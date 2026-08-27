@@ -1120,8 +1120,22 @@ export interface ServerStatus {
 // Prebuilt Python environments — electron/env-catalog.ts owns the numbers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One environment on the release. Not a platform: `wsl-x64` is driven from win32. */
-export type EnvTarget = 'windows-x64' | 'wsl-x64' | 'mac-arm64';
+/**
+ * One environment on the release. Not a platform: `wsl-x64` is driven from win32.
+ *
+ * The `nli-` pair are the analysis worker's Pythons — torch, transformers and
+ * the DeBERTa weights baked in. They are separate entries rather than packages
+ * added to the reading environments because the two are wanted at different
+ * times by different people: somebody who only ever converts books should not
+ * download a gigabyte of NLI to rasterise a PDF, and the Windows reading
+ * environment (62 MB of PyMuPDF) would grow twenty-fold if it carried them.
+ */
+export type EnvTarget =
+  | 'windows-x64'
+  | 'wsl-x64'
+  | 'mac-arm64'
+  | 'nli-windows-x64'
+  | 'nli-mac-arm64';
 
 /**
  * The four things an install does, in order. Only `download` has a meaningful
@@ -1180,6 +1194,127 @@ export interface EnvInstallResult {
   /** The interpreter that now exists, when there is one. */
   pythonPath: string | null;
   detail: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// First run — electron/system-probe.ts, electron/ollama.ts, electron/llm-catalog.ts
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The NVIDIA card, if there is one. Every unknown is null, never zero. */
+export interface CudaFacts {
+  /** True when nvidia-smi answered at all. */
+  present: boolean;
+  name: string | null;
+  /** Null when there is no card, or when its answer carried no readable figure. */
+  vramMB: number | null;
+  /** One sentence for the screen. Says which of those two nulls this is. */
+  detail: string;
+}
+
+/** Which pool `modelMemoryMB` came out of — the word the screen prints. */
+export type MemoryBasis = 'vram' | 'unified' | 'ram';
+
+export interface SystemProfile {
+  /**
+   * `process.platform`, as a plain string — the same shape `FoundryApi.platform`
+   * uses and for the same reason: this file is compiled by the RENDERER's
+   * tsconfig too, which has no node types in it, and `NodeJS.Platform` there is
+   * a namespace that does not exist.
+   */
+  platform: string;
+  arch: string;
+  appleSilicon: boolean;
+  cuda: CudaFacts;
+  ramMB: number;
+  /** Null when it could not be measured. A null SKIPS the space warning. */
+  freeDiskMB: number | null;
+  /**
+   * What a model can actually expect to have: the card's VRAM on a discrete
+   * GPU, a fraction of unified memory on Apple silicon, system RAM otherwise.
+   */
+  modelMemoryMB: number;
+  memoryBasis: MemoryBasis;
+  detail: string;
+}
+
+/** Is ollama here, and is it running? Two different questions, both answered. */
+export interface OllamaFacts {
+  /** The server answered `/api/version` on `url`. */
+  running: boolean;
+  /** What it said, when it said anything. */
+  version: string | null;
+  /** An `ollama` binary is on this machine even if nothing is listening. */
+  installed: boolean;
+  /** The models it already holds. Empty when nothing is running. */
+  models: string[];
+  url: string;
+  /** One sentence: running, installed-but-stopped, or absent. */
+  detail: string;
+}
+
+/** One row of the Qwen lineup, as the wizard draws it. */
+export interface LlmModelOption {
+  /** The ollama tag — what `ollama pull` is given and what a job's `--model` is. */
+  tag: string;
+  label: string;
+  /** The download, from ollama's own library listing. */
+  downloadGB: number;
+  /** Weights plus working room. The number `fits` is decided against. */
+  needsGB: number;
+  description: string;
+  /** `needsGB` clears this machine's `modelMemoryMB`. */
+  fits: boolean;
+  /** The largest one that fits. Exactly one row has this, and only if any fits. */
+  recommended: boolean;
+  /** True when ollama already holds it — no download to ask permission for. */
+  installed: boolean;
+}
+
+/** What the wizard's model step is looking at. */
+export interface LlmChoices {
+  profile: SystemProfile;
+  ollama: OllamaFacts;
+  options: LlmModelOption[];
+  /**
+   * The tag the wizard should preselect: the recommendation, or — when nothing
+   * fits — the smallest, which the screen marks with the CPU warning.
+   */
+  suggested: string;
+  /** The model jobs use today, whether or not setup has ever run. */
+  current: string;
+}
+
+/** `download` has a percentage; the other two are a sentence and a spinner. */
+export type OllamaPhase = 'download' | 'verify' | 'write' | 'done' | 'error';
+
+export interface OllamaPullProgress {
+  tag: string;
+  phase: OllamaPhase;
+  /** 0–100 while downloading. Meaningless otherwise; read `detail`. */
+  percent: number;
+  detail: string;
+}
+
+/** What `ollama:install` did. The binary is installed by ollama's own screen. */
+export interface OllamaInstallResult {
+  ok: boolean;
+  /** Where the installer landed, when one was fetched. */
+  path: string | null;
+  detail: string;
+}
+
+/**
+ * Has this person been through setup, and what did they decline?
+ *
+ * Skips are REMEMBERED so the wizard does not ask twice, and re-offered from
+ * the settings screen so declining is not permanent. A skip is a decision, not
+ * an error, and nothing in the app treats it as one.
+ */
+export interface SetupState {
+  /** False on a machine that has never finished or dismissed the wizard. */
+  completed: boolean;
+  /** Step ids the person moved past without doing the thing. */
+  skipped: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3772,11 +3907,20 @@ export interface CapturePhoto {
    * complete and NOTHING REWRITTEN. Same no-migration posture as the standing
    * crop itself, and for the same reason: a migration here would have to guess.
    *
-   * ── WHO WRITES IT, WHICH IS A SHORT LIST ON PURPOSE ─────────────────────
+   * ── WHO WRITES IT, WHICH IS A SHORTER LIST SINCE WAVE 26 ────────────────
    *
-   * The say-so (*This page is right*) writes true; release writes false. Those
-   * two are the only writers, because they are the only acts whose answer the
-   * pages cannot already give.
+   * ONE WRITER, AND IT ONLY EVER WRITES TRUE: the editor's *Global* tick,
+   * unticked. That is the only act whose answer the pages cannot already give —
+   * a person can claim a photograph without moving anything on it, and a
+   * derivation cannot know they looked.
+   *
+   * `false` is READ AND NEVER WRITTEN. Release wrote it — it cleared the mark
+   * and deliberately kept the lines, so the derive had to be out-argued — and
+   * the door that replaced it (*Follow the book again*, and re-ticking the box)
+   * clears the pages' `byHand` instead, which leaves the photograph saying
+   * nothing about itself. Recipes written before that wave hold stored
+   * `false`s, they mean exactly what they always meant, and the validator
+   * carries them.
    *
    * And every act that PLACES a line — a corner dragged, a gutter slid, a crop
    * cleared, a spread rejoined — DELETES this field rather than writing beside
@@ -3916,7 +4060,7 @@ export interface CaptureRecipe {
  * compare against, so the standing carries the frame it was drawn for rather
  * than pointing at a photograph that may since have been removed.
  */
-export interface CaptureStanding {
+export interface CaptureLines {
   /**
    * The whole SHEET, before any cut — the same quad `joinedQuad` reassembles,
    * with the dimensions of the photograph it was placed on.
@@ -3935,6 +4079,52 @@ export interface CaptureStanding {
    * turn without needing one of its own.
    */
   cut?: CaptureSplit;
+}
+
+/**
+ * THE BOOK'S LINES, AND THE TWO SIDES THAT MAY WANT THEIR OWN (Wave 51b).
+ *
+ * ── Owen: *"a 'just even pages' and 'just odd pages' global setting"* ───────
+ *
+ * The real case is recto/verso. A book photographed one page at a time is shot
+ * from a fixed stand, so the left-hand pages sit in one part of the frame and
+ * the right-hand pages in another — two crops, alternating, and a single
+ * standing can only ever be right about half of them. `crop`/`cut` above stay
+ * the book's ONE answer; these two are the exceptions it delegates to.
+ *
+ * ── ABSENT IS "NO SIDE HAS ASKED", AND THERE IS NO MIGRATION ───────────────
+ *
+ * Every recipe ever written is already valid: with no `odd` and no `even`, every
+ * photograph resolves to `crop`/`cut` exactly as it did before this field
+ * existed. Nothing derives a parity standing from the crops that are there —
+ * guessing which half of a book meant to differ is the invisible decision the
+ * standing was invented to abolish.
+ *
+ * ── A BLOCK IS WHOLE, NOT A PATCH ─────────────────────────────────────────
+ *
+ * A photograph wears its side's block if there is one and the book's own lines
+ * otherwise — the WHOLE block, crop and cut together, never a field-by-field
+ * merge. Two reasons. A merge cannot spell "the odd pages are single pages and
+ * the even ones are spreads", because an absent `cut` in a patch means *inherit*
+ * and in a block means *no cut*. And the lift that writes one (`standingOf`) is
+ * a whole configuration taken off one photograph, so storing it as anything less
+ * than a whole configuration would be this file describing something the writer
+ * cannot produce.
+ *
+ * ── PARITY IS BY PHOTOGRAPH ───────────────────────────────────────────────
+ *
+ * The 1st, 3rd, 5th … photograph in the table's order is odd. NOT the 1st, 3rd,
+ * 5th page: a spread photograph already holds a left page and a right page, so
+ * per-page parity on a shoot of spreads would put both sides of the same picture
+ * in different groups and ask one frame to wear two crops. The recto/verso case
+ * this exists for is a one-page-per-photograph shoot, where photograph parity
+ * and page parity are the same thing.
+ */
+export interface CaptureStanding extends CaptureLines {
+  /** What the 1st, 3rd, 5th … photograph wears, when that side asked for its own. */
+  odd?: CaptureLines;
+  /** What the 2nd, 4th, 6th … photograph wears, when that side asked for its own. */
+  even?: CaptureLines;
 }
 
 /**

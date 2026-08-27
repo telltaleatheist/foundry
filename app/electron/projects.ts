@@ -1737,7 +1737,7 @@ function currentBookStep(manifest: ProjectManifest, ledger: ProjectLedger): Ledg
    * WHAT IT COSTS IF IT IS WRONG, because it is not obvious from here: this is
    * `LedgerView.current`, and `currentArrangement` is built on it. Null means
    * the renderer's `mintedFrom` is null, which means THE DIVERGENCE SENTENCE
-   * NEVER APPEARS AGAIN and the mint button never says "Finish again" — a
+   * NEVER APPEARS AGAIN and the mint button never says "Generate book again" — a
    * feature quietly un-shipping itself with nothing on screen to say so.
    *
    * SO THE LEDGER IS ASKED DIRECTLY, and the test is the one this function

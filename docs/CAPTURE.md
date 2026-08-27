@@ -3189,3 +3189,602 @@ partial beats a bent whole.
 - Wave 24's watch-item "a person who ticks Two pages 25 times marks
   them all" → dissolved: accepting the book's cut never completed a
   page, and propagation now happens at Apply anyway.
+
+---
+
+## Wave 51 — Global, and the propagation that stops waiting (Owen, 2026-08-26) — BUILT
+
+Numbered 51 and not 26 because the waves are the PROJECT's, not this
+file's: `docs/PLAN.md` runs the sequence and 26 is *"hosted, there is no
+shelf"*. This document happens to hold only the capture waves (20, 21,
+21b, 21c, 24, 25), which makes its own last number misleading. Said here
+so nobody renumbers it back.
+
+Owen's spec, in his own order:
+
+> the flow is: drag/drop pages in → page organizer → turn/crop/split via
+> the editor → finalize each pass → generate book.
+
+> in the editor modal, for both the crop pass and the split pass, there
+> is a **Global** checkbox, automatically checked. Checked: moving the
+> crop (or the split line, or pressing turn) moves EVERY page that hasn't
+> been individually set, to that same position — live, no separate Apply
+> press. Uncheck it: the current photograph becomes its own. All other
+> pages KEEP the position last set globally; subsequent drags move only
+> this page and it is immune to future global moves. Re-check it: the
+> book adopts THIS page's crop/cut and every follower jumps to it.
+
+> under the global checkbox, a button that resets ALL pages across the
+> book back to original, INCLUDING individually set ones.
+
+### The diagnosis this closes: the rule was right and the sequence was not
+
+Wave 25's scope rule is still the rule — *a control on a card speaks for
+that photograph, a control on the rail speaks for the book, the modal
+speaks for the photograph it has open*. What it bought was a sequence
+nobody could hold: **place a crop → press Record → leave the modal →
+press Apply → come back to see whether it fitted.** Owen said so during
+the Wave 25 walk (*"it wasnt obvious to me that i had to apply all crops
+from the main window"*) and Wave 33's answer was a SECOND BUTTON in the
+modal doing both — which is the shape a surface takes when the gesture
+cannot say what it is for.
+
+The correction is that **the scope is a state of the photograph, not a
+property of a button.** A photograph either moves with the book or it
+does not; that fact already existed (`isComplete`) and was already drawn
+on every card as a dot; it had no control anywhere. Give it one, put it
+where the hand is, and the modal is still only speaking for the
+photograph it has open — that photograph now has something to say about
+the book, which is not the same as the modal reaching past it.
+
+### The model, exactly
+
+**Global ticked** (the default, because `isComplete` is false for every
+photograph as it arrives):
+
+- The photograph is a FOLLOWER, and so is the hand on it. A gesture that
+  lands — corners let go of, the gutter let go of, ⟲ or ⟳ pressed, *Two
+  pages* ticked or unticked, *Use the whole photograph* — makes this
+  photograph's lines the book's and dresses every other follower in them.
+- **The current photograph is a follower like the rest.** It is not the
+  source and not exempt: it holds the standing because it authored it,
+  which is the same thing.
+
+**Global unticked:**
+
+- `complete: true` is written and the photograph is its own. **Nothing
+  else moves.** Every other page keeps the lines it was last given.
+- Subsequent gestures on it mark it by hand and reach nobody, and every
+  global — live or finalize — skips it.
+
+**Re-ticked:** the book adopts THIS photograph's lines, its own mark is
+given up inside the same walk, and every follower takes them. One door
+(`leadTheBook`), which is also the drag path's door, so re-ticking and
+dragging cannot land differently.
+
+Same semantics in the split pass, for the cut alone — `recordCut`'s
+ruling, unmoved: by then the crop is settled and this photograph may not
+be speaking for it.
+
+### Live, but on GESTURE END
+
+`quadsChange`/`splitChange` fire per pointermove and must, because the
+recipe is what the screen draws. Dressing the book is a walk that
+re-derives halves and rebuilds the arrangement, so it runs once, when the
+hand opens — the page editor grew a `settled` output that fires on
+release **and only if something actually moved**, so a press with no
+travel does not write the recipe. During the drag `setQuads`/`setSplit`
+are passed `mine: false`, or the hand placing the book's crop would opt
+its own page out of the standing it is authoring (Wave 24's `cutHere`
+trap, arriving through the corners).
+
+### A photograph of another shape leads nobody
+
+A crop is fractions of a frame, so a standing lifted off the one landscape
+frame in a shoot of twenty-six portrait ones fits none of them —
+`sameShape` would skip every follower and the book would hold a crop
+nothing can wear. That was survivable while the standing was written by a
+deliberate press; **live it would happen to somebody who nudged a corner
+on the odd frame**, with the rail's counts collapsing to "26 a different
+shape" as the only sign.
+
+So a gesture on a photograph that is not the same shape as the book's
+EXISTING standing stays local: the standing is untouched and nobody else
+moves. It still gives up the photograph's own mark, or re-ticking the box
+on the odd frame would be a checkbox that ticks itself back off. With no
+standing yet there is nothing to be a different shape from, and the first
+gesture defines the book whatever frame it happens on.
+
+**Deferred out loud**: the tick's caption does not yet say "the book
+cannot reach this one" on a differently-shaped photograph — it reads
+*Following the book*, which is true of the state and silent about the
+shape. The rail's pressable "N a different shape" is where that
+population is named. It needs a per-photograph shape input on the modal
+to say it in both places; deferred rather than half-built.
+
+### Removed, and what each was
+
+| gone | why it has nowhere left to happen |
+| --- | --- |
+| *✓ This page is right — next* | it completed AND stepped, which is the one thing somebody claiming a page is not about to do. The unticked box says it where the hand already is. |
+| *Make this the book's crop* / *...cut* | the gesture is the record now |
+| *Make it the book's crop and apply to all* | Wave 33's two-in-one; there are no longer two |
+| *Turn the other N to match this one* | subsumed by a turn with Global on, which is the same act with the reach the tick promises |
+| *Where it stands* (block, release, follow-again) | the tick names the state and is the single door back |
+| the `justApplied` acknowledgement | four presses lit it and all four are gone; the gesture acknowledges itself by moving the picture, the cards and the strip at once |
+
+`applyToAll` and its union, `recordCrop`, `recordCut`, `release`,
+`outOfTurnWith` and `hasStanding` went with them. Gravestones at every
+site.
+
+### Reset — the ONE act that overrules a hand
+
+Under the tick, and confirmed once through the app's own dialog. Every
+other act in this stage spares a page somebody placed, which is Owen's
+standing ruling; this is the door for the evening when that assumption is
+what went wrong.
+
+- **Crop pass**: every photograph back to the whole frame, the book's
+  standing cleared, every mark cleared. **THE TURNS SURVIVE.** "Back to
+  original" could mean the frame as the camera handed it over — it must
+  not, because Owen's opening move on a shoot is to turn twenty-five
+  sideways spreads before he places a corner, and un-turning them would
+  spend the reset destroying the work nobody was complaining about. So
+  each photograph gets `turnQuad(WHOLE_FRAME, turnsOf(sheet))`: no crop,
+  same orientation. A cut survives its crop (`clearCrop`'s ruling,
+  applied to the book).
+- **Split pass**: every photograph rejoined and the book's cut cleared.
+  The crops stay — a reset answering a question about gutters with the
+  loss of an evening's cropping would be the wrong reach.
+
+### A REVERSAL: a turn claims nothing
+
+`turned()` used to write `byHand: true` on every page, so turning a
+photograph made it its own. The argument was that a later global would
+otherwise undo a turn somebody performed deliberately, **and it was false
+about the crop**: `wearing` takes the standing through `turnedLike` into
+whatever direction the photograph already faces, precisely so an upright
+page keeps its orientation while receiving the book's rectangle. No
+global crop has ever been able to undo a turn.
+
+The false protection had a real cost, and the tick made it fatal: turning
+twenty-five sideways spreads on the table claimed all twenty-five, so the
+book's crop would then reach NOBODY and every card would carry a mark
+nobody meant to set. A turn now leaves the mark exactly as it found it in
+both directions — it does not claim a follower and it does not release a
+page somebody claimed.
+
+Wave 21c's *"a bulk turn skips nobody for being complete"* is reversed
+with it, for the same reason: it was right about a press labelled *turn
+the other 24* and wrong about a tick whose caption promises the book
+leaves an unticked page alone. Turning one photograph alone is the ⟲ ⟳
+pair with Global off, or the pair on the table.
+
+### Finalize, and Generate
+
+- *Apply crops* → **Finalize page crops**; *Apply the cut* → **Finalize
+  page splits**. The commitment-point model is unchanged: the projection
+  flips everywhere and the pixels are cut once, at the end. What changed
+  is that by finalize time the followers already wear the standing, so
+  the press is a commitment PLUS a safety net — it runs the same walk
+  (`dressed`, one body, shared with the live path) and catches
+  stragglers: a photograph intaken since, one handed back to the book
+  between gestures. *Reopen* stays free.
+- *Finish the pages* → **Generate book**; *Finish again* → **Generate
+  book again**. Same mint machinery, no behaviour change.
+
+### The grid's drag-reorder, which was unusable at the end of the book
+
+Owen, moving a back cover from the top of the table to the
+bottom-right: it could not be done. Three defects, one cause and two
+consequences.
+
+1. **The landing was a SLOT, and there are n+1 places to insert into a
+   list of n.** `landing` is an insertion index now, 0..n; the pointer's
+   half of the card decides which side, so every card has two answers and
+   the last one has the answer nobody could express before. Drawn as the
+   same hairline: leading edge for i < n, trailing edge of the last card
+   for n.
+2. **The table's own space was deaf.** The dragover/drop handlers moved
+   from the slots to the `.table` scroller and hit-test the card under the
+   pointer, so a drop on the padding below the last row is not a miss —
+   it is the end of the book, which is the only thing it could mean.
+3. **No auto-scroll.** An HTML5 drag suppresses pointermove entirely and
+   `dragover` does not fire while the hand is held still, so scrolling
+   per event would be both jittery and dead in the one case that matters.
+   The event records where the pointer is; a `requestAnimationFrame` loop
+   does the moving, ramping from nothing at 48 px out to 16 px/frame at
+   the border, cancelled on drop, dragend, a real dragleave of the table,
+   and on destroy.
+
+### What SURVIVES from Waves 24 and 25, unamended
+
+- **A hand-placed crop is never overwritten by a global.** The tick is
+  that ruling with a control on the front of it for the first time.
+  Reset-all is the one explicit, confirmed exception.
+- **The surface names the scope** — extended, not replaced: the
+  photograph now says whether it speaks for the book.
+- **Passes, not modes.** Two ordered passes; what is grabbable still
+  answers the scope question before it is asked. No mode was added.
+- **Pixels are cut once, at the end.** Finalize flips the projection and
+  cuts nothing.
+- **`isComplete` is the ONE test every skip reads**, and the dot on the
+  card, the tick in the modal and the rail's populations are readings of
+  it. The rail's counts stay pressable.
+- **`sameShape` guards every global**, live and finalize alike; the
+  rail's "N a different shape" is where that population is named, and it
+  is why the live path stays SILENT (a notice bar rewritten on every
+  corner let go of is a notice bar nobody reads).
+
+### Superseded, named so nothing dangles
+
+- Wave 25's record/apply split → the tick, and one live walk.
+- Wave 25's say-so (*This page is right*) → the unticked box.
+- Wave 25's release (`complete: false`) → *Follow the book again*, which
+  clears the provenance instead. **Nothing writes `false` any more; the
+  read stays, because older recipes hold them.**
+- Wave 24/25's "no live global; the destructive act is only ever an
+  explicit press" → reversed for the FOLLOWERS only. The thing that rule
+  protected — a person fixing one bad frame must not move the other
+  twenty-four by accident — is now protected by the tick they turned off
+  to fix it, and by the fact that a follower has no work of its own to
+  lose.
+- Wave 21c's bulk turn skipping nobody → skips the photographs that are
+  their own.
+
+### Schema
+
+**None.** Every field this needed already existed (`book`, `pass`,
+`complete`, `byHand`), so `validRecipe` is untouched — and the reset
+paths lean on its existing rule that a standing holding neither a crop
+nor a cut is written as silence rather than as an empty object.
+
+### Still open, said out loud
+
+- **Not hand-tested.** Gates are green and nothing here has been walked
+  in the running app. First things to walk: a crop drag with Global on
+  over a shoot of more than one shape; unticking, dragging, re-ticking;
+  the reset in both passes; and the back-cover drag to the bottom-right
+  that opened the grid half of this wave.
+- **The table's turn buttons and strike are unchanged**, per rule 1 (a
+  control on a card speaks for that photograph). A turn from the table
+  now claims nothing, so it no longer opts a photograph out of the book —
+  which is the reversal above, arriving at a second surface.
+- **Reset is per-pass and not per-book.** There is no one press that
+  clears crops AND cuts; it is two presses in two passes, because a
+  person standing in the split pass asking about gutters has not asked
+  about their crops.
+
+---
+
+## Wave 51b — the tick becomes a MODE, and the book grows two sides (Owen, 2026-08-26) — BUILT
+
+Wave 51 was hand-walked the same evening it landed. It works; two things
+about it were wrong in the hand, and both are Owen's own words.
+
+> if i uncheck global, make it so it doesnt switch back to checked unless
+> i specifically set it back … my workflow is i set the global
+> configuration for everything, and then i uncheck global and go through
+> every page and tweak them individually. i dont want to have to uncheck
+> global for every one. just keep it checked/unchecked unless i
+> check/uncheck it again specifically.
+
+> im thinking we can add a 'just even pages' and 'just odd pages' global
+> setting. this change only applies to every other page, but its global.
+> that kind of thing.
+
+### A. The tick was a STATE OF THE PHOTOGRAPH, and it had to become a MODE
+
+Wave 51's box was `!isComplete` of whatever was open — an honest reading
+of a real state, and the wrong control for the second half of an evening.
+That half is **one pass through the book tweaking pages one at a time**,
+and a box derived per photograph re-ticks itself at every step: fifty
+unticks, and any one of them forgotten moves the whole book.
+
+So *Global* is renderer-session state on the service, per open project,
+**ticked on open** and flipped **only by a click**. Stepping between
+photographs never touches it.
+
+- **NOT IN THE RECIPE, ruled.** The recipe records what the BOOK is. How
+  a person is working this evening is a fact about the HAND, and storing
+  it would open tomorrow's project with the corners quietly disarmed
+  because of how last night ended.
+- **Unchecking marks NOTHING.** Wave 51's untick wrote `complete: true`,
+  because the box WAS that field. A mode cannot: it describes the next
+  hour, not the picture that happens to be on screen. A page becomes its
+  own by being **moved** while the mode is off (`setQuads(…, mine)`), and
+  a page nobody touches stays a follower — which is exactly the
+  walk-every-page workflow.
+- **`markComplete` is a gravestone** and **nothing writes `complete: true`
+  any more.** The read stays: recipes written earlier on 2026-08-26 hold
+  them and they mean what they meant.
+- **Re-ticking moves nothing.** It arms the mode; the next gesture is what
+  defines or updates the standing. A box that re-dressed the book on being
+  ticked could not be ticked *in preparation* for anything.
+
+**The death of "re-check to adopt", and what replaced it.** Checking no
+longer targets a page, so the act it used to perform had to land
+somewhere: **a gesture made with Global on, on a photograph that is
+currently its own, hands that photograph back AND leads the book** — one
+walk, `dressed`'s `lead`, which has always been the one photograph a mark
+does not spare. The shape guard is unchanged and now cuts both ways: a
+gesture on a photograph that is not the same shape as its scope's
+standing stays local, the standing is untouched, and the photograph is
+still left a FOLLOWER rather than marked — the person meant a global act,
+and the rail's pressable "N a different shape" is where that population
+is named.
+
+**The modal says where the page stands in a sentence of its own** —
+*This page is following the book* / *This page is its own — the book
+leaves it alone* — because the tick no longer carries that fact and the
+dot that does is on a card behind the modal. With the mode ON it adds the
+consequence: *…until you move something here, which hands it back*. Cards
+and rail counts are unchanged.
+
+### B. Two sides of one book — *All pages / Odd / Even*
+
+The case is recto/verso: a book photographed one page at a time from a
+fixed stand puts the left-hand pages in one part of the frame and the
+right-hand pages in another, so **one crop is wrong about half the book by
+construction**.
+
+A three-way scope sits under the tick and **only while it is ticked** (a
+control that would change nothing is absent, this stage's own rule).
+Session state beside the mode, default *All pages*, never stored.
+
+**PARITY IS BY PHOTOGRAPH** — the 1st, 3rd, 5th … in the ARRANGEMENT is
+odd, first appearance in `order`, the same rule the walk, the mint and
+`namerFor` use. Not by page: a spread photograph already holds a left page
+and a right page, so page parity would put both halves of one picture on
+different sides and ask a single frame to wear two crops. The shoot this
+exists for is one page per photograph, where the two readings agree. A
+drag can move a photograph from one side to the other, exactly as it moves
+its page number — that is what it means for the sides to be a fact about
+the arrangement rather than a mark on a picture.
+
+**The standing learns sides.** `CaptureStanding` is now
+`CaptureLines & { odd?: CaptureLines; even?: CaptureLines }`, where
+`CaptureLines` is the `crop?`/`cut?` pair the standing already was. Chosen
+over four flat fields (`oddCrop`, `oddCut`, …) because it is the SAME
+SHAPE at all three levels: one validator body (`validLines`), one
+resolution, and a lift (`standingOf`) that already produces exactly a
+`CaptureLines`.
+
+- **A block is taken WHOLE, never merged field by field.** A photograph
+  wears its side's block if there is one and the book's own lines
+  otherwise. A merge cannot spell *the odd pages are single sheets and the
+  even ones are spreads*, because an absent `cut` in a patch means
+  "inherit" and in a block means "no cut".
+- **Absent means the side never asked**, so **no migration**: every recipe
+  ever written resolves to `crop`/`cut` exactly as before.
+- `validRecipe` **carries** them — refused if wrongly typed, consulted by
+  nothing in main — which is `byHand`'s contract for the fourth time and
+  for the same reason: the validator REBUILDS the recipe field by field,
+  so a field main "ignores" is deleted on the next save.
+
+**Semantics, exactly:**
+
+| act | what it writes | who it dresses |
+| --- | --- | --- |
+| gesture, scope **All** | the book's own lines, **and both sides are dropped** | every follower |
+| gesture, scope **Odd**/**Even** | that side's block; the other side untouched | that side's followers |
+| gesture, split pass, scope **All** | the cut into the book's lines **and into whichever side blocks exist** | every follower |
+| turn ⟲ ⟳ with Global | nothing (a turn is not a standing) | that scope's followers |
+| Reset (either pass) | clears the sides with the book's own | everything, marks included |
+
+**All supersedes**, and that is the ruling: the sides exist because
+somebody said the two halves differ, and an act made with the scope back
+on *All pages* is the same person saying they do not. The split pass's
+cut is the one place the block rule needs help — a cut written only into
+the book's own lines would never reach a side that has a block, so an
+*All* cut is written into all three and the sides keep the crops the crop
+pass gave them (`recordCut`'s ruling arriving at a second level).
+
+**One resolution, `linesFor`, and everything reads it**: the two
+Finalizes, the live propagation, *Follow the book again*, the cut the *Two
+pages* tick offers, the ghost under the outline, and the rail's counts.
+Late intake inherits by the same rule, at the finalize, as it always did.
+
+**The gesture is always in reach of the photograph it was made on**, even
+when that photograph sits on the other side of the book from the scope.
+It has already been moved by the drag, and leaving it out would leave it
+holding a stored mark while the hand that moved it was plainly the book's.
+"This gesture speaks for the odd pages" should not require standing on an
+odd page to say.
+
+### The counts that would have lied, and what was done
+
+- **`applyPopulations` / `applyCost`** measured every photograph against
+  `book.crop`. Under a parity standing that lies twice: every odd
+  photograph carrying the odd crop reads as *a different shape* or as a
+  taker of a crop it will never be given. **Fixed by resolving per
+  photograph** through the same `linesFor` the Apply uses — so the counts
+  stay EXACT rather than being hidden.
+- **They stopped being exhaustive.** A photograph whose side has no
+  standing yet is now in **none** of the three: it is not going to take
+  anything and it is not being spared either. Naming it under any heading
+  would blame a shape or a hand for a crop nobody has placed.
+- **The split pass now demands a CUT as well as a crop** before counting a
+  photograph a taker, because that is what its Apply lands. With one
+  standing the two questions had one answer; with a side that is cut and a
+  side that is not they do not.
+- **The rail's WORDS, not its numbers.** A new `sided` input: while the
+  book's lines are split, *"22 take the book's crop and cut, two pages
+  each"* becomes *"22 take the lines their side of the book is set to"* —
+  the old sentence promises ONE crop and ONE cut, which is exactly what
+  the book no longer has.
+- **`hasCrop` / `hasCut`** (which decide whether an Apply exists at all)
+  are now ANY of the three standings: a book whose odd pages have a crop
+  has something to finalize.
+- The modal's *Two pages* caption said *"the rest of the book follows
+  it"*, which under a parity scope is half of them. It names the side now.
+
+### What the scope caption says, in every state
+
+| state | caption under the tick |
+| --- | --- |
+| unticked | Your changes move this page alone. The rest keep the lines they have. |
+| ticked, All pages | Your changes move every page the book still moves. |
+| ticked, Odd | Your changes move the odd pages the book still moves — the 1st, 3rd, 5th photograph. |
+| ticked, Even | Your changes move the even pages the book still moves — the 2nd, 4th, 6th photograph. |
+
+No count in it, deliberately: a scoped, live count would have to be
+recomputed on every step, and the rail carries the counted version under
+the button that spends them. *"the book still moves"* is the skip, said
+without a number.
+
+### Schema
+
+**Changed** — the first time in this run of waves. `CaptureStanding` gains
+`odd?` and `even?`, both `CaptureLines`, both carried by `validRecipe`
+through `validSide`/`validLines`. Absent is every recipe ever written, so
+nothing migrates and nothing is guessed.
+
+### Still open, said out loud
+
+- **There is no way to say "leave this one alone" WITHOUT moving it.**
+  `markComplete` lost its only door with the untick. A page that already
+  looks right and must not be moved by a later global has to be nudged to
+  claim it. The right home is the card's right-click, beside *Follow the
+  book again* — deferred rather than half-built as a second meaning for a
+  checkbox.
+- **A side's FIRST gesture is shape-checked against the book's own crop**
+  (`linesFor` falls back until that side has a block). On any real
+  recto/verso shoot every frame is the same shape, so this only bites a
+  shoot whose two sides differ in proportion — which would be a different
+  camera per side. Named, not fixed.
+- **Not hand-tested.** Gates green (three typechecks, `ng build`
+  883.26 kB WARNING-only, `bun test` 418 pass). First things to walk:
+  untick → step → still unticked; a corner dragged with Global on over a
+  page that was its own; *Odd* then *Even* then *All* in that order, and
+  the rail's counts after each.
+
+---
+
+## Wave 51c — the override: one act that gives the whole book back (Owen, 2026-08-26) — BUILT
+
+An addendum to Wave 51b, not a wave of its own. It builds the second
+half of a sentence the first half of which was already everywhere.
+
+> if the page was individually edited, it's exempt from the global
+> settings, unless the user specifically overrides all individual
+> settings to revert to global.
+
+### The exemption and the override are ONE rule, and only half of it existed
+
+The clause before the comma is the whole of the capture service: every
+global act asks `isComplete` and steps around the photographs a hand has
+claimed — the live propagation, both Finalizes, the ⟲ ⟳ pair with
+*Global* on, the rail's counts. It has been true since Wave 24 and it is
+Owen's standing ruling.
+
+The clause **after** the comma had exactly one door: *Follow the book
+again*, on a card's right-click, **one photograph at a time**. That is
+the right shape for a mark set by accident and the wrong shape for the
+person the sentence is about — somebody who has decided the individual
+pass itself was the mistake, and would be closing the modal to make fifty
+right-clicks against a population they cannot see from inside it.
+
+So the rule is now complete, and it is stated as a pair:
+
+| | who it reaches | what it means |
+| --- | --- | --- |
+| the exemption | every global act, always | a page a hand placed is not moved by the book |
+| the override | one deliberate, confirmed act | **every** mark is given up and the book's standing is worn |
+
+### *Give every page back to the book*
+
+A second button in the modal's Scope block, **under** *Reset every crop* /
+*Reset every split*, **absent** (never disabled) while no photograph is
+its own — this stage's own rule, and it makes the button a fact: if it is
+there, some page in this shoot is its own.
+
+- **Caption**, which exists for the clause it ends with: *"Every page you
+  set yourself takes the book's crop and cut as they stand. The book's
+  own lines stay exactly as they are — Reset above is the one that goes
+  back to the originals."* In the split pass: *"…takes the book's cut as
+  it stands. Crops stay, and so do the book's own lines — …"*
+- **IT IS NOT A GENTLER RESET, and the two sit one above the other.**
+  Reset goes back to the ORIGINALS and empties the book's standing with
+  them; this KEEPS the standing and dresses everybody in it. Both
+  overrule a hand, so both ask first — and each question names the other
+  act, because the outcomes are opposite and the buttons are a step apart.
+- **Confirmed, with the count in it.** *"7 photographs you set yourself
+  will take the book's lines again — the crop and cut their side of the
+  book is set to."* The count is `prepare().complete`, the same
+  derivation as the dots on the cards and as the button's own presence,
+  so the dialog cannot promise a reach the act does not have.
+
+### One walk, released first — `followAllAgain`
+
+`dressed` is the one body the live propagation and both Finalizes share,
+and it **spares everything complete**; its `lead` is the one photograph a
+mark does not spare. Here **every** marked photograph is a lead.
+
+Rather than teaching that parameter to carry a population, the marks are
+given up **before** the walk, through `following` — which is exactly what
+`dressed` does to its lead on the way into `wear`. The walk then meets a
+book of followers and does what it always does. So a photograph handed
+back by this act and one handed back by the right-click **cannot come out
+differently**, and there is no second walk to disagree with the first.
+
+**The pass is read, not taken.** `resetAll` takes its half as an argument
+because its caller composes a sentence about it anyway; this reads
+`pass()`, so the confirm and the act cannot name two different passes.
+The crop pass hands back the resolved crop AND cut (exactly
+`matchTheOthers`); the split pass hands back the **cut alone**, for
+`applyCuts`' reason — by then the crops are committed, and a pass that
+moved a corner would answer a question about gutters with somebody's
+cropping.
+
+**Nobody else is reached.** Followers already wear whatever the book has
+to give them; dressing them here would be an act with a reach it never
+claimed, and the two Finalizes are where that is asked for.
+
+### A page with nothing to wear gives up its mark ANYWAY — ruled
+
+A photograph whose side of the book has no standing yet, or whose frame
+is not the standing's shape, has nothing to take. **It still comes out a
+follower, keeping the lines it has.**
+
+That is `matchTheOthers`' own ruling for the same state, and it is the
+only reading of *revert to global* that is true of the outcome the button
+promises: **the book may move this one again**. The alternative — leave
+it marked and count it — would answer *give every page back to the book*
+with a book that still holds pages the next global steps around, for a
+reason the person would have to go looking for.
+
+The shape case is not new either: `leadTheBook`'s guard already releases
+a photograph it cannot dress, and the rail's pressable *N a different
+shape* is where that population is named. What this adds is a count in
+the sentence, so nothing is silent:
+
+> 7 photographs are following the book again. 2 of them kept the lines
+> they had — the book has nothing their side and shape can wear yet.
+
+`announce` could not say that, and the difference is not a wording
+preference: its shape is *"N were changed. Left alone: …"*, and here
+**nothing is left alone** — every marked photograph gives up its mark,
+the ones the book has no lines for included. Listing those under *Left
+alone* would tell somebody a page is still theirs at the exact moment it
+stopped being. `handedBack` is the sentence, and its second clause is
+about LINES rather than about marks, which is the true half.
+
+### Schema
+
+**Unchanged.** Nothing new is stored: the act clears `complete` and
+`byHand` through `following` and writes lines the standing already held.
+
+### What this does NOT close
+
+**Wave 51b's deferred gap is still open** and is a different one: there
+is still no way to say *"leave this one alone"* WITHOUT moving the page.
+That wants a card right-click beside *Follow the book again*; this
+addendum builds the door in the opposite direction.
+
+### Not hand-tested
+
+Gates green. First things to walk: mark three pages by hand with *Global*
+off, reopen the modal, press it, and check the notice's count against the
+dots that disappear; the same in the split pass, where the crops must not
+move; and the button's absence on a shoot where nothing is its own.
