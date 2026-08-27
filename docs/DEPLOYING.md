@@ -89,6 +89,59 @@ how you test a build.
   target's runtime on first use, so the first full build needs network.
 - `gh`, authenticated against `telltaleatheist/foundry`.
 
+## The Python environments — a different release, a different runbook
+
+**`env-v1` is not the engine's release and `tools/deploy.sh` never touches it.**
+The five CLI assets above ship under `vX.Y.Z`; the prebuilt Pythons the Electron
+app downloads live under a single, **prerelease-flagged** tag, `env-v1`, kept out
+of `/releases/latest` on purpose so BookForge's engine updater never sees them.
+Bumping the app's version does not republish an environment, and rebuilding an
+environment does not make a release.
+
+Five targets today (`app/electron/env-catalog.ts`):
+
+| target | what it is for | built on |
+| --- | --- | --- |
+| `windows-x64` | PyMuPDF, the rasteriser every tier needs | any bash on Windows |
+| `wsl-x64` | vLLM, the reading server | a WSL distro |
+| `mac-arm64` | mlx-vlm + PyMuPDF | an Apple-silicon Mac |
+| `nli-windows-x64` | torch + transformers + the DeBERTa weights | any bash on Windows |
+| `nli-mac-arm64` | the same, MPS-capable | an Apple-silicon Mac |
+
+**Each target must be built on a machine that can EXECUTE its interpreter.** The
+build downloads a python-build-standalone tarball and then runs it to install
+wheels; there is no cross-build. That is why `nli-mac-arm64` has a `null` sha256
+in the catalog today — it is written and unbuilt, and the null makes that a
+visible refusal rather than a quiet gap (`docs/SETUP.md` §8).
+
+```
+# 1. build — prints bytes + sha256, and for an nli target verifies the model
+#    loads OFFLINE and drives one request through src/analyze/nli_worker.py
+tools/env/build-env.sh nli-windows-x64 /tmp/nli-env
+
+# 2. upload — the .tar.gz (or its .partN slices) plus the .json testimony
+tools/env/upload-env.sh nli-windows-x64 /tmp/nli-env
+
+# 3. THE STEP NOTHING AUTOMATES: copy the numbers from
+#    /tmp/nli-env/foundry-env-<target>-v1.json into ENV_ASSETS
+#    (app/electron/env-catalog.ts) and commit.
+```
+
+Three things about step 3 that are worth stating rather than remembering:
+
+- **A published asset whose hash is not in the catalog is an environment the app
+  refuses to install.** That is the right failure and it is still a failure —
+  `requirePublished` throws before a byte moves.
+- **A rebuilt asset uploaded without updating the catalog is worse**: the bytes
+  change and the old sha256 stays, so every user's download verifies against
+  nothing it can match, deletes itself, and names two hashes. `upload-env.sh`
+  passes `--clobber`, so the old bytes really are gone.
+- **A split archive has no whole file on the release.** GitHub caps an asset at
+  2 GiB; anything larger goes up as `.partN` slices which `envSources()` fetches
+  in catalog order and concatenates. The order is the catalog's and nothing sorts
+  it — `part10` before `part2` is exactly the bug that produces an archive that
+  downloads, verifies against nothing, and fails to unpack.
+
 ## Platform notes for the VLM conversion
 
 `vlm-convert` is the one mode with a dependency outside the binary, because

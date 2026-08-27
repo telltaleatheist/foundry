@@ -212,6 +212,35 @@ export class UiService {
   readonly queueOpen = signal(false);
 
   /**
+   * Whether first-run setup is on screen.
+   *
+   * NOT IN THE ONE-QUESTION LIST, for the same reason the queue panel is not:
+   * that list is for MODALS, and a modal is a question. Setup is a FLOW — five
+   * steps, each of which starts work that outlives the step it was started from
+   * — and `only()` would let any dialog opened on top of it silently clear the
+   * boolean, which for a wizard mid-download reads as the app throwing away
+   * what somebody was in the middle of.
+   *
+   * It does sit ABOVE every dialog (z-index 1250, the capture-progress rung),
+   * because on first run there is nothing behind it worth reaching, and below
+   * the confirm card at 1300 so a "this model is too big for your machine, are
+   * you sure" still lands on top of the screen that asked it.
+   *
+   * TWO THINGS OPEN IT. The shell, once, on a machine whose `setup:state` says
+   * it has never been through this — and the settings screen's button, which is
+   * what makes every skip recoverable rather than permanent.
+   */
+  readonly setupOpen = signal(false);
+
+  openSetup(): void {
+    this.setupOpen.set(true);
+  }
+
+  closeSetup(): void {
+    this.setupOpen.set(false);
+  }
+
+  /**
    * Whether the open-documents panel is up.
    *
    * ON by default, and it still shows nothing until there is a document — the

@@ -19,7 +19,8 @@ in the process, not a detail.
 **How to use this file.** It is the INDEX AND THE STATUS. The designs live
 where they were argued — `docs/WORKBENCH.md` (app surface + the endgame
 specs §8–§11), `docs/DERIVED-BOOK.md` (the data model, phases 0/A–G),
-`docs/STEP-LEDGER.md`, `docs/BANK-LIFECYCLE.md`, `docs/TRANSLATION-STEPS.md`
+`docs/STEP-LEDGER.md`, `docs/BANK-LIFECYCLE.md`, `docs/TRANSLATION-STEPS.md`,
+`docs/SETUP.md` (first run, the model lineup, the analysis-worker environment)
 — and this file says what is done, what is running, what is next, and what
 is knowingly not being done. When a unit lands, update its row here in the
 same commit that lands it.
@@ -1804,9 +1805,10 @@ mark); the ghost shipped; the stamp-on-press path, override dialog,
 `stampCost` and `completeNames` deleted with gravestones. Gates re-run
 by the lead: 418/0, three clean typechecks, `ng build` 728.87 kB
 (WARNING only). Record in CAPTURE.md § Wave 25 ("What W25-P3
-settled"). **OPEN: the hand-test** — nothing in P3 was exercised in
-the running app; the split-pass gutter drag and the ghost first, then
-the whole loop with a release and a reopen on the way.
+settled"). **The hand-test never happened, and Wave 51 rebuilt the
+surface it would have tested** — the record/apply split, the say-so and
+release are gone; the gutter drag, the ghost, the pass model and the
+projection survive and are still owed a walk, now as part of Wave 51's.
 
 ### Wave 26 — hosted, there is no shelf (Owen, 2026-08-21, via the switchboard) — LANDED (this commit)
 
@@ -3407,6 +3409,245 @@ Cross-repo seams booked with bookforge-pc-2 (2026-08-26):
   is the `vtt-book` path for audio-only books; the book-analysis-reuse
   optimization (offsets → sentence → cue for epub-aligned audiobooks) is
   theirs, later.
+
+---
+
+### Wave 51 — Global, and the propagation that stops waiting (Owen, 2026-08-26) — BUILT
+
+Owen's rework of the capture crop/split surface. Full record at
+**docs/CAPTURE.md § Wave 51**, not duplicated here. (Numbered 51, not 26:
+CAPTURE.md holds only the capture waves, so its own last number is
+misleading and 26 is *hosted, there is no shelf*.)
+
+The diagnosis: Wave 25's scope rule was right and its SEQUENCE was not —
+place a crop, press Record, leave the modal, press Apply, come back to
+look. The correction is a **Global** checkbox in the editor, ticked by
+default. Ticked, a gesture that lands (corners, gutter, turn, the *Two
+pages* tick, *Use the whole photograph*) makes this photograph's lines the
+book's and dresses every follower — live, on gesture end, one walk shared
+with the finalize. Unticked, the gesture reaches the page it is made on
+and marks it that page's own.
+
+**Amended the same evening by Wave 51b below** — this wave derived the
+tick from the open photograph (`!isComplete`) and wrote `complete: true`
+on the untick; the tick is a sticky MODE now, unticking marks nothing, and
+*re-tick to adopt* is gone. Read the two together.
+
+- **Removed with gravestones**: *This page is right — next*, *Make this
+  the book's crop/cut*, *...and apply to all*, *Turn the other N*, the
+  *Where it stands* block (release + follow-again), the `justApplied`
+  acknowledgement; and the service doors `applyToAll` (+ its union),
+  `recordCrop`, `recordCut`, `release`, `outOfTurnWith`, `hasStanding`.
+- **Renames**: *Apply crops* → **Finalize page crops**; *Apply the cut* →
+  **Finalize page splits** (commitment-point model unchanged — by
+  finalize time the followers already wear the standing, so the press is
+  a commitment plus a safety net running the same walk); *Finish the
+  pages* → **Generate book**.
+- **Reset all** — the ONE act that overrules a hand, confirmed once
+  through the app's dialog. Crop pass: whole frame back, standing
+  cleared, **turns kept** (un-turning twenty-five sideways spreads would
+  destroy the work nobody complained about). Split pass: everything
+  rejoined, the book's cut cleared, crops kept.
+- **A REVERSAL**: a turn claims nothing. `turned()` used to mark every
+  page by hand to stop a global undoing a turn — which `wearing` has
+  never been able to do (`turnedLike` keeps each photograph's own
+  facing). The false protection would have claimed the twenty-five
+  spreads Owen stands upright before placing a corner, leaving the
+  book's crop reaching nobody. Wave 21c's "a bulk turn skips nobody for
+  being complete" reverses with it.
+- **Grid drag-reorder**, from Owen failing to move a back cover to the
+  bottom-right: landing is an INSERTION index (0..n) decided by the
+  pointer's half of the card, drawn on the last card's trailing edge for
+  n; the `.table`'s own space accepts the drop and means "the end"; and
+  auto-scroll on a rAF loop driven from `dragover` (HTML5 drag suppresses
+  pointermove), ramping to 16 px/frame inside 48 px of either edge.
+- **No schema change.** Every field already existed, so `validRecipe` is
+  untouched.
+- **SURVIVING rulings, named**: a hand-placed crop is never overwritten
+  by a global (reset-all is the one confirmed exception); the surface
+  names the scope; passes not modes; pixels cut once at the end;
+  `isComplete` the one skip predicate; `sameShape` guarding every global.
+- **OPEN: the hand-test**, which also carries Wave 25's. Gates green
+  (three typechecks + `ng build` 878.14 kB, WARNING only), nothing walked
+  in the running app. **Hand-walked the same evening**, which produced
+  Wave 51b.
+
+---
+
+### Wave 51b — Global as a sticky MODE, and the book's two sides (Owen, 2026-08-26) — BUILT
+
+Owen's hand-walk of Wave 51, in two corrections. Full record at
+**docs/CAPTURE.md § Wave 51b**, not duplicated here.
+
+- **The tick is a MODE, sticky, session-only.** *"just keep it
+  checked/unchecked unless i check/uncheck it again specifically."* It was
+  `!isComplete` of the open photograph, so it re-ticked itself at every
+  step — and the second half of an evening is one pass through fifty pages
+  tweaking each in turn. Now: a service signal, ticked on open, per
+  project, **not in the recipe** (how a person is working tonight is a
+  fact about the hand, not about the book).
+- **Unchecking marks nothing**, and `markComplete` is a gravestone —
+  **nothing writes `complete: true` any more**; the read stays for older
+  recipes. A page becomes its own by being MOVED while the mode is off.
+- **"Re-tick to adopt" is dead.** Ticking targets no page, so its act
+  moved into the gesture: a gesture with Global on, made on a page that is
+  currently its own, hands it back AND leads the book, in one walk.
+- **Parity scopes** — *All pages / Odd / Even*, under the tick and only
+  while it is ticked. Recto/verso: one crop is wrong about half a
+  one-page-per-photograph shoot by construction. **Parity is by
+  PHOTOGRAPH**, first appearance in the arrangement (a spread already
+  holds both a left and a right page, so page parity would ask one frame
+  to wear two crops).
+- **SCHEMA CHANGE** (Wave 51 had none): `CaptureStanding` gains `odd?` and
+  `even?`, each the `crop?`/`cut?` pair extracted as `CaptureLines`.
+  Carried by `validRecipe` through one shared `validLines`. Absent is
+  every recipe ever written — no migration.
+- **All supersedes**: an *All pages* act drops both sides. A split-pass
+  *All* cut is written into the book's lines and into whichever sides
+  exist, because a side's block is taken WHOLE and would otherwise never
+  see it.
+- **Counts that would have lied**: `applyPopulations` measured every
+  photograph against `book.crop`; it resolves per photograph now (same
+  body the Apply uses), it is no longer exhaustive (a side with no
+  standing is in none of the three), and the split pass demands a cut as
+  well as a crop before counting a taker. The rail's WORDS change under a
+  `sided` input; its numbers stay exact.
+- **OPEN**: no door for "leave this one alone" without moving it (wants a
+  card right-click); a side's first gesture is shape-checked against the
+  book's own crop; **not hand-tested** — gates green (three typechecks,
+  `ng build` 883.26 kB WARNING-only, `bun test` 418 pass).
+
+---
+
+### Wave 52 — `tag`: one document, against somebody's own vocabulary (Owen, 2026-08-26) — BUILT
+
+An engine command for Owen's wife, a lawyer with a personal tag vocabulary
+("christian nationalism", "free speech", "ban"). Her own software loops over
+her documents, converts each to plain text and shells `foundry tag` once per
+document; it answers a SET — which of her tags apply, plus new ones the
+document suggests — and nothing else. Argued in full in **`docs/TAGGING.md`**;
+this row is the index and the status.
+
+`foundry tag --doc <file.txt> --tags <tags.txt> [--out <file.json>]`, plus
+analyze's shared `--model` / `--ollama` / `--nli-python` / `--nli-home` /
+`--fetch-nli-model`. `src/tag/` (input, evidence, ask, run), reusing
+`src/analyze/`'s machinery rather than copying it: the sentence segmenter, the
+resident NLI worker, both ranking passes (`scoreSentenceLevel` /
+`scoreWindowLevel`, EXPORTED for this), and the constrained-call envelope
+(`askConstrained`, extracted out of `askVerdict` — the schema, temperature 0,
+the `think` rule and the thinking-model trap are one body of code now). Same
+widest net, same 0.2 / 0.15 floors, no sensitivity knob, no fallbacks.
+
+**The decisions, each of which could have gone the other way:**
+
+1. **Aboutness, not stance.** analyze asks whether the AUTHOR asserts a claim;
+   a tag is a subject heading, so an opinion striking a ban down is about
+   "ban" and about "free speech". The hypothesis is `about <tag>`, written to
+   COMPLETE the pipeline's default template rather than to replace it — the
+   template is the calibration and is still never edited.
+2. **No locations, and that is the whole size difference.** Where a tag matched
+   is analyze's job; building the locator twice would be two answers that could
+   disagree. It is also what allows this command to normalise a hard-wrapped
+   paragraph before segmenting it, which analyze is forbidden to do.
+3. **No report file.** One document is minutes, so answers are held in memory
+   and written once. analyze's append-and-fsync report exists because a book is
+   hours.
+4. **`--out` is optional here alone** — the caller is a loop reading a pipe, so
+   without it the JSON goes to stdout; with it the PATH is the last stdout line,
+   the house convention.
+5. **An empty tags file is a legal run** (suggestions only, and no interpreter
+   is required for it); an absent one is exit 2. Missing doc, missing tags file
+   and a missing interpreter are all refused before any work, as usage errors.
+6. **A degraded call is a "no"**, an all-degraded verify stage refuses, and a
+   failed suggestion call refuses — an empty `suggested` would be a claim the
+   run did not make.
+
+**The output JSON is a cross-repo contract** (`{"applies":[…],"suggested":[…]}`,
+both keys always present, her spelling and her order in `applies`): fields added
+never renamed, changes announced before they ship — analyze's header posture and
+vtt-book's decode recipe, again.
+
+**Deferred out loud:** no tuning against a legal vocabulary (the floors are
+analyze's, unmeasured here — the first real audit is what should move them); no
+app surface, because the caller is her own software; no near-duplicate folding
+beyond case/quotes/dashes/trailing plural; no test, per the standing rule.
+Proved end to end on this PC against a scratch opinion: 8 sentences, 3 of 4 tags
+applied (`employment law` correctly not), 7 suggestions, and an empty-vocabulary
+run that started no worker at all.
+
+### Wave 53 — first-run setup, and the analysis worker's own Python (Owen, 2026-08-26) — BUILT
+
+The occasion in Owen's words: *"a setup screen for when its first installed
+on a users system"* — the concrete user being his wife, a lawyer, on Windows
+with an RTX 2070. Eight gigabytes of video memory, no interest in Python, and
+no way of knowing that `qwen3.8:27b` sitting in the Translate dialog is
+seventeen gigabytes of weights her card cannot hold. The design is argued in
+full in **`docs/SETUP.md`**; the build/upload runbook is in
+**`docs/DEPLOYING.md`** § *The Python environments*. This row is the index.
+(Numbered 53: it was built the same evening as Waves 51–52, in a worktree,
+and landed after them.)
+
+**Built.**
+
+- **The wizard** (`app/src/app/components/setup-wizard/`): Welcome → Library →
+  Ollama and a model → Python environments → The reading model → Ready.
+  Mounted unconditionally by the shell at z-index 1250, holding its own `@if`,
+  and NOT in `UiService.dialogs` — it is a flow, not a question, and `only()`
+  clearing it would take a half-finished setup off the screen. Every step
+  skippable, skips recorded, and re-openable from Settings.
+- **Nothing downloads on arrival at a step.** Every byte has a button and the
+  size is beside it.
+- **The system probe** (`app/electron/system-probe.ts`): nvidia-smi, RAM,
+  free disk, Apple-silicon unified memory. Async and deadlined, cached for the
+  process, and every unknown is a null with a sentence rather than a zero.
+- **The Qwen 3.5 lineup** (`app/electron/llm-catalog.ts`), one editable const,
+  recommendation = largest that fits at `download + 1.5 GB`. **The 2070 lands
+  on `qwen3.5:4b`**, not 9b, because 8.1 does not fit in 8.0 — stated in the
+  file so it is not mistaken for a bug. A machine with NO GPU inverts the rule
+  and gets the smallest, because there RAM stops being what binds.
+- **Ollama** (`app/electron/ollama.ts`): detect running vs installed as two
+  questions, fetch the vendor's own installer and `shell.openPath` it (so the
+  user lands in ollama's screen, and nothing here ever claims the install
+  succeeded — the re-probe is the only thing that says so), and `POST
+  /api/pull` streamed. Neither goes through the job queue, and the header says
+  why.
+- **A default-model setting** (`AppSettings.defaultLlmModel` + `ollamaUrl`),
+  seeding all three language dialogs through one helper. `qwen3.8:27b` stays
+  the fallback when unset, so nothing about an existing machine changes.
+- **The analysis-worker environment**, `nli-windows-x64` and `nli-mac-arm64`
+  in the env catalog: torch, transformers, and the DeBERTa weights BAKED IN
+  with a `sitecustomize.py` pointing `HF_HOME` at them, so the first analysis
+  is offline. The build flattens the HF cache (no symlinks — the app unpacks
+  with the system tar, and a symlink on Windows fails the install) and then
+  re-verifies offline and drives one request through `nli_worker.py` before it
+  will tar. `EnvSpec.role` keeps the installer from writing `backend.python`,
+  which would break every conversion on the machine; the engine finds it by
+  name, first in `defaultNliPythonCandidates()`, which is now a contract
+  between the two files and commented as one on both sides.
+- **`tools/env/build-env.sh`** grew the two `nli-*` targets;
+  **`tools/env/upload-env.sh`** is new — the `gh release upload` was a
+  remembered command and is now a script with the three non-obvious things
+  written down.
+
+**Deferred out loud.**
+
+- **`nli-mac-arm64` is NOT BUILT** and its catalog sha256 is `null`. The build
+  has to run on an Apple-silicon Mac — it executes a darwin interpreter to
+  install wheels and bake weights, and no cross-build can do that. The null is
+  the honest state: `requirePublished` throws, the card greys it out, and
+  nobody downloads an archive nobody can name the hash of. Run
+  `tools/env/build-env.sh nli-mac-arm64` then `upload-env.sh` on the Mac
+  Studio, and paste the numbers into `ENV_ASSETS`.
+- **The `dots.ocr` weights are still pulled at runtime by the reader** and
+  foundry still does not host them (`docs/ARCHITECTURE.md` §6). The wizard's
+  reading step is therefore a DISCLOSURE — the first read pays ~6 GB, once —
+  plus, on Windows with the WSL environment installed, a button that starts
+  the reading server now through the door that already exists. On macOS there
+  is no door that would fetch them without also reading a book, so it is
+  disclosure and nothing else. No second delivery path was invented.
+- **No progress bar for that first-serve download.** Parsing vLLM's own output
+  into a bar is separate work.
+- **No new tests**, per the standing rule.
 
 ---
 

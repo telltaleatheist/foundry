@@ -185,7 +185,39 @@ export function defaultNliPythonCandidates(): string[] {
     ? path.join(home, 'Projects', 'ebook2audiobook', 'python_env', 'python.exe')
     : path.join(home, 'Projects', 'ebook2audiobook', 'python_env', 'bin', 'python');
 
-  return [...conda, bookforgeRuntime, e2aCheckout];
+  /*
+   * ── THE ONE THE APP INSTALLS, AND IT IS FIRST ─────────────────────────────
+   *
+   * foundry's own prebuilt analysis environment: torch, transformers, and the
+   * DeBERTa weights baked into its Hugging Face cache, downloaded by the app's
+   * environment installer from the `env-v1` release. THE PATH IS A CONTRACT
+   * WITH `defaultDest()` in app/electron/env-catalog.ts — the installer writes
+   * nothing into any settings file for this environment, deliberately (see the
+   * `role` field there: pointing `backend.python` at an interpreter with no
+   * PyMuPDF in it would break every conversion on the machine), so being found
+   * HERE, by name, is the entire mechanism that connects the two.
+   *
+   * First in the list because it is the only candidate whose contents this
+   * project chose. Everything below it is somebody else's environment that
+   * happens to carry torch, and preferring a measured one over a borrowed one
+   * is the same argument the env catalog is built on.
+   */
+  // Two platforms and no third: there is no linux entry in the catalog, and
+  // naming a path the app never installs to would put a line in the refusal
+  // message that can never become true.
+  const appEnv = process.platform === 'win32'
+    ? [path.join(
+      process.env['LOCALAPPDATA'] ?? path.join(home, 'AppData', 'Local'),
+      'foundry', 'envs', 'nli-windows-x64', 'python', 'python.exe',
+    )]
+    : process.platform === 'darwin'
+      ? [path.join(
+        home, 'Library', 'Application Support',
+        'foundry', 'envs', 'nli-mac-arm64', 'python', 'bin', 'python3',
+      )]
+      : [];
+
+  return [...appEnv, ...conda, bookforgeRuntime, e2aCheckout];
 }
 
 /** The interpreter this run uses, or a refusal naming every path tried. */

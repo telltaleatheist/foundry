@@ -41,8 +41,12 @@ import type {
   HostNodes,
   Job,
   JobRequest,
+  LlmChoices,
   MetadataOutcome,
   MetadataWriteOutcome,
+  OllamaFacts,
+  OllamaInstallResult,
+  OllamaPullProgress,
   PdfMetadataFields,
   LedgerStep,
   ProjectLedger,
@@ -56,6 +60,8 @@ import type {
   SetupLogEvent,
   SetupRequest,
   SetupResult,
+  SetupState,
+  SystemProfile,
   MintMeta,
   StepDeletion,
   StepLedgerView,
@@ -1196,6 +1202,56 @@ export interface FoundryApi {
     chooseDest(defaultPath: string): Promise<string | null>;
     /** Every phase change, as it happens. Returns its own unsubscribe. */
     onInstallProgress(listener: (progress: EnvInstallProgress) => void): () => void;
+  };
+
+  /**
+   * ── FIRST RUN ─────────────────────────────────────────────────────────────
+   *
+   * The wizard's own doors, and none of them is exclusive to it: the settings
+   * screen reaches every one, which is what makes a skipped step recoverable
+   * rather than a decision somebody is stuck with.
+   */
+  setup: {
+    /** Has this machine been through it, and what was declined. */
+    state(): Promise<SetupState>;
+    /** Mark it over — FINISHED OR DISMISSED — and record what was skipped. */
+    finish(skipped: string[]): Promise<SetupState>;
+    /**
+     * What this computer is. Cached in main for the life of the process;
+     * `force` re-reads it, which is only worth doing after somebody has
+     * installed a driver in another window.
+     */
+    probe(force?: boolean): Promise<SystemProfile>;
+  };
+
+  /**
+   * Ollama, which foundry never starts, stops or configures — see
+   * electron/ollama.ts. These doors detect it, fetch its official installer,
+   * and pull one model; nothing more.
+   */
+  ollama: {
+    facts(): Promise<OllamaFacts>;
+    /** Hardware, ollama's state, the lineup with one row badged, and today's model. */
+    choices(): Promise<LlmChoices>;
+    /**
+     * Fetch the official installer and hand it to the OS. `ok` means it was
+     * OPENED, never that ollama is installed — that happens in a window this
+     * app does not own, so `facts()` is the only thing that ever says so.
+     */
+    install(): Promise<OllamaInstallResult>;
+    cancelInstall(): Promise<void>;
+    /** `POST /api/pull`, streamed. A failure is a result, not a rejection. */
+    pull(tag: string): Promise<{ ok: boolean; detail: string }>;
+    cancelPull(): Promise<void>;
+    /** Installer download AND model pull, on one channel. Returns its unsubscribe. */
+    onProgress(listener: (progress: OllamaPullProgress) => void): () => void;
+  };
+
+  /** What the translate, simplify and analyse dialogs open with. */
+  llm: {
+    defaults(): Promise<{ model: string; ollama: string }>;
+    /** Answers with the tag AS STORED — a name main refused comes back changed. */
+    setModel(model: string): Promise<string>;
   };
 
   backendSetup: {

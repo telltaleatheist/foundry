@@ -21,6 +21,7 @@ import { app } from 'electron';
 
 import { hostedLibraryDir } from './host';
 import { readJson } from '../shared/json';
+import { DEFAULT_OLLAMA_ENDPOINT, DEFAULT_TRANSLATE_MODEL } from '../shared/pipeline';
 import {
   ANALYSIS_CATEGORY_IDS,
   CUSTOM_CATEGORY_DESCRIPTION_MAX,
@@ -74,6 +75,60 @@ export interface AppSettings {
    * thirteenth built-in does not have to reconcile itself with a file.
    */
   analysisCategories: CustomAnalysisCategory[];
+  /**
+   * THE OLLAMA MODEL EVERY LANGUAGE JOB STARTS FROM — translate, simplify,
+   * analyse.
+   *
+   * `qwen3.8:27b` was ruled the standard for every task (Owen, 2026-08-22) and
+   * remains the fallback when this is unset, so nothing about an existing
+   * machine changes by adding this field. What it buys is the machine that
+   * CANNOT run it: 27b wants seventeen gigabytes of weights, an 8 GB card is an
+   * ordinary card, and a default nobody's hardware can honour is a default that
+   * makes the app look broken on first use. Setup measures the machine and
+   * writes the largest Qwen 3.5 that fits here.
+   *
+   * IT IS A SEED, NOT A LOCK. The three dialogs still show the model in an
+   * editable field and still send whatever is in it; this decides what is in it
+   * when the dialog opens. Somebody who types a different model for one book
+   * gets that model for that book and this is untouched — a per-run choice is
+   * not a change of mind about the default.
+   */
+  defaultLlmModel: string;
+  /**
+   * Where ollama is. Its own default port unless somebody moved it.
+   *
+   * Here rather than in the engine's settings.json for the reason that file's
+   * header gives about server lifecycle: foundry never starts, stops or
+   * configures ollama, and the engine is handed the URL on the command line for
+   * every run. This is the app remembering what to hand it.
+   */
+  ollamaUrl: string;
+  /**
+   * TRUE ONCE SOMEBODY HAS BEEN THROUGH FIRST-RUN SETUP — finished OR dismissed.
+   *
+   * The absence of app-settings.json would have served as a first-run signal
+   * and it is deliberately not the one used: the file is written the first time
+   * anybody changes the library folder or adds an analysis category, so on the
+   * machine where somebody poked at settings before setup ran, "no file" would
+   * already be false and the wizard would never appear. An explicit marker says
+   * the thing that is actually being asked.
+   *
+   * DISMISSING SETS IT. A wizard that came back every launch until it was
+   * completed would be a wizard that punishes somebody for wanting to look at
+   * the app first, and every step it offers is re-offered from the settings
+   * screen, so nothing is lost by letting it go.
+   */
+  setupCompleted: boolean;
+  /**
+   * The steps that were moved past without doing the thing.
+   *
+   * Kept so the settings screen can say WHICH ones — "you skipped the analysis
+   * worker" is actionable and "setup was not completed" is not. Free-form
+   * strings rather than a union: a step id that no longer exists is a stale
+   * entry the reader ignores, and a schema that refused it would turn renaming
+   * a wizard step into a migration.
+   */
+  setupSkipped: string[];
 }
 
 export const KEEP_WARM_MAX_MINUTES = 240;
@@ -208,12 +263,61 @@ export function clampAnalysisCategories(value: unknown): CustomAnalysisCategory[
   return out;
 }
 
+/**
+ * A model tag, or the standing default.
+ *
+ * NOT VALIDATED AGAINST A LIST, and that is on purpose: the lineup this app
+ * knows about (electron/llm-catalog.ts) is what setup OFFERS, not what ollama
+ * can run. Somebody who has pulled a model of their own and typed its name has
+ * said something true about their machine that a hardcoded table cannot know,
+ * and refusing it would make the setting less useful than the text field it
+ * seeds. The shape check is all there is: a non-empty single token.
+ */
+export function clampModelTag(value: unknown, fallback = DEFAULT_TRANSLATE_MODEL): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || /\s/.test(trimmed)) return fallback;
+  return trimmed;
+}
+
+/** An http(s) origin, or ollama's own. Anything unparsable is the default. */
+export function clampOllamaUrl(value: unknown, fallback = DEFAULT_OLLAMA_ENDPOINT): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim().replace(/\/+$/, '');
+  if (trimmed.length === 0) return fallback;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return fallback;
+    return trimmed;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Step ids, deduplicated and capped. A stale id is harmless; a corpus is not. */
+export function clampSkipped(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    const id = entry.trim().slice(0, 40);
+    if (id.length === 0) continue;
+    seen.add(id);
+    if (seen.size >= 20) break;
+  }
+  return [...seen];
+}
+
 export function readAppSettings(): AppSettings {
   const raw = readRaw();
   return {
     keepServerWarmMinutes: clampKeepWarm(raw?.['keepServerWarmMinutes']),
     libraryDir: clampLibraryDir(hostedLibraryDir() ?? raw?.['libraryDir']),
     analysisCategories: clampAnalysisCategories(raw?.['analysisCategories']),
+    defaultLlmModel: clampModelTag(raw?.['defaultLlmModel']),
+    ollamaUrl: clampOllamaUrl(raw?.['ollamaUrl']),
+    setupCompleted: raw?.['setupCompleted'] === true,
+    setupSkipped: clampSkipped(raw?.['setupSkipped']),
   };
 }
 
@@ -227,6 +331,18 @@ export function writeAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.analysisCategories !== undefined) {
     root['analysisCategories'] = clampAnalysisCategories(patch.analysisCategories);
+  }
+  if (patch.defaultLlmModel !== undefined) {
+    root['defaultLlmModel'] = clampModelTag(patch.defaultLlmModel);
+  }
+  if (patch.ollamaUrl !== undefined) {
+    root['ollamaUrl'] = clampOllamaUrl(patch.ollamaUrl);
+  }
+  if (patch.setupCompleted !== undefined) {
+    root['setupCompleted'] = patch.setupCompleted === true;
+  }
+  if (patch.setupSkipped !== undefined) {
+    root['setupSkipped'] = clampSkipped(patch.setupSkipped);
   }
   const file = settingsFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });

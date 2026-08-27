@@ -18,6 +18,7 @@ import type {
   EnvInstallProgress,
   HostNodes,
   Job,
+  OllamaPullProgress,
   QuestionAnswer,
   ReReadAnswer,
   ServerStatus,
@@ -279,6 +280,27 @@ const api: FoundryApi = {
     cancel: () => ipcRenderer.invoke('env:cancel'),
     chooseDest: (defaultPath) => ipcRenderer.invoke('env:choose-dest', defaultPath),
     onInstallProgress: (listener) => subscribe<EnvInstallProgress>('env:install-progress', listener),
+  },
+
+  setup: {
+    state: () => ipcRenderer.invoke('setup:state'),
+    finish: (skipped) => ipcRenderer.invoke('setup:finish', skipped),
+    probe: (force) => ipcRenderer.invoke('system:probe', force === true),
+  },
+
+  ollama: {
+    facts: () => ipcRenderer.invoke('ollama:facts'),
+    choices: () => ipcRenderer.invoke('ollama:choices'),
+    install: () => ipcRenderer.invoke('ollama:install'),
+    cancelInstall: () => ipcRenderer.invoke('ollama:install-cancel'),
+    pull: (tag) => ipcRenderer.invoke('ollama:pull', tag),
+    cancelPull: () => ipcRenderer.invoke('ollama:pull-cancel'),
+    onProgress: (listener) => subscribe<OllamaPullProgress>('ollama:progress', listener),
+  },
+
+  llm: {
+    defaults: () => ipcRenderer.invoke('llm:defaults'),
+    setModel: (model) => ipcRenderer.invoke('llm:set-model', model),
   },
 
   backendSetup: {

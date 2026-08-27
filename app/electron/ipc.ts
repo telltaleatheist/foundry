@@ -65,6 +65,9 @@ import {
 } from './host-ops';
 import type { HostNodeAction } from '../shared/host-ops';
 import * as queue from './job-queue';
+import { cancelOllamaInstall, cancelPull, installOllama, probeOllama, pullModel } from './ollama';
+import { finishSetup, llmChoices, setupState } from './setup';
+import { probeSystem } from './system-probe';
 import {
   createCaptureProject,
   deletableStep,
@@ -2546,6 +2549,61 @@ export function registerIpc(): void {
   ipcMain.handle('vllm:keep-warm', () => readAppSettings().keepServerWarmMinutes);
   ipcMain.handle('vllm:set-keep-warm', (_event, minutes: number) =>
     writeAppSettings({ keepServerWarmMinutes: minutes }).keepServerWarmMinutes);
+
+  // ── First run ────────────────────────────────────────────────────────────
+  /*
+   * THE WIZARD'S DOORS. Every one of them is also reachable from the settings
+   * screen, which is the whole design: setup is the first-run ARRANGEMENT of
+   * questions the app can already answer, not a separate mechanism. Nothing
+   * below is exclusive to it.
+   *
+   * `system:probe` takes a force flag because the one case where the hardware
+   * answer goes stale inside a process is somebody installing a GPU driver and
+   * pressing Check again — see the cache argument in system-probe.ts.
+   */
+  ipcMain.handle('setup:state', () => setupState());
+  ipcMain.handle('setup:finish', (_event, skipped: string[]) =>
+    finishSetup(Array.isArray(skipped) ? skipped : []));
+
+  ipcMain.handle('system:probe', (_event, force?: boolean) => probeSystem(force === true));
+
+  ipcMain.handle('ollama:facts', () => probeOllama(readAppSettings().ollamaUrl));
+  ipcMain.handle('ollama:choices', () => llmChoices());
+  /*
+   * Two long-running doors, and NEITHER goes through the job queue — unlike an
+   * env install, which does.
+   *
+   * The queue exists to keep expensive GPU work from running two at a time and
+   * to give a run a row somebody can cancel from the shelf. An ollama pull is
+   * neither: ollama is doing the work in its own process, it will keep doing it
+   * whether or not this app is looking, and a row on the shelf saying "pulling"
+   * would be a row that cannot be cancelled in any meaningful sense and cannot
+   * be resumed by us either. Progress is broadcast instead, and the wizard
+   * draws it; if the window closes, ollama finishes anyway, which is exactly
+   * the behaviour a person expects from a download they started in a tool that
+   * is not this one.
+   */
+  ipcMain.handle('ollama:install', () =>
+    installOllama((progress) => broadcast('ollama:progress', progress)));
+  ipcMain.handle('ollama:install-cancel', () => { cancelOllamaInstall(); });
+  ipcMain.handle('ollama:pull', (_event, tag: string) =>
+    pullModel(tag, readAppSettings().ollamaUrl, (progress) => broadcast('ollama:progress', progress)));
+  ipcMain.handle('ollama:pull-cancel', () => { cancelPull(); });
+
+  /*
+   * The model every language job starts from. Read by the three dialogs when
+   * they open, written by setup and by the settings screen.
+   *
+   * ANSWERED WITH WHAT WAS STORED, never with what was sent: `clampModelTag`
+   * refuses a name with whitespace in it and falls back, and a renderer that
+   * kept its own optimistic copy would show a model the next job will not use.
+   */
+  ipcMain.handle('llm:defaults', () => {
+    const settings = readAppSettings();
+    return { model: settings.defaultLlmModel, ollama: settings.ollamaUrl };
+  });
+  ipcMain.handle('llm:set-model', (_event, model: string) =>
+    writeAppSettings({ defaultLlmModel: model }).defaultLlmModel);
 
   /*
    * The whole list on every mutation — and hosted, the whole list is the HOST's
