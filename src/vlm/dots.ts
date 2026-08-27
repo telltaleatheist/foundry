@@ -50,6 +50,7 @@
  * it is better than throwing away 299 good pages.
  */
 import { parseXml } from '../epub/xml.js';
+import { starEmphasis } from './dialect.js';
 
 /** One page's answer could not be read. Always names the page. */
 export class DotsPageError extends Error {
@@ -511,9 +512,15 @@ export interface DotsInlineOptions {
  * escaping, which is what makes the order safe.
  */
 export function dotsInline(raw: string, opts: DotsInlineOptions = {}): string {
-  let out = escapeXml(stripIllegalXml(raw));
-  out = out.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>');
-  out = out.replace(/(?<![*\w])\*(?=\S)([\s\S]*?\S)\*(?!\w)/g, '<em>$1</em>');
+  /*
+   * THE STAR RULES ARE `starEmphasis`, THE ONE BODY (src/vlm/dialect.ts). Two
+   * identical transcriptions of them lived here and there until 2026-08-27,
+   * which is how the crossed-tags defect (`***` shredded into
+   * <strong><em>…</strong></em>) got fixed in dialect.ts and went on shipping
+   * from this line — the witches re-export refused at the same offset a day
+   * after the "fix". One body now; the argument for each rule lives on it.
+   */
+  let out = starEmphasis(escapeXml(stripIllegalXml(raw)));
   out = out.replace(SUPERSCRIPT_RUN, (run) => {
     if (opts.stripNoteMarkers) return '';
     const digits = [...run].map((c) => String(SUPERSCRIPT_DIGITS.indexOf(c))).join('');

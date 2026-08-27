@@ -103,6 +103,31 @@ const SUPERSCRIPTS: ReadonlyMap<string, string> = new Map(Object.entries({
 const SUPERSCRIPT_RUN = /[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ]+/g;
 
 /**
+ * THE STAR RULES, ONE BODY FOR TWO DIALECT FAMILIES. `inlineMarkdown` below
+ * consumes it for the markdown dialects; `dotsInline` (src/vlm/dots.ts)
+ * consumes it for the dots pipeline — which until 2026-08-27 carried ITS OWN
+ * transcription of these three lines, identical down to the missing `***`
+ * rule, so the crossed-tags defect was fixed here and went on shipping there.
+ * Found by the export refusal, one day after both landed: the witches book,
+ * re-exported through the "fixed" engine, refused at the same offset. The
+ * repro had matched this file byte for byte only because the copies had not
+ * drifted YET — the exact failure `outputSizeFor`'s move to shared/ was
+ * written to end, one directory over.
+ *
+ * TAKES THE ESCAPED STRING, never raw prose: every caller runs
+ * `escapeXml(stripIllegalXml(...))` first, so a `<` here is always a tag an
+ * earlier rule wrote and the `<`-exclusions below are what keep a pair of
+ * stars from closing somebody else's element.
+ */
+export function starEmphasis(escaped: string): string {
+  let out = escaped;
+  out = out.replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*/g, '<strong><em>$1</em></strong>');
+  out = out.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>');
+  out = out.replace(/(?<![*\w])\*(?=\S)([^*<]*?\S)\*(?!\w)/g, '<em>$1</em>');
+  return out;
+}
+
+/**
  * Markdown inline markup → XHTML.
  *
  * Escaping happens FIRST, so a `<` in the book's prose is already `&lt;` before
@@ -131,10 +156,7 @@ const SUPERSCRIPT_RUN = /[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ]+/g;
  * system can style and no narrator can be told to skip.
  */
 function inlineMarkdown(raw: string): string {
-  let out = escapeXml(stripIllegalXml(raw));
-  out = out.replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*/g, '<strong><em>$1</em></strong>');
-  out = out.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>');
-  out = out.replace(/(?<![*\w])\*(?=\S)([^*<]*?\S)\*(?!\w)/g, '<em>$1</em>');
+  let out = starEmphasis(escapeXml(stripIllegalXml(raw)));
   out = out.replace(/(?<![_\w])_(?=\S)([^_<]*?\S)_(?!\w)/g, '<em>$1</em>');
   out = out.replace(SUPERSCRIPT_RUN, (run) => {
     const digits = [...run].map((c) => SUPERSCRIPTS.get(c) ?? c).join('');
