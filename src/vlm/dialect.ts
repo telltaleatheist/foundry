@@ -109,15 +109,33 @@ const SUPERSCRIPT_RUN = /[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ]+/g;
  * a single element is written and cannot open one. The markdown characters are
  * untouched by escaping, which is what makes the order safe.
  *
+ * `***` HAS ITS OWN RULE, AND IT RUNS FIRST. Without one, `***The Cosby
+ * Show***` is shredded by the two passes below it — `**` eats two of the three
+ * stars and leaves the third, and the `*` pass then pairs the leftovers ACROSS
+ * the `</strong>` that was just written: `<strong><em>…</strong></em>`, which
+ * is not well-formed XML, so the whole spine document refuses to parse and the
+ * book's own reader shows nothing. Found on a real export (the witches book,
+ * 8 markers, 2 crossed pairs); the engine's own `vlm-book` named the defect.
+ *
+ * AND THE SINGLE-MARKER PASSES MAY NOT CROSS A TAG. Their captures exclude
+ * `<`, which at this point can only be a tag an earlier pass wrote — prose `<`
+ * is already `&lt;`. That is the second half of the same defect: any UNBALANCED
+ * star in the prose could otherwise pair with one on the far side of an emitted
+ * element and close it in the wrong order. The cost, accepted and stated: an em
+ * WRAPPING a strong (`*a **b** c*`) no longer nests and keeps its literal
+ * stars — models write that nesting as `***` anyway, and a rare pair of stars
+ * on the page beats a document no reading system will open.
+ *
  * A run of unicode superscript digits becomes one `<sup>`: `September¹⁴` is a
  * footnote marker, and left as raw characters it stays a marker no reading
  * system can style and no narrator can be told to skip.
  */
 function inlineMarkdown(raw: string): string {
   let out = escapeXml(stripIllegalXml(raw));
+  out = out.replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*/g, '<strong><em>$1</em></strong>');
   out = out.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>');
-  out = out.replace(/(?<![*\w])\*(?=\S)([^*]*?\S)\*(?!\w)/g, '<em>$1</em>');
-  out = out.replace(/(?<![_\w])_(?=\S)([^_]*?\S)_(?!\w)/g, '<em>$1</em>');
+  out = out.replace(/(?<![*\w])\*(?=\S)([^*<]*?\S)\*(?!\w)/g, '<em>$1</em>');
+  out = out.replace(/(?<![_\w])_(?=\S)([^_<]*?\S)_(?!\w)/g, '<em>$1</em>');
   out = out.replace(SUPERSCRIPT_RUN, (run) => {
     const digits = [...run].map((c) => SUPERSCRIPTS.get(c) ?? c).join('');
     return `<sup>${digits}</sup>`;
