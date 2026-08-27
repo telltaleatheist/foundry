@@ -908,10 +908,7 @@ export class ActionMenuComponent {
     this.ui.documentsShown() && this.documents.tabs().length > 0);
 
   /**
-   * THE HOST'S ACTS THAT BELONG ON THE DOCK — the ones with a form, that
-   * consume the book.
-   *
-   * ── Two filters, and each earns its place ───────────────────────────────────
+   * THE HOST'S ACTS THAT BELONG ON THE DOCK — the ones that consume the book.
    *
    * `appliesTo: 'book'` because the menu aims at THE BOOK IN FRONT OF YOU, and
    * that is the only currency this menu can name — an act consuming AUDIO is about
@@ -920,11 +917,18 @@ export class ActionMenuComponent {
    * asks, so the two surfaces cannot come to different answers about what may be
    * offered from a book.
    *
-   * A `form` because an act WITHOUT one runs the instant it is pressed, and a
-   * menu row that started an hours-long job on a single click — with no
-   * dialog, no confirmation and no statement of what it would run against —
-   * is the one gesture in this menu that could not be taken back. The tree's
-   * footer is where a formless act is pressed, beside the row it names.
+   * A `form` FILTER STOOD HERE AND IS GONE. It reasoned that an act without a
+   * form runs the instant it is pressed, so a menu tile starting an hours-long
+   * job on one click could not be taken back. That reasoning read "formless" as
+   * "fire-and-forget", and the contract says the opposite
+   * (`HostOperationOffer.form`, shared/host-ops.ts): a formless offer is the
+   * host asking its questions in ITS OWN WINDOW — the press is a LAUNCHER, it
+   * opens a dialog somewhere else and starts nothing at all. BookForge's
+   * narrate is moving exactly there (Owen, 2026-08-26: Foundry is for text
+   * changes, not audio changes), and a filter kept for the old reading would
+   * have made that act silently vanish from this menu while the tree footer
+   * went on offering it — two surfaces disagreeing about what may be pressed,
+   * which is the thing `offeredFrom` exists to prevent.
    *
    * EMPTY STANDALONE, which is the whole of the guard: nobody registered
    * anything, so this is `[]` and the loop that draws it runs zero times.
@@ -945,9 +949,29 @@ export class ActionMenuComponent {
      * in a grid of things you can do.
      */
     const both = [...this.hostOps.offersFor('book'), ...this.hostOps.offersFor('export')];
-    return both.filter((offer, at) =>
-      offer.form !== undefined && both.findIndex((one) => one.id === offer.id) === at);
+    return both.filter((offer, at) => both.findIndex((one) => one.id === offer.id) === at);
   });
+
+  /**
+   * THE PRESS ITSELF, aimed and ready — the one fork the tree footer already
+   * takes (`open-documents`, the `act.form` branch), taken here through the
+   * same two doors so the two surfaces cannot mean different things by one
+   * offer. An offer WITH a form opens the host's questions in our card, on the
+   * workspace where the card lives; a FORMLESS offer is invoked immediately —
+   * the host raises its own window and asks there, so there is nothing to
+   * navigate to on this side and nothing irreversible in the click. Errors are
+   * a sentence on the strip, this menu's own habit.
+   */
+  private press(operationId: string, dir: string, nodeId: string): void {
+    if (this.hostOps.offer(operationId)?.form !== undefined) {
+      void this.router.navigateByUrl('/');
+      this.ui.openHostOp({ operationId, projectDir: dir, nodeId });
+      return;
+    }
+    void this.hostOps.invoke(operationId, dir, nodeId).catch((err: unknown) => {
+      this.notices.notice.set(err instanceof Error ? err.message : String(err));
+    });
+  }
 
   /**
    * WHICH PROJECT A MENU ACT IS ABOUT — the book in front of you, as a folder.
@@ -1119,8 +1143,7 @@ export class ActionMenuComponent {
           );
           return;
         }
-        void this.router.navigateByUrl('/');
-        this.ui.openHostOp({ operationId, projectDir: dir, nodeId: exportNodeId(target.file) });
+        this.press(operationId, dir, exportNodeId(target.file));
         return;
       }
       const standing = this.ledger.standingIn(dir);
@@ -1147,8 +1170,7 @@ export class ActionMenuComponent {
         );
         return;
       }
-      void this.router.navigateByUrl('/');
-      this.ui.openHostOp({ operationId, projectDir: dir, nodeId: standing.id });
+      this.press(operationId, dir, standing.id);
       return;
     }
     const project = this.projects.items().find((one) => fold(one.dir) === fold(dir)) ?? null;
@@ -1202,9 +1224,7 @@ export class ActionMenuComponent {
      */
     const target = exports[0];
     if (target === undefined) return;
-    const nodeId = exportNodeId(target.file);
-    void this.router.navigateByUrl('/');
-    this.ui.openHostOp({ operationId, projectDir: dir, nodeId });
+    this.press(operationId, dir, exportNodeId(target.file));
   }
 
   protected home(): void {
