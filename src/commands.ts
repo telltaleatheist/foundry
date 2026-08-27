@@ -18,6 +18,7 @@
  *    model in `src/vlm/models.ts` is asked the exact string its own model card
  *    documents; this file wires argv to the run and never reshapes a prompt.
  */
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import {
@@ -40,6 +41,9 @@ import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from '.
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { dumpBlocks } from './vlm/blocks-dump.js';
 import { analyzeBook } from './analyze/run.js';
+import { resolveNliPython } from './analyze/nli-bridge.js';
+import { readVocabulary } from './tag/input.js';
+import { formatTagJson, tagDocument } from './tag/run.js';
 import { buildBookFile } from './vlm/book-run.js';
 import { compileBook } from './vlm/compile.js';
 import { vlmConvert } from './vlm/convert.js';
@@ -881,11 +885,17 @@ const AN_CATEGORIES: OptionSpec = {
   describe: 'A JSON list of categories, replacing the built-in set. Default: all of them.',
 };
 
+/**
+ * Shared with `tag`, which is why the wording names the QUESTION rather than the
+ * verdict: the same model answers analyze's stance question and tag's aboutness
+ * one, and one spelling of a flag across the commands that need it is the point
+ * of a shared spec.
+ */
 const AN_MODEL: OptionSpec = {
   name: 'model',
   type: 'string',
   placeholder: '<name>',
-  describe: `The Ollama model that answers the verdicts. Default ${DEFAULT_TRANSLATE_MODEL}.`,
+  describe: `The Ollama model that answers the questions. Default ${DEFAULT_TRANSLATE_MODEL}.`,
 };
 
 const AN_OLLAMA: OptionSpec = {
@@ -919,6 +929,40 @@ const AN_FRESH: OptionSpec = {
   name: 'fresh',
   type: 'boolean',
   describe: 'Ask every sentence and every passage again, into a file that replaces the report.',
+};
+
+// ── tag ──────────────────────────────────────────────────────────────────────
+
+const TAG_DOC: OptionSpec = {
+  name: 'doc',
+  type: 'string',
+  placeholder: '<file.txt>',
+  describe: 'The plain-text document to tag. Never written to; nothing here converts a PDF.',
+};
+
+const TAG_TAGS: OptionSpec = {
+  name: 'tags',
+  type: 'string',
+  placeholder: '<tags.txt>',
+  describe: 'Your tag vocabulary, one per line. An empty file is legal: the run only suggests.',
+};
+
+/**
+ * Where the answer goes, and here alone it is OPTIONAL.
+ *
+ * Every other `--out` in this program is required, because foundry never invents
+ * a name for a file it is going to leave on somebody's disk. This command's
+ * answer is two short lists, and its caller is a program looping over a folder
+ * of documents — for which the natural home is the pipe it is already reading.
+ * So: with `--out`, the JSON is a file and the PATH is the last line on stdout,
+ * the house convention; without it, the JSON itself is on stdout and no file is
+ * invented anywhere.
+ */
+const TAG_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<file.json>',
+  describe: 'Where the JSON is written. Omit it and the JSON goes to stdout instead.',
 };
 
 export interface Command {
@@ -1486,6 +1530,92 @@ async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
   // The result is the path, and it is the last line on stdout. Everything above
   // was progress and went to stderr.
   process.stdout.write(`${result.outPath}\n`);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// tag
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * `tag` — one document, one person's vocabulary, one set of tags back.
+ *
+ * ── EVERYTHING THIS FUNCTION DOES IS A PREFLIGHT, AND THAT IS THE CONTRACT ──
+ *
+ * Exit 2 means the command line was wrong and NOTHING RAN; exit 1 means a run
+ * began and failed. So the three things that can be known before any work —
+ * a document that is not there, a tags file that is not there, and an
+ * interpreter that is not there — are refused HERE, as usage errors, rather than
+ * inside the run where they would exit 1 and tell a caller that a model had been
+ * asked something. `run.ts` still checks the two files, because a file can go
+ * away between the check and the read, and a program that trusted a stat from a
+ * moment ago would report a missing file as a parse failure.
+ *
+ * THE INTERPRETER IS ONLY REQUIRED WHERE THERE IS SOMETHING TO RANK. An empty
+ * vocabulary is a legal run that only suggests, and it never starts a worker —
+ * refusing it for want of a Python it would not have used is analyze's
+ * lazy-worker ruling stated at the command line.
+ */
+async function runTag(args: ParsedArgs): Promise<void> {
+  const docPath = requireString(args, 'doc', 'the plain-text document to tag');
+  const tagsPath = requireString(args, 'tags', 'the tag vocabulary, one tag per line');
+  if (!fs.existsSync(docPath)) {
+    throw new UsageError(
+      `no such document: ${docPath}. This command reads PLAIN TEXT and converts nothing — whatever `
+      + 'calls it does the converting.',
+    );
+  }
+  if (!fs.existsSync(tagsPath)) {
+    throw new UsageError(
+      `no such tags file: ${tagsPath}. It is one tag per line; an empty file is a legal run, an `
+      + 'absent one is a path that is wrong.',
+    );
+  }
+
+  const tags = readVocabulary(tagsPath, log);
+  const nliPython = optionalString(args, 'nli-python');
+  const nliHome = optionalString(args, 'nli-home');
+  if (tags.length > 0) {
+    try {
+      resolveNliPython(nliPython);
+    } catch (err) {
+      // Named here so it is an exit 2 with nothing run, rather than the same
+      // sentence an hour of Ollama later.
+      throw new UsageError((err as Error).message);
+    }
+  }
+  // The fetch hatch takes a flag OR an environment variable — analyze's reason:
+  // a person at a terminal pulling the weights once types the flag, and a
+  // machine being provisioned sets the variable beside every other path.
+  const fetch = flag(args, 'fetch-nli-model') || process.env['FOUNDRY_NLI_FETCH'] === '1';
+  const outPath = optionalString(args, 'out');
+
+  const result = await tagDocument({
+    docPath,
+    tags,
+    ...(outPath !== undefined ? { outPath } : {}),
+    model: optionalString(args, 'model') ?? DEFAULT_TRANSLATE_MODEL,
+    endpoint: optionalString(args, 'ollama') ?? DEFAULT_OLLAMA_ENDPOINT,
+    nli: {
+      ...(nliPython !== undefined ? { python: nliPython } : {}),
+      ...(nliHome !== undefined ? { home: nliHome } : {}),
+      ...(fetch ? { fetch: true } : {}),
+    },
+    log,
+  });
+
+  log(
+    `tag: ${result.sentences} sentence(s), ${result.candidates} tag(s) worth asking about, `
+    + `${result.asked} model call(s)`
+    + (result.degraded > 0 ? `, ${result.degraded} of them unanswerable` : '') + '.',
+  );
+  /*
+   * ONE ANSWER, TWO DOORS. With `--out` the path is the last line on stdout
+   * (every other command's contract, so a caller shelling several of them back
+   * to back does not have to know which one it is reading); without it the JSON
+   * is the answer and goes there itself. Everything above was progress, on
+   * stderr, so both are readable from a pipe.
+   */
+  process.stdout.write(result.outPath !== null ? `${result.outPath}\n` : formatTagJson(result.answer));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -3014,6 +3144,66 @@ export const COMMANDS: readonly Command[] = [
       AN_NLI_PYTHON, AN_NLI_HOME, AN_FETCH, AN_FRESH,
     ],
     run: runVlmAnalyze,
+  },
+  {
+    name: 'tag',
+    summary: 'Tag one plain-text document from your own vocabulary, and suggest what else it is.',
+    usage: '--doc <file.txt> --tags <tags.txt> [--out <file.json>] [--model <name>]'
+      + ' [--ollama <url>] [--nli-python <path>] [--nli-home <dir>]',
+    detail: [
+      'ONE DOCUMENT, YOUR OWN TAGS, ONE ANSWER: which of them apply, and what',
+      'else this document would be called. Every sentence and every sliding',
+      'three-sentence window is scored against every tag by a zero-shot',
+      'entailment model; each tag anything scored for is then put to an Ollama',
+      'model with its best passages and one question — does this document',
+      'genuinely concern that subject? A last call over the document\'s strongest',
+      'passages proposes new tags in the style of your list.',
+      '',
+      'THE QUESTION IS ABOUTNESS, WHICH IS NOT analyze\'S QUESTION. analyze asks',
+      'whether the AUTHOR asserts a claim, because it is hunting for what a book',
+      'is pushing. A tag is a subject heading, not an accusation: an opinion',
+      'striking a ban down is about "ban" and about "free speech", and an',
+      'argument against a movement is about that movement. Both are yes here.',
+      '',
+      'IT READS PLAIN TEXT AND CONVERTS NOTHING. No PDF, no DOCX, no EPUB —',
+      'whatever calls this does the converting, which is the only arrangement',
+      'that lets one program own document conversion instead of two.',
+      '',
+      'THERE ARE NO LOCATIONS IN THE ANSWER. Where a tag matched is analyze\'s',
+      'business (docs/ANALYSIS.md) and is deliberately not built twice; a tag run',
+      'answers a SET. There is no score, no confidence and no explanation for the',
+      'same reason analyze has none: a rationale invented for a label the model',
+      'has just chosen is a fabrication that reads like evidence.',
+      '',
+      'THE OUTPUT is {"applies":[…],"suggested":[…]}. `applies` holds YOUR tags,',
+      'spelled exactly as your file spells them and in your file\'s order —',
+      'nothing recases or rewrites a vocabulary. `suggested` holds new ones,',
+      'short lowercase noun phrases, never a repeat of something already in your',
+      'list. With --out the JSON is written there and the PATH is the last line',
+      'on stdout; without it the JSON itself is on stdout. Progress is on stderr',
+      'either way.',
+      '',
+      'AN EMPTY TAGS FILE IS A LEGAL RUN. Nothing is ranked, no entailment model',
+      'is loaded, and the answer is suggestions alone — which is what you want',
+      'the first time, before there is a vocabulary to compare against.',
+      '',
+      'WHAT IT NEEDS. An Ollama server at --ollama (default',
+      'http://localhost:11434) holding --model, which foundry never starts, stops',
+      'or pulls; and — only when there are tags to rank — a Python with torch,',
+      'transformers and the MoritzLaurer/deberta-v3-base-zeroshot-v2.0 weights,',
+      'named with --nli-python or FOUNDRY_NLI_PYTHON. There is no PATH search: a',
+      'miss prints every path that was tried, before anything has run. The',
+      'weights live under --nli-home (or FOUNDRY_NLI_HOME, or an HF_HOME you have',
+      'already set, or foundry\'s own config directory) and the worker runs',
+      'OFFLINE; pass --fetch-nli-model ONCE to let it download them.',
+      '',
+      'THERE IS NO SENSITIVITY DIAL, and no fallback of any kind. The ranker',
+      'casts the widest calibrated net and the model decides; a missing worker or',
+      'a missing model ends the run with a sentence naming what was looked for,',
+      'rather than quietly answering a smaller question.',
+    ].join('\n'),
+    options: [TAG_DOC, TAG_TAGS, TAG_OUT, AN_MODEL, AN_OLLAMA, AN_NLI_PYTHON, AN_NLI_HOME, AN_FETCH],
+    run: runTag,
   },
   {
     name: 'translate',

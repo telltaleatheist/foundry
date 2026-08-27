@@ -353,8 +353,14 @@ function words(prefix: readonly number[], from: number, to: number): number {
  * verified, flagged, and then scored as a miss because it carried the wrong
  * category. Keeping every category above the floor is what makes 10/10 and
  * 11/11 reachable at all.
+ *
+ * EXPORTED for `foundry tag` (docs/TAGGING.md), which ranks a document against a
+ * lawyer's own tag vocabulary and needs exactly this pass — the same worker, the
+ * same floor, the same rescue rule — with a different kind of label in the plan
+ * and no windowing after it, because that command reports no locations. It is
+ * shared rather than copied so the widest-net posture is one body of code.
  */
-async function scoreSentenceLevel(
+export async function scoreSentenceLevel(
   sentences: readonly BookSentence[],
   plan: readonly RankPlan[],
   score: ScoreTexts,
@@ -424,8 +430,10 @@ async function scoreSentenceLevel(
  * hypotheses at once; a three-sentence window that half-entails two categories
  * is a much weaker version of the same argument, and briefcase never measured
  * it. The rule is left where it was measured.
+ *
+ * EXPORTED for `foundry tag`, with `scoreSentenceLevel` and for its reason.
  */
-async function scoreWindowLevel(
+export async function scoreWindowLevel(
   sentences: readonly BookSentence[],
   plan: readonly RankPlan[],
   sentenceLevel: readonly FlagCandidate[],

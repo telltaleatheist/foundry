@@ -194,18 +194,33 @@ Answer "skip" if the author is reporting that other people make that claim, quot
 Respond with JSON only: {"verdict":"flag"} or {"verdict":"skip"}`;
 }
 
-/** The exact JSON body sent for one verdict. Separate so a reader can see it. */
-export function verifyBody(model: string, prompt: string, numCtx: number): string {
+/**
+ * The exact JSON body of ONE schema-constrained generate call. Separate so a
+ * reader can see it, and generic in the schema so the second command that asks
+ * a model a closed question does not have to write this object again.
+ *
+ * `foundry tag` (docs/TAGGING.md) asks two of them — does this document concern
+ * this tag, and what else would you call it — and neither is a verdict. What is
+ * shared is everything the measurements in this file's header are about: the
+ * schema rather than the string 'json', temperature 0, and the `think` rule.
+ */
+export function constrainedBody(
+  model: string,
+  prompt: string,
+  numCtx: number,
+  schema: Record<string, unknown>,
+  predictTokens: number,
+): string {
   const body: Record<string, unknown> = {
     model,
     prompt,
     stream: false,
-    // The schema, not the string 'json': it constrains the decode to the two
-    // legal answers rather than merely to well-formed JSON.
-    format: VERDICT_SCHEMA,
+    // The schema, not the string 'json': it constrains the decode to the legal
+    // answers rather than merely to well-formed JSON.
+    format: schema,
     options: {
       num_ctx: numCtx,
-      num_predict: VERDICT_PREDICT_TOKENS,
+      num_predict: predictTokens,
       // Zero, because this is a classification with a right answer and any
       // sampling above it is variance in an accusation.
       temperature: 0,
@@ -215,6 +230,11 @@ export function verifyBody(model: string, prompt: string, numCtx: number): strin
   // that does not answers a request carrying it with a 400 naming the field.
   if (takesThinkField(model)) body['think'] = false;
   return JSON.stringify(body);
+}
+
+/** The exact JSON body sent for one verdict. */
+export function verifyBody(model: string, prompt: string, numCtx: number): string {
+  return constrainedBody(model, prompt, numCtx, VERDICT_SCHEMA, VERDICT_PREDICT_TOKENS);
 }
 
 /**
@@ -250,8 +270,22 @@ export interface VerdictOutcome {
   degraded?: string;
 }
 
+/** The answer text of one constrained call, or the reason there is not one. */
+export interface ConstrainedAnswer {
+  /** The model's answer, still unparsed. Null where the call produced none. */
+  text: string | null;
+  /** Set only where `text` is null — the sentence the run reports. */
+  degraded?: string;
+}
+
 /**
- * Ask the server for one verdict.
+ * Ask the server one closed question and hand back what it said.
+ *
+ * The transport half of `askVerdict`, standing on its own so `foundry tag` asks
+ * its two questions through the same door rather than through a second copy of
+ * the trap below. It parses the ENVELOPE and nothing else: what the answer MEANS
+ * is the caller's, because a verdict, an aboutness answer and a list of tags are
+ * three different readings of one string.
  *
  * ── THE THINKING-MODEL TRAP, AND IT IS NOT OPTIONAL ─────────────────────────
  *
@@ -273,30 +307,33 @@ export interface VerdictOutcome {
  *
  * A transport failure, a non-200 and an answer that is not Ollama's documented
  * shape all come back as degradations rather than throwing, because ONE bad
- * call must not end a stage that is making hundreds of tiny ones — and because
- * a degradation is recorded as a skip, which cannot accuse anybody. A stage
- * where EVERY call degraded is the caller's problem and it refuses.
+ * call must not end a stage that is making hundreds of tiny ones.
  */
-export async function askVerdict(
+export async function askConstrained(
   transport: Transport,
   endpoint: string,
   model: string,
   prompt: string,
   numCtx: number,
-): Promise<VerdictOutcome> {
+  schema: Record<string, unknown>,
+  predictTokens: number,
+): Promise<ConstrainedAnswer> {
   const base = normaliseEndpoint(endpoint);
   let response: { status: number; body: string };
   try {
-    response = await transport.post(`${base}/api/generate`, verifyBody(model, prompt, numCtx));
+    response = await transport.post(
+      `${base}/api/generate`,
+      constrainedBody(model, prompt, numCtx, schema, predictTokens),
+    );
   } catch (error) {
     return {
-      verdict: null,
+      text: null,
       degraded: error instanceof OllamaError ? error.message : (error as Error).message,
     };
   }
   if (response.status !== 200) {
     return {
-      verdict: null,
+      text: null,
       degraded: `ollama at ${base} answered ${response.status}: `
         + `${response.body.trim().slice(0, 200) || '(no body)'}`,
     };
@@ -305,7 +342,7 @@ export async function askVerdict(
   try {
     parsed = JSON.parse(response.body) as typeof parsed;
   } catch {
-    return { verdict: null, degraded: `ollama at ${base} answered 200 with something that is not JSON` };
+    return { text: null, degraded: `ollama at ${base} answered 200 with something that is not JSON` };
   }
 
   let text = typeof parsed.response === 'string' ? parsed.response : '';
@@ -314,15 +351,38 @@ export async function askVerdict(
   }
   if (parsed.done_reason === 'length') {
     return {
-      verdict: null,
-      degraded: `the answer hit the ${VERDICT_PREDICT_TOKENS}-token ceiling, so it was cut off`,
+      text: null,
+      degraded: `the answer hit the ${predictTokens}-token ceiling, so it was cut off`,
     };
   }
-  const verdict = parseVerdict(text);
+  return { text };
+}
+
+/**
+ * Ask the server for one verdict.
+ *
+ * The envelope, the schema and the thinking-model trap are `askConstrained`'s;
+ * what is left here is the READING — and its one rule, which is the reason a
+ * degradation is never allowed to be an accusation: a null verdict is recorded
+ * by the caller as a skip plus a warning. A stage where EVERY call degraded is
+ * the caller's problem and it refuses.
+ */
+export async function askVerdict(
+  transport: Transport,
+  endpoint: string,
+  model: string,
+  prompt: string,
+  numCtx: number,
+): Promise<VerdictOutcome> {
+  const answer = await askConstrained(
+    transport, endpoint, model, prompt, numCtx, VERDICT_SCHEMA, VERDICT_PREDICT_TOKENS,
+  );
+  if (answer.text === null) return { verdict: null, degraded: answer.degraded ?? 'no answer' };
+  const verdict = parseVerdict(answer.text);
   if (verdict === null) {
     return {
       verdict: null,
-      degraded: `no verdict in the answer: ${text.trim().slice(0, 120) || '(empty)'}`,
+      degraded: `no verdict in the answer: ${answer.text.trim().slice(0, 120) || '(empty)'}`,
     };
   }
   return { verdict };
