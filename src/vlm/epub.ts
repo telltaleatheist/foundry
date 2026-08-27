@@ -28,6 +28,7 @@
  * to a paragraph is otherwise unrecoverable once the pages are joined, and it is
  * the first thing anyone checking this mode's output wants.
  */
+import { parseXml } from '../epub/xml.js';
 import { writeZip, zipText, type ZipEntry } from '../export/zip.js';
 import type { VlmBlock } from './dialect.js';
 import type { DotsPageKind } from './dots.js';
@@ -324,6 +325,29 @@ export function packageVlmEpub(
   entries.push(zipText(`${OPF_DIR}/style.css`, stylesheet));
 
   for (const document of documents) {
+    /*
+     * THE SPINE REFUSES AT THE WRITE. An EPUB's documents are XML, and a
+     * reading system handed one that does not parse shows the reader NOTHING —
+     * the same sentence `wellFormed` in dialect.ts says about a model's
+     * fragment, asserted here at the one seam every spine document passes
+     * through on its way into a book. This is a refusal, not a repair: nothing
+     * is guessed shut, the export fails naming the document and the parser's
+     * own words, and the defect is fixed where it was made.
+     *
+     * MEASURED COST OF ITS ABSENCE: the triple-emphasis defect (2026-08-26)
+     * wrote crossed tags into c0016.xhtml, the export was filed as a library
+     * version, and the first thing to refuse it was a TTS pipeline in another
+     * repo — a cross-repo session to diagnose what this parse would have named
+     * the day it was written.
+     */
+    try {
+      parseXml(document.xhtml, 'xhtml');
+    } catch (err) {
+      throw new VlmEpubError(
+        `"${document.href}" is not well-formed XHTML and was not written into the book `
+        + `(${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
     entries.push(zipText(`${OPF_DIR}/${document.href}`, document.xhtml));
   }
   for (const resource of resources) {
