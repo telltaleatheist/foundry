@@ -65,6 +65,7 @@ import {
 import { askAboutness, askSuggestions, buildAboutnessPrompt, buildSuggestPrompt, cleanSuggestions } from './ask.js';
 import { evidenceByTag, stridedSample, topPassages } from './evidence.js';
 import { readDocument, TagError, type TagDocument } from './input.js';
+import { decideNliOnly } from './nli-decide.js';
 
 /**
  * How many texts go to the worker in one request.
@@ -96,6 +97,12 @@ export interface TagOptions {
   endpoint: string;
   /** `--nli-python`, `--nli-home`, `--fetch-nli-model`. */
   nli: Omit<NliWorkerOptions, 'log'>;
+  /**
+   * `--nli-only`: judge from entailment scores alone. No Ollama is contacted,
+   * `suggested` is always empty, and the caller has refused an empty
+   * vocabulary before this runs (there would be nothing left to answer).
+   */
+  nliOnly?: boolean;
   /** Progress and diagnostics. stderr, per the house rule. */
   log: (line: string) => void;
   /** Injected so the model stages can be driven without a live server. */
@@ -117,6 +124,14 @@ export interface TagAnswer {
   applies: string[];
   /** New tags the document supports, in the order the model offered them. */
   suggested: string[];
+  /**
+   * Which engine produced this answer — ADDED 2026-08-29 and announced on the
+   * cross-repo channel, per the contract's fields-are-added-never-renamed rule.
+   * `full` is the NLI-rank + LLM-verify pipeline; `nli-only` judged from
+   * entailment scores alone and can never suggest, so its `suggested` is empty
+   * by declared inability rather than by claim.
+   */
+  engine: 'full' | 'nli-only';
 }
 
 export interface TagResult {
@@ -239,6 +254,8 @@ export async function tagDocument(opts: TagOptions): Promise<TagResult> {
   const document = readDocument(opts.docPath, log);
   const plan = tagPlan(opts.tags);
 
+  if (opts.nliOnly) return tagNliOnly(opts, document, plan);
+
   const transport = opts.transport ?? fetchTransport();
   const endpoint = normaliseEndpoint(opts.endpoint);
   await requireModel(transport, endpoint, opts.model);
@@ -285,6 +302,64 @@ export async function tagDocument(opts: TagOptions): Promise<TagResult> {
         + 'fall out on its own idle timer.');
   }
   return result;
+}
+
+/**
+ * The NLI-only run: rank exactly as the full engine ranks, then decide from
+ * the scores alone (`nli-decide.ts` carries the rule and its provisionality).
+ *
+ * NO OLLAMA PREFLIGHT AND NO UNLOAD, because no Ollama: this path exists for a
+ * machine that has none, and an engine that probed a server it will never ask
+ * anything of would fail runs over a dependency it does not have. `suggested`
+ * is empty by declared inability — the aboutness question survives without an
+ * LLM, the what-else-would-you-call-it question does not — and the `engine`
+ * field is how a consumer tells that emptiness from the full engine's claim.
+ */
+async function tagNliOnly(
+  opts: TagOptions,
+  document: TagDocument,
+  plan: readonly RankPlan[],
+): Promise<TagResult> {
+  const { log } = opts;
+  const shared = (line: string): void => log(
+    line.startsWith('analyze: ') ? `tag: ${line.slice('analyze: '.length)}` : line,
+  );
+
+  let worker: NliWorker | null = null;
+  const ensureWorker = async (): Promise<NliWorker> => {
+    worker ??= await NliWorker.start({ ...opts.nli, log: shared });
+    return worker;
+  };
+  const startedWorker = (): NliWorker | null => worker;
+
+  try {
+    const candidates = await rankCandidates(document.sentences, plan, opts, shared, ensureWorker);
+    const decision = decideNliOnly(opts.tags, candidates);
+    // The stats stay on stderr: the JSON carries no scores by standing ruling,
+    // and a calibration pass needs to see the middle of the distribution.
+    for (const one of decision.stats) {
+      log(
+        `tag: nli-only "${one.tag}" — max ${one.max.toFixed(3)}, `
+        + `strong ${one.strongSentences}, mid ${one.midSentences}, `
+        + `candidates ${one.candidates} → ${one.applies ? 'APPLIES' : 'no'}`,
+      );
+    }
+    const answer: TagAnswer = {
+      applies: decision.applies,
+      suggested: [],
+      engine: 'nli-only',
+    };
+    return {
+      answer,
+      outPath: writeAnswer(answer, opts.outPath ?? null),
+      sentences: document.sentences.length,
+      candidates: decision.stats.filter((one) => one.candidates > 0).length,
+      asked: 0,
+      degraded: 0,
+    };
+  } finally {
+    startedWorker()?.stop();
+  }
 }
 
 /**
@@ -385,6 +460,7 @@ async function answerStage(args: {
     // wrote, with the tags that did not hold removed.
     applies: opts.tags.filter((tag) => applies.includes(tag)),
     suggested: cleanSuggestions(suggested.tags, opts.tags),
+    engine: 'full',
   };
   log(
     `tag: ${answer.applies.length} of ${opts.tags.length} tag(s) apply; `

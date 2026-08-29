@@ -965,6 +965,12 @@ const TAG_OUT: OptionSpec = {
   describe: 'Where the JSON is written. Omit it and the JSON goes to stdout instead.',
 };
 
+const TAG_NLI_ONLY: OptionSpec = {
+  name: 'nli-only',
+  type: 'boolean',
+  describe: 'Judge tags from entailment scores alone: no Ollama, and no suggestions ever.',
+};
+
 export interface Command {
   name: string;
   /** One line, shown in the top-level command list. */
@@ -1572,6 +1578,16 @@ async function runTag(args: ParsedArgs): Promise<void> {
   }
 
   const tags = readVocabulary(tagsPath, log);
+  const nliOnly = flag(args, 'nli-only');
+  if (nliOnly && tags.length === 0) {
+    // The full engine's empty-vocabulary run is legal because it can still
+    // suggest. This engine cannot, so an empty vocabulary leaves it no
+    // question at all — a usage error, before anything runs.
+    throw new UsageError(
+      '--nli-only with an empty tags file has no question to answer: the entailment engine can '
+      + 'judge the tags you give it, and never propose new ones.',
+    );
+  }
   const nliPython = optionalString(args, 'nli-python');
   const nliHome = optionalString(args, 'nli-home');
   if (tags.length > 0) {
@@ -1600,6 +1616,7 @@ async function runTag(args: ParsedArgs): Promise<void> {
       ...(nliHome !== undefined ? { home: nliHome } : {}),
       ...(fetch ? { fetch: true } : {}),
     },
+    ...(nliOnly ? { nliOnly: true } : {}),
     log,
   });
 
@@ -3148,7 +3165,7 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'tag',
     summary: 'Tag one plain-text document from your own vocabulary, and suggest what else it is.',
-    usage: '--doc <file.txt> --tags <tags.txt> [--out <file.json>] [--model <name>]'
+    usage: '--doc <file.txt> --tags <tags.txt> [--out <file.json>] [--nli-only] [--model <name>]'
       + ' [--ollama <url>] [--nli-python <path>] [--nli-home <dir>]',
     detail: [
       'ONE DOCUMENT, YOUR OWN TAGS, ONE ANSWER: which of them apply, and what',
@@ -3175,7 +3192,8 @@ export const COMMANDS: readonly Command[] = [
       'same reason analyze has none: a rationale invented for a label the model',
       'has just chosen is a fabrication that reads like evidence.',
       '',
-      'THE OUTPUT is {"applies":[…],"suggested":[…]}. `applies` holds YOUR tags,',
+      'THE OUTPUT is {"applies":[…],"suggested":[…],"engine":"full"|"nli-only"}.',
+      '`applies` holds YOUR tags,',
       'spelled exactly as your file spells them and in your file\'s order —',
       'nothing recases or rewrites a vocabulary. `suggested` holds new ones,',
       'short lowercase noun phrases, never a repeat of something already in your',
@@ -3186,6 +3204,16 @@ export const COMMANDS: readonly Command[] = [
       'AN EMPTY TAGS FILE IS A LEGAL RUN. Nothing is ranked, no entailment model',
       'is loaded, and the answer is suggestions alone — which is what you want',
       'the first time, before there is a vocabulary to compare against.',
+      '',
+      '--nli-only IS A SECOND ENGINE, EXPLICIT AND NEVER A FALLBACK. It judges',
+      'from the entailment scores alone: no Ollama is needed or contacted, and',
+      '`suggested` is always empty, because an entailment model can judge the',
+      'tags it is given and never propose new ones — which is also why an empty',
+      'vocabulary is refused under this flag. A tag applies when enough distinct',
+      'sentences score strongly for it; the thresholds are provisional and',
+      'uncalibrated against any real vocabulary, and the per-tag evidence is',
+      'printed to stderr so a calibration pass has something to read. It exists',
+      'for machines that cannot hold an LLM at all.',
       '',
       'WHAT IT NEEDS. An Ollama server at --ollama (default',
       'http://localhost:11434) holding --model, which foundry never starts, stops',
@@ -3202,7 +3230,7 @@ export const COMMANDS: readonly Command[] = [
       'a missing model ends the run with a sentence naming what was looked for,',
       'rather than quietly answering a smaller question.',
     ].join('\n'),
-    options: [TAG_DOC, TAG_TAGS, TAG_OUT, AN_MODEL, AN_OLLAMA, AN_NLI_PYTHON, AN_NLI_HOME, AN_FETCH],
+    options: [TAG_DOC, TAG_TAGS, TAG_OUT, TAG_NLI_ONLY, AN_MODEL, AN_OLLAMA, AN_NLI_PYTHON, AN_NLI_HOME, AN_FETCH],
     run: runTag,
   },
   {
