@@ -30,9 +30,12 @@
  * THE MARKUP IS THE CATEGORY. `h1` is a Title because the publisher set it as
  * one; `blockquote` is a Quote, `figcaption` a Caption, `li` a List-item, `table`
  * a Table, `img` a Picture, and anything carrying `epub:type="footnote"` is a
- * Footnote. There is no classifier here and there must not be one: the whole
- * point of the ruling above is that a book which already says what its parts are
- * does not get asked again. An element this table has no rule for becomes a Text
+ * Footnote. A class that SPELLS a category is the same declaration in the only
+ * vocabulary the house's CSS gave it: `class="h1"` is a heading and a class
+ * naming the word caption is a caption (`CAPTION_CLASS`), both read literally
+ * and neither inferred. There is no classifier here and there must not be one:
+ * the whole point of the ruling above is that a book which already says what its
+ * parts are does not get asked again. An element this table has no rule for becomes a Text
  * row AND A LOG LINE, which is this codebase's standing answer to an ambiguity —
  * never a silent guess and never a dropped paragraph.
  *
@@ -200,6 +203,35 @@ const NOTE_TYPES: ReadonlySet<string> = new Set(['footnote', 'endnote', 'rearnot
  * moved to the end of a chapter.
  */
 const NOTE_CLASSES: ReadonlySet<string> = new Set(['footnote', 'footnotes', 'fn', 'note', 'endnote']);
+
+/**
+ * A class whose name IS the word "caption" — `class="h1"`'s rule (the `case 'p'`
+ * branch of `explodeElement`), applied to the other kind of element a house
+ * style sets in a `<p>`.
+ *
+ * Vellum writes every photo caption as `<p class="inline-image-caption">`
+ * directly after its `<div class="image-container">` — measured on God's People
+ * (2026-08-29): 37 of 37, uniform. No `epub:type`, no `<figcaption>`, so the
+ * declaration exists nowhere but the class, and a walk that refused to read it
+ * exploded every one of them as a Text row. That is how 37 captions reached a
+ * finished audiobook: the narration picker downstream keys on the category this
+ * file writes, and a caption filed as prose is invisible to it. Owen's ruling,
+ * same date: *"ideally it wont read caption text at all. those are
+ * unintentionally included."*
+ *
+ * The word must stand ALONE in its token, delimited or at an edge —
+ * `caption`, `inline-image-caption`, `caption-text`, `photo_captions` — because
+ * a substring match would read `captioned-gallery` as a caption. Like the
+ * `class="h1"` rule, this reads what the publisher named, not what anything
+ * infers: there is no other thing a class spelling the word caption can mean on
+ * an element that holds words.
+ */
+const CAPTION_CLASS = /(?:^|[-_])captions?(?:[-_]|$)/;
+
+/** Does this element's own class attribute name it a caption? */
+function isCaptionClassed(el: XmlElement): boolean {
+  return classes(el).some((name) => CAPTION_CLASS.test(name));
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // the walk
@@ -769,7 +801,14 @@ function explodeElement(el: XmlElement, walk: DocumentWalk, book: Explosion): vo
        * one state the rank.
        */
       const declared = classes(el).some((name) => /^h[1-6]$/.test(name));
-      whole(declared ? 'Section-header' : walk.inherited ?? 'Text');
+      if (declared) { whole('Section-header'); return; }
+      // The same reading, one class over: a `<p>` the publisher NAMED a caption
+      // is one (`CAPTION_CLASS`). Asked after the heading spelling because the
+      // two cannot both be true of one honest class list, and a heading is the
+      // louder claim; asked before the inherited category because a caption
+      // inside a figure or a quote wrapper is still a caption.
+      if (isCaptionClassed(el)) { whole('Caption'); return; }
+      whole(walk.inherited ?? 'Text');
       return;
     }
     case 'dt': case 'dd': whole(walk.inherited ?? 'Text'); return;
@@ -811,7 +850,14 @@ function explodeElement(el: XmlElement, walk: DocumentWalk, book: Explosion): vo
   if (!CONTAINERS.has(el.tag) && hasBlockChildren(el)) {
     book.loose.set(el.tag, (book.loose.get(el.tag) ?? 0) + 1);
   }
-  descendInto(el, walk, book, walk.inherited);
+  // A `<div>` the publisher named a caption captions everything it groups: its
+  // own inline run becomes a Caption row, and a `<p>` inside it inherits the
+  // category exactly as a `<blockquote>`'s paragraphs inherit Quote. Divs only —
+  // a `<section class="captions">` is a gallery's grouping, not one caption.
+  descendInto(
+    el, walk, book,
+    el.tag === 'div' && isCaptionClassed(el) ? 'Caption' : walk.inherited,
+  );
 }
 
 /** An id on an element that produced no row goes to whatever row comes next. */
