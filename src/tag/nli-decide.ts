@@ -15,26 +15,27 @@
  * tag a fifty-page filing "ban" for one passing mention. So the decision here
  * is document-level and asks for CORROBORATION:
  *
- *   - only SENTENCE-level candidates are counted. A window candidate is the
- *     same evidence wearing a coat: one strong sentence appears again in up to
- *     three windows, and counting it four times would let a single sentence
- *     impersonate a theme.
- *   - a sentence counts as STRONG at ≥ 0.90 — on this model's score
- *     distribution (bimodal; briefcase's measurement, rank.ts) that is the
- *     "genuinely entailed" mode, not the ambiguous middle.
- *   - a tag applies when two distinct sentences are strong, or when one is and
- *     the best score anywhere (windows included) is near-certain (≥ 0.95).
+ *   - a tag applies when the best score ANYWHERE — sentence or window —
+ *     reaches near-certainty (≥ NLI_CERTAIN).
  *
- * THE THRESHOLDS ARE PROVISIONAL AND SAY SO. Nothing has been calibrated
- * against a real vocabulary over real documents; that measurement is exactly
- * the test this engine was built to run, and these constants are where its
- * findings land.
+ * ── WHY MAX-ONLY, WHEN THE FIRST CUT DEMANDED CORROBORATION ─────────────────
+ *
+ * The first cut required two strong sentences, on the intuition that one
+ * sentence should not impersonate a theme. The 2026-08-30 calibration against
+ * 249 real labelled documents measured the opposite: ranking tags by peak
+ * score put 49% of the owner's own labels in the top 5 of 117 candidates,
+ * and every corroboration-count ranking did WORSE (strong-count first dropped
+ * that to 35%). Breadth of firing rewards promiscuous broad tags; one peak
+ * sentence is the better aboutness signal on this model. The corroboration
+ * requirement was deleted for that reason — a rule the data contradicts is
+ * not a safeguard, it is a miss generator. NLI_STRONG survives for the
+ * diagnostics only.
  */
 import type { FlagCandidate } from '../analyze/rank.js';
 
-/** A sentence at or above this entails the tag rather than brushing past it. */
+/** Diagnostic band: a sentence here entails rather than brushes past. */
 export const NLI_STRONG = 0.9;
-/** Near-certainty: one sentence here plus one strong one is enough. */
+/** The decision: a tag applies when any passage reaches near-certainty. */
 export const NLI_CERTAIN = 0.95;
 /** Diagnostic band only — printed so a calibration pass can see the middle. */
 export const NLI_MID = 0.5;
@@ -87,7 +88,7 @@ export function decideNliOnly(
       if (candidate.score >= NLI_STRONG) strong.add(candidate.sentenceIndex);
       if (candidate.score >= NLI_MID) mid.add(candidate.sentenceIndex);
     }
-    const applies = strong.size >= 2 || (strong.size >= 1 && max >= NLI_CERTAIN);
+    const applies = max >= NLI_CERTAIN;
     return {
       tag,
       candidates: mine.length,
