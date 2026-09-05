@@ -53,6 +53,32 @@ same artefact, and only the ledger's story about the order differs.
 
 ## 2. What a translate step is, precisely
 
+> **2026-09-05 — THE FAMILY SPLIT.** Everything below describes a `translate`
+> step, and a REWRITE used to be one of those: `action: 'translate'` carrying
+> `params.rewrite`. It is not any more. Owen: *"it isnt a translate job. naming it
+> translate is deceptive … it needs to be accurate. translate, simplify, and
+> cleanup are all three similar steps."* There are three ledger actions —
+> `translate`, `simplify`, `clean` — sharing one body of machinery (the records
+> file, the queue job family, the derived book, the render path), named in
+> `TEXT_PASS_ACTIONS` (`app/shared/ledger.ts`).
+>
+> Read every paragraph below as being about the FAMILY except where it names a
+> language, which only `translate` and `simplify` have. Concretely:
+>
+> - `PARAMS_OF.translate` is `['language', 'bank', 'from']` — **no `rewrite`**.
+>   `PARAMS_OF.simplify` is that list plus `rewrite`. `PARAMS_OF.clean` is empty:
+>   a cleanup goes into no language, is asked in no mode, and records no model
+>   (the argument is `PARAMS_OF.translate`'s own — re-asking with a better model
+>   refines THIS row rather than ordering a second one).
+> - **Stored simplify rows heal on read.** `readStep` reads a `translate` that
+>   carries a `rewrite` back as a `simplify`, and the ledger is written whole on
+>   the next append, so the file is corrected for good. A malformed `rewrite`
+>   still refuses by name. Nothing writes the old shape again.
+> - Labels are display-only and are unchanged: *Simplified — natural voice (de)*
+>   is what those rows were stamped with and what they keep. A cleanup's row reads
+>   **Cleaned for narration**.
+
+
 Already true (`recordGenerated`, `app/electron/projects.ts:2027-2041`): a
 translation lands a ledger step — the only Generate-family product that does —
 with `action: 'translate'`, `parent` captured at enqueue, `payload:

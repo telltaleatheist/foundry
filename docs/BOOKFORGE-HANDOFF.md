@@ -685,6 +685,49 @@ export type { ExportLanding };
   has no EPUB export", it is now "there is no book at the step you are
   standing on" — the unread scan and the import row, and nothing else.
 
+**2026-09-05 — THE TEXT-PASS SPLIT AND THE NARRATION CLEANUP: THREE CONTRACT
+CHANGES, said loudly, all three additive but two of them visible on the wire.**
+
+- **`HostOperation.invoke` gained a FOURTH argument** —
+  `invoke(projectDir, nodeId, settings, context: HostInvokeContext)`.
+  `HostInvokeContext` is `{ cleaned: boolean }`: true when Foundry's NARRATION
+  CLEANUP is in effect at the step the act was ordered from, false everywhere
+  else and for a `nodeId` Foundry cannot resolve to a step (your own node ids,
+  `export:<file>`). It is never omitted and a host that names three parameters
+  keeps working untouched — the third argument's own compatibility story, one
+  argument along. **The durable record is on the FILE, not here**: an EPUB
+  compiled from a cleaned position carries `bookforge:narration-text` in its OPF
+  (`vlm-compile --narration-stamp`), which is what a narration should act on. The
+  context is the answer available BEFORE the export exists, so a press can be
+  decided or warned about while the person is still at the dialog.
+
+- **`FoundryHostQueue.enqueue` may now be handed three text-pass shapes** —
+  `JobRequest | TextPassRequest`, where `TextPassRequest` is
+  `TranslateRequest | SimplifyRequest | CleanRequest`. A SIMPLIFY used to arrive
+  as `kind: 'translate'` wearing a `rewrite`; it arrives as `kind: 'simplify'`
+  now, and a narration cleanup as `kind: 'clean'`. **Both are new `JobKind`
+  members** (`JOB_RESOURCE` files them on the `gpu` lane, like a translation) and
+  both will reach a lane table, a label and a command line on your side. Owen's
+  ruling: *"it isnt a translate job. naming it translate is deceptive … translate,
+  simplify, and cleanup are all three similar steps."* This is the one thing in
+  this note that a re-vendor is REQUIRED for rather than merely recommended — a
+  simplify pressed in a hosted window sends the new kind from the moment the
+  snapshot lands, so vendor the app and the queue's kind handling together.
+
+- **Foundry gained a `clean` ledger action and a `Clean text` act, hidden
+  standalone.** Owen: *"cleanup will only ever be done on behalf of bookforge and
+  wont be available in foundry since foundry isnt designed to narrate text … we
+  can add the step/logic to foundry, but only make it visible when vendored to
+  bookforge."* The tile, the dialog and the tree's "from here" entry are all
+  `@if (hosted())`; the step, the queue job, the ledger and the render path exist
+  regardless. A cleanup runs `foundry clean-text --book … --records … --stamp …`,
+  lands a `clean` step whose payload is its records file, and every position
+  under it reads the cleaned words — *"everything they do after that carries the
+  cleanup along"*. A later translate or simplify makes fresh text, at which point
+  the cleanup is no longer in effect and the stamp is not written into the EPUB.
+  One new IPC door, `workspace:plan-clean` (IPC-CHANNELS.md regenerated, 108
+  handles); `queue:enqueue-translate` is unrenamed and now takes the family.
+
 **2026-08-17 — host-ops round 2 landed: TWO CONTRACT CHANGES, said loudly
 as asked.** (First written as 2026-08-18 — both sides' harnesses asserted
 the wrong day; the channel messages of that evening carry the same skew.)
@@ -972,7 +1015,15 @@ export interface HostOperation {        // electron/host-ops.ts, re-exported by 
   label: string;                        // "Narrate"
   kind: 'narrate' | 'enhance' | 'assemble';  // picks the icon and the amber tint
   appliesTo: 'book' | 'audio';          // what a node must PRODUCE to offer this
-  invoke(projectDir: string, nodeId: string): void | Promise<void>;
+  // 2026-08-18 added `settings`; 2026-09-05 added `context` — see the dated
+  // notes above. Both are optional to NAME: a host declaring fewer parameters
+  // keeps working, because JavaScript ignores an argument nobody named.
+  invoke(
+    projectDir: string,
+    nodeId: string,
+    settings: Record<string, unknown>,
+    context: { cleaned: boolean },
+  ): void | Promise<void>;
 }
 
 export function setHostNodes(projectDir: string, nodes: readonly HostNode[]): void;

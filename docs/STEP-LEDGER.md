@@ -57,6 +57,16 @@ UI. Build a list.
 | **Reading** (OCR) | the readings bank | expensive | `vlm-read` queue job |
 | **Curation commit** | a frozen snapshot of the overlay at commit time | irreplaceable (user labor) | the user pressing **Save** in the block editor — no queue job, no expense |
 | **Translation** | the translation bank | expensive | translate queue job |
+| **Simplify** | the rewrite's records file | expensive | simplify queue job |
+| **Clean** | the cleanup's records file (+ a `.stamp.json` beside it) | expensive | clean queue job |
+
+> **2026-09-05.** The last two rows are the other two TEXT PASSES. A rewrite was
+> stored as a `translate` carrying `params.rewrite` and is a `simplify` action now;
+> a narration cleanup is `clean`, and it is Foundry's to run and BookForge's to
+> want — the step, ledger, queue and render logic live here, the tile and the
+> dialog are drawn only when `hosted()`. Stored `translate`+`rewrite` rows HEAL ON
+> READ into `simplify` and are persisted that way on the next write; nothing writes
+> the old shape again. See `TEXT_PASS_ACTIONS` in `app/shared/ledger.ts`.
 
 Renderings (epub/txt/pdf via Generate) are **not** steps. They are free,
 reproducible from a step's payload at any time, and minting a step for one would
@@ -212,7 +222,14 @@ must still read; write a migration from today's linear step rows):
     { "id": "s3", "parent": "s1", "action": "translate",
       "payload": "translations/<key>-en.jsonl",
       "params": { "language": "English" },
-      "retention": "expensive", "createdAt": 0, "label": "Translated (English)" }
+      "retention": "expensive", "createdAt": 0, "label": "Translated (English)" },
+    { "id": "s4", "parent": "s3", "action": "simplify",
+      "payload": "readings/<key>.en.destiffen.records.jsonl",
+      "params": { "language": "en", "rewrite": "destiffen", "from": "en" },
+      "retention": "expensive", "createdAt": 0, "label": "Simplified — natural voice (en)" },
+    { "id": "s5", "parent": "s4", "action": "clean",
+      "payload": "readings/<key>.clean.records.jsonl",
+      "retention": "expensive", "createdAt": 0, "label": "Cleaned for narration" }
   ]
 }
 ```

@@ -3767,6 +3767,94 @@ BookForge's own doctrine moved here with an engine section on the front.
   its Ollama-gated `--scripture` probe was deliberately not ported, because that
   repo's own ruling keeps it out of the keeper sweep.
 
+#### The app half — three ledger actions, the hosted tile, the stamp on the file
+
+BookForge needs the book's text prepared before it is read aloud. Owen ruled
+both halves in one sitting.
+
+**The shape:** *"text cleanup should be an optional (but encouraged) step where
+the user runs it at any point and everything they do after that carries the
+cleanup along. if they delete blocks and then run cleanup, just like with
+translate or simplify, it changes the contents of the text that the user sees.
+they can delete blocks or whatever after that."*
+
+**The name:** *"it isnt a translate job. naming it translate is deceptive … it
+needs to be accurate. translate, simplify, and cleanup are all three similar
+steps."* — answered as THREE LEDGER ACTIONS over ONE body of machinery. The
+family is `TEXT_PASS_ACTIONS` (`app/shared/ledger.ts`): a records file per run, a
+derived book materialised when it lands, a GPU queue row, one render path.
+
+**Whose it is:** *"cleanup will only ever be done on behalf of bookforge and wont
+be available in foundry since foundry isnt designed to narrate text … we can add
+the step/logic to foundry, but only make it visible when vendored to bookforge."*
+
+**Built.**
+
+- **`STEP_ACTIONS` gains `simplify` and `clean`**, and every per-action table
+  named the two the compiler asked it to. A REWRITE stored as
+  `{action: 'translate', params: {rewrite}}` **HEALS ON READ** into `simplify`
+  (`readStep`) and is persisted that way on the next append; a malformed
+  `rewrite` still refuses by name, because the heal moves the action and never
+  the value. `PARAMS_OF.translate` LOST `rewrite`, which is what makes the heal
+  load-bearing rather than cosmetic. `PARAMS_OF.clean` is empty — no language, no
+  mode, and **no `model`**, on `PARAMS_OF.translate`'s own argument that re-asking
+  with a better model refines THIS row rather than ordering a second one. So a
+  second clean from the same parent REPLACES, exactly as a re-simplify in the
+  same mode does.
+- **Two walks where there was one.** `translationInEffect` is now the LANGUAGE
+  question (translate | simplify — a cleanup declares none, and the walk goes
+  past it, so a cleaned Hungarian book is still declared `hu`);
+  `textPassInEffect` is the WORDS question (all three), and it is what
+  `openBookAtPosition` and `BOUNDS_THE_REPLAY` ask. Splitting them is the whole
+  correctness of the wave: one function answering both would have rendered either
+  a book claiming a language its step never recorded, or the UNCLEANED words
+  under a row that says they were cleaned. `cleanupInEffect` is derived from the
+  nearest pass and is never stored — a later translate or simplify makes fresh
+  text, so the cleanup is not in effect there.
+- **Queue:** `JobKind` gains `simplify` and `clean` (both `gpu`);
+  `TranslateRequest` split into `TranslateRequest` / `SimplifyRequest` (required
+  `rewrite`) / `CleanRequest` (book, records, **stamp**, model, endpoint);
+  `enqueueTranslate` → `enqueueTextPass`, one door for three kinds; `argsFor`
+  spells `foundry clean-text --book --records --stamp --model --endpoint`;
+  `parseProgressLine` learns `clean-text: n/m` (anchored to end-of-line, so the
+  final `n blocks, m changed…` summary cannot be read as a fraction). Rows say
+  **Clean text**; the step says **Cleaned for narration**.
+- **The stamp reaches the EPUB.** `planRendering` composes `narrationStamp` off
+  `cleanupInEffect` at the step the rendering is about, and `argsFor` puts
+  `--narration-stamp` on the `vlm-compile` line — which is the ONLY EPUB-producing
+  spawn in this app (`compiles` is true for every epub and txt, so
+  `vlm-convert --records` is left with the facsimile, which has no narration in
+  it). All three request builders carry it: the export dialog, the mint-metadata
+  dialog and `exportEpubFromStep`, the last of which is the file BookForge
+  narrates. A missing stamp file omits the flag rather than failing the export.
+- **The host seam** gains `HostInvokeContext` — a fourth argument to
+  `HostOperation.invoke`, `{ cleaned: boolean }`, composed in main off the
+  ledger at the press. Optional to NAME, so a host declaring three parameters is
+  untouched. The durable record is still the OPF's `bookforge:narration-text`;
+  this is the answer available before the EPUB exists.
+- **One IPC door added** — `workspace:plan-clean`. `queue:enqueue-translate` was
+  deliberately NOT renamed: it takes the family now, and a rename costs
+  IPC-CHANNELS.md two entries for a door whose behaviour is unchanged. The doc
+  was regenerated in this commit (108 handles) and had drifted eleven doors
+  behind, which is recorded there rather than quietly corrected.
+- **Hidden, not grayed.** The Clean text tile and the tree's "from here" entry are
+  `@if (hosted())`; the gray underneath is the ordinary stage rule
+  (`canCleanFrom` → `canSimplifyFrom`). A gray says "not from here", and this act
+  is not part of a standalone Foundry at all.
+- **No new tests**, per the standing rule; the 423 existing ones pass unchanged.
+
+**Deferred out loud:**
+
+- **The stamp is not swept.** `orphanedBanks` names a step's records file and its
+  legacy bank; a cleanup's `<…>.stamp.json` beside it is not in that list, so
+  deleting a clean step leaves a few hundred bytes behind. It is in the same
+  company as the derived `.book.jsonl` files, which are not swept either, and it
+  is named here rather than fixed inside a wave about the ledger's vocabulary.
+- **BookForge must re-vendor before a hosted simplify works.** A simplify pressed
+  in a hosted window now sends `kind: 'simplify'` to the host's queue, which its
+  sealed snapshot of `shared/api.ts` predates. This is the one item in the handoff
+  note marked required rather than recommended.
+
 ---
 
 ## 8. Session hygiene
