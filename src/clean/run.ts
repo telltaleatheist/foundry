@@ -299,6 +299,27 @@ function refuseForeignRecords(
   );
 }
 
+/**
+ * The runner for a run that has no question — every one of its methods is a
+ * defect if it is ever called.
+ *
+ * `askAboutEach` returns before touching a runner when nothing reaches the
+ * model, so this stands in for a server that was never opened. It THROWS rather
+ * than returning an empty answer, because a silent stub would turn "the loop
+ * asked a question this run had decided not to ask" into a book full of
+ * unchanged blocks nobody could account for.
+ */
+const NOTHING_TO_ASK: NumberNormalizerRunner = {
+  model: '(no model — every block was already answered)',
+  generate(): Promise<string> {
+    throw new CleanTextError(
+      'clean-text opened no model because every block of this book was already answered in the '
+      + 'records file, and then something asked one anyway. Nothing was written.',
+    );
+  },
+  async release(): Promise<void> { /* nothing was ever loaded. */ },
+};
+
 /** Every disposition that means the validators would not let an edit through. */
 function isRefusal(status: string): boolean {
   return status !== 'APPLIED' && status !== 'APPLIED_RULE'
@@ -502,24 +523,49 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     };
   });
 
-  const runner = opts.runner ?? await openOllamaRunner({
-    model,
-    endpoint,
-    ...(opts.transport === undefined ? {} : { transport: opts.transport }),
-    ...(opts.keepModel === undefined ? {} : { keepModel: opts.keepModel }),
-    log: opts.log,
-  });
+  /*
+   * ── A RUN WITH NOTHING TO ASK NEVER TOUCHES THE SERVER ─────────────────────
+   *
+   * `askAboutEach` already refuses to load a model it has no question for —
+   * *"an Ollama that is down must not fail a pass that had nothing to ask it"* —
+   * and this is the same rule one layer out. `openOllamaRunner` proves the
+   * server is there and holds the model BEFORE any work starts, which is right
+   * and is worth the round trip for a run that is about to spend an hour of
+   * GPU; asking it of a run whose every block is already banked would make a
+   * re-run over a finished book fail because a machine somewhere is off.
+   *
+   * A CALLER-SUPPLIED RUNNER IS ALWAYS USED, banked or not: a test that passes
+   * one is asserting what happens to it, and silently swapping in a stub would
+   * make "the model was never called" unprovable.
+   */
+  const runner = opts.runner ?? (asks.length === 0
+    ? NOTHING_TO_ASK
+    : await openOllamaRunner({
+      model,
+      endpoint,
+      ...(opts.transport === undefined ? {} : { transport: opts.transport }),
+      ...(opts.keepModel === undefined ? {} : { keepModel: opts.keepModel }),
+      log: opts.log,
+    }));
 
   const settled = await askAboutEach(
     asks,
     runner,
     narrationTextPrompt(),
-    (done, total) => {
-      // `clean-text: <done>/<total>`, per block, and BookForge mirrors the
-      // shape — so it stays exactly this, and both numbers count blocks
-      // FINISHED rather than a position, which is what keeps a progress bar
-      // drawn from it monotonic.
-      if (total > 0) opts.log(`clean-text: ${done}/${total}`);
+    (done, total, label) => {
+      /*
+       * `clean-text: <done>/<total>`, per block, and BookForge mirrors the
+       * shape — so it stays exactly this, and both numbers count blocks
+       * FINISHED rather than a position, which is what keeps a progress bar
+       * drawn from it monotonic.
+       *
+       * THE RELEASE TICK IS NOT A BLOCK. `askAboutEach` calls this once more
+       * from its `finally`, at `(total, total, 'Releasing model')`, so that a
+       * desktop bar reaches its end even on the failure path. Printing it would
+       * put `7/7` on the log twice, and a reader counting lines would be told
+       * the book had eight blocks in it.
+       */
+      if (total > 0 && label !== 'Releasing model') opts.log(`clean-text: ${done}/${total}`);
     },
     'every-block',
     EVERY_CLASS,

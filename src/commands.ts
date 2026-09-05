@@ -971,6 +971,79 @@ const TAG_NLI_ONLY: OptionSpec = {
   describe: 'Judge tags from entailment scores alone: no Ollama, and no suggestions ever.',
 };
 
+// ═════════════════════════════════════════════════════════════════════════════
+// clean-text — the third text act (src/clean/, docs/CLEAN-TEXT.md)
+// ═════════════════════════════════════════════════════════════════════════════
+
+const CT_BOOK_IN: OptionSpec = {
+  name: 'book',
+  type: 'string',
+  placeholder: '<book.jsonl>',
+  describe: 'The book file whose blocks are cleaned. Read, never written.',
+};
+
+const CT_RECORDS: OptionSpec = {
+  name: 'records',
+  type: 'string',
+  placeholder: '<file.jsonl>',
+  describe: 'Where the cleaned text is written: one row per block, keyed by its own id.',
+};
+
+const CT_STAMP: OptionSpec = {
+  name: 'stamp',
+  type: 'string',
+  placeholder: '<file.json>',
+  describe: 'Where the narration text stamp goes — what a rendered EPUB carries to prove this ran.',
+};
+
+const CT_ENDPOINT: OptionSpec = {
+  name: 'endpoint',
+  type: 'string',
+  placeholder: '<url>',
+  describe: `The Ollama server. Default ${DEFAULT_OLLAMA_ENDPOINT}. Used, never started.`,
+};
+
+const CT_MODEL: OptionSpec = {
+  name: 'model',
+  type: 'string',
+  placeholder: '<name>',
+  describe: `The model that reads the residue. Default ${DEFAULT_TRANSLATE_MODEL}, temperature 0.`,
+};
+
+const CT_KEEP_MODEL: OptionSpec = {
+  name: 'keep-model',
+  type: 'boolean',
+  describe: 'Leave the model loaded when the run ends (for an Ollama shared with other work).',
+};
+
+/**
+ * The argv layer, and nothing else.
+ *
+ * Every refusal about the FILES is the engine's (`src/clean/run.ts`): a book
+ * that cannot be read, a records file written about a different book, a server
+ * that does not answer. What belongs here is the three paths being present at
+ * all, because a run missing one of them has nothing to write and nothing ran —
+ * which is what exit code 2 means (src/cli.ts).
+ */
+async function runCleanText(args: ParsedArgs): Promise<void> {
+  const bookPath = requireString(args, 'book', 'the book file whose blocks are cleaned');
+  const recordsPath = requireString(args, 'records', 'where the cleaned text is written');
+  const stampPath = requireString(args, 'stamp', 'where the narration text stamp is written');
+
+  const { runCleanText: clean } = await import('./clean/run.js');
+  await clean({
+    bookPath,
+    recordsPath,
+    stampPath,
+    ...(optionalString(args, 'endpoint') === undefined
+      ? {} : { endpoint: optionalString(args, 'endpoint')! }),
+    ...(optionalString(args, 'model') === undefined
+      ? {} : { model: optionalString(args, 'model')! }),
+    ...(flag(args, 'keep-model') ? { keepModel: true } : {}),
+    log,
+  });
+}
+
 export interface Command {
   name: string;
   /** One line, shown in the top-level command list. */
@@ -3503,6 +3576,121 @@ export const COMMANDS: readonly Command[] = [
       TR_RECORDS, TR_SOURCE_RECORDS, TR_GENERATION,
     ],
     run: runTranslate,
+  },
+  {
+    name: 'clean-text',
+    summary: 'Clean a book\'s text for a narrator: punctuation, numbers as words, the model on every block.',
+    usage: '--book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
+      + ' [--endpoint <url>] [--model <name>] [--keep-model]',
+    detail: [
+      'THE THIRD TEXT ACT. translate turns a book into another language, --rewrite',
+      'turns it into plainer prose, and this turns it into the text a NARRATOR is',
+      'handed. All three read a book file, ask a local model about its blocks and',
+      'write records — one JSONL row per block, keyed by the question, positioned',
+      'by the block\'s own id — so a cleaned edition and a translated one are two',
+      'files that agree about what every paragraph is called.',
+      '',
+      'The rules are BookForge\'s and were moved here whole, byte for byte, so that',
+      'ONE definition of this transform serves both the audiobook renders and the',
+      'Orpheus fine-tuning corpora. docs/CLEAN-TEXT.md is the doctrine and it is',
+      'the authority on every judgement below; this page says what the command',
+      'does with it.',
+      '',
+      'THREE STAGES, OVER EVERY BLOCK, IN THIS ORDER. The order is load-bearing:',
+      'canonicalizing an ellipsis AFTER the number rules had computed offsets',
+      'would invalidate every one of them, and the rules\' own find strings',
+      'routinely contain characters stage 1 created.',
+      '',
+      '  1  PUNCTUATION (spec s1) — the canonical ellipsis, the quote map, control',
+      '     characters and invisibles deleted, every space variant to U+0020,',
+      '     repeated spaces collapsed, -- to an em dash, ?!! to one mark, trailing',
+      '     space trimmed. Dashes the book printed are KEPT.',
+      '  2  THE NUMBER RULES — the shapes a narrator\'s reading is guaranteed:',
+      '     dates, clock times, money, percent, decades, ordinals, #N, comma-',
+      '     grouped and bare integers. Citation apparatus is left as printed, and',
+      '     so is every scripture reference, which this stage only DETECTS and',
+      '     PROTECTS so the model can read it.',
+      '  3  THE MODEL, ON EVERY BLOCK — number residue, abbreviations, all-caps',
+      '     runs, bracketed apparatus, spaced hyphens, roman numerals, ampersands.',
+      '',
+      'STAGE 3 IS NOT A DIGIT TEST, and that is Owen\'s ruling of 2026-09-04:',
+      '"send every single block through to be sure. I suspect deterministic',
+      'decisions on this aren\'t the right way to do it. Let the model decide what',
+      'should be updated." An abbreviation and an acronym print no digit at all, so',
+      'a digit test would never show the model one. One call per block, temperature',
+      '0, and the cost is accepted because the pass runs ONCE and the book keeps',
+      'the result.',
+      '',
+      'THE MODEL NEVER RETURNS REWRITTEN TEXT. It returns an anchored edit list —',
+      '{find, replace} pairs, each a verbatim span of the block — and every edit',
+      'passes a wall of validators before a character moves. The class an edit',
+      'belongs to is DERIVED from the span and never declared by the model, at most',
+      'one word token of a find may change, and the replacement must be a READING',
+      'of the token that changed. An edit that fails is refused BY THE NAME of the',
+      'invariant it broke — WORDS_DROPPED, NOT_A_READING, SPANS_MARKUP,',
+      'SCRIPTURE_UNREAD — the text stands exactly as the book printed it, and the',
+      'refusal is on stderr and in the receipt. A block whose answer will not parse',
+      'is retried once at the same settings; more than 10% of blocks failing to',
+      'parse fails the run, because that is a model this pass cannot use rather',
+      'than a hard book.',
+      '',
+      'WHICH BLOCKS: EXACTLY THE ONES A TRANSLATION WOULD TOUCH. The same plan,',
+      'the same code — a shelved row is not in the book, a formula and a picture',
+      'are skipped and counted, a table is taken apart into cells and put back by',
+      'splicing rather than by asking a model to preserve a grid, a folio is',
+      'carried without being asked about, and a chapter title is asked for only',
+      'where it cannot be proved to be a copy of a heading the run already handled.',
+      'That sharing is the point: a book that has been cleaned and then translated',
+      'has had the same population of blocks through both.',
+      '',
+      'AN EDIT MAY NOT CROSS AN INLINE MARKER. A block\'s text is the flowing',
+      'dialect — **bold**, *italic*, a run of superscript digits for a note number',
+      '— and those characters ARE the markup. So the row is cut into the runs of',
+      'plain text between its markers and the markers themselves, and a span that',
+      'crosses a boundary is refused SPANS_MARKUP rather than flattened, exactly as',
+      'a span crossing an <em> is refused one format over. The markers come through',
+      'byte for byte around whatever changed. What it costs is stated: a lone',
+      'asterisk a scan left in the prose protects the two characters beside it.',
+      '',
+      '--records IS ITS OWN COST CACHE. The key hashes the block\'s source text, the',
+      'model, and BOTH version constants — so editing one paragraph re-cleans that',
+      'paragraph and nothing else, changing --model re-cleans everything, and a',
+      'version bump re-cleans everything, which is correct: a book cleaned at n5',
+      'was cleaned by rules this build no longer runs. A key already in the file is',
+      'never asked again, so a killed run resumes and costs nothing for what it',
+      'already paid for. A row is only appended where it says something new, so',
+      're-running over an unchanged book writes nothing at all — and a position',
+      'whose newest row a PERSON wrote is left exactly as they left it.',
+      '',
+      'A --records file written about a DIFFERENT BOOK is refused by name. The test',
+      'is existence, not coverage: one position in common proves the file is about',
+      'this book, and zero — with rows in it — cannot be an accident.',
+      '',
+      '--stamp IS WHAT A FILE CARRIES. The records say what this run decided about',
+      'a BOOK; the stamp says a particular EPUB was written from that decision, and',
+      'the render door is handed a file. It is written on EVERY run, even one that',
+      'changed not a single character, because a book that merely printed no curly',
+      'quote and no digit has still HAD the pass and must not be asked to pay for',
+      'it again. Hand it to vlm-compile or vlm-convert as --narration-stamp and it',
+      'goes into the book\'s package document. Its normalizerVersion and',
+      'punctuationSpec are read from the modules that define them and are never',
+      'literals, because a stale copy of a version somewhere else is a claim about',
+      'a pass that no longer runs.',
+      '',
+      'THE RECEIPT is written beside the records as <records>.receipt.json: every',
+      'punctuation rule and how often it fired, every span the punctuation stage',
+      'could not reach, and every edit the model proposed with the validator\'s',
+      'verdict on it. A pass whose only output is cleaner text is a pass nobody can',
+      'audit.',
+      '',
+      'THE SERVER IS SOMEBODY ELSE\'S. foundry sends Ollama HTTP at --endpoint and',
+      'does not start it, stop it, pull a model or configure it. A server that is',
+      'not answering ends the run with the URL that was tried; a model the server',
+      'has not got ends it with the list of models it HAS. The weights are released',
+      'when the run ends unless --keep-model says the machine is shared.',
+    ].join('\n'),
+    options: [CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_ENDPOINT, CT_MODEL, CT_KEEP_MODEL],
+    run: runCleanText,
   },
   {
     name: 'epub-final',
