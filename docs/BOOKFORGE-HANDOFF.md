@@ -216,9 +216,29 @@ line-buffered. The commands an integrator needs:
 |---|---|
 | `vlm-read` / `vlm-convert` | read pages with the vision model / render products from a bank (`--reuse-readings` spends no GPU) |
 | `vlm-book` | receipt → book file: `--readings <bank>` or `--epub <file>`, `--out`, `--pdf` or `--pages <dir>` (cut figures), `--language` |
-| `vlm-compile` | book file → EPUB/txt: `--book`, `--out`, `--images`, `--title`, `--author` |
+| `vlm-compile` | book file → EPUB/txt: `--book`, `--out`, `--images`, `--title`, `--author`, `--narration-stamp` |
 | `translate` | book file → records: `--book`, language flags, endpoint config |
+| `clean-text` | book file → records, for a NARRATOR: `--book`, `--records`, `--stamp`, `--endpoint`, `--model` (docs/CLEAN-TEXT.md) |
 | `doctor --json` | environment/report probe |
+
+**`clean-text` is the third text act** and it writes the same records format
+`translate` does, over the same row plan — so the app materialises a cleaned
+book exactly as it materialises a translated one. Two things about it are a
+CROSS-REPO CONTRACT and BookForge reads both:
+
+* `--stamp` writes `{stampVersion, normalizerVersion, punctuationSpec, model,
+  at, punctuationRefused}` — BookForge's `NarrationTextStamp`, field for field.
+  Hand that file to `vlm-compile --narration-stamp` (or `vlm-convert`) and it
+  goes into the OPF as `<meta name="bookforge:narration-text" content="…"/>`,
+  which is what `readNarrationTextStamp` and `narrationTextGate` read.
+* the progress lines are `clean-text: <done>/<total>` per block and a final
+  `clean-text: <n> blocks, <m> changed, <k> edits refused in <s>s`. BookForge
+  mirrors those shapes, so they do not move.
+
+**Foundry now OWNS `NORMALIZER_VERSION` and `PUNCTUATION_SPEC_VERSION`** (Owen,
+2026-09-05), and `src/clean/` is what the orpheus-finetune training repo
+vendors from. Their values are the contract: a change to the rules bumps them
+here and every stamped book correctly reads stale.
 
 Everything the app does goes through these; there is no private channel.
 

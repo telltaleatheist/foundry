@@ -1,8 +1,236 @@
-# The narration text pass
+# Clean text — the narration text pass
 
 **One text-normalization definition, shared by the Orpheus training corpora and
 BookForge's narration**, run as an intentional step the user queues and the book
 remembers.
+
+---
+
+> **PROVENANCE, AND WHO OWNS THIS NOW.** The body of this document below the
+> engine section is BookForge's `docs/NARRATION_TEXT_PASS.md`, vendored
+> byte-identical from `bookforge` main at commit **`0f962d5f`** and then edited
+> only where it names a file path that has moved. Every ruling in it is Owen's
+> and stands unchanged.
+>
+> Owen ruled on **2026-09-05** that the pass MOVES INTO THE ENGINE: the act is
+> called **Clean text**, it is one of three sibling text acts (`translate` /
+> `simplify` / `clean-text`) sharing the records-file machinery, and **Foundry
+> becomes the owner of `NORMALIZER_VERSION` and `PUNCTUATION_SPEC_VERSION`** and
+> the source the `orpheus-finetune` training repo vendors from.
+>
+> The five modules, the two prompts, the word list and both fixture files live
+> in `src/clean/` and `test/clean/fixtures/`, and the commit that put them there
+> changed not one byte of any of them — it is the anchor a drift check pins to.
+> The version-bump policy below is now THIS repository's to obey.
+
+---
+
+## The engine's door — `foundry clean-text`
+
+```
+foundry clean-text --book <book.jsonl> --records <out.records.jsonl>
+                   --stamp <out.stamp.json> [--endpoint <url>]
+                   [--model <name>] [--keep-model]
+```
+
+Input is a **book file** (docs/BOOK-FILE.md), not an EPUB — the engine is handed
+the book itself, one row per block, before any spine or package document exists.
+Output is a **records file** in `src/translate/records.ts`'s format and a
+**stamp**. No second book is written: the app materialises the cleaned edition
+from the records and the parent book together (docs/RENDERER.md §4), which is
+exactly how a translation reaches a file.
+
+### Which blocks — the plan is `translate`'s, imported
+
+`bookRowPlan` + `bookTitlePlan` (`src/translate/bookrows.ts`), unchanged, so
+**exactly the blocks a translation would touch are the blocks a cleanup
+touches**. That file argues every one of its decisions and each is as true of a
+cleanup as of a translation: a shelved row is not in the book, `Formula` and
+`Picture` are skipped and counted, a `Table` is taken apart into cells and put
+back by splicing rather than by asking a model to preserve a grid, a folio is
+carried without being asked about, and a chapter title is asked for only where
+it cannot be PROVED to be a copy of a heading the run already handled. Sharing
+the plan is what makes the two acts commutable.
+
+**This is where the engine diverges from BookForge, deliberately.** That pass
+runs `selectNumberTargets`, which drops a **caption** and a **footnote** — and
+its reason is stated below: the narration cut has already removed them from the
+file the pass is handed. *There is no cut here.* `clean-text` produces records
+about a BOOK, and a caption and a footnote are blocks of the book that
+`translate` transforms like any other. So the plan decides, the selector is not
+consulted, and what a narration copy contains stays the cut's decision, made
+later, by whoever makes it.
+
+`preformatted` is likewise always false on this route, and that is stated rather
+than assumed: a book file row carries no styling and no `white-space`
+declaration, so nothing can read the answer off it. What it costs: a code
+listing the vision model categorised as `Text` is canonicalized like prose here,
+where the EPUB route would have refused it by name.
+
+### The marker rule — what `SPANS_MARKUP` means on a book file
+
+Every refusal this pass makes about markup is expressed against ONE array,
+`segments`: on the EPUB route, the length of each descendant **text node** of an
+element, summing to `text.length`. A span inside one segment can be spliced with
+every tag around it untouched; a span that crosses a boundary would reach across
+an `<em>`, a `<sup>` or a link and is refused `SPANS_MARKUP` rather than
+flattened. Three copies of the same four-line walk enforce it —
+`withinOneNode` in `applyNumberRules`, `withinOneNode` in
+`validateNumberEdits`, `nodeHolding` in the punctuation stage.
+
+**A book file row has no text nodes.** Its markup is IN the string: `**bold**`,
+`*italic*`, `***both***`, `_italic_`, and a run of Unicode superscript digits
+for a note marker (`dotsInline`, `src/vlm/dots.ts`; the mirror is
+`app/shared/inline.ts`). Two obvious answers were both rejected:
+
+* **One segment (`[text.length]`)** — which is what the vendored plain-text
+  driver does for the `.txt` audition path, saying so out loud: *"a block is one
+  text node, so `SPANS_MARKUP` can never fire"*. Harmless on an audition. On a
+  BOOK it lets a punctuation span or a model edit delete one of a pair of
+  asterisks, and the damage does not appear until the book is rendered — a
+  `<strong>` that never closes, or `starEmphasis`' single-star pass pairing the
+  survivor with a star on the far side of an emitted element, which
+  `src/vlm/dialect.ts` carries the measured version of.
+* **Masking the markers** the way `translate` does (`textmask.ts`), showing the
+  model prose with `⟦e1⟧` in it. That breaks the pass at its centre: the
+  validators judge an edit by its WORDS — `keepsEveryWord`, `classifyEdit`, the
+  one-token law — and a token is a word to all of them. The one-token law would
+  be deciding cases about this program's own private syntax.
+
+**So a segment is re-spelled and nothing else moves.** `markerSegments`
+(`src/clean/segments.ts`) cuts a row into the runs of plain text between its
+markers and the marker runs themselves, in order, summing to `text.length`
+exactly as text nodes do. All three checks work unchanged, on unchanged code,
+and the disposition is still `SPANS_MARKUP` because it still means the same
+thing: **an edit may not reach across an inline marker.** The markers come
+through byte for byte around whatever changed.
+
+The boundary is drawn on the **characters** — every maximal run of `*`, `_` or a
+superscript digit — rather than on any one emitter's pairing rule, because this
+asks *"could a character here be markup?"*, not *"is this pair emphasis?"*, and
+its two errors are not symmetric:
+
+| | cost |
+|---|---|
+| over-protect | one cleanup span is refused, BY NAME, in the receipt and in the stamp's `punctuationRefused` count. A person can read it. |
+| under-protect | a star is deleted from the middle of a book by a pass that reported success, and a reader finds it. |
+
+Character runs are provably a superset of every pattern `starEmphasis`,
+`inlineMarkdown` and `textmask.ts` apply — each of those matches only spans
+built out of these characters — so no marker any renderer would write can fall
+inside a plain segment however the pairing rules move. What it costs is named:
+an edit spanning the underscore of `AfW_HH_231191` is refused, and a lone
+asterisk a scan left in the prose protects the two characters beside it.
+
+### The records contract
+
+One row per block asked, in `src/translate/records.ts`'s format — the same file
+`translate --records` writes, and the same reader on the other side.
+
+| field | on this route |
+|---|---|
+| `key` | `cleanKey`: sha-256 over a format string, the **model**, `NORMALIZER_VERSION`, `PUNCTUATION_SPEC_VERSION` and the block's **source text**. |
+| `parts` | the row's own id (`b12-3`, `b12-3#1`, `b2-3/1`), or `chapter:<division id>` for a title. |
+| `text` | the cleaned text, in the flowing block's own dialect. |
+
+**The file is the cost cache.** A key already in it is never asked of a model
+again, so a killed run resumes and pays for nothing it already bought — resume
+semantics identical to `translate`'s appends. What the four key fields buy:
+editing one paragraph re-cleans that paragraph and nothing else; changing
+`--model` re-cleans everything; **a bump to either version re-cleans
+everything**, which is correct rather than unfortunate — a book cleaned at `n5`
+was cleaned by rules this build no longer runs. A paragraph that appears twice
+is asked once and gets two rows, because materialization looks up by POSITION.
+
+A row is only appended where it says something new, so re-running over an
+unchanged book writes nothing at all. A position whose newest row a **person**
+wrote is left exactly as they left it, unless the source text under it has since
+changed — in which case the machine's row goes on top, the run says so, and the
+correction is still in the file above it, because this format appends.
+
+A table is the one block whose record is written once for the whole ROW: the
+cells are cleaned separately and spliced back into the source string's own
+ranges, so the tags, the attributes and the cell order are untouched by
+construction. A grid the answers broke is left as printed and named.
+
+### The stamp
+
+`--stamp` writes BookForge's `NarrationTextStamp`, field for field:
+
+```json
+{"stampVersion": 2, "normalizerVersion": "n6", "punctuationSpec": "s1",
+ "model": "qwen3.8:27b", "at": "2026-09-05T…Z", "punctuationRefused": 0}
+```
+
+The two version fields are **read from the modules that define them** and are
+never literals — `narrationTextStamp` is the only constructor and it takes no
+version parameter, so no caller anywhere can supply its own idea of what `n6`
+is. A stale copy of a version somewhere else is a claim about a pass that no
+longer runs, which is the exact defect this ownership move exists to end.
+
+It is written on **every** run, even one that changed not a single character,
+because the stamp is what unlocks the render: a book that merely printed no
+curly quote and no digit has still HAD the pass.
+
+`punctuationRefused` is the count of punctuation-stage spans the pass could read
+and was not allowed to apply, and **every one of them is named** — on stderr as
+it happens, and in the receipt with its `find`, its `replace` and its reason. So
+a book with three hundred unreachable spans is not byte-indistinguishable from a
+clean one.
+
+Hand the file to `vlm-compile --narration-stamp` or `vlm-convert
+--narration-stamp` and it goes into the OPF's `<metadata>` as
+`<meta name="bookforge:narration-text" content="…"/>` — EPUB 2's form, spliced
+in by `insertPackageMeta` (`src/epub/meta.ts`) by source offset, never by
+re-serialising the package. Ignored with a note on stderr for a non-EPUB format;
+a file that is not a stamp of this shape is refused by name before any work.
+
+### What the run says
+
+Progress on stderr, line-buffered — **BookForge mirrors these shapes, so they do
+not move**:
+
+```
+clean-text: <done>/<total>
+clean-text: <n> blocks, <m> changed, <k> edits refused in <s>s
+```
+
+The **receipt** lands at `<records>.receipt.json`, a suffix on the whole path and
+never a rename (`pendingRecordsPath`'s idiom): every punctuation rule and how
+often it fired, every span the punctuation stage could not reach, every block
+that was asked about, every edit the model proposed and the validator's verdict
+on it. Every refusal is ALSO said on stderr by its **disposition's own name** —
+`REFUSED NOT_A_READING`, `REFUSED SPANS_MARKUP` — because those names are argued
+in this document and a person reading one can find the paragraph that governs
+it, where a person reading "the replacement was not accepted" cannot.
+
+### Refusals by name
+
+* a `--book` that cannot be read, or is not a book file;
+* a book with no block that has words in it;
+* a `--records` file written about a **different book** — the test is EXISTENCE,
+  not coverage: one position in common proves the file is about this book, and
+  zero, with rows in it, cannot be an accident (a partial file is the normal
+  state of a resumed run and must not trip it);
+* a server that does not answer, naming the URL, and a model the server has not
+  got, listing the models it HAS;
+* **more than 10% of blocks failing to parse fails the run** — that is a model
+  this pass cannot use, not a hard book.
+
+A run whose every block is already answered **never opens the server at all**,
+which is `askAboutEach`'s own rule one layer out: an Ollama that is down must
+not fail a pass that had nothing to ask it.
+
+### The model
+
+`qwen3.8:27b` by default (`DEFAULT_TRANSLATE_MODEL` — Owen, 2026-08-22: 27b is
+the standard for every task), **temperature 0**, `num_predict` 2048, one call
+per block, over `/api/chat` through the engine's own Ollama client
+(`src/translate/ollama.ts`). The context window is pinned ONCE for the whole
+book, because Ollama reloads the runner on any change to it. The weights are
+released when the run ends unless `--keep-model` says the machine is shared.
+
+---
 
 > Owen, 2026-09-04: *"We should make this its own intentional step that the user
 > runs and persists, so we don't have to run it again. It runs the step on an
@@ -172,6 +400,14 @@ number edit and the replacement was refused for carrying a digit.
 
 
 ## Where it runs
+
+> The three doors below are **BookForge's**, over an EPUB, and they are recorded
+> here because they are the requirements the rules were shaped by — the ledger,
+> the gate, the stamp and the streaming path all still behave exactly as
+> described. The engine's own door is `foundry clean-text`, above. Until
+> BookForge calls it instead of running its own compiled copy, there are two
+> implementations of this pass and the version-bump policy at the end of this
+> document is what keeps them from drifting.
 
 ### 1. As a ledger pass — the main door
 
@@ -452,32 +688,40 @@ parse. **Pre-existing — it is on `main` too** (found by the adversarial review
 book-less rule is untouched here on purpose, because every change to it is a
 change to how `main` reads text that has nothing to do with scripture.
 
-## Version bump policy
+## Version bump policy — THIS repository's to obey
 
-**Changing `electron/tts-punctuation.ts`, `electron/tts-number-rules.ts`,
-`electron/tts-number-normalizer.ts` or `electron/prompts/tts-number-normalize.txt`
-is a change to the TRAINING CORPORA's text transform.**
+**Changing `src/clean/tts-punctuation.ts`, `src/clean/tts-number-rules.ts`,
+`src/clean/tts-number-normalizer.ts`, `src/clean/tts-spoken-forms.ts` or
+either file in `src/clean/prompts/` is a change to the TRAINING CORPORA's text
+transform.** Owen moved the ownership here on 2026-09-05; the paragraphs below
+were written when it lived one repository over and every one of them still
+holds, with the paths re-pointed.
 
-The orpheus-finetune side vendors BookForge's compiled output byte-for-byte into
+The orpheus-finetune side vendors this transform byte-for-byte into
 `pipeline/normalization/vendor/` and drift-checks it on every training build
 (`check_vendored.py`, `PROVENANCE.json`). A silent change there means a fine-tune
-is handed text that is not the text it learned.
+is handed text that is not the text it learned. **It vendors from `src/clean/`
+now**, pinned to the commit named at the head of this document.
 
 So, on any such change:
 
-1. bump `NORMALIZER_VERSION` (`electron/tts-number-normalizer.ts`) and say in its
-   comment what changed — a stale `.nN.` copy on disk is a claim about a pass that
-   no longer runs, and the cache keys on it;
-2. bump `PUNCTUATION_SPEC_VERSION` (`electron/tts-punctuation.ts`) when a
+1. bump `NORMALIZER_VERSION` (`src/clean/tts-number-normalizer.ts`) and say in
+   its comment what changed — a stale `.nN.` copy on disk is a claim about a pass
+   that no longer runs, and the cache keys on it. **The `clean-text` key holds it
+   too**, so a bump correctly re-buys every block of every book;
+2. bump `PUNCTUATION_SPEC_VERSION` (`src/clean/tts-punctuation.ts`) when a
    punctuation rule changes;
-3. **tell the orpheus-finetune side to re-vendor**, and mirror any new fixture
-   case into `pipeline/normalization/fixtures/cases.json`;
-4. re-run both suites and their harness:
+3. **tell the orpheus-finetune side to re-vendor** from the new commit, and
+   mirror any new fixture case into `pipeline/normalization/fixtures/cases.json`;
+4. **tell BookForge**, which still carries its own copy of these modules for its
+   in-app pass. Two copies of a load-bearing definition is the failure
+   ARCHITECTURE §2 exists to design out, and this move only half-closes it: the
+   engine owns the versions, and BookForge's copy has to follow until it calls
+   `foundry clean-text` instead of running its own;
+5. re-run the keepers and the training side's harness:
 
 ```bash
-npx tsc -p tsconfig.electron.json
-node tools/test-text-normalization.js
-node tools/test-narration-text-pass.js
+tsc --noEmit && bun test
 node C:/Users/tellt/Projects/orpheus-finetune/pipeline/normalization/run_fixtures.js \
      --mode bookforge --bookforge <this checkout>
 node C:/Users/tellt/Projects/orpheus-finetune/pipeline/normalization/run_fixtures.js \
@@ -1021,9 +1265,34 @@ and the live run measured it making it correctly.
 ---
 ---
 
-## Files
+## Files — in THIS repository, which owns them
 
 | file | what |
+|---|---|
+| `src/clean/tts-punctuation.ts` | stage 1, the shared spec (`PUNCTUATION_SPEC_VERSION`) |
+| `src/clean/tts-number-rules.ts` | stage 2 — the rules, and `scriptureSpans` (detect-and-protect) |
+| `src/clean/tts-number-normalizer.ts` | stage 3, the validators and the record (`NORMALIZER_VERSION`) |
+| `src/clean/tts-spoken-forms.ts` | what a token may be read AS — the curated tables |
+| `src/clean/data/english-words.json` | the word test behind the emphasis reading |
+| `src/clean/ai-cleanup-prepass.ts`, `number-expansion.ts`, `line-join.ts` | the three leaves the four above import |
+| `src/clean/prompts/tts-number-normalize.txt` | the number prompt — what the training side vendors |
+| `src/clean/prompts/tts-narration-text.txt` | the wider instruction, appended to it |
+| `src/clean/prompt.ts` | the two, joined the one way, embedded in the binary |
+| `src/clean/segments.ts` | the marker rule — what a segment IS on a book file row |
+| `src/clean/targets.ts` | the two shapes the pass is typed against |
+| `src/clean/punctuate.ts` | stage 1 as spans, and the splice that proves each one landed |
+| `src/clean/runner.ts` | the model, on the engine's own Ollama client |
+| `src/clean/stamp.ts` | the stamp: the name, the shape, the versions, the reader |
+| `src/clean/run.ts` | **the pass** — the plan, the key, the rows, the receipt |
+| `src/commands.ts` | the `clean-text` command and `--narration-stamp` |
+| `src/epub/meta.ts` | `insertPackageMeta` — how a `<meta>` gets into an OPF |
+| `test/clean/fixtures/text-normalization-cases.json` | the shared definition's 132 cases |
+| `test/clean/fixtures/scripture-readings.json` | the books, the shapes and the measured readings |
+| `test/clean/*.test.ts` | the ported keepers |
+
+### And where each of them came from
+
+| bookforge (read-only, `0f962d5f`) | what |
 |---|---|
 | `electron/tts-punctuation.ts` | stage 1, the shared spec (`s1`) |
 | `electron/tts-number-rules.ts` | stage 2 — the rules, and `scriptureSpans` (detect-and-protect) |
