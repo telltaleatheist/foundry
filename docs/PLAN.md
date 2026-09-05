@@ -3843,6 +3843,23 @@ the step/logic to foundry, but only make it visible when vendored to bookforge."
   is not part of a standalone Foundry at all.
 - **No new tests**, per the standing rule; the 423 existing ones pass unchanged.
 
+**Owen's first press, the same evening — two defects, fixed in c93004f:**
+
+- **Two of three export builders dropped the stamp.** The export dialog and the
+  mint-metadata dialog copied `records`, `language` and `bookPath` off the plan
+  by hand and stopped there; only `exportEpubFromStep` carried
+  `narrationStamp`. An export from a cleaned position came out with no
+  `bookforge:narration-text` meta and BookForge's gate asked Owen to clean a
+  book he had just cleaned. The carry is `carriedFromPlan`
+  (`app/shared/pipeline.ts`) now, spread by all three, so nothing is left for a
+  fourth builder to copy by hand. Rule: a `WorkspacePlan` is never hand-copied
+  into a request.
+- **A cleanup's card said "Translated."** `titleForStep` had no `case 'clean'`
+  and the default is the translate sentence — the trap the `capture` comment
+  warns about, fallen into a third time. Owen: *"is an error, and its
+  deceptive."* The `Record<StepAction, …>` tables catch a missing action at
+  compile time; a `switch` with a `default` does not, and there is one.
+
 **Deferred out loud:**
 
 - **The stamp is not swept.** `orphanedBanks` names a step's records file and its
