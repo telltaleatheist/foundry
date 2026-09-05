@@ -163,8 +163,49 @@ export function answerBudget(source: string): number {
   return Math.max(PREDICT_FLOOR, Math.ceil((source.length * ANSWER_CHAR_CEILING) / CHARS_PER_TOKEN));
 }
 
+/**
+ * The three sampling numbers, for the caller that is not translating.
+ *
+ * ── WHY THIS IS A PARAMETER AND NOT A SETTING ───────────────────────────────
+ *
+ * The header's ruling stands and is not being reopened: temperature 0.2 is
+ * MEASURED for a translation and there is no knob for it, because the good
+ * values are already known (ARCHITECTURE §5). What changed is that this file
+ * now serves a second ACT with a different measurement behind it.
+ *
+ * `clean-text` (src/clean/) asks a model to return an anchored edit list, not
+ * prose, and its whole safety story is a wall of validators over a JSON answer.
+ * Its temperature is 0 — pinned by the vendored pass, part of the cross-repo
+ * contract the training corpora are normalized under, and not this file's to
+ * revise. Its `num_predict` is a fixed 2048 for the same reason: an edit list
+ * is bounded by the edits a paragraph can carry, and `answerBudget`'s ratio is
+ * derived from a TRANSLATION's length, which an edit list is not. And its
+ * `num_ctx` is pinned ONCE for a whole book, because Ollama fully reloads the
+ * runner on any change to it and a per-block estimate would churn a 17 GB model
+ * in and out between paragraphs.
+ *
+ * So the numbers are a parameter with the translation's own values as the
+ * default, and every caller that does not pass one gets exactly what it got
+ * before — which is what makes this safe to add rather than a second set of
+ * sampling rules to keep true.
+ */
+export interface ChatTuning {
+  temperature: number;
+  numCtx: number;
+  /** Omitted means `answerBudget` sizes it from the input, as translate wants. */
+  numPredict?: number;
+}
+
+/** Translate's own, unchanged — see `ChatTuning` and this file's header. */
+const TRANSLATE_TUNING: ChatTuning = { temperature: 0.2, numCtx: 8192 };
+
 /** The exact JSON body sent for one block. Separate so a test can read it. */
-export function chatBody(model: string, system: string, user: string): string {
+export function chatBody(
+  model: string,
+  system: string,
+  user: string,
+  tuning: ChatTuning = TRANSLATE_TUNING,
+): string {
   const body: Record<string, unknown> = {
     model,
     stream: false,
@@ -175,7 +216,11 @@ export function chatBody(model: string, system: string, user: string): string {
     // `num_predict` is sized from the block — see `answerBudget`. It is the
     // difference between a model that rambles for two minutes and a model that
     // rambles for two seconds, on a block whose answer is refused either way.
-    options: { temperature: 0.2, num_ctx: 8192, num_predict: answerBudget(user) },
+    options: {
+      temperature: tuning.temperature,
+      num_ctx: tuning.numCtx,
+      num_predict: tuning.numPredict ?? answerBudget(user),
+    },
   };
   if (takesThinkField(model)) body['think'] = false;
   return JSON.stringify(body);
@@ -243,9 +288,10 @@ export async function chat(
   model: string,
   system: string,
   user: string,
+  tuning?: ChatTuning,
 ): Promise<string> {
   const url = `${normaliseEndpoint(endpoint)}/api/chat`;
-  const response = await transport.post(url, chatBody(model, system, user));
+  const response = await transport.post(url, chatBody(model, system, user, tuning));
   if (response.status !== 200) {
     throw new OllamaError(
       `ollama at ${normaliseEndpoint(endpoint)} answered ${response.status} for model "${model}": `

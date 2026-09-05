@@ -58,6 +58,8 @@
  * AND a fused sentence. The context is checked against the block, not the span,
  * because that is where the evidence is.
  */
+import englishWordList from './data/english-words.json';
+
 export type AbbreviationContext =
   /** A digit must follow it: "no. 5", never "a flat no." */
   | 'followed-by-digit'
@@ -336,23 +338,34 @@ export type ReadingRefusal = string | null;
  */
 let englishWords: ReadonlySet<string> | null = null;
 
+/*
+ * ── THE WORD LIST IS IMPORTED, NOT READ ─────────────────────────────────────
+ *
+ * BookForge reached this file with `require('fs')` and `__dirname`, which is
+ * correct there: Electron ships a directory and `dist/electron/data` sits
+ * beside the compiled module. Foundry ships ONE FILE — `bun build --compile`
+ * embeds the runtime and every module in the executable (ARCHITECTURE §1) — and
+ * a `readFileSync` next to `import.meta.dir` inside that binary names a path
+ * that does not exist on the machine it runs on. The failure is the worst kind:
+ * it survives every test run from the checkout and appears only in the shipped
+ * artifact, on the one class of input (a run of capitals) nobody thinks to try.
+ *
+ * So the list is imported as a module and the bundler INLINES it, which is the
+ * rule this repo already follows for `package.json` (src/version.ts) and the
+ * Tesseract pin. The list is 1,547 lines of short words; the cost of carrying
+ * it in the binary is a few tens of kilobytes.
+ *
+ * WHAT IS KEPT IS THE LAZINESS AND THE NAMED FAILURE. The Set is still built
+ * on first use rather than at import, and a list that arrives empty or the
+ * wrong shape is still a refusal that says so — an inlined JSON cannot go
+ * missing, but a re-vendor that hands over the wrong file still can.
+ */
 function loadEnglishWords(): ReadonlySet<string> {
   if (englishWords !== null) return englishWords;
-  const fs = require('fs') as typeof import('fs');
-  const path = require('path') as typeof import('path');
-  const file = path.join(__dirname, 'data', 'english-words.json');
-  let parsed: { words?: unknown };
-  try {
-    parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as { words?: unknown };
-  } catch (err) {
-    throw new Error(
-      `The narration text pass needs its English word list at ${file} to tell a word printed in `
-      + `capitals from an initialism, and could not read it: ${(err as Error).message}. `
-      + 'Build with `npm run build:electron`, which copies electron/data into dist.');
-  }
+  const parsed = englishWordList as { words?: unknown };
   if (!Array.isArray(parsed.words) || parsed.words.length === 0) {
-    throw new Error(`${file} carries no words array, so nothing can say whether a run of `
-      + 'capitals is a word. Nothing was read.');
+    throw new Error('src/clean/data/english-words.json carries no words array, so nothing can '
+      + 'say whether a run of capitals is a word. Nothing was read.');
   }
   englishWords = new Set((parsed.words as string[]).map((w) => w.toLowerCase()));
   return englishWords;

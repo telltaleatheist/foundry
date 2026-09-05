@@ -65,7 +65,7 @@ const HYPHEN_SPLIT = /([A-Za-zÀ-ÿ]+)-[ \t]*\n[ \t]*([A-Za-zÀ-ÿ]+)/g;
 // dehyphenate" welds real compounds shut (far-right → farright), and once the break
 // is gone the corpus attestation below can never recover the word. Keep the break;
 // let proveHyphenVerdict decide it from the book's own evidence.
-export { isWrapHyphenBreak } from '../shared/text/line-join';
+export { isWrapHyphenBreak } from './line-join.js';
 
 export type HyphenVerdict = 'join' | 'hyphen';
 
@@ -1300,14 +1300,6 @@ export function applyEditList(
   }
 
   return { text, records };
-}
-
-function countOccurrences(haystack: string, needle: string): number {
-  if (!needle) return 0;
-  let count = 0;
-  let idx = haystack.indexOf(needle);
-  while (idx !== -1) { count++; idx = haystack.indexOf(needle, idx + needle.length); }
-  return count;
 }
 
 /**

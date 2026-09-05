@@ -53,7 +53,7 @@
  * Doctrine, from the pass above it: pure functions only. No fs, no model, no
  * Electron. Every rule is reachable from a test with no GPU.
  */
-import type { NarrationTextRewrite } from './epub-processor.js';
+import type { NarrationTextRewrite } from './targets.js';
 import { ordinalToWords, pluralizeLastWord, yearToWords } from './number-expansion.js';
 
 /** Anything with an Arabic digit in it. */
@@ -484,9 +484,6 @@ const NUMBERED_BOOK_NAMES: readonly string[] = [
  * Longest first, so "III" is preferred over "II" over "I".
  */
 const VOLUME_NUMBER = '[123]|III|II|I|1st|2nd|3rd';
-
-/** The same set as a test, for the one place that reads a token on its own. */
-const VOLUME_TOKEN = /^(?:[123]|i{1,3}|1st|2nd|3rd)$/i;
 
 /**
  * The two- and three-letter words that stand in front of a number and are NOT

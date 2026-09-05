@@ -81,7 +81,7 @@ import {
 } from './tts-spoken-forms.js';
 import type { ReadingRefusal } from './tts-spoken-forms.js';
 import type { NumberRuleOutcome } from './tts-number-rules.js';
-import type { NarrationNumberTarget, NarrationTextRewrite } from './epub-processor.js';
+import type { NarrationNumberTarget, NarrationTextRewrite } from './targets.js';
 
 // The citation guard is DEFINED in tts-number-rules.ts, because the rules and
 // this validator owe the same answer about "p. 23". Re-exported here so the
@@ -768,18 +768,6 @@ function abbreviationReadingRefusal(token: string, reading: readonly string[]): 
     : `"${said}" is not a reading of "${token}" — this build reads it `
       + `${entry.readings.map((r) => `"${r}"`).join(' or ')}`;
 }
-/**
- * The word tokens of `find` that do not appear, IN ORDER, in `replace`.
- *
- * Greedy and left to right, the same shape as `keepsEveryWord`'s subsequence
- * walk, but it reports WHICH words went missing rather than only whether any
- * did — because the one-token law has to know whether the one that went is the
- * one the class was allowed to change.
- */
-function droppedWords(find: string, replace: string): string[] {
-  return alignWords(find, replace).dropped;
-}
-
 /** "e.g.", "a.m." — single letters joined by periods, which are always one. */
 const DOTTED_LETTERS = /^(?:[A-Za-zÀ-ÿ]\.)+$/;
 
@@ -1094,14 +1082,6 @@ function expandsToken(token: string, word: string): boolean {
   }
   return true;
 }
-
-/**
- * The words a reference's READING is built out of, which are therefore not
- * evidence that a book name arrived.
- */
-const READING_STRUCTURE: ReadonlySet<string> = new Set([
-  'verse', 'verses', 'chapter', 'chapters', 'to', 'through', 'and', 'following',
-]);
 
 export function scriptureWordsSurvive(find: string, replace: string): boolean {
   const prose = (text: string): string[] => text.split(/\s+/)
@@ -2003,7 +1983,7 @@ function ruleRewrites(ruled: NumberRuleOutcome): NarrationTextRewrite[] {
  * which runs on the failure path too, because a pass that threw still left 6-17
  * GB of weights resident and e2a takes the GPU next either way.
  */
-async function askAboutEach(
+export async function askAboutEach(
   asks: readonly NormalizerAsk[],
   runner: NumberNormalizerRunner,
   systemPrompt: string,
@@ -2236,297 +2216,31 @@ export function normalizedTextPaths(
   };
 }
 
-/**
- * Read every number in a narration copy as words, and write the copy that says
- * them.
+/*
+ * ── `normalizeNarrationNumbers` IS NOT HERE, AND THAT IS THE PORT ──────────
  *
- * Returns the input path UNCHANGED, with no model call and no file written, when
- * the book has no digit anywhere a narrator reads — the cut's own precedent
- * (`narrationInputFor` returns the source for a book with nothing to cut): a
- * file with no evidence passes through untouched, same bytes.
+ * BookForge's book door stood at this point: it opened an EPUB, read every
+ * element of every spine document into a target, ran the stages, and wrote the
+ * book back out through `writeNarrationEpub`. It was 290 lines and every one of
+ * them was about a document tree — `readNarrationNumberTargets`,
+ * `applyTextNodeRewrites`, the nav, the NCX, the OPF title, the reconciliation
+ * of a heading against the contents entry that repeats it.
  *
- * Otherwise the copy is ALWAYS written, even when every edit was rejected and
- * the text is unchanged. That is what makes the cache honest: "this input, these
- * rules, this model, and here is the record of what the model said" is a fact
- * worth keeping, and re-deriving it would mean a second model pass over a book
- * the pass has already read.
+ * FOUNDRY IS HANDED THE BOOK, NOT A RENDERING OF IT. `foundry clean-text` reads
+ * a book file (docs/BOOK-FILE.md) whose rows are the blocks themselves, before
+ * any spine, nav or OPF exists, and writes RECORDS rather than a second book —
+ * `src/clean/run.ts`, which is the door that replaces this function. Everything
+ * above this line is shared by both doors unchanged: the rules, the validators,
+ * the one-token law, the retry rules, the parse-failure gate and `askAboutEach`
+ * itself. What was cut is exactly the part that could only ever mean something
+ * inside an EPUB, and it was cut rather than left to rot because it would not
+ * compile: it imports a module this engine deliberately does not have.
+ *
+ * `normalizeTextBlocks` below IS kept, though nothing in this engine calls it.
+ * It is the audition path's driver, it compiles, and it is the second witness
+ * that `askAboutEach` serves more than one caller — which is the property that
+ * stops the two from drifting.
  */
-export async function normalizeNarrationNumbers(
-  inputPath: string,
-  runner: NumberNormalizerRunner,
-  options: EpubNumberNormalizationOptions,
-): Promise<NumberNormalizationOutcome | null> {
-  const { readNarrationNumberTargets, writeNarrationEpub } = await import('./epub-processor.js');
-
-  const inputSha16 = options.inputSha16;
-  const { epubPath, recordPath } = normalizedCopyPaths(options.outDir, inputSha16, runner.model);
-
-  // Both halves or neither: the record IS part of the artifact (it is the review
-  // trail and what makes the rewrite reversible for display), so a copy sitting
-  // beside a missing record describes a pass nobody can check, and is re-made.
-  try {
-    await fs.access(epubPath);
-    const record = JSON.parse(await fs.readFile(recordPath, 'utf8')) as NumberNormalizationRecord;
-    console.log(
-      `[TTS-NUMBERS] ${record.appliedSpans} number(s) already read as words by `
-      + `${record.model} (copy on disk reused): ${epubPath}`);
-    return { epubPath, recordPath, reused: true, record };
-  } catch { /* not normalized yet, or the record is not beside it */ }
-
-  const policy: NumberEditPolicy =
-    options.ask === 'every-block' ? EVERY_CLASS : NUMBERS_ONLY;
-  const targets = await readNarrationNumberTargets(inputPath);
-  const selected = selectNumberTargets(targets, options.ask);
-  if (selected.length === 0) {
-    console.log(
-      `[TTS-NUMBERS] ${path.basename(inputPath)} prints no digits a narrator would read — `
-      + 'the book passes through untouched.');
-    return null;
-  }
-
-  // Context is the book's own neighbours, in the book's own order, so a year is
-  // read against the sentence it stands in. Indexed over ALL targets rather than
-  // the selected ones: the paragraph before a date is usually digit-free, and
-  // that is exactly the paragraph that says whether 1200 is a year.
-  const positionOf = new Map<string, number>();
-  targets.forEach((t, i) => positionOf.set(t.key, i));
-
-  const isTocEntry = (t: NarrationNumberTarget): boolean => t.kind === 'nav' || t.kind === 'ncx';
-  // A contents entry that repeats a heading of this book is NOT asked about
-  // separately — it takes the heading's own edits below. Decided before the first
-  // request, so the total the progress bar reports is the number of requests
-  // that will actually be made, and computed off the SELECTED set because a
-  // heading with no digits is not a heading this pass has an opinion about.
-  const headingTexts = new Set(
-    selected.filter(isHeadingTarget).map((t) => collapseForTocMatch(t.text)));
-  const asked = selected.filter(
-    (t) => !(isTocEntry(t) && headingTexts.has(collapseForTocMatch(t.text))));
-
-  const asks: NormalizerAsk[] = asked.map((t) => {
-    const at = positionOf.get(t.key)!;
-    // Only a neighbour of the SAME kind in the SAME file is context: the entry
-    // after a contents line is another chapter's name, which says nothing about
-    // this one's numbers.
-    const sameRun = (offset: number): string | null => {
-      const other = targets[at + offset];
-      if (other === undefined || other.kind !== t.kind || other.file !== t.file) return null;
-      return other.text;
-    };
-    return {
-      key: t.key, text: t.text, segments: t.segments,
-      previous: sameRun(-1), next: sameRun(1),
-    };
-  });
-
-  const { decisions: pending, parseFailed, asked: targetsAsked } =
-    await askAboutEach(asks, runner, options.systemPrompt, options.onProgress,
-      options.ask, policy);
-
-  // ── The heading and its contents entries, made to say ONE thing ───────────
-  //
-  // e2a matches a body heading against the TOC titles it was handed, to recognize
-  // a chapter opening that lost its heading tag, and the m4b's chapter names come
-  // from that same list — so the two MUST be the same string. Guaranteed here by
-  // construction rather than hoped for: the heading's own edits are offered to
-  // every entry that repeats it, and only the edits that land on EVERY one of
-  // them are applied to ANY of them. An edit that will not land on the contents
-  // line is taken back off the heading too (`TOC_MISMATCH`), so the two cannot
-  // diverge in either direction.
-  //
-  // THE RULE EDITS GO THROUGH THIS TOO, and they are checked differently on
-  // purpose. A rule edit is not re-validated — the validator would refuse
-  // "2 Cor. 10:4" → "Second Corinthians ten four" for losing the word "Cor.",
-  // which is precisely what the abbreviation rule exists to do. It is asked of
-  // the member's OWN rules instead: a rule edit lands on a member iff running
-  // the rules over that member produced the same edit. They genuinely can
-  // differ — `applyNumberRules` is a pure function of the text AND its text
-  // nodes, so a heading carrying an `<em>` can refuse a span that its one-node
-  // contents entry takes — and that is exactly the divergence this exists to
-  // stop.
-  const groups = new Map<string, NarrationNumberTarget[]>();
-  for (const target of selected) {
-    if (!isHeadingTarget(target) && !isTocEntry(target)) continue;
-    const key = collapseForTocMatch(target.text);
-    const list = groups.get(key);
-    if (list === undefined) groups.set(key, [target]); else list.push(target);
-  }
-  const editId = (e: { find: string; replace: string }): string => `${e.find}\u0000${e.replace}`;
-
-  const TOC_MISMATCH_DETAIL = 'the heading and its contents entry could not both take it';
-
-  for (const [, members] of groups) {
-    const headings = members.filter(isHeadingTarget);
-    const entries = members.filter(isTocEntry);
-    if (headings.length === 0 || entries.length === 0) continue;  // nothing to reconcile
-
-    // A contents entry that was never asked has no settled decision yet, so it
-    // gets its own deterministic reading here — the same function, same text.
-    const ruledOf = new Map<string, NumberRuleOutcome>();
-    for (const member of members) {
-      ruledOf.set(member.key,
-        pending.get(member.key)?.ruled ?? applyNumberRules(member.text, member.segments));
-    }
-    const ruleIdsOf = (key: string): Set<string> =>
-      new Set(ruledOf.get(key)!.rewrites.map(editId));
-
-    // The first heading in book order is the proposal. A second heading printing
-    // the same words gets the same reading, which is the point.
-    const head = pending.get(headings[0].key);
-    if (head === undefined) {
-      throw new Error(
-        `The number-normalization pass reached no decision about the heading ${headings[0].key} `
-        + 'that its contents entries repeat. Nothing was written.');
-    }
-    const headRuleIds = ruleIdsOf(headings[0].key);
-    const proposal = head.accepted.map((e) => ({ find: e.find, replace: e.replace }));
-    const byRule = (e: { find: string; replace: string }): boolean => headRuleIds.has(editId(e));
-
-    const survives = new Set(proposal.map(editId));
-    for (const member of members) {
-      const ruled = ruledOf.get(member.key)!;
-      const landed = new Set<string>(ruleIdsOf(member.key));
-      for (const edit of validateNumberEdits(
-        ruled.text, ruled.segments, proposal.filter((e) => !byRule(e)),
-        ruleSpansInApplied(ruled), policy).accepted) {
-        landed.add(editId(edit));
-      }
-      for (const id of [...survives]) if (!landed.has(id)) survives.delete(id);
-    }
-
-    for (const member of members) {
-      const ruled = ruledOf.get(member.key)!;
-      const spans = ruleSpansInApplied(ruled);
-      const memberRuleIds = ruleIdsOf(member.key);
-
-      const fromRules = ruled.rewrites
-        .filter((e) => survives.has(editId(e)))
-        .map(({ at, find, replace }) => ({ at, find, replace }));
-      const fromModel = validateNumberEdits(
-        ruled.text, ruled.segments,
-        proposal.filter((e) => survives.has(editId(e)) && !byRule(e)), spans, policy,
-      ).accepted.map((edit) => ({
-        find: edit.find, replace: edit.replace, at: toOriginalOffset(spans, edit.at),
-      }));
-      const accepted = [...fromRules, ...fromModel].sort((a, b) => a.at - b.at);
-
-      const was = pending.get(member.key);
-      const records: NumberEditRecord[] = [];
-      if (was !== undefined) {
-        // Everything already settled about this member, with the applied edits
-        // the group could not agree on demoted by name.
-        for (const record of was.records) {
-          const applied = record.status === 'APPLIED' || record.status === 'APPLIED_RULE';
-          records.push(applied && !survives.has(editId(record))
-            ? { ...record, status: 'TOC_MISMATCH', detail: TOC_MISMATCH_DETAIL }
-            : record);
-        }
-      } else {
-        // A contents entry that cost no request: its trail is its own rules'
-        // reading, plus whatever the heading proposed on top of it.
-        for (const edit of ruled.rewrites) {
-          records.push(survives.has(editId(edit))
-            ? { find: edit.find, replace: edit.replace, status: 'APPLIED_RULE', detail: edit.rule }
-            : {
-              find: edit.find, replace: edit.replace,
-              status: 'TOC_MISMATCH', detail: TOC_MISMATCH_DETAIL,
-            });
-        }
-        for (const edit of proposal) {
-          if (memberRuleIds.has(editId(edit))) continue;  // recorded just above
-          records.push(survives.has(editId(edit))
-            ? { ...edit, status: 'APPLIED' }
-            : { ...edit, status: 'TOC_MISMATCH', detail: TOC_MISMATCH_DETAIL });
-        }
-      }
-      pending.set(member.key, {
-        status: was === undefined ? 'SHARED_WITH_HEADING' : was.status,
-        accepted,
-        records,
-        ruled,
-        ...(was === undefined || was.rawAnswer === undefined ? {} : { rawAnswer: was.rawAnswer }),
-      });
-    }
-  }
-
-  // The record and the rewrite plan, built from the SAME settled decisions, so
-  // the copy on disk and the review trail beside it cannot describe two passes.
-  const rewrites = new Map<string, NarrationTextRewrite[]>();
-  const units: NumberUnitRecord[] = [];
-  const dispositions: Record<string, number> = {};
-  const appliedByClass: Record<string, number> = {};
-  for (const target of selected) {
-    const settled = pending.get(target.key);
-    if (settled === undefined) {
-      // Every selected target was either asked about or reconciled against the
-      // heading it repeats. One that is neither means the two passes above
-      // disagree about what this book holds, which is not a book to narrate.
-      throw new Error(
-        `The number-normalization pass reached no decision about ${target.key}. Nothing was written.`
-      );
-    }
-    if (settled.accepted.length > 0) rewrites.set(target.key, settled.accepted);
-    for (const record of settled.records) {
-      dispositions[record.status] = (dispositions[record.status] ?? 0) + 1;
-      if (record.status !== 'APPLIED' && record.status !== 'APPLIED_RULE') continue;
-      const klass = record.editClass ?? classifyEdit(record.find);
-      appliedByClass[klass] = (appliedByClass[klass] ?? 0) + 1;
-    }
-    units.push({
-      key: target.key, kind: target.kind, file: target.file, status: settled.status,
-      text: target.text, edits: settled.records,
-      ...(settled.rawAnswer === undefined ? {} : { rawAnswer: settled.rawAnswer }),
-    });
-  }
-
-  await fs.mkdir(options.outDir, { recursive: true });
-  // Written to a staging name and renamed into place, so a process that dies
-  // mid-write cannot leave a truncated file under the name the reuse branch
-  // above trusts. The record is renamed FIRST: the copy is what the reuse branch
-  // tests for, so it must be the last of the two to appear.
-  const stagingEpub = path.join(options.outDir, `${inputSha16}.staging-${crypto.randomUUID()}.epub`);
-  const stagingRecord = `${stagingEpub}.edits.json`;
-  const written = await writeNarrationEpub(inputPath, stagingEpub, [], {
-    excludeCaptions: options.copy.excludeCaptions,
-    excludeFootnotes: options.copy.excludeFootnotes,
-    stripSupMarkers: options.copy.stripSupMarkers,
-    rewrites,
-  });
-
-  const record: NumberNormalizationRecord = {
-    normalizerVersion: NORMALIZER_VERSION,
-    model: runner.model,
-    source: inputPath,
-    inputSha16,
-    generatedAt: new Date().toISOString(),
-    targetsTotal: targets.length,
-    targetsSelected: selected.length,
-    targetsAsked,
-    unitsParseFailed: parseFailed,
-    appliedSpans: written.rewrittenSpans,
-    // The two halves of that count, from the tally the same decisions produced:
-    // an APPLIED_RULE record IS an accepted rule edit and an APPLIED record IS an
-    // accepted model edit — anything the reconciliation took back is TOC_MISMATCH
-    // by then and in neither.
-    appliedByRules: dispositions.APPLIED_RULE ?? 0,
-    appliedByModel: dispositions.APPLIED ?? 0,
-    scriptureReferences: dispositions.SCRIPTURE_PROTECTED ?? 0,
-    dispositions,
-    appliedByClass,
-    units,
-  };
-  await fs.writeFile(stagingRecord, JSON.stringify(record, null, 2), 'utf8');
-  await fs.rename(stagingRecord, recordPath);
-  await fs.rename(stagingEpub, epubPath);
-
-  console.log(
-    `[TTS-NUMBERS] ${written.rewrittenSpans} number(s) read as words over `
-    + `${selected.length} of ${targets.length} passage(s) — ${record.appliedByRules} by rules, `
-    + `${record.appliedByModel} by ${runner.model} (asked about ${targetsAsked}); `
-    + `${record.scriptureReferences} scripture reference(s) protected; dispositions `
-    + `${JSON.stringify(dispositions)}; the copy is ${epubPath}`);
-
-  return { epubPath, recordPath, reused: false, record };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The same pass, over a plain-text input
