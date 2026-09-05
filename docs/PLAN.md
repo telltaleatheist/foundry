@@ -3709,6 +3709,64 @@ which gains only 2 joins from it:
 - **No new tests**, per the standing rule; the 423 existing ones pass
   unchanged, which is the statement that the 82 working joins did not move.
 
+### Wave 55 — Clean text: the narration pass becomes the engine's (Owen, 2026-09-05) — BUILT
+
+> Owen, 2026-09-05: the narration text pass **moves into Foundry**, the act is
+> called **Clean text**, it is one of three sibling text acts
+> (`translate` / `simplify` / `clean-text`) sharing the records-file machinery,
+> and **Foundry becomes the owner of `NORMALIZER_VERSION`** and the source the
+> `orpheus-finetune` training repo vendors from.
+
+The design and every ruling behind it are in **docs/CLEAN-TEXT.md**, which is
+BookForge's own doctrine moved here with an engine section on the front.
+
+- The five modules, three leaves, two prompts, the word list and both fixture
+  files were vendored **byte-identical** from `bookforge` main `0f962d5f` in two
+  commits that changed not one byte — the anchor a drift check pins to — before
+  a line of porting happened.
+- `foundry clean-text --book --records --stamp [--endpoint] [--model]`. Same row
+  plan as `translate` (`bookRowPlan` + `bookTitlePlan`), same records format,
+  same resume semantics; the key holds both version constants, so a bump
+  re-buys every block rather than leaving stale answers keyed to dead rules.
+- The marker rule: `markerSegments` re-spells what a *segment* is on a flowing
+  row, so all three of the vendored `SPANS_MARKUP` checks work UNCHANGED and an
+  edit still cannot reach across an emphasis delimiter or a superscript run.
+- `--narration-stamp` on `vlm-compile` and `vlm-convert` writes the stamp into
+  the OPF through `insertPackageMeta` (`src/epub/meta.ts`), by source-offset
+  splice.
+- Measured end to end against local Ollama on a book carrying a date, a grouped
+  number, a clock, a page citation, two scripture references, an abbreviation,
+  an acronym, a spaced hyphen, a bracketed aside, an emphasis span and a
+  superscript marker — and again from a `bun build --compile` binary, which is
+  what proves the word list and both prompts are embedded rather than read off
+  a path that exists only in the checkout.
+
+**Deferred out loud, not silently:**
+
+- **BookForge still runs its own compiled copy of this pass.** Two
+  implementations of a load-bearing definition is what ARCHITECTURE §2 exists to
+  design out, and this move only half-closes it: the engine owns the versions,
+  and BookForge's copy has to follow until it calls `foundry clean-text`
+  instead. Named in docs/CLEAN-TEXT.md, and step 5 of the version-bump policy
+  is the interim guard.
+- **`narration-text-readiness.ts` was not moved.** It is the LEDGER-side gate —
+  "is the `narration-text` entry the last text-changing one?" — and it asks a
+  question about applied passes, which is a concept the app owns and this engine
+  has no model of. The FILE gate (the stamp) is here; the PROJECT gate stays
+  there.
+- **Captions and footnotes are cleaned here and are not in BookForge's pass.**
+  Deliberate, argued in docs/CLEAN-TEXT.md: that exclusion exists because the
+  narration cut has already removed them, and there is no cut on this route.
+  Worth Owen's eye if a narration copy ever reads one aloud that it should not.
+- **`preformatted` is always false on a book file row.** Nothing in the format
+  can say the whitespace is the author's, so a code listing the model
+  categorised as `Text` is canonicalized like prose here where the EPUB route
+  refused it. Stated in `src/clean/targets.ts` and in the doc.
+- **No new tests**, per the standing rule. What landed under `test/clean/` are
+  PORTS of BookForge's existing keepers against the two vendored fixture files;
+  its Ollama-gated `--scripture` probe was deliberately not ported, because that
+  repo's own ruling keeps it out of the keeper sweep.
+
 ---
 
 ## 8. Session hygiene
