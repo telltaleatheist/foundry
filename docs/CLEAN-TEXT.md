@@ -48,6 +48,78 @@ Output is a **records file** in `src/translate/records.ts`'s format and a
 from the records and the parent book together (docs/RENDERER.md §4), which is
 exactly how a translation reaches a file.
 
+### The EPUB door — the FAILSAFE, and never the standard method
+
+```
+foundry clean-text --epub <in.epub> --out <out.epub>
+                   [--endpoint <url>] [--model <name>] [--keep-model]
+```
+
+> Owen, 2026-09-05: the bare-EPUB cleanup **STAYS as a FAILSAFE** — a user who
+> forgot, whom BookForge asks about at the narrate door — **but never as the
+> standard method.**
+
+The standard method is the book route above, because a cleanup there is a
+**step**: everything the person does after it carries the cleanup along. This
+route produces a FILE and nothing that remembers how it was made, so a re-export
+from the project loses it. Replacing the existing EPUB and showing the
+"re-export loses it" notice are **BookForge's to build**.
+
+**Mutually exclusive with `--book` / `--records` / `--stamp` / `--generation`,
+refused by name.** They are two doors onto one pass and they do not name their
+blocks the same way, so a run handed both would pick a source silently and file
+its answers under the other one's names. `--out` on the book route is refused for
+the mirror reason: that route writes records, and the app materialises the
+cleaned edition from them.
+
+**It is ONE implementation of the pass**, riding `translate`'s EPUB route:
+
+* `readFoundryBook` — the container chain and the admission rule. An EPUB with no
+  `data-bf-cat` anywhere is refused by name and pointed at `foundry epub-stamp`,
+  exactly as `translate` refuses one.
+* `findBlocks` — the same walk over the same stamped categories.
+* `spliceAll` — every answer back into the **source range** it came out of, right
+  to left, overlaps refused. The container, the ids, the spine, the file names,
+  `dc:identifier`, every `data-bf-*` attribute and every unedited byte survive
+  **by construction** rather than by intention. Nothing is re-wrapped: the
+  element around a rewritten text node is untouched.
+* `--out` equal to `--epub` is refused — the engine's standing self-overwrite
+  refusal.
+
+**A segment here is a TEXT NODE, and that is the vendored code's own
+segmentation.** The book route re-spells a segment as `markerSegments` because a
+row's markup is IN its string; on this route it is not. A block is an element,
+its markup is `<em>`, `<sup>` and anchors, and `SPANS_MARKUP` means exactly what
+it was written to mean. `markerSegments` is not consulted at all here: a `*` in a
+publisher's paragraph is an asterisk the author printed.
+
+**Only a text node whose text actually changed is written.** An untouched node
+keeps its own bytes — its entities, its whitespace, its spelling. A node that
+changed is re-encoded, so `&#8212;` inside it comes back as a literal em dash;
+outside one, it is not touched. The exception is an entity this program does not
+decode (`&oelig;`): re-encoding it would turn a œ a reader sees into the literal
+text, so a block holding one is **left as printed and named**, on `translate`'s
+own mercy.
+
+**The cost cache is `<out>.clean-bank.jsonl`**, opened without a flag because
+there is nothing to choose: the book route's cache is the records file the caller
+names, and this route names none. It exists for `bank.ts`'s measured reason — the
+ZIP is written at the very end, so a killed run has produced nothing. The key is
+its own format (`clean/xhtml/v1`) and it hashes the node SPLIT as well as the
+words, because the answer is one string per node and a node array replayed into a
+different markup shape would put a cleaned clause inside the wrong `<em>`.
+Nothing is migrated between the two formats — `KEY_FORMATS`' rule.
+
+**The stamp goes into `--out`'s package document AND beside it** as
+`<out>.stamp.json`, so the sidecar/OPF pair exists on this route too. Its
+positions are the archive's own — `<archive path>#<n>` — because a bare EPUB has
+no book file and may carry no `data-bf-src` at all. It follows, and is stated
+rather than discovered, that handing this sidecar to `vlm-compile
+--narration-stamp` refuses: those positions name no book file's rows, which is
+the correct answer.
+
+A stamp already in the package is **replaced in its own place**, never joined.
+
 ### Which blocks — the plan is `translate`'s, imported
 
 `bookRowPlan` + `bookTitlePlan` (`src/translate/bookrows.ts`), unchanged, so

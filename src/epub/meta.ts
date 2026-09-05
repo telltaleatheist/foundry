@@ -517,15 +517,28 @@ function uniqueIdentifierElement(opfPath: string, view: PackageView): XmlElement
  *
  * Two `<meta>` under one name would be two claims about one file, and nothing
  * downstream has a rule for which of them wins. So every existing one is
- * removed and one is written. They are removed with `removalRange`, so a
- * package does not gain a blank line each time it is re-stamped, and the
- * removals and the insertion go through `spliceAll` together — which refuses an
- * overlap rather than letting two edits disagree about what the file will look
- * like.
+ * removed and one is written.
  *
- * The insertion point is `metaInsertionPoint`'s: after the LAST thing in
- * `<metadata>`, which keeps the `<meta>` block together at the end the way
- * every package a person has ever opened is laid out.
+ * ── AND WHERE ONE IS ALREADY THERE, IT IS REPLACED IN ITS OWN PLACE ─────────
+ *
+ * This used to remove every existing one and then insert after the last
+ * SURVIVING element of `<metadata>`, and it was wrong in the one arrangement
+ * this program itself writes: a stamp is appended LAST, so the element before it
+ * is the last survivor, and the insertion point lands exactly on the newline
+ * `removalRange` takes with the doomed element. Two edits over one offset —
+ * which `spliceAll` refuses, correctly and loudly, with a message blaming the
+ * block walk. It went unmet until `clean-text --epub`, the first caller that
+ * re-stamps a book that already carries a stamp.
+ *
+ * Replacing the FIRST existing one in its own range fixes it by construction
+ * and is the better answer anyway: a re-stamped package differs from the old one
+ * in exactly the characters of the claim that changed, rather than losing a line
+ * here and gaining one there — which is what makes "only the stamp changed"
+ * something a person can see in a diff. Any further copies are still removed.
+ *
+ * With none there, the insertion point is `metaInsertionPoint`'s: after the LAST
+ * thing in `<metadata>`, which keeps the `<meta>` block together at the end the
+ * way every package a person has ever opened is laid out.
  */
 export function insertPackageMeta(
   opfPath: string,
@@ -534,18 +547,24 @@ export function insertPackageMeta(
   content: string,
 ): string {
   const view = viewPackage(opfPath, source);
+  const written = `<meta name="${escapeAttr(name)}" content="${escapeAttr(content)}"/>`;
 
   const doomed = elementChildren(view.metadata).filter(
     (child) => localName(child.tag) === 'meta' && child.attrs.get('name') === name,
   );
-  const where = metaInsertionPoint(view, new Set(doomed));
-  const edits = doomed.map((el) => removalRange(source, el));
-  edits.push({
+  const standing = doomed[0];
+  if (standing !== undefined) {
+    const edits = doomed.slice(1).map((el) => removalRange(source, el));
+    edits.push({ start: standing.start, end: standing.end, text: written });
+    return spliceAll(source, edits);
+  }
+
+  const where = metaInsertionPoint(view, new Set());
+  return spliceAll(source, [{
     start: where.at,
     end: where.at,
-    text: `\n${where.indent}<meta name="${escapeAttr(name)}" content="${escapeAttr(content)}"/>`,
-  });
-  return spliceAll(source, edits);
+    text: `\n${where.indent}${written}`,
+  }]);
 }
 
 function escapeText(value: string): string {

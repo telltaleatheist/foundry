@@ -242,7 +242,20 @@ CROSS-REPO CONTRACT and BookForge reads both:
   names blocks — it has no book file to check them against.
 * the progress lines are `clean-text: <done>/<total>` per block and a final
   `clean-text: <n> blocks, <m> changed, <k> edits refused in <s>s`. BookForge
-  mirrors those shapes, so they do not move.
+  mirrors those shapes, so they do not move — **on both routes**.
+
+**The bare-EPUB route is a FAILSAFE and never the standard method** (Owen,
+2026-09-05): `foundry clean-text --epub <in.epub> --out <out.epub>`. It exists
+for a user who forgot, and BookForge asks about it at narrate. Replacing the
+existing EPUB and the "re-export loses it" notice are **BookForge's to build**.
+It is one implementation of the pass — `translate`'s EPUB route, spliced back by
+source range, so the container, the ids, the spine, the file names,
+`dc:identifier` and every `data-bf-*` attribute survive and the ONLY change to
+the package document is the stamp. It writes the stamp into `--out`'s OPF and
+beside it as `<out>.stamp.json`, and banks its answers in
+`<out>.clean-bank.jsonl`. That sidecar names ARCHIVE positions rather than row
+ids, so it is not a stamp to hand to `vlm-compile`. `--epub` is mutually
+exclusive with `--book`/`--records`/`--stamp`/`--generation` and says so by name.
 
 **Foundry now OWNS `NORMALIZER_VERSION` and `PUNCTUATION_SPEC_VERSION`** (Owen,
 2026-09-05), and `src/clean/` is what the orpheus-finetune training repo

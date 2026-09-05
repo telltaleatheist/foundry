@@ -1014,6 +1014,24 @@ const CT_STAMP: OptionSpec = {
   describe: 'Where the narration text stamp goes — what a rendered EPUB carries to prove this ran.',
 };
 
+/**
+ * The FAILSAFE door — Owen, 2026-09-05, and the ruling is in the describe line
+ * because the flag's danger is that it looks like the ordinary way to do this.
+ */
+const CT_EPUB_IN: OptionSpec = {
+  name: 'epub',
+  type: 'string',
+  placeholder: '<in.epub>',
+  describe: 'FAILSAFE: clean a finished EPUB in place of a book file. Never the standard method.',
+};
+
+const CT_EPUB_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<out.epub>',
+  describe: 'Where the cleaned EPUB is written, with the stamp in its package document. --epub only.',
+};
+
 const CT_ENDPOINT: OptionSpec = {
   name: 'endpoint',
   type: 'string',
@@ -1044,6 +1062,54 @@ const CT_KEEP_MODEL: OptionSpec = {
  * which is what exit code 2 means (src/cli.ts).
  */
 async function runCleanText(args: ParsedArgs): Promise<void> {
+  /*
+   * ── TWO DOORS, AND ASKING FOR BOTH IS REFUSED BEFORE A BYTE IS READ ─────────
+   *
+   * `translate`'s rule for `--book` against `--epub`, for its reason: they are
+   * two spellings of one book and they do not name their blocks the same way, so
+   * a run handed both would silently pick a source and file its answers under
+   * whichever one it chose. The three book-route flags name a records file, a
+   * stamp file and a generation token, and the EPUB route writes none of them —
+   * a flag this command accepted and dropped on the floor is how somebody ends
+   * up looking for a file that was never going to exist.
+   */
+  const epubIn = optionalString(args, 'epub');
+  if (epubIn !== undefined) {
+    const bookRoute = (['book', 'records', 'stamp', 'generation'] as const)
+      .filter((name) => optionalString(args, name) !== undefined);
+    if (bookRoute.length > 0) {
+      throw new UsageError(
+        `--epub is the bare-EPUB failsafe and ${bookRoute.map((n) => `--${n}`).join(', ')} `
+        + `belong${bookRoute.length === 1 ? 's' : ''} to the book-file route. They are two doors `
+        + 'onto one pass: the book route writes RECORDS keyed by the row ids a derived book keeps, '
+        + 'and this one rewrites a finished file in place of them. Asking for both would mean '
+        + 'choosing a source silently and filing the answers under the other one\'s names. The '
+        + 'EPUB route writes its stamp into --out\'s package document and beside it as '
+        + '<out>.stamp.json; it needs no --records, no --stamp and no --generation.',
+      );
+    }
+    const outPath = requireString(args, 'out', 'where the cleaned EPUB is written');
+    const { cleanTextEpub } = await import('./clean/epub.js');
+    await cleanTextEpub({
+      epubPath: epubIn,
+      outPath,
+      ...(optionalString(args, 'endpoint') === undefined
+        ? {} : { endpoint: optionalString(args, 'endpoint')! }),
+      ...(optionalString(args, 'model') === undefined
+        ? {} : { model: optionalString(args, 'model')! }),
+      ...(flag(args, 'keep-model') ? { keepModel: true } : {}),
+      log,
+    });
+    return;
+  }
+  if (optionalString(args, 'out') !== undefined) {
+    throw new UsageError(
+      '--out names the EPUB this run writes, and only the --epub failsafe writes one. The book '
+      + 'route produces RECORDS: the app materialises the cleaned edition from them and the parent '
+      + 'book together (docs/RENDERER.md §4), so there is no second book for --out to name.',
+    );
+  }
+
   const bookPath = requireString(args, 'book', 'the book file whose blocks are cleaned');
   const recordsPath = requireString(args, 'records', 'where the cleaned text is written');
   const stampPath = requireString(args, 'stamp', 'where the narration text stamp is written');
@@ -3634,7 +3700,8 @@ export const COMMANDS: readonly Command[] = [
     name: 'clean-text',
     summary: 'Clean a book\'s text for a narrator: punctuation, numbers as words, the model on every block.',
     usage: '--book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
-      + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--keep-model]',
+      + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--keep-model]'
+      + '  |  --epub <in.epub> --out <out.epub> [--endpoint <url>] [--model <name>] [--keep-model]',
     detail: [
       'THE THIRD TEXT ACT. translate turns a book into another language, --rewrite',
       'turns it into plainer prose, and this turns it into the text a NARRATOR is',
@@ -3742,6 +3809,37 @@ export const COMMANDS: readonly Command[] = [
       'verdict on it. A pass whose only output is cleaner text is a pass nobody can',
       'audit.',
       '',
+      '--epub IS A FAILSAFE AND NEVER THE STANDARD METHOD — Owen, 2026-09-05. It',
+      'is for a person who exported a book and only then remembered the pass, and',
+      'BookForge asks about it at the narrate door. The standard method is the',
+      'book route above, because a cleanup there is a STEP: everything the person',
+      'does afterwards carries it along. This one produces a FILE and nothing that',
+      'remembers how it was made, so a re-export from the project loses it.',
+      '',
+      'It is ONE implementation of the pass and not a second one. It rides the',
+      'route translate uses over an EPUB: the same walk over the blocks foundry',
+      'stamps (data-bf-cat), the same three stages on the block\'s text, and every',
+      'answer spliced back into the SOURCE RANGE it came out of — so the',
+      'container, the ids, the spine, the file layout, dc:identifier and every',
+      'unedited byte are the book\'s own by construction. The one change to the',
+      'package document is the stamp. An EPUB carrying no foundry stamps is',
+      'refused by name and pointed at `foundry epub-stamp`; an --out equal to',
+      '--epub is refused as every self-overwrite in this engine is.',
+      '',
+      'ON THIS ROUTE A SEGMENT IS A TEXT NODE, which is what the pass was written',
+      'for: a block is an element, its markup is <em>, <sup> and anchors, and',
+      'SPANS_MARKUP means what it has always meant. The book route re-spells a',
+      'segment because a row\'s markup is IN its string; here it is not, and a `*`',
+      'in a publisher\'s paragraph is an asterisk the author printed.',
+      '',
+      'The answers are banked in <out>.clean-bank.jsonl so a killed run resumes',
+      'and re-buys nothing — this route writes its ZIP at the very end, which is',
+      'the measurement --bank exists because of. The stamp goes into --out\'s',
+      'package document AND beside it as <out>.stamp.json. That sidecar names the',
+      'archive\'s own positions rather than a book file\'s row ids, because a bare',
+      'EPUB has none; handing it to vlm-compile --narration-stamp therefore',
+      'refuses, which is the correct answer.',
+      '',
       'THE SERVER IS SOMEBODY ELSE\'S. foundry sends Ollama HTTP at --endpoint and',
       'does not start it, stop it, pull a model or configure it. A server that is',
       'not answering ends the run with the URL that was tried; a model the server',
@@ -3749,7 +3847,8 @@ export const COMMANDS: readonly Command[] = [
       'when the run ends unless --keep-model says the machine is shared.',
     ].join('\n'),
     options: [
-      CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_ENDPOINT, CT_MODEL, CT_KEEP_MODEL, TR_GENERATION,
+      CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_EPUB_IN, CT_EPUB_OUT,
+      CT_ENDPOINT, CT_MODEL, CT_KEEP_MODEL, TR_GENERATION,
     ],
     run: runCleanText,
   },
