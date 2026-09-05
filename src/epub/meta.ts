@@ -489,6 +489,65 @@ function uniqueIdentifierElement(opfPath: string, view: PackageView): XmlElement
 // ═════════════════════════════════════════════════════════════════════════════
 
 /** Text on its way into a document this program did not write. */
+/**
+ * Put one EPUB-2 `<meta name … content …/>` into a package's `<metadata>`,
+ * replacing whatever was there under that name.
+ *
+ * ── WHY THIS LIVES HERE AND NOT WHERE ITS ONE CALLER IS ─────────────────────
+ *
+ * The caller is `clean-text`'s stamp, on its way into a book being written
+ * (`--narration-stamp`, src/vlm/epub.ts). But what it needs is not a fact about
+ * narration, it is the answer to *"how does this program put an element into an
+ * OPF?"* — and that answer is this file's, argued at length in its header: by
+ * SOURCE-OFFSET SPLICE, never by re-serialising. Rebuilding a package from
+ * parsed values would regenerate the manifest, the spine, the refinements and
+ * the rendition properties out of foundry's idea of them, and everything the
+ * original carried that foundry has no field for would silently vanish. A
+ * second implementation of the same splice, living beside the one caller that
+ * happens to need it today, is how that rule gets forgotten by the third.
+ *
+ * ── EPUB 2's `name`/`content` FORM, DELIBERATELY ────────────────────────────
+ *
+ * It needs no `prefix` declaration on `<package>`, every reader and every
+ * validator ignores an unknown `name`, and both EPUB versions this project
+ * writes carry it unchanged. That is BookForge's choice and this is the same
+ * seam, so it is not re-litigated here.
+ *
+ * ── REPLACED, NEVER JOINED ──────────────────────────────────────────────────
+ *
+ * Two `<meta>` under one name would be two claims about one file, and nothing
+ * downstream has a rule for which of them wins. So every existing one is
+ * removed and one is written. They are removed with `removalRange`, so a
+ * package does not gain a blank line each time it is re-stamped, and the
+ * removals and the insertion go through `spliceAll` together — which refuses an
+ * overlap rather than letting two edits disagree about what the file will look
+ * like.
+ *
+ * The insertion point is `metaInsertionPoint`'s: after the LAST thing in
+ * `<metadata>`, which keeps the `<meta>` block together at the end the way
+ * every package a person has ever opened is laid out.
+ */
+export function insertPackageMeta(
+  opfPath: string,
+  source: string,
+  name: string,
+  content: string,
+): string {
+  const view = viewPackage(opfPath, source);
+
+  const doomed = elementChildren(view.metadata).filter(
+    (child) => localName(child.tag) === 'meta' && child.attrs.get('name') === name,
+  );
+  const where = metaInsertionPoint(view, new Set(doomed));
+  const edits = doomed.map((el) => removalRange(source, el));
+  edits.push({
+    start: where.at,
+    end: where.at,
+    text: `\n${where.indent}<meta name="${escapeAttr(name)}" content="${escapeAttr(content)}"/>`,
+  });
+  return spliceAll(source, edits);
+}
+
 function escapeText(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

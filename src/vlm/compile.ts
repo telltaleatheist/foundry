@@ -106,6 +106,7 @@ import {
   sectionName,
 } from './dots-book.js';
 import {
+  narrationStampForFormat,
   packageVlmEpub,
   XHTML_HEAD,
   XHTML_TAIL,
@@ -192,6 +193,15 @@ export interface CompileOptions {
   title?: string;
   /** `dc:creator`. Absent writes none, and none is never invented. */
   author?: string;
+  /**
+   * `--narration-stamp`: the JSON of a narration text stamp, written into the
+   * package document so the FILE can answer for itself at the render door.
+   *
+   * Ignored with a note for every format but EPUB — `narrationStampForFormat`
+   * carries that argument. Absent writes nothing, which is what a book nobody
+   * has cleaned should say about itself.
+   */
+  narrationStamp?: string;
   log: (line: string) => void;
 }
 
@@ -1032,6 +1042,10 @@ export function compileBook(opts: CompileOptions): CompileReport {
      * package identifier is for, and no clock or random number is involved.
      */
     identifier: `urn:foundry:bank:${book.source.bankSha}`,
+    ...(() => {
+      const stamp = narrationStampForFormat(opts.narrationStamp, format, opts.log, 'vlm-compile');
+      return stamp === undefined ? {} : { narrationStamp: stamp };
+    })(),
   };
 
   /*

@@ -28,6 +28,8 @@
  * to a paragraph is otherwise unrecoverable once the pages are joined, and it is
  * the first thing anyone checking this mode's output wants.
  */
+import { NARRATION_TEXT_STAMP_NAME } from '../clean/stamp.js';
+import { insertPackageMeta } from '../epub/meta.js';
 import { parseXml } from '../epub/xml.js';
 import { writeZip, zipText, type ZipEntry } from '../export/zip.js';
 import type { VlmBlock } from './dialect.js';
@@ -48,6 +50,27 @@ export interface VlmEpubMetadata {
   /** BCP-47. Declared, not detected — see the `--language` option. */
   language: string;
   identifier: string;
+  /**
+   * `--narration-stamp`: a narration text stamp, as the JSON it was written as.
+   *
+   * It goes into `<metadata>` as an EPUB-2 `<meta name content/>`, and it is
+   * PACKAGE METADATA in the ordinary sense — a claim the file makes about
+   * itself, which is what everything else on this interface is too. That is why
+   * it rides here rather than as a sixth positional argument threaded through
+   * three emitters that have no opinion about it.
+   *
+   * Absent is the ordinary answer and it writes nothing at all. A book carrying
+   * no stamp is one the narration gate reads as `missing`, which is the correct
+   * answer for a book nobody has cleaned.
+   *
+   * THE STRING IS CARRIED, NOT THE OBJECT, and it is the pass's own bytes.
+   * `clean-text --stamp` wrote a file; `--narration-stamp` read it back and
+   * checked all six of its fields (`readNarrationStampFile`); what lands in the
+   * book is what that pass said about itself. Re-serialising it here would mean
+   * this emitter holding an opinion about a version constant it does not own —
+   * exactly the second copy the move into this engine exists to remove.
+   */
+  narrationStamp?: string;
 }
 
 /** One page's worth of blocks, in reading order. */
@@ -110,6 +133,33 @@ export interface VlmEpubResult {
 }
 
 export const OPF_DIR = 'EPUB';
+
+/**
+ * The `--narration-stamp` note, said once, where the format is known.
+ *
+ * A stamp is a claim written into an OPF, and only an EPUB has one. A plain
+ * text file, an HTML page and a real-text PDF have nowhere to put it — so the
+ * flag is IGNORED there, and ignoring an instruction in silence is the one
+ * thing this program does not do (ARCHITECTURE §8). It is a note rather than a
+ * refusal because the caller is usually a script that passes the same flags to
+ * every format, and failing a text export over metadata it could never have
+ * carried would be refusing a run that is otherwise exactly right.
+ */
+export function narrationStampForFormat(
+  stamp: string | undefined,
+  format: string,
+  log: (message: string) => void,
+  command: string,
+): string | undefined {
+  if (stamp === undefined) return undefined;
+  if (format === 'epub') return stamp;
+  log(
+    `${command}: --narration-stamp names a narration text stamp, which is written into an EPUB's `
+    + `package document, and this run writes ${format}. The stamp is not carried, and nothing `
+    + 'else about the run changes.',
+  );
+  return undefined;
+}
 
 /**
  * A fixed timestamp, so the same pages produce the same bytes.
@@ -399,8 +449,7 @@ export function packageVlmEpub(
   ].join('\n');
   const spine = documents.map((d) => `    <itemref idref="${d.id}"/>`).join('\n');
 
-  entries.push(zipText(`${OPF_DIR}/package.opf`,
-    `<?xml version="1.0" encoding="UTF-8"?>\n`
+  const opf = `<?xml version="1.0" encoding="UTF-8"?>\n`
     + `<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id"`
     + ` xml:lang="${esc(metadata.language)}">\n`
     + `  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n`
@@ -410,7 +459,26 @@ export function packageVlmEpub(
     + (metadata.author ? `    <dc:creator>${esc(metadata.author)}</dc:creator>\n` : '')
     + `    <meta property="dcterms:modified">${FIXED_MODIFIED}</meta>\n`
     + `  </metadata>\n  <manifest>\n${manifest}\n  </manifest>\n`
-    + `  <spine>\n${spine}\n  </spine>\n</package>\n`));
+    + `  <spine>\n${spine}\n  </spine>\n</package>\n`;
+
+  /*
+   * THE STAMP GOES IN BY SPLICE, THROUGH THE ONE FUNCTION THAT EDITS AN OPF.
+   *
+   * The package above is a string this emitter just built, so the stamp could
+   * have been another `+` in the template. It is not, and that is deliberate:
+   * `insertPackageMeta` (src/epub/meta.ts) is where this program knows how to
+   * put an element into a `<metadata>` — after the last child, indented off the
+   * file's own siblings, replacing any earlier `<meta>` of that name rather than
+   * joining it — and that knowledge has to serve a package foundry did NOT
+   * write, because `epub-meta` and a re-stamp of an imported book both need it.
+   * One implementation, exercised on the easy case every time an EPUB is
+   * written, is how the hard case stays true.
+   */
+  entries.push(zipText(`${OPF_DIR}/package.opf`,
+    metadata.narrationStamp === undefined
+      ? opf
+      : insertPackageMeta(
+        `${OPF_DIR}/package.opf`, opf, NARRATION_TEXT_STAMP_NAME, metadata.narrationStamp)));
 
   const zipStarted = Date.now();
   const bytes = writeZip(entries);

@@ -33,6 +33,7 @@ import {
   type ParsedArgs,
 } from './args.js';
 import { buildReport, formatReport } from './backend/plan.js';
+import { readNarrationStampFile } from './clean/stamp.js';
 import { epubFinal } from './epub/final.js';
 import { epubMeta, EPUB_META_FIELDS, type EpubMetaField } from './epub/meta.js';
 import { epubStamp } from './epub/stamp.js';
@@ -492,6 +493,23 @@ const COMPILE_AUTHOR: OptionSpec = {
   type: 'string',
   placeholder: '<name>',
   describe: 'dc:creator. Left out, none is written — an author is never inferred.',
+};
+
+/**
+ * The narration text stamp, on its way into the book being written.
+ *
+ * Shared by `vlm-compile` and `vlm-convert` because it means exactly the same
+ * thing to both: the file `foundry clean-text --stamp` wrote, read back, checked
+ * field by field, and put into the package document as an EPUB-2
+ * `<meta name="bookforge:narration-text" content="…"/>`. That is the claim the
+ * render door reads to know a book's text has been cleaned and by which rules,
+ * and it lives on the FILE because the render door is handed a file.
+ */
+const NARRATION_STAMP: OptionSpec = {
+  name: 'narration-stamp',
+  type: 'string',
+  placeholder: '<stamp.json>',
+  describe: "Write this clean-text stamp into the EPUB's package document. Ignored for other formats.",
 };
 
 // ── translate ────────────────────────────────────────────────────────────────
@@ -1239,6 +1257,14 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     // have always been — see VLM_FINAL for what the edition is.
     ...(flag(args, 'final') ? { final: true } : {}),
     language: optionalString(args, 'language') ?? 'en',
+    // Read and checked here — the same call `runVlmCompile` makes, and its
+    // comment is the argument for refusing a malformed stamp before any work.
+    ...(optionalString(args, 'narration-stamp') === undefined
+      ? {}
+      : {
+        narrationStamp: JSON.stringify(
+          readNarrationStampFile(optionalString(args, 'narration-stamp')!)),
+      }),
     log,
   });
 
@@ -1555,6 +1581,7 @@ async function runVlmCompile(args: ParsedArgs): Promise<void> {
   const imagesDir = optionalString(args, 'images');
   const title = optionalString(args, 'title');
   const author = optionalString(args, 'author');
+  const narrationStamp = optionalString(args, 'narration-stamp');
   compileBook({
     bookPath: requireString(args, 'book', 'the book file to compile'),
     outPath: requireString(args, 'out', 'where the finished book is written'),
@@ -1564,6 +1591,18 @@ async function runVlmCompile(args: ParsedArgs): Promise<void> {
     ...(imagesDir !== undefined ? { imagesDir } : {}),
     ...(title !== undefined ? { title } : {}),
     ...(author !== undefined ? { author } : {}),
+    /*
+     * READ AND CHECKED HERE, at the argv layer, and carried as the JSON it was
+     * written as. A stamp that is not a stamp is refused before a single page is
+     * compiled: writing rubbish into a package document is worse than writing
+     * nothing, because the gate reads a stamp it cannot parse as `stale`, so a
+     * book carrying rubbish looks exactly like a book nobody has cleaned — and
+     * the person who re-runs the pass to fix it gets the same rubbish written a
+     * second time.
+     */
+    ...(narrationStamp === undefined
+      ? {}
+      : { narrationStamp: JSON.stringify(readNarrationStampFile(narrationStamp)) }),
     log,
   });
 }
@@ -2755,6 +2794,7 @@ export const COMMANDS: readonly Command[] = [
       VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_FIXED_CAP, VLM_READINGS,
       VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
       VLM_OVERLAY, VLM_CHAPTERS, VLM_STRIP_MARKERS, VLM_FINAL, VLM_RECORDS,
+      NARRATION_STAMP,
     ],
     run: runVlmConvert,
   },
@@ -3020,7 +3060,10 @@ export const COMMANDS: readonly Command[] = [
       'language is the reading\'s own, carried by the book file\'s header, and is',
       'declared rather than detected. Same book file and same flags, same bytes.',
     ].join('\n'),
-    options: [COMPILE_BOOK, COMPILE_OUT, COMPILE_IMAGES, COMPILE_TITLE, COMPILE_AUTHOR],
+    options: [
+      COMPILE_BOOK, COMPILE_OUT, COMPILE_IMAGES, COMPILE_TITLE, COMPILE_AUTHOR,
+      NARRATION_STAMP,
+    ],
     run: runVlmCompile,
   },
   {

@@ -57,6 +57,7 @@ import {
 } from './dots-book.js';
 import {
   buildVlmEpub,
+  narrationStampForFormat,
   type VlmChapter,
   type VlmEpubMetadata,
   type VlmPageBlocks,
@@ -183,6 +184,15 @@ export interface VlmConvertOptions {
    * translation they ordered. Refused, by name, before a page renders.
    */
   recordsPath?: string;
+  /**
+   * `--narration-stamp`: the JSON of a narration text stamp, written into the
+   * package document so the FILE can answer for itself at the render door.
+   *
+   * Ignored with a note for every format but EPUB — `narrationStampForFormat`
+   * carries that argument. Absent writes nothing, which is what a book nobody
+   * has cleaned should say about itself.
+   */
+  narrationStamp?: string;
   log: (message: string) => void;
   /** The subprocess and the socket, swappable — see `ReadPhaseOptions.bridge`. */
   bridge?: VlmBridge;
@@ -639,11 +649,14 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
      */
     const title = run.document.title.length > 0 ? run.document.title : stem;
     const identifier = `urn:sha256:${crypto.createHash('sha256').update(fs.readFileSync(pdfPath)).digest('hex')}`;
+    const narrationStamp =
+      narrationStampForFormat(opts.narrationStamp, format, opts.log, 'vlm-convert');
     const metadata: VlmEpubMetadata = {
       title,
       ...(run.document.author.length > 0 ? { author: run.document.author } : {}),
       language: opts.language,
       identifier,
+      ...(narrationStamp === undefined ? {} : { narrationStamp }),
     };
 
     let bytes: Uint8Array;
