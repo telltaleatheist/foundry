@@ -92,6 +92,7 @@ import { spliceTableGrid, type TableGrid } from '../translate/tablecells.js';
 import { DEFAULT_OLLAMA_ENDPOINT, DEFAULT_TRANSLATE_MODEL } from '../translate/run.js';
 import type { Transport } from '../translate/ollama.js';
 
+import { blockDigest, bookPositionTexts } from './digest.js';
 import { narrationTextPrompt } from './prompt.js';
 import { applySpans, CleanTextError, punctuateBlocks, segmentsAfter } from './punctuate.js';
 import type { PunctuationStageRecord } from './punctuate.js';
@@ -696,10 +697,53 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   ensureDir(path.dirname(receiptOut));
   fs.writeFileSync(receiptOut, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
 
+  /*
+   * ── WHAT THIS CLEANUP PRODUCED, BLOCK BY BLOCK, SO THE CLAIM CAN BE CHECKED ─
+   *
+   * Owen, 2026-09-05, on the gap BookForge measured: *"recompute over the book
+   * handed and refuse by name on mismatch."* The stamp used to say only that a
+   * pass RAN — six fields all of which are true of a pass over a different book
+   * — so `vlm-compile --narration-stamp` cheerfully stamped the UNCLEANED parent
+   * and the render door believed it. This is the half of the claim that can be
+   * disproved: every position this run covered, and a digest of the text a
+   * reader will actually find there.
+   *
+   * THE TEXT IS THE ONE MATERIALISATION WILL PUT AT THAT POSITION, which is the
+   * newest row of the records file, or the book's own text where no row was
+   * written — and that fallback is not a corner case, it is the ordinary state
+   * of a paragraph the pass had nothing to change. A HAND-CORRECTED row is the
+   * newest row like any other and is therefore what is hashed: the person's
+   * words are what the narrator gets, so the person's words are what the stamp
+   * has to be a claim about.
+   *
+   * IT COVERS EVERY BLOCK OF THE PLAN AND NOT ONLY THIS RUN'S, because a resumed
+   * run whose every block was banked still writes a stamp, and a stamp naming
+   * only the handful of blocks the last invocation happened to buy would let
+   * everything else through unchecked.
+   *
+   * The positions and the text form both come from src/clean/digest.ts, which is
+   * also where `vlm-compile` reads them — one definition, so the two sides
+   * cannot drift into hashing different strings.
+   */
+  const sourceTexts = bookPositionTexts(book);
+  const digests = new Map<string, string>();
+  for (const parts of new Set(blocks.map((b) => b.parts))) {
+    const text = records.rowFor(parts)?.text ?? sourceTexts.get(parts);
+    if (text === undefined) {
+      throw new CleanTextError(
+        `clean-text cleaned ${parts} of ${where} and can find no text at that position to stand `
+        + 'behind the stamp. The plan and the book file disagree about what this book holds, and '
+        + 'nothing was stamped.',
+      );
+    }
+    digests.set(parts, blockDigest(text));
+  }
+
   const stamp = narrationTextStamp({
     model,
     at,
     punctuationRefused: punctuated.record.refused.length,
+    blocks: digests,
   });
   ensureDir(path.dirname(path.resolve(opts.stampPath)));
   fs.writeFileSync(path.resolve(opts.stampPath), `${JSON.stringify(stamp, null, 2)}\n`, 'utf8');
@@ -711,6 +755,11 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     );
   }
   opts.log(`clean-text: the receipt is ${receiptOut}; the stamp is ${path.resolve(opts.stampPath)}`);
+  opts.log(
+    `clean-text: the stamp names ${digests.size} block position(s) and their text digest is `
+    + `${stamp.textDigest} — vlm-compile --narration-stamp recomputes both over the book it is `
+    + 'handed and refuses by name if it is not this one.',
+  );
 
   const refused = punctuated.record.refused.length + modelRefused;
   const seconds = ((Date.now() - started) / 1000).toFixed(1);

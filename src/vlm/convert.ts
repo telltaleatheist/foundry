@@ -38,6 +38,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { narrationStampMeta, type NarrationTextStamp } from '../clean/stamp.js';
 import { ensureDir } from '../fsdirs.js';
 import { TranslationRecords } from '../translate/records.js';
 import { cropPageRenders, readPdfTextLayer, type VlmPage, type VlmUnreadablePage } from './bridge.js';
@@ -193,6 +194,14 @@ export interface VlmConvertOptions {
    * has cleaned should say about itself.
    */
   narrationStamp?: string;
+  /**
+   * Where that stamp was read from, so a refusal can name a FILE.
+   *
+   * A second field beside the JSON rather than a path this command opens for
+   * itself: the argv layer already reads and checks the stamp before a page
+   * renders (`readNarrationStampFile`), and that early refusal is worth keeping.
+   */
+  narrationStampPath?: string;
   log: (message: string) => void;
   /** The subprocess and the socket, swappable — see `ReadPhaseOptions.bridge`. */
   bridge?: VlmBridge;
@@ -405,6 +414,54 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       + 'named a translation, is a file somebody would keep believing it was the translation.',
     );
   }
+  /*
+   * ── A CHECKABLE STAMP, ON THE ONE ROUTE THAT CANNOT CHECK IT ────────────────
+   *
+   * Owen ruled on 2026-09-05 that a `--narration-stamp` is recomputed over the
+   * book it is handed and refused by name on a mismatch. `vlm-compile` can do
+   * that: it is handed a BOOK FILE, and the positions a cleanup names are that
+   * file's row ids. THIS ROUTE HAS NO BOOK FILE. It reads a PDF and mints the
+   * book as it writes it, and its own records are keyed by the cast's `page:order`
+   * coordinates rather than by row ids — two different spellings of a position,
+   * neither able to answer for the other.
+   *
+   * So there is nothing here to hash a stamp's positions against, and the
+   * alternatives are both worse than a refusal: carrying the stamp unchecked is
+   * the exact defect the ruling closes — and on this route it is at its worst,
+   * because a book read fresh off a PDF has BY DEFINITION never been through the
+   * cleanup the stamp describes. Silently dropping the field would put a claim
+   * in a book with the checkable half quietly removed.
+   *
+   * A stamp with no `blocks` is still carried, because that is every stamp
+   * BookForge's own pass writes and every one foundry 1.1.0 wrote, and refusing
+   * them would refuse books that were correct when they were stamped. It is said
+   * out loud one layer down (`checkedNarrationStampMeta`), which is where the
+   * sentence about an unchecked stamp already lives.
+   *
+   * IT IS REFUSED HERE, BEFORE A PAGE RENDERS, with the other refusals that are
+   * about the ROUTE rather than about a file: this run is hours of somebody's
+   * GPU and a refusal it could have made in the first second must not wait for
+   * the last one.
+   */
+  const narrationStampMetaJson = ((): string | undefined => {
+    const stamp = narrationStampForFormat(opts.narrationStamp, format, opts.log, 'vlm-convert');
+    if (stamp === undefined) return undefined;
+    const parsed = JSON.parse(stamp) as NarrationTextStamp;
+    if (parsed.blocks !== undefined) {
+      throw new Error(
+        `--narration-stamp ${opts.narrationStampPath ?? '(the stamp given)'} names `
+        + `${Object.keys(parsed.blocks).length} cleaned block position(s), and this command cannot `
+        + 'check one of them. vlm-convert reads a PDF and mints the book as it writes it — it is '
+        + 'handed no book file, and a cleanup names a book file\'s row ids — so a stamp written '
+        + 'here would be a claim nothing recomputed, over a book that has by definition never had '
+        + 'the pass. Compile the CLEANED book instead: `foundry vlm-compile --book <the '
+        + 'materialisation of the clean step> --narration-stamp <this file>`, which recomputes '
+        + 'every position and refuses by name. Nothing was read.',
+      );
+    }
+    return JSON.stringify(narrationStampMeta(parsed));
+  })();
+
   /*
    * A RECORDS FILE THAT IS NOT THERE IS NOT AN EMPTY ONE.
    *
@@ -649,8 +706,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
      */
     const title = run.document.title.length > 0 ? run.document.title : stem;
     const identifier = `urn:sha256:${crypto.createHash('sha256').update(fs.readFileSync(pdfPath)).digest('hex')}`;
-    const narrationStamp =
-      narrationStampForFormat(opts.narrationStamp, format, opts.log, 'vlm-convert');
+    const narrationStamp = narrationStampMetaJson;
     const metadata: VlmEpubMetadata = {
       title,
       ...(run.document.author.length > 0 ? { author: run.document.author } : {}),

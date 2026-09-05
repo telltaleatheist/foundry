@@ -68,6 +68,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { bookPositionTexts } from '../clean/digest.js';
+import { checkedNarrationStampMeta } from '../clean/stamp.js';
 import { ensureDir } from '../fsdirs.js';
 import {
   figureMediaType,
@@ -202,6 +204,16 @@ export interface CompileOptions {
    * has cleaned should say about itself.
    */
   narrationStamp?: string;
+  /**
+   * Where that stamp was read from, so a refusal can name a FILE.
+   *
+   * A second field beside the JSON rather than a path this command reads for
+   * itself, because the argv layer already opens and checks the stamp before any
+   * work starts (`readNarrationStampFile`) and the early refusal is worth
+   * keeping. What it costs is this line; what it buys is a refusal a person can
+   * act on rather than one quoting a blob back at them.
+   */
+  narrationStampPath?: string;
   log: (line: string) => void;
 }
 
@@ -1042,9 +1054,35 @@ export function compileBook(opts: CompileOptions): CompileReport {
      * package identifier is for, and no clock or random number is involved.
      */
     identifier: `urn:foundry:bank:${book.source.bankSha}`,
+    /*
+     * ── THE STAMP IS RECOMPUTED OVER THIS BOOK BEFORE IT GOES IN ──────────────
+     *
+     * Owen, 2026-09-05, on what BookForge measured: this command stamped
+     * whatever book it was handed, so compiling the UNCLEANED parent with the
+     * flag produced an EPUB whose package document claimed a cleanup over text
+     * still reading "Dr. Smith". `checkedNarrationStampMeta` hashes every
+     * position the stamp names against the text THIS book holds there and
+     * refuses by name if they disagree — src/clean/digest.ts owns the text form
+     * and every argument about it, and `clean-text` computes the same digests
+     * through the same function.
+     */
     ...(() => {
       const stamp = narrationStampForFormat(opts.narrationStamp, format, opts.log, 'vlm-compile');
-      return stamp === undefined ? {} : { narrationStamp: stamp };
+      if (stamp === undefined) return {};
+      return {
+        narrationStamp: checkedNarrationStampMeta({
+          stampJson: stamp,
+          stampPath: opts.narrationStampPath ?? '(the stamp given)',
+          texts: bookPositionTexts(book),
+          where: bookPath,
+          command: 'vlm-compile',
+          remedy: 'Compile the position that sits UNDER the clean step — the book file '
+            + 'materialised from that step\'s records — or run `foundry clean-text` over this book '
+            + 'and stamp with the stamp it writes.',
+          log: opts.log,
+          fail: (message: string): never => { throw new CompileError(message); },
+        }),
+      };
     })(),
   };
 

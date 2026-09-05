@@ -167,7 +167,9 @@ construction. A grid the answers broke is left as printed and named.
 
 ```json
 {"stampVersion": 2, "normalizerVersion": "n6", "punctuationSpec": "s1",
- "model": "qwen3.8:27b", "at": "2026-09-05T…Z", "punctuationRefused": 0}
+ "model": "qwen3.8:27b", "at": "2026-09-05T…Z", "punctuationRefused": 0,
+ "blocks": {"b12-3": "6ac778d1…", "chapter:c3": "a40703bd…"},
+ "textDigest": "22abe835…"}
 ```
 
 The two version fields are **read from the modules that define them** and are
@@ -185,6 +187,71 @@ and was not allowed to apply, and **every one of them is named** — on stderr a
 it happens, and in the receipt with its `find`, its `replace` and its reason. So
 a book with three hundred unreachable spans is not byte-indistinguishable from a
 clean one.
+
+### The digest contract — a claim the render door can CHECK
+
+> Owen, 2026-09-05, on the gap BookForge measured: **"recompute over the book
+> handed and refuse by name on mismatch."**
+
+`vlm-compile --narration-stamp` used to stamp whatever book it was handed.
+Compiling the **uncleaned** parent book with the flag produced an EPUB whose OPF
+claimed a cleanup over text still reading *"Dr. Smith"* and *"$5,000"* — six
+fields all true about a pass that really ran, and a lie about the file they were
+written into. The render door reads the FILE, so it believed it.
+
+So the stamp says **what** it cleaned. Two fields, beside the six:
+
+| field | in the `.stamp.json` sidecar | in the OPF |
+|---|---|---|
+| `blocks` | position → sha-256 of the cleaned text | how many positions that map holds |
+| `textDigest` | one order-independent digest over the whole map | the same string |
+
+`stampVersion` **stays 2**. BookForge's reader refuses a MISSING field and never
+enumerates keys, so the six it knows are all still there and a field it has never
+heard of costs it nothing.
+
+**The text form is defined once and both sides import it** (`blockDigest`,
+`src/clean/digest.ts`): *the block's own text, as the book file holds it — the
+flowing dialect string, BEFORE any rendering transform.* Before the emitter turns
+it into XHTML, before entities are escaped, before pagebreak markers, before a
+superscript run becomes a noteref anchor. On the writing side that is the newest
+record's `text` at the position, or the book's own text where no row was written
+— which is exactly what materialisation puts there, hand-corrected rows included.
+On the reading side it is `BookRow.text` at that position. Hashing the RENDERED
+XHTML was rejected: an emitter that writes `&#8217;` where it used to write `’`
+would break every digest on disk while changing not one word of anybody's book.
+
+**An absent position is SKIPPED and counted; a present one that differs
+REFUSES.** Owen ruled it, and the reason is the shelf: a person strikes a block
+after the cleanup ran and it is legitimately gone without one character of the
+remaining text having moved. Refusing that would make every removal re-buy the
+whole book's model time. A block that is *present and different* is text this
+cleanup never saw, shipping under a claim that it did.
+
+**Not ONE position in common is not a trimmed book** — it is a stamp about a
+different book, and it is refused as one. `refuseForeignRecords`' existence test,
+for its reason.
+
+The refusal names the count and the first five positions and says what it means:
+
+> `--narration-stamp <path>` claims a narration text cleanup over 7 block(s), and
+> 6 of them do not hold the text that cleanup produced — e-2, e-3, e-4, e-5, e-6
+> and 1 more. **THE BOOK HANDED IS NOT THE ONE THIS CLEANUP PRODUCED**: a stamp
+> is a claim about a FILE, and this recomputed it over the book it was actually
+> given. Compile the position that sits UNDER the clean step — the book file
+> materialised from that step's records — or run `foundry clean-text` over this
+> book and stamp with the stamp it writes. Nothing was written.
+
+**`vlm-convert --narration-stamp` REFUSES a stamp that names blocks**, and points
+at `vlm-compile`. That route reads a PDF and mints the book as it writes it: it
+is handed no book file, its own records are keyed by the cast's `page:order`
+coordinates rather than by row ids, and there is nothing to hash the stamp's
+positions against. Carrying it unchecked would be the measured defect at its
+worst — a book read fresh off a PDF has by definition never had the pass.
+
+A stamp carrying **no** `blocks` (BookForge's own pass writes one; so did foundry
+1.1.0) is still carried, and the run says on stderr that **nothing was
+recomputed** rather than implying a check that did not happen.
 
 Hand the file to `vlm-compile --narration-stamp` or `vlm-convert
 --narration-stamp` and it goes into the OPF's `<metadata>` as

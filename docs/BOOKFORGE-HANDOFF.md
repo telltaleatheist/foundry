@@ -228,9 +228,18 @@ CROSS-REPO CONTRACT and BookForge reads both:
 
 * `--stamp` writes `{stampVersion, normalizerVersion, punctuationSpec, model,
   at, punctuationRefused}` — BookForge's `NarrationTextStamp`, field for field.
-  Hand that file to `vlm-compile --narration-stamp` (or `vlm-convert`) and it
-  goes into the OPF as `<meta name="bookforge:narration-text" content="…"/>`,
-  which is what `readNarrationTextStamp` and `narrationTextGate` read.
+  Hand that file to `vlm-compile --narration-stamp` and it goes into the OPF as
+  `<meta name="bookforge:narration-text" content="…"/>`, which is what
+  `readNarrationTextStamp` and `narrationTextGate` read.
+  **Since 2026-09-05 the stamp also carries `blocks` and `textDigest`** — a
+  digest per cleaned position in the sidecar, and in the OPF the block COUNT plus
+  that one whole-book digest. `stampVersion` STAYS 2, because BookForge's reader
+  refuses a missing field and never enumerates keys, so the two extra ones pass.
+  `vlm-compile --narration-stamp` now **recomputes every digest over the book it
+  is handed and refuses by name** on a mismatch (docs/CLEAN-TEXT.md, "The digest
+  contract"), which closes the gap BookForge measured: stamping the uncleaned
+  parent used to succeed. `vlm-convert --narration-stamp` refuses a stamp that
+  names blocks — it has no book file to check them against.
 * the progress lines are `clean-text: <done>/<total>` per block and a final
   `clean-text: <n> blocks, <m> changed, <k> edits refused in <s>s`. BookForge
   mirrors those shapes, so they do not move.

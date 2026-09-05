@@ -1266,6 +1266,9 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
       : {
         narrationStamp: JSON.stringify(
           readNarrationStampFile(optionalString(args, 'narration-stamp')!)),
+        // Carried beside the JSON so a refusal about the stamp names the FILE
+        // somebody would go and look at. See `ConvertOptions.narrationStampPath`.
+        narrationStampPath: optionalString(args, 'narration-stamp')!,
       }),
     log,
   });
@@ -1604,7 +1607,12 @@ async function runVlmCompile(args: ParsedArgs): Promise<void> {
      */
     ...(narrationStamp === undefined
       ? {}
-      : { narrationStamp: JSON.stringify(readNarrationStampFile(narrationStamp)) }),
+      : {
+        narrationStamp: JSON.stringify(readNarrationStampFile(narrationStamp)),
+        // Carried beside the JSON so a refusal about the stamp names the FILE
+        // somebody would go and look at. See `CompileOptions.narrationStampPath`.
+        narrationStampPath: narrationStamp,
+      }),
     log,
   });
 }

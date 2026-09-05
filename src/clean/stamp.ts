@@ -41,6 +41,7 @@
 import * as fs from 'node:fs';
 
 import { stripBom } from '../bom.js';
+import { checkStampBlocks, textDigestOf } from './digest.js';
 import { NORMALIZER_VERSION } from './tts-number-normalizer.js';
 import { PUNCTUATION_SPEC_VERSION } from './tts-punctuation.js';
 
@@ -93,6 +94,62 @@ export interface NarrationTextStamp {
    * could not reach rather than claiming the book is already canonical.
    */
   punctuationRefused: number;
+  /**
+   * Every block this cleanup produced: its position → a digest of the text.
+   *
+   * ── WHY THE STAMP CARRIES THIS AND WHAT IT IS FOR ──────────────────────────
+   *
+   * The six fields above say a pass RAN, at these versions, with this model, and
+   * every one of them is true of a pass that ran over a completely different
+   * book. That is not a hypothetical: BookForge measured `vlm-compile
+   * --narration-stamp` writing a valid stamp into the UNCLEANED parent book, and
+   * the render door believed it. So the stamp now says what it cleaned, and the
+   * commands that write it into a book recompute the same digests over the book
+   * they were actually handed and refuse by name on a mismatch
+   * (src/clean/digest.ts, which owns the text form and every argument about it).
+   *
+   * ── OPTIONAL, AND THAT IS NOT SOFTNESS ─────────────────────────────────────
+   *
+   * `stampVersion` STAYS 2 (Owen, 2026-09-05), because BookForge's reader
+   * refuses a MISSING field and never enumerates keys — so the six it knows must
+   * all still be there, and a field it has never heard of costs it nothing.
+   * A stamp with no `blocks` therefore still reads: BookForge's own in-app pass
+   * writes one, and so did foundry 1.1.0. What it does NOT get is a check, and
+   * the command that writes it says so out loud rather than implying one
+   * happened.
+   */
+  blocks?: Record<string, string>;
+  /**
+   * `blocks` as ONE order-independent digest — the whole-book form.
+   *
+   * This is the field that goes into the package document, because a `<meta
+   * content=…>` holding thousands of hashes is not a package document.
+   * `textDigestOf` computes it and argues the ordering.
+   */
+  textDigest?: string;
+}
+
+/**
+ * The stamp as a PACKAGE DOCUMENT carries it.
+ *
+ * Owen, 2026-09-05: the OPF gets the six fields plus `textDigest` and the block
+ * COUNT, never the per-block map. One word, `blocks`, and two renderings of it
+ * — the map in the sidecar and how many positions that map holds in the package
+ * — because they are the same fact and the package cannot hold the first form.
+ * A reader wanting the map has the sidecar; a reader wanting to know whether two
+ * files were cleaned from the same text has `textDigest`, which is what the map
+ * is for anyway.
+ */
+export interface NarrationTextStampMeta {
+  stampVersion: number;
+  normalizerVersion: string;
+  punctuationSpec: string;
+  model: string;
+  at: string;
+  punctuationRefused: number;
+  /** How many positions the cleanup produced. Absent with `textDigest`. */
+  blocks?: number;
+  textDigest?: string;
 }
 
 /**
@@ -100,12 +157,16 @@ export interface NarrationTextStamp {
  *
  * The two version fields are not parameters. See this file's header: the point
  * of a single constructor is that no caller anywhere can supply its own idea of
- * what `n6` is.
+ * what `n6` is. `textDigest` is not a parameter either, and for the mirror
+ * reason — it is a pure function of `blocks`, and a caller able to supply its own
+ * would be able to supply one that does not describe the map beside it.
  */
 export function narrationTextStamp(request: {
   model: string;
   at: string;
   punctuationRefused: number;
+  /** Position → `blockDigest` of the cleaned text. Empty is legal and honest. */
+  blocks: ReadonlyMap<string, string>;
 }): NarrationTextStamp {
   return {
     stampVersion: NARRATION_TEXT_STAMP_VERSION,
@@ -114,7 +175,96 @@ export function narrationTextStamp(request: {
     model: request.model,
     at: request.at,
     punctuationRefused: request.punctuationRefused,
+    blocks: Object.fromEntries(request.blocks),
+    textDigest: textDigestOf(request.blocks),
   };
+}
+
+/**
+ * The package document's form of a stamp — see `NarrationTextStampMeta`.
+ *
+ * A stamp that carries no `blocks` produces neither field rather than a `0` and
+ * an empty digest: zero cleaned blocks is a thing a stamp could honestly say,
+ * and a stamp that never said it must not be made to.
+ */
+export function narrationStampMeta(stamp: NarrationTextStamp): NarrationTextStampMeta {
+  return {
+    stampVersion: stamp.stampVersion,
+    normalizerVersion: stamp.normalizerVersion,
+    punctuationSpec: stamp.punctuationSpec,
+    model: stamp.model,
+    at: stamp.at,
+    punctuationRefused: stamp.punctuationRefused,
+    ...(stamp.blocks === undefined ? {} : { blocks: Object.keys(stamp.blocks).length }),
+    ...(stamp.textDigest === undefined ? {} : { textDigest: stamp.textDigest }),
+  };
+}
+
+/**
+ * Recompute a stamp over the text actually being stamped, and hand back what
+ * the package document should carry.
+ *
+ * ── THE ONE DOOR EVERY STAMP GOES THROUGH ON ITS WAY INTO A BOOK ────────────
+ *
+ * `vlm-compile` and `vlm-convert` both write this claim into somebody's OPF, so
+ * both of them ask this, and neither of them holds an opinion about what a
+ * digest is or which text form it is over — src/clean/digest.ts owns both and is
+ * the only place either is written down. What the caller supplies is the thing
+ * it is holding: position → text, as ITS book actually reads.
+ *
+ * A STAMP THAT NAMES NO BLOCKS IS CARRIED AND SAID OUT LOUD. BookForge's in-app
+ * pass writes one, and so did foundry 1.1.0; refusing them would refuse every
+ * book cleaned before today for carrying a stamp that was correct when it was
+ * written. What is not acceptable is implying a check that did not happen, so
+ * the note names the omission and says what to do about it (ARCHITECTURE §8).
+ */
+export function checkedNarrationStampMeta(request: {
+  /** The stamp, as this program serialized the file it read. */
+  stampJson: string;
+  /** The file it was read from — a person fixes a path, not a JSON blob. */
+  stampPath: string;
+  /** Position → text, as the thing about to be stamped holds it. */
+  texts: ReadonlyMap<string, string>;
+  /** What is being stamped, for the refusal and the note. */
+  where: string;
+  /** `vlm-compile` / `vlm-convert` — whose log this is. */
+  command: string;
+  /** This route's own sentence about what to do instead. */
+  remedy: string;
+  log: (message: string) => void;
+  /** The caller's own error class. A refusal is never this file's to choose. */
+  fail: (message: string) => never;
+}): string {
+  // Parsed back from this program's own `JSON.stringify` of a file
+  // `readNarrationStampFile` already checked field by field, which is why this
+  // is a cast and not a second validator.
+  const stamp = JSON.parse(request.stampJson) as NarrationTextStamp;
+
+  if (stamp.blocks === undefined) {
+    request.log(
+      `${request.command}: --narration-stamp ${request.stampPath} names no cleaned block positions, `
+      + 'so NOTHING WAS RECOMPUTED and this run is taking the stamp\'s word for it that '
+      + `${request.where} is the book that cleanup produced. Stamps written by this build carry a `
+      + 'digest per position and are checked; re-run `foundry clean-text` to get one.',
+    );
+    return JSON.stringify(narrationStampMeta(stamp));
+  }
+
+  const check = checkStampBlocks({
+    blocks: stamp.blocks,
+    texts: request.texts,
+    stampPath: request.stampPath,
+    where: request.where,
+    remedy: request.remedy,
+    fail: request.fail,
+  });
+  request.log(
+    `${request.command}: --narration-stamp recomputed over ${request.where} — ${check.matched} `
+    + `block(s) hold exactly the text the cleanup produced${check.skipped === 0 ? '' : `, and `
+      + `${check.skipped} position(s) the stamp names are not in this book at all (a struck block `
+      + 'is legitimately absent, so those are skipped rather than refused)'}.`,
+  );
+  return JSON.stringify(narrationStampMeta(stamp));
 }
 
 /**
@@ -197,6 +347,27 @@ export function readNarrationStampFile(stampPath: string): NarrationTextStamp {
     );
   }
 
+  /*
+   * ── THE BLOCK MAP IS CHECKED AS A SHAPE, AND ONLY AS A SHAPE ────────────────
+   *
+   * Absent is legal (see `NarrationTextStamp.blocks`). Present and not a flat
+   * object of strings is not: the caller is about to hash text against these
+   * values, and a `blocks` holding a number or a nested object would compare
+   * every position against something that is not a digest and refuse the whole
+   * book — a false accusation, in the one place this program is asserting that
+   * somebody's book is not what it claims to be. Whether the digests are RIGHT
+   * is exactly the question `checkStampBlocks` exists to ask; whether they are
+   * digest-shaped is this reader's, because it is the only reader.
+   */
+  const blocks = readBlocks(row.blocks, stampPath);
+  if (blocks !== undefined && typeof row.textDigest !== 'string') {
+    throw new NarrationStampError(
+      `--narration-stamp ${stampPath} names ${Object.keys(blocks).length} cleaned block(s) and `
+      + 'carries no textDigest over them. The two are written together by one constructor '
+      + '(`narrationTextStamp`), so a stamp with one and not the other was assembled by hand or by '
+      + 'a program that does not know what either means.',
+    );
+  }
   return {
     stampVersion: row.stampVersion,
     normalizerVersion: row.normalizerVersion!,
@@ -204,5 +375,31 @@ export function readNarrationStampFile(stampPath: string): NarrationTextStamp {
     model: row.model!,
     at: row.at!,
     punctuationRefused: row.punctuationRefused!,
+    ...(blocks === undefined ? {} : { blocks }),
+    ...(typeof row.textDigest === 'string' ? { textDigest: row.textDigest } : {}),
   };
+}
+
+/** `blocks`, proved to be a flat map of strings, or undefined where absent. */
+function readBlocks(raw: unknown, stampPath: string): Record<string, string> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new NarrationStampError(
+      `--narration-stamp ${stampPath} holds a "blocks" that is `
+      + `${Array.isArray(raw) ? 'an array' : typeof raw}. In a stamp FILE, blocks is the map from `
+      + 'each cleaned block\'s position to a digest of the text the cleanup produced there '
+      + '(a package document carries the COUNT instead).',
+    );
+  }
+  const out: Record<string, string> = {};
+  for (const [position, digest] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof digest !== 'string') {
+      throw new NarrationStampError(
+        `--narration-stamp ${stampPath} holds a "blocks" entry for ${position} that is not a digest `
+        + `but ${typeof digest}. Every value in that map is one block's text digest, as hex.`,
+      );
+    }
+    out[position] = digest;
+  }
+  return out;
 }
