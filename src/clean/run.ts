@@ -191,6 +191,18 @@ export interface CleanTextOptions {
   model?: string;
   /** Leave the weights loaded when the run ends. */
   keepModel?: boolean;
+  /**
+   * The app's binding of this records file to the reading it was made from,
+   * written into every row and NEVER INTERPRETED here — `translate --generation`
+   * verbatim, because it is the same field of the same format.
+   *
+   * It is not optional in practice and it was missing: the app's shared argv
+   * builder appends `--generation <reading generation>` to every text pass, so a
+   * hosted Clean text press against 1.1.0 died on `unknown option --generation`
+   * before a block was read. Sharing `records.ts` and not sharing the field that
+   * binds a records file to its reading is sharing half a format.
+   */
+  generation?: string;
   /** Injected so the tests drive the whole pass with no server and no GPU. */
   transport?: Transport;
   /** Injected so a test can settle every block without a transport at all. */
@@ -630,7 +642,12 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
         + 'run\'s answer takes over — the correction is still in the file, above it.',
       );
     }
-    records.append({ key, parts, text });
+    records.append({
+      key,
+      parts,
+      ...(opts.generation === undefined ? {} : { generation: opts.generation }),
+      text,
+    });
     written += 1;
   };
 

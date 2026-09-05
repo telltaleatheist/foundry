@@ -29,9 +29,17 @@ remembers.
 
 ```
 foundry clean-text --book <book.jsonl> --records <out.records.jsonl>
-                   --stamp <out.stamp.json> [--endpoint <url>]
-                   [--model <name>] [--keep-model]
+                   --stamp <out.stamp.json> [--generation <id>]
+                   [--endpoint <url>] [--model <name>] [--keep-model]
 ```
+
+`--generation` is `translate`'s field in `translate`'s words — the app's binding
+of a records file to the reading it was made from, written into every row and
+never interpreted here. It is not decoration: the app's shared argv builder
+appends `--generation <reading generation>` to **every** text pass, so a hosted
+**Clean text** press against 1.1.0 died on `unknown option --generation` before a
+block was read. Sharing `records.ts` and not sharing the field that binds a
+records file to its reading is sharing half a format.
 
 Input is a **book file** (docs/BOOK-FILE.md), not an EPUB — the engine is handed
 the book itself, one row per block, before any spine or package document exists.

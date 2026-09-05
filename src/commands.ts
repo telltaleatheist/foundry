@@ -1058,6 +1058,8 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
     ...(optionalString(args, 'model') === undefined
       ? {} : { model: optionalString(args, 'model')! }),
     ...(flag(args, 'keep-model') ? { keepModel: true } : {}),
+    ...(optionalString(args, 'generation') === undefined
+      ? {} : { generation: optionalString(args, 'generation')! }),
     log,
   });
 }
@@ -3624,7 +3626,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'clean-text',
     summary: 'Clean a book\'s text for a narrator: punctuation, numbers as words, the model on every block.',
     usage: '--book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
-      + ' [--endpoint <url>] [--model <name>] [--keep-model]',
+      + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--keep-model]',
     detail: [
       'THE THIRD TEXT ACT. translate turns a book into another language, --rewrite',
       'turns it into plainer prose, and this turns it into the text a NARRATOR is',
@@ -3709,6 +3711,12 @@ export const COMMANDS: readonly Command[] = [
       'is existence, not coverage: one position in common proves the file is about',
       'this book, and zero — with rows in it — cannot be an accident.',
       '',
+      '--generation IS WRITTEN INTO EVERY ROW AND NEVER READ HERE — translate\'s',
+      'field, in translate\'s words, because it is the same field of the same',
+      'format: the app\'s binding of a records file to the reading it was made',
+      'from, so it can tell records about THIS bank from records left beside a',
+      'book that has since been read again.',
+      '',
       '--stamp IS WHAT A FILE CARRIES. The records say what this run decided about',
       'a BOOK; the stamp says a particular EPUB was written from that decision, and',
       'the render door is handed a file. It is written on EVERY run, even one that',
@@ -3732,7 +3740,9 @@ export const COMMANDS: readonly Command[] = [
       'has not got ends it with the list of models it HAS. The weights are released',
       'when the run ends unless --keep-model says the machine is shared.',
     ].join('\n'),
-    options: [CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_ENDPOINT, CT_MODEL, CT_KEEP_MODEL],
+    options: [
+      CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_ENDPOINT, CT_MODEL, CT_KEEP_MODEL, TR_GENERATION,
+    ],
     run: runCleanText,
   },
   {

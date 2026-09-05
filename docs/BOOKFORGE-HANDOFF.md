@@ -218,7 +218,7 @@ line-buffered. The commands an integrator needs:
 | `vlm-book` | receipt → book file: `--readings <bank>` or `--epub <file>`, `--out`, `--pdf` or `--pages <dir>` (cut figures), `--language` |
 | `vlm-compile` | book file → EPUB/txt: `--book`, `--out`, `--images`, `--title`, `--author`, `--narration-stamp` |
 | `translate` | book file → records: `--book`, language flags, endpoint config |
-| `clean-text` | book file → records, for a NARRATOR: `--book`, `--records`, `--stamp`, `--endpoint`, `--model` (docs/CLEAN-TEXT.md) |
+| `clean-text` | book file → records, for a NARRATOR: `--book`, `--records`, `--stamp`, `--generation`, `--endpoint`, `--model`; or the bare-EPUB FAILSAFE `--epub`, `--out` (docs/CLEAN-TEXT.md) |
 | `doctor --json` | environment/report probe |
 
 **`clean-text` is the third text act** and it writes the same records format
