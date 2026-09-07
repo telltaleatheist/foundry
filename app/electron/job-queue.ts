@@ -1426,6 +1426,48 @@ export function enqueueHere(
  * conversion because it failed an hour ago would make the shelf's own history
  * the reason the retry is impossible.
  */
+/**
+ * THE ROW ALREADY WAITING TO MAKE THIS, WHEN "THIS" IS CHAINED ON A PROMISE.
+ *
+ * ── Why the product path is not enough for a chained pass ───────────────────
+ *
+ * `pendingFor` dedupes on the product, and for an ordinary press the product is
+ * the identity: two presses of "translate to German" from one step name one
+ * records file, and the second press finds the first row. A pass chained on a
+ * PROMISE breaks that in one case — a deferred simplify carries a PLACEHOLDER
+ * product minted fresh at every press (`pendingRecordsFileFor`, shared/ledger.ts,
+ * where the eight characters are the step id's), because the real name needs a
+ * language the promised chain cannot yet state. Two presses, two placeholders,
+ * two rows, and once the parent landed both would resolve to ONE file and the
+ * second would fail at spawn with `renameProduct`'s sentence — a refusal an hour
+ * late for a mistake made in a second.
+ *
+ * So a chained pass is deduped on WHAT IT IS rather than on what it will be
+ * called: the row it waits on, the act, and the one setting that makes the act
+ * this act — the target language of a translation, the mode of a rewrite (a
+ * cleanup has neither). Those are exactly the facts `promisedBy` puts on the row
+ * (`Job.after`, `Job.into`, `Job.mode`), so the question is asked of the rows
+ * and not of the requests, which is what lets it be asked of a HOST's rows the
+ * same way — BookForge was asked to key promised passes on the same three
+ * (2026-09-07), so both queues answer a double press with one row.
+ *
+ * ORDINARY PRESSES ARE UNTOUCHED: a request with no `after` is not chained, and
+ * this answers undefined before `pendingFor` is asked, exactly as before.
+ */
+function pendingChained(request: TextPassRequest): Job | undefined {
+  const after = request.after;
+  if (after === undefined) return undefined;
+  const into = request.kind === 'translate' ? request.to : undefined;
+  const mode = request.kind === 'simplify' ? request.rewrite : undefined;
+  return jobs.find(
+    (job) => (job.state === 'held' || job.state === 'queued' || job.state === 'running')
+      && job.after === after
+      && job.kind === request.kind
+      && job.into === into
+      && job.mode === mode,
+  );
+}
+
 function pendingFor(outputPath: string): Job | undefined {
   const key = path.resolve(outputPath).toLowerCase();
   return jobs.find(
@@ -1570,7 +1612,7 @@ export function enqueueTextPass(
    * function so the two can never answer it differently. See `productOf`.
    */
   const outputPath = productOf(request);
-  const already = pendingFor(outputPath);
+  const already = pendingChained(chained) ?? pendingFor(outputPath);
   if (already) return already;
 
   const job: Job = {
