@@ -613,6 +613,18 @@ the renderer's "you pressed Add twice, nothing changed" notice is also reading
 that answer. The identity is `outputPath`, which for a reading is the BANK
 (`readingsPath`) and for a translation is the RECORDS file (`recordsPath`).
 
+> **`Job.outputPath` IS THE ROW'S IDENTITY ON FOUNDRY'S SIDE, not a display
+> field — amended 2026-09-07.** Every row your queue pushes back through
+> `setHostQueueRows` must carry the request's PRODUCT there: a rendering's
+> output file, a reading's `readingsPath`, a text pass's `recordsPath`
+> (translate, simplify AND clean), an analysis's report — `productOf`'s rule,
+> word for word. Foundry files a row under a project by
+> `projectDirOf(job.outputPath)`, and the promised (greyed) card for a queued
+> text pass is derived from the rows filed under that project; a row that
+> crosses with `outputPath: ''` belongs to no project, so the person presses
+> Clean text and nothing appears in the tree. Measured on the PC on 2026-09-07
+> and fixed on your side (BookForge 1b91d85d, your keeper covers it).
+
 **Nothing in `docs/IPC-CHANNELS.md` moved** — 71 handles, 14 pushes, counted from
 source. `queue:list` and `queue:changed` carry the same `Job[]` shape and, hosted,
 a different list. The three functions above are main-process exports, not
