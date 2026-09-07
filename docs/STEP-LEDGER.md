@@ -370,9 +370,38 @@ at a step nothing has made yet), and the aim is discharged by being kept: when t
 lands, the position moves onto that very step and the promise stops existing.
 
 **A PLAN MADE UNDER ONE IS DEFERRED.** Everything deterministic is composed at the
-press — the records path, the step id, the stamp path, the export's own name in
-`final/` — and everything that had to be read off a chain is left absent, with
-`deferred: { from }` saying so. At SPAWN the same plan function is asked again with the
-now-real row, the materialised fields are merged in, and the run proceeds as an
-ordinary one. If the step never landed, the job fails by name: a promise whose parent
-was lost must not quietly run against the position instead.
+press — the step id, the stamp path, the export's own name in `final/` — and
+everything that had to be read off a chain is left absent, with `deferred: { from }`
+saying so. At SPAWN the same plan function is asked again with the now-real row, the
+materialised fields are merged in, and the run proceeds as an ordinary one. If the step
+never landed, the job fails by name: a promise whose parent was lost must not quietly
+run against the position instead.
+
+**THE IDENTITY IS MINTED AT THE PRESS; THE FILE IS NAMED AT SPAWN** — amended
+2026-09-07, Owen: *"I'd like to make it possible to chain anything and have it pick up
+required settings from the last step after it finishes."* The two used to be one
+decision (`translationTarget` answers both in a breath) and they are separable, which
+is what makes any pass chainable onto any promise:
+
+- **The STEP ID cannot wait.** It is the pending node's identity — the tree draws it,
+  `Job.mints` carries it, and a child ordered from the grayed card already names it as
+  its `parentStep`. So it is minted at the press and handed BACK INTO the re-plan
+  (`recordsForTextPass`'s `minted`), which is what makes the two askings agree about
+  one step rather than merely about one path.
+- **The FILE NAME sometimes must.** A rewrite's records file is named after the
+  language the book is in at that position, and a promised translation on the way down
+  changes that language while recording it nowhere a walk can read (`params` is absent
+  on a promise, above, and stays absent). Such a plan wears
+  `readings/<key>.<action>[.<mode>].pending-<id8>.records.jsonl` and admits it
+  (`DeferredPlan.namesAtSpawn`); no such file is ever written, because the engine does
+  not run until the row carries the real name.
+- **A RE-RUN CAN ONLY RESOLVE LATE.** `reRunTarget` compares the parent first and
+  nothing is parented to a promise, so every deferred pass plans as a BRANCH however
+  exactly it repeats a pass that already exists under the row about to land. With the
+  parent landed the comparison can match, this run then aims at that step's own
+  records, and `recordLanding` swaps rather than appends — the ordinary replace rule,
+  arriving at spawn instead of at the press.
+- **The row follows.** `Job.outputPath` is the dedupe key and the payload the landing
+  files, so a re-plan that moves the file moves the row and announces it; the dedupe is
+  re-asked against the real name, and a row resolving onto a file another live job is
+  already writing fails by name rather than putting two runs into one file.

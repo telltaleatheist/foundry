@@ -3941,17 +3941,18 @@ field a step does not have and admitting one would be a promise storable on a di
   enqueued), so drawing only the three would have produced no grayed row at all for
   Owen's own gesture in Foundry's own window. Argued at `PENDING_IN`; a hosted row is
   never `held`, so the design's three are what BookForge will actually push.
-- **A promised card carries no params, so it says "Translated" and "Simplified"
-  without the tag or the mode it will wear once it lands.** The mode is on the row only
-  as a SENTENCE ("Simplify — plain terms") and this codebase does not read facts back
-  out of sentences. `titleForStep` gained a `case 'simplify'` so a params-less one does
-  not fall to the translate default — the fourth time that `default` has caught an
-  action, and the reason the `Record<StepAction, …>` tables exist.
-- **A deferred SIMPLIFY under a promised translation or rewrite is refused by name.**
-  A rewrite's file is NAMED after the language it happens in, and a promised pass that
-  moves the book between languages records that answer nowhere this app can read. A
-  promised CLEANUP changes no language, so the ordinary case — Owen's own chain —
-  plans normally, reading the language at the landed ancestor.
+- ~~**A promised card carries no params, so it says "Translated" and "Simplified"
+  without the tag or the mode it will wear once it lands.**~~ **CLOSED by the
+  chain-anything sub-entry below.** The params stay absent (a promise records nothing
+  into a ledger every walk reads); the FACT moved onto the row as `Job.into` /
+  `Job.mode` and the card composes the landed card's own sentence from it.
+  `titleForStep` keeps its `case 'simplify'` as the fallback for a row that carries
+  neither — the fourth time that `default` has caught an action, and the reason the
+  `Record<StepAction, …>` tables exist.
+- ~~**A deferred SIMPLIFY under a promised translation or rewrite is refused by
+  name.**~~ **OVERRULED 2026-09-07 — see the chain-anything sub-entry below.** The
+  refusal was correct about the FILENAME and wrong about the press: the name now waits
+  for spawn behind a placeholder, and the rewrite chains.
 - **A deferred translation's same-language refusal is made at spawn rather than at the
   press.** It compares the target against the language of the translation in effect,
   which a promised chain may not be able to name yet. The refusal still happens; it
@@ -3965,6 +3966,81 @@ field a step does not have and admitting one would be a promise storable on a di
   them across, honour `after` and cascade its removals. Named required in the handoff
   note; until then a hosted chain runs out of order and `materializeDeferred` fails the
   row by name rather than exporting the wrong book.
+
+#### Chain anything — 2026-09-07, same day, Owen's second ruling — BUILT
+
+> Owen, 2026-09-07: *"I'd like to make it possible to chain anything and have it pick
+> up required settings from the last step after it finishes. So I should be able to
+> chain translate -> simplify -> tts -> assembly. Everything should come together
+> logically and work."*
+
+TTS and assembly are the host's and already chain (`exportEpubFromStep` on a promised
+step). What did not was Foundry's own text passes: **a deferred SIMPLIFY under a
+promised translate or simplify was refused by name**, two deferrals up. The diagnosis
+held — a rewrite's records file is named after the language the book is in at that
+position, and a promised step carries no params, so `translationInEffect` over
+ledger ∪ promises cannot say the language — and the conclusion did not. What was
+impossible was the FILENAME. Everything else about the press was in hand.
+
+**THE STEP ID IS MINTED AT THE PRESS; THE FILE IS NAMED AT SPAWN.** The two used to be
+one decision (`translationTarget` answers both in a breath) and they are separable. The
+id cannot wait — it is the pending node's identity, `Job.mints` carries it and children
+already name it as `parentStep` — so it is minted at the press and handed BACK INTO the
+re-plan (`recordsForTextPass`'s new `minted` argument, carried through all three plan
+doors). The name waits.
+
+- **The placeholder:** `readings/<key>.<action>[.<mode>].pending-<id8>.records.jsonl`
+  (`pendingRecordsFileFor`, shared/ledger.ts; `pendingRecordsForTextPass`,
+  electron/projects.ts), with `deferred.namesAtSpawn: true` on the plan. Deterministic,
+  unique to the press, and **never written to a disk** — the engine does not run until
+  the row carries the real name. Only a rewrite ever needs one: a translation's target
+  was typed by a person and a cleanup goes into no language at all.
+- **At spawn** (`materializeDeferred`, both doors) the re-plan is asked with the landed
+  step AND the press-time id. Its `recordsPath` and `stampPath` are TAKEN (Wave 56 kept
+  the press's, which was right while the press could always name the file), a rewrite's
+  `to` and `from` are filled from `plan.from`, and `bookPath`/`seedRecords`/`generation`
+  merge as before. The row's `outputPath` is rewritten to the real name — it is the
+  dedupe key AND the payload `recordTextPass` files — and `changed()` announces it.
+- **The dedupe is re-asked against the real name.** Two rewrites ordered from one
+  promise are two placeholders that may resolve to one file; the second fails by name
+  (`renameProduct`) rather than putting two six-hour runs into one records file.
+- **Replacement resolves at spawn, and needed no new code.** `reRunTarget` compares the
+  parent first, so nothing parented to a promise can match and every deferred pass
+  plans as a branch. Once the parent lands the comparison can match, the re-plan aims
+  at that step's own records, and `recordLanding` swaps rather than appends — the
+  ordinary rule, arriving late. Owen ruled it should: *"the landing resolves
+  replacement at spawn like it resolves the name."*
+- **The promised card says which one it is.** `Job.into` (a translation's target) and
+  `Job.mode` (a rewrite's mode) are copied onto the row off the request by
+  `promisedBy`, and the tree composes "Translated into German" / "Simplified into plain
+  terms" out of the same tables the landed card uses (`promisedTitle`). The synthetic
+  step's `params` stay ABSENT — that step goes into `withPending` and every `…InEffect`
+  walk reads it, and a promise must not answer a question about a run that has not
+  happened. Both fields are optional and named required-at-re-vendor in
+  docs/BOOKFORGE-HANDOFF.md §8b; a host that has not copied them draws Wave 56's card.
+- **`SimplifyRequest.to` and `.from` are now optional**, for exactly the window between
+  a deferred press and its spawn. `argsFor` refuses a rewrite that reaches the command
+  line without one (`languageOf`), by name, on `bookOf`'s precedent.
+- **Gates:** `bun test` 823 pass / 0 fail, root `tsc --noEmit`, `app` electron
+  typecheck, `ng build`. No test was added (house rule); none was invalidated.
+
+**Deferred out loud, not silently:**
+
+- **A deferred pass that resolves onto an EXISTING step at spawn lands as that step,
+  and its own promised id never lands.** That is what replacement means and it is what
+  Owen asked for, but a child chained under the promised id then fails at its own spawn
+  with the cascade's existing sentence (*"The step this was to be made from never
+  landed"*) rather than being re-parented onto the replaced step. Re-parenting a live
+  chain is a second mechanism and was not built; the failure is loud, named, and costs
+  nothing already spent.
+- **Hosted, the re-dedupe sees only Foundry's own rows.** `pendingFor` reads `jobs`,
+  not `shelfJobs()`, which is `runJob`'s standing ruling (*"what protects the file is
+  the same thing that protects it there — one scheduler"*). A host running two rows
+  that resolve onto one records file is the host's collision to prevent.
+- **A promised EXPORT card still says only "EPUB".** `Job.into`/`Job.mode` are text-pass
+  facts; an export's promise is a file whose name is deterministic at the press, and
+  the card that draws it reads `EXPORT_LABEL_OF`. Nothing about this ruling asked for
+  more.
 
 ---
 

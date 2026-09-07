@@ -118,6 +118,39 @@ in the user's example would collide. Same fix, same convention as bank paths
   path; branch → mint. Filenames are out of the UI; the row's label
   (`labelFor`) is what a person reads, and ten translations are ten rows.
 
+#### Naming at spawn — amended 2026-09-07 (Owen's chain-anything ruling)
+
+> *"I'd like to make it possible to chain anything and have it pick up required
+> settings from the last step after it finishes. So I should be able to chain
+> translate -> simplify -> tts -> assembly. Everything should come together
+> logically and work."*
+
+Everything above decides a name **at the press**, which is right for every press made
+from a step that exists. A pass ordered from a PROMISED step (docs/STEP-LEDGER.md,
+"Pending nodes") sometimes cannot:
+
+- a **rewrite** is named after the language the book is in at that position, and a
+  promised translation or rewrite on the way down changes that language while recording
+  it nowhere a walk can read — a promise carries no `params`, deliberately;
+- **any** deferred pass plans as a branch even when it exactly repeats a pass that
+  already exists under the row about to land, because `reRunTarget` compares the parent
+  first and nothing is parented to a promise.
+
+So the two decisions the paragraphs above make together are split. The **step id** is
+minted at the press, because it is the pending node's identity and children already
+name it. The **file name** is composed at spawn, by re-asking `recordsForTextPass` with
+that same minted id: a branch then wears the `id8` the press promised, and a re-run
+that could not match at the press aims at the step it now matches and writes into that
+step's records — which `recordLanding` swaps rather than appends, with no rule added
+anywhere. In between, a rewrite that could not name itself wears
+`readings/<key>.simplify.<mode>.pending-<id8>.records.jsonl` and says so
+(`DeferredPlan.namesAtSpawn`); nothing ever writes such a file, and the row's
+`outputPath` is rewritten to the real name at spawn — re-deduped against it, and
+refused by name if another live job is already writing that file.
+
+A translation never needs the placeholder: its target was typed by the person pressing
+the button. A cleanup never needs it: it goes into no language at all.
+
 Translation banks branch identically: `readings/<key>.<tag>.<id8>.bank.jsonl`.
 A branched translation deliberately does **not** share the first one's bank —
 sharing would be harmless for hits but would let `deleteStep`'s sweep destroy

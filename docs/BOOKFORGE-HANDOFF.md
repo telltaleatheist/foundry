@@ -391,8 +391,8 @@ none changes what the app does standalone:
 Foundry's tree now draws a **grayed card for every live queue row that will land a
 node**, derived from the rows themselves — nothing pending is stored anywhere, in
 `project.json` or otherwise. Standing on such a card makes the tiles answer for it and
-plans made under it come back DEFERRED, to be re-planned at spawn. Two fields cross the
-mount seam for this, and **a host that keeps its own queue must carry both**.
+plans made under it come back DEFERRED, to be re-planned at spawn. Four fields cross the
+mount seam for this, and **a host that keeps its own queue must carry them**.
 
 **WHAT THE HOST MUST COPY, VERBATIM, OFF THE REQUEST ONTO ITS OWN ROW**
 (`FoundryJobRow` is `Job` — the fields are on the type already; what is required is
@@ -406,8 +406,31 @@ that the row the host *mints* carries them):
    `request.after`. It is one of the HOST's own row ids, because `shelfJobs()` hosted
    is the host's list. A row pushed back without it lets a chained export start before
    the cleanup it is an export OF.
-3. **`row.forStep`** — unchanged and already required; listed here only because these
-   three are the whole of what a minted row owes.
+3. **`row.into`** — `request.to` for a `translate`, absent for everything else. It is
+   what the grayed card says it is going to be: "Translated into German" instead of
+   "Translated". **Optional and safe to miss** — a row without it draws the shorter
+   card rather than none — but a person looking at three grayed rows cannot tell which
+   is the German one, so copy it.
+4. **`row.mode`** — `request.rewrite` for a `simplify`, absent for everything else, and
+   the same field for the other pass whose promised card could not say which it was:
+   "Simplified into plain terms". Optional on the same terms as `into`.
+5. **`row.forStep`** — unchanged and already required; listed here only because these
+   five are the whole of what a minted row owes.
+
+> `into` and `mode` are FACTS, not the row's sentence. `Job.title` already reads
+> "Simplify — plain terms", and Foundry's tree deliberately does not parse it: this
+> codebase does not read facts back out of sentences. Copy the request's own values.
+>
+> **Added 2026-09-07 with Owen's chain-anything ruling** — *"I'd like to make it
+> possible to chain anything and have it pick up required settings from the last step
+> after it finishes. So I should be able to chain translate -> simplify -> tts ->
+> assembly."* The same ruling made any Foundry text pass chainable onto any promised
+> text pass; nothing else about the seam moved. One consequence a host queue should
+> know about: **a deferred text pass may have its `outputPath` rewritten when it
+> spawns**, because a rewrite's records file is named after a language the promised
+> chain could not state until its parent landed. Foundry rewrites its own row and
+> announces it on `queue:changed`; a host that mirrors `outputPath` should take the row
+> Foundry pushes rather than the path it minted.
 
 **WHAT THE HOST'S SCHEDULER MUST DO WITH `after`:**
 
