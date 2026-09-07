@@ -503,10 +503,18 @@ export class MintMetaDialogComponent {
        * own output name is the stem convention; this dialog's whole point is
        * that the person names the file.
        */
+      // THE PLAN'S OWN SEPARATOR, never a literal one. This joined with '\\'
+      // regardless of platform, so on a Mac the request carried
+      // "\Volumes\iO\...\final\<name>.epub" — not an absolute path there — and
+      // main wrote the book relative to its working directory: a complete EPUB
+      // named with backslashes, sitting untracked in the host app's repo (Owen,
+      // 2026-09-07, Mutineers' Moon). The renderer has no `path`; the plan's
+      // path already says which separator this machine uses.
+      const sep = plan.outputPath.includes('\\') ? '\\' : '/';
       const parts = plan.outputPath.split(/[\\/]/);
       parts.pop();
       const filed = asciiFilename(this.filenameShown()).replace(/\.epub$/i, '') + '.epub';
-      const outputPath = [...parts, filed].join('\\');
+      const outputPath = [...parts, filed].join(sep);
       const request: JobRequest = {
         kind: 'epub',
         inputPath: plan.sourcePath,

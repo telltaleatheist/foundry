@@ -1313,6 +1313,20 @@ function changed(): void {
  * hosted, so both sides of the comparison come from one place.
  */
 export function enqueue(request: JobRequest, parentStep: string | null = null): Job {
+  // A PRODUCT PATH THAT IS NOT ABSOLUTE IS REFUSED BY NAME, before either queue
+  // sees it. Main resolves a relative path against its own working directory,
+  // which is nowhere a person chose — a renderer that built the path with the
+  // wrong separator once had a whole EPUB written into the host app's repo
+  // (2026-09-07). The renderer is the only place such a string can be minted,
+  // and this is the one door every request passes through.
+  const product = productOf(request);
+  if (!path.isAbsolute(product)) {
+    throw new Error(
+      `The ${request.kind} request names its output as "${product}", which is not an absolute `
+      + 'path on this machine, so it would be written relative to the app\'s working directory. '
+      + 'Nothing was queued. (A path with backslashes on macOS/Linux is one relative segment.)',
+    );
+  }
   const host = hostQueue();
   if (host !== null) {
     // THE CHAIN LINK RIDES ON THE REQUEST — `enqueueTextPass` carries the whole
