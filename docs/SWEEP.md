@@ -197,3 +197,42 @@ met the code and lost, each argued in a docblock where it is built:
    still waiting — so a left-reaching deletion can never shift the
    offsets of a cut not yet made. (`mend`/`cutSpans`,
    `app/src/app/core/sweep.ts`.)
+
+## §7 Amended by Owen (2026-09-07) — three verdicts, no hover, a wider press
+
+Four asks in one message, each landed in the dialog and argued where it
+is built (`sweep-dialog.component.ts`, `core/sweep.ts`):
+
+1. **Three verdicts, not two** (amends §2.3, §2.4, §3). *"the sweep — it
+   should give me the choice of deleting the whole block or just the
+   text."* A live match now wears `cut` (the span, as before), `keep`, or
+   **`block`** — strike the whole paragraph the match sits in. One press
+   on the pill steps cut → keep → block → cut; keep stays the FIRST press
+   because it is the one the strike-all-then-spare workflow makes a
+   hundred times. A block with a `block` verdict on any of its matches is
+   struck whole and none of its spans are cut (`plan`'s third argument);
+   the count on the landing verb excludes those spans for the same
+   reason. The footer gains `Strike all blocks` beside `Keep all` /
+   `Cut all`, and the verb reads `Cut 12`, `Strike 3 blocks`, or
+   `Cut 12, strike 3 blocks`. A block verdict draws the WHOLE quotation
+   in the cancel, because what the row shows cancelled is what the op
+   cancels. On a translated pass a whole-block strike is an op, exactly
+   as an emptied block already was (§2.7).
+2. **Nothing on hover** (amends §2.4's glance and §3's anatomy). *"there
+   shouldnt be a tool tip that pops up on hover in the sweep. i can see it
+   already."* The floating glance and the row-level `title` tooltips are
+   gone. The block's wider text is a **click on the quotation**, which
+   swaps it into the row and back out on the next click. An opened row
+   grows — the 2026-08-24 ruling was about rows growing under a pointer on
+   its way to a button; a row somebody clicked open is a row they asked to
+   grow.
+3. **The whole cell is the button** (amends §3). *"if i click anywhere
+   near the cut/keep button it should register as a click. the button is
+   small and hard to click, but i like it visually."* The pill is
+   unchanged and is now the face of a button that fills the verdict
+   column from the row's top edge to its bottom and out to the card's
+   border.
+4. **Ctrl/Cmd+Z** is not the sweep's but was in the same message; see
+   `src/app/app.ts` `onKeyDown` — the book's undo chord now lives on the
+   window's keydown, because a hosted window has no Foundry menu to carry
+   the accelerator.

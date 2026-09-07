@@ -938,6 +938,13 @@ export interface ExportLanding {
   document's undo, Ctrl+B documents, Ctrl+\ split) are yours to offer: send
   `menu:action` with `'export' | 'close-tab' | 'split-right' |
   'toggle-documents' | 'undo' | 'redo'` to the window's `webContents`.
+  **Undo/redo, amended 2026-09-07:** the book's undo also listens for
+  Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z on the window's own `keydown` (a caret in a
+  text field is left to the browser). On Windows and Linux that reaches the
+  hosted window through your platform `role: 'undo'` menu untouched. **On a
+  Mac your role menu consumes the key before the page sees it**, so there the
+  chord still needs you: when the focused window is Foundry's, send
+  `menu:action` `'undo'`/`'redo'` to it instead of `webContents.undo()`.
 - **Deep link.** `openFoundryWindow(dir)` pushes `project:open` with
   `{ dir, originalPath, managed }` after the renderer loads. The renderer's own
   wiring of it — landing in the project instead of on Home — is a follow-up wave
