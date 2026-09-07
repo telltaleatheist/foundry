@@ -158,7 +158,7 @@ import { materializeTextPass } from './book';
 import { parseProgressLine, runEngine, stampMintMetadata, writeBookFile } from './engine';
 import { ENV_SPECS } from './env-catalog';
 import { destFor, installEnv } from './env-install';
-import { foundryHost, type FoundryHostQueue } from './host';
+import { foundryHost, type FoundryHostQueue, hostMintMeta } from './host';
 import {
   bookAtPosition,
   generatedRoleFor,
@@ -195,6 +195,7 @@ import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from 
 import { planCleanup, planExport, planSimplification, planTranslation } from './workspace';
 import { exportNodeId } from '../shared/host-ops';
 import { ancestry, REWRITE_LABELS } from '../shared/ledger';
+import { inheritMintMeta, type MintMeta } from '../shared/mint-meta';
 import { fold } from '../shared/original';
 import { rowMinting } from '../shared/pending';
 import { JOB_RESOURCE, SLOTS, type JobResource } from '../shared/queue-board';
@@ -765,6 +766,23 @@ export function onExportLanded(listener: (landing: ExportLanding) => void): void
  * and lenient end to end, because a language the settle cannot work out is a
  * stamp that falls back to the form's answer rather than a mint that fails.
  */
+/**
+ * THE PROJECT'S DECLARATION WITH THE HOST'S RECORD UNDERNEATH — what an EPUB
+ * export nobody confirmed at a form is stamped with. `inheritMintMeta` holds
+ * the precedence; this is only the two reads it needs, both lenient: a
+ * catalogue that will not parse and a host that throws are each "no record",
+ * because the book is made and a stamp is the last thing that happens to it.
+ */
+async function inheritedMintMetaFor(dir: string): Promise<MintMeta | null> {
+  let stored: MintMeta | undefined;
+  try {
+    stored = (await readManifest(dir)).meta;
+  } catch {
+    stored = undefined;
+  }
+  return inheritMintMeta(stored ?? null, await hostMintMeta(dir));
+}
+
 async function chainLanguageOf(
   outputPath: string,
   parentStep: string | null,
@@ -4096,10 +4114,37 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
        * comments up. A stamp that fails is a console line and never a failed
        * job: the book is made and filed, and a metadata splice can be pressed
        * again from the tile in seconds.
+       *
+       * ── AND A MINT NOBODY CONFIRMED INHERITS, the way the modal would have ──
+       *
+       * A host-ordered export (`exportEpubFromStep`, electron/mount.ts) has no
+       * modal in front of it, and used to carry the project's stored block or
+       * nothing. A hosted project minted from a bare document has no stored
+       * block until somebody confirms a mint, so BookForge's narrate-on-a-step
+       * produced an EPUB whose `dc:title` was the tray file's stem and whose
+       * `dc:creator` was absent — while BookForge's own shelf knew the author
+       * (bookforge-pc-1, 2026-09-07). The modal asked the host for exactly that
+       * record (`mintMetaFor`) and merged it under the stored block; the
+       * unattended route never did. Now it asks the same question through the
+       * same function (`inheritMintMeta`, shared/mint-meta.ts): the request's
+       * confirmed block first, the stored block over the host's record next,
+       * and nothing at all only when neither side has a record — the
+       * standalone first mint, which is what it always was.
+       *
+       * A BLOCK WITH NO TITLE IS NOT STAMPED. The splice writes `Untitled` for
+       * an empty one, and a title the compile already took from the scan is
+       * strictly better than that word over it.
        */
+      const projectDir = projectDirOf(next.outputPath);
       let minted: ExportMintMetadata | undefined;
-      if (request.kind === 'epub' && request.mintMeta !== undefined) {
-        const meta = request.mintMeta;
+      const inherited = request.kind === 'epub' && request.mintMeta === undefined && projectDir !== null
+        ? await inheritedMintMetaFor(projectDir)
+        : null;
+      const confirmed = request.kind === 'epub'
+        ? request.mintMeta ?? (inherited !== null && inherited.title.trim().length > 0 ? inherited : undefined)
+        : undefined;
+      if (request.kind === 'epub' && confirmed !== undefined) {
+        const meta = confirmed;
         const declared = request.language
           ?? await chainLanguageOf(next.outputPath, madeFrom)
           ?? meta.language;
@@ -4140,7 +4185,6 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
        * listener registered by anything else — a test, a future caller — reaches
        * this line and not that one.
        */
-      const projectDir = projectDirOf(next.outputPath);
       if (projectDir !== null) {
         try {
           exportLanded({
