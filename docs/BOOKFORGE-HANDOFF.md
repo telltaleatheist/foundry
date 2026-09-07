@@ -945,6 +945,9 @@ export interface ExportLanding {
   Mac your role menu consumes the key before the page sees it**, so there the
   chord still needs you: when the focused window is Foundry's, send
   `menu:action` `'undo'`/`'redo'` to it instead of `webContents.undo()`.
+  `foundryWindow()` is exported through the mount for exactly that test —
+  compare it to `BrowserWindow.getFocusedWindow()` rather than capturing
+  `browser-window-created`.
 - **Deep link.** `openFoundryWindow(dir)` pushes `project:open` with
   `{ dir, originalPath, managed }` after the renderer loads. The renderer's own
   wiring of it — landing in the project instead of on Home — is a follow-up wave
