@@ -230,3 +230,58 @@ run and deleted (no test was added; house rule).
   harmless: the process is quitting and `noteQueueIdle` is idempotent.)
 - **The landing arms were walked** for serial assumptions; findings are
   in the wave's report and in PLAN.md's Wave 35 row.
+
+## 7. Pending nodes — added 2026-09-07 (Owen's promised-chain ruling)
+
+> *"if i queue cleanup, i want a grayed out step to appear where the item will be
+> when it finishes. i should be able to run jobs against the grayed out row.
+> everything under it that i run will also be grayed out. if that item is removed
+> from the queue, anything under it also disappears. … if i then remove the cleanup
+> step from the queue, or it otherwise gets lost along the way, everything under
+> that grayed out chain also gets removed."*
+
+**NOTHING PENDING IS EVER STORED.** The queue rows ARE the record. A row carries
+`Job.mints` — the node it will put in the tree when it lands, a step id for a text
+pass and `export:<file>` for an export — and the library tree DERIVES a grayed card
+from every live row that has one (`shared/pending.ts`). A row that leaves the queue
+takes its card off the screen in the same repaint, and everything hanging under it
+with it, because a promise is drawn only where its parent is a real step or another
+live promise. That is the whole of the drawing half of the cascade; there is no
+bookkeeping and nothing to forget.
+
+**THE BOARD LEARNED ONE RULE, AND IT IS NOT A BARRIER.** `Job.after` names the row a
+job is downstream of. `nextStartable` SKIPS a row whose `after` has not finished —
+skips, not blocks, which is the opposite of the install rule in §3 and right for the
+opposite reason: an install stops the walk because everything behind it would run
+against the environment it is replacing, and a promised chain concerns nobody but
+itself. The lanes are exactly why the rule is needed: an export is a CPU row and the
+cleanup it is an export OF is a GPU row, so without it the export steps past its own
+parent into the free lane and compiles the book without the cleanup.
+
+**AN ABSENT PARENT ROW IS NOT A LOST PARENT.** `reconcileChains` runs at the top of
+every `pump()`, before a slot is reserved, and resolves every `after` the queue
+cannot answer: present and unfinished → wait; present and failed or cancelled →
+cancel this row and its chain by name; ABSENT → ask the LEDGER, because the parent
+may simply have landed an hour ago and been cleared from the shelf. Only an id that
+is in neither the queue nor the ledger is lost. It is async and it is therefore
+OUTSIDE `nextStartable`, which must stay synchronous: `pump()`'s loop reserves a slot
+between two calls to it.
+
+**THE DRAIN DOES NOT COUNT A WAITING ROW.** A promised export is enqueued `queued`
+(a rendering never waits for a person) but is in fact waiting for one, because its
+cleanup is `held` until somebody presses Start. Counting it as work the board is
+about to do would hold twenty gigabytes of vLLM resident for exactly that long, with
+`keepServerWarmMinutes` defaulting to 0 — see §3's warning, which this is an
+instance of rather than an exception to.
+
+**CLEAR FINISHED LEAVES A SETTLED ROW THAT STILL HAS A CHAIN.** A done cleanup with a
+promised export behind it is over as work and not over as a chain, and a person
+watching a batch should see it whole. Mirrors BookForge's own rule, which matters
+because the two lists are drawn in one window.
+
+**HOSTED, FOUNDRY ONLY SETS THE FIELDS.** The host's queue does the scheduling: it
+copies `mints` and `after` off the request onto its own rows, refuses an `after`
+naming a row it does not hold or one already failed or cancelled, and cascades its
+removals transitively. Foundry's last line is `materializeDeferred`, which refuses at
+spawn when the step a run was to be made from never landed — so a host that runs a
+chained row out of order gets a failed row with a sentence rather than a wrong book.

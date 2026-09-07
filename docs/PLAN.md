@@ -3872,6 +3872,100 @@ the step/logic to foundry, but only make it visible when vendored to bookforge."
   sealed snapshot of `shared/api.ts` predates. This is the one item in the handoff
   note marked required rather than recommended.
 
+
+### Wave 56 — the promised chain: grayed steps you can act from (Owen, 2026-09-07) — BUILT
+
+> Owen, 2026-09-07: *"if i queue cleanup, i want a grayed out step to appear where
+> the item will be when it finishes. i should be able to run jobs against the grayed
+> out row. everything under it that i run will also be grayed out. if that item is
+> removed from the queue, anything under it also disappears. so when i run ai cleanup
+> on an 'applied changes' row, it adds it to the queue and adds a grayed out row as a
+> step. i click the grayed out row and hit the export epub tile. the export epub tile
+> is grayed out until ai cleanup finishes. i can click the grayed out exported epub
+> and click narrate. then send narration and assembly to the queue. if i then remove
+> the cleanup step from the queue, or it otherwise gets lost along the way, everything
+> under that grayed out chain also gets removed."*
+
+**NOTHING PENDING IS EVER STORED**, and that is the architecture rather than a
+detail. The queue rows are the record: a row carries `Job.mints` (the node it will
+land — a step id for a text pass, `export:final/<name>` for an export) and the tree
+DERIVES a grayed card from every live row that has one. A promise is drawn only where
+its parent is a real step or another live promise, so a row that leaves the queue takes
+its whole chain off the screen in the same repaint. The ledger stays pure —
+`shared/host-ops.ts`'s "derived and never stored" rule extended to Foundry's own
+promises — and `LedgerStep` gained no `pending` field, because `parseLedger` refuses a
+field a step does not have and admitting one would be a promise storable on a disk.
+
+- **`shared/pending.ts`** is the whole derivation: `pendingStepOf` (a live row as the
+  `LedgerStep` it will be), `admitPending` (the orphan rule, which IS the drawing half
+  of the cascade), `withPending` (one composed ledger, so all four `…InEffect` walks go
+  through a promise with no signature changed), `rowMinting`, `deferralFor`.
+- **Standing on a promise is a renderer fact.** Main refuses `ledger:go` to a step that
+  does not exist and is right to, so `LedgerService` holds the aim and `standingIn`
+  answers with the promise — which makes every tile, every dialog refusal and the
+  metadata gate answer for the grayed card without any of them learning a second kind
+  of standing. The document pane does not move: there is no book at a step nothing has
+  made yet.
+- **The tiles are DIMMED AND LIVE**, which is both of Owen's sentences at once. A
+  disabled button satisfies *"grayed out until ai cleanup finishes"* and makes *"i click
+  the grayed out row and hit the export epub tile"* impossible; and this panel's own
+  rule is that a button whose only outcome is a refusal is not drawn at all. The press
+  has an outcome — the export is planned, queued and made when the cleanup lands.
+- **Deferred plans.** The four plan doors took one optional trailing argument (the step
+  the press named). A plan under a promise composes everything deterministic now —
+  records path, step id, stamp path, the export's own name in `final/` — and leaves
+  `bookPath`, `seedRecords`, `generation` and `narrationStamp` absent behind
+  `deferred: { from }`. `materializeDeferred` re-asks the SAME plan function at spawn
+  with the landed row and merges the four fields in; the paths the promise already
+  claimed are kept, or a run would land under a step id nobody promised and orphan its
+  own children at the moment it succeeded.
+- **The scheduler.** `Job.after` names the row a job is downstream of. `nextStartable`
+  skips a row whose parent has not finished (skips, not blocks — the lanes are exactly
+  why it is needed: an export is CPU and its cleanup is GPU). `reconcileChains` runs at
+  the top of every pump and asks the LEDGER about a parent row that is no longer in the
+  list, because an absent row usually means the parent LANDED and was cleared. Loss —
+  neither in the queue nor in the ledger — cascades: cancelled and removed
+  transitively, with the reason in each casualty's own `error`, which `exportEpubFromStep`
+  now rejects its awaiting host with.
+- **The host seam.** `HostInvokeContext.pendingRow` says which row a host act's own work
+  must wait behind; `cleaned` is answered over the composed ledger, so a narration
+  ordered from a promised cleanup is told the truth about the file it will be handed.
+  docs/BOOKFORGE-HANDOFF.md §8b lists exactly what the host must copy and honour.
+- **Gates:** `bun test` 823 pass / 0 fail, root `tsc --noEmit`, `app` electron and
+  renderer typechecks, `ng build`. No test was added (house rule); none was invalidated.
+
+**Deferred out loud, not silently:**
+
+- **`held` is drawn as a promise, where the design named `queued|running|failed`.**
+  Standalone every text pass is born `held` (nothing expensive starts by being
+  enqueued), so drawing only the three would have produced no grayed row at all for
+  Owen's own gesture in Foundry's own window. Argued at `PENDING_IN`; a hosted row is
+  never `held`, so the design's three are what BookForge will actually push.
+- **A promised card carries no params, so it says "Translated" and "Simplified"
+  without the tag or the mode it will wear once it lands.** The mode is on the row only
+  as a SENTENCE ("Simplify — plain terms") and this codebase does not read facts back
+  out of sentences. `titleForStep` gained a `case 'simplify'` so a params-less one does
+  not fall to the translate default — the fourth time that `default` has caught an
+  action, and the reason the `Record<StepAction, …>` tables exist.
+- **A deferred SIMPLIFY under a promised translation or rewrite is refused by name.**
+  A rewrite's file is NAMED after the language it happens in, and a promised pass that
+  moves the book between languages records that answer nowhere this app can read. A
+  promised CLEANUP changes no language, so the ordinary case — Owen's own chain —
+  plans normally, reading the language at the landed ancestor.
+- **A deferred translation's same-language refusal is made at spawn rather than at the
+  press.** It compares the target against the language of the translation in effect,
+  which a promised chain may not be able to name yet. The refusal still happens; it
+  arrives as a failed row with main's own sentence instead of as a dark button.
+- **`HostInvokeContext.cleaned` is still `false` for an act ordered from an export
+  node**, promised or landed — unchanged, and unchanged for its own documented reason:
+  an export id is not a position this app can ask a question about, and the durable
+  answer is the OPF meta on the file.
+- **BookForge must re-vendor before a promised chain works hosted.** Foundry sets
+  `mints` and `after` on the request; the host's own queue mints the row and must carry
+  them across, honour `after` and cascade its removals. Named required in the handoff
+  note; until then a hosted chain runs out of order and `materializeDeferred` fails the
+  row by name rather than exporting the wrong book.
+
 ---
 
 ## 8. Session hygiene

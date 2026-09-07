@@ -376,6 +376,71 @@ none changes what the app does standalone:
    before — §7's CLI contract and §9's ground rules are unchanged by any of
    this.
 
+### 8b. The promised chain — REQUIRED at the next re-vendor (2026-09-07)
+
+> Owen, 2026-09-07: *"if i queue cleanup, i want a grayed out step to appear where
+> the item will be when it finishes. i should be able to run jobs against the grayed
+> out row. everything under it that i run will also be grayed out. if that item is
+> removed from the queue, anything under it also disappears. … i click the grayed out
+> row and hit the export epub tile. the export epub tile is grayed out until ai
+> cleanup finishes. i can click the grayed out exported epub and click narrate. then
+> send narration and assembly to the queue. if i then remove the cleanup step from the
+> queue, or it otherwise gets lost along the way, everything under that grayed out
+> chain also gets removed."*
+
+Foundry's tree now draws a **grayed card for every live queue row that will land a
+node**, derived from the rows themselves — nothing pending is stored anywhere, in
+`project.json` or otherwise. Standing on such a card makes the tiles answer for it and
+plans made under it come back DEFERRED, to be re-planned at spawn. Two fields cross the
+mount seam for this, and **a host that keeps its own queue must carry both**.
+
+**WHAT THE HOST MUST COPY, VERBATIM, OFF THE REQUEST ONTO ITS OWN ROW**
+(`FoundryJobRow` is `Job` — the fields are on the type already; what is required is
+that the row the host *mints* carries them):
+
+1. **`row.mints`** — the node this row will put in Foundry's tree when it lands. A
+   step id for a text pass (`request.stepId`), `export:final/<name>` for an export.
+   Foundry composes it before it hands the request over; a row pushed back without it
+   takes a promised card off the tree, and every card promised under it with it.
+2. **`row.after`** — the row id this one is downstream of, composed by Foundry off
+   `request.after`. It is one of the HOST's own row ids, because `shelfJobs()` hosted
+   is the host's list. A row pushed back without it lets a chained export start before
+   the cleanup it is an export OF.
+3. **`row.forStep`** — unchanged and already required; listed here only because these
+   three are the whole of what a minted row owes.
+
+**WHAT THE HOST'S SCHEDULER MUST DO WITH `after`:**
+
+- **Do not start a row whose `after` has not finished.** Skip it, do not block behind
+  it: an unrelated reading must not wait on somebody's cleanup.
+- **Refuse an `after` naming a row the queue does not hold, or one already `failed` or
+  `cancelled`.** (Foundry's own queue distinguishes a third case — an absent parent may
+  simply have landed and been cleared — by asking the ledger; a host that keeps its
+  finished rows longer than Foundry does may not need to.)
+- **Cascade removals transitively.** Removing, cancelling or failing a row removes
+  every row whose `after` names it, and every row under those, with the reason in the
+  casualty's own `error`. This is Owen's *"everything under that grayed out chain also
+  gets removed."*
+- **Sweep a settled row only when everything chained under it has settled too**, so a
+  done cleanup stays on the shelf while its promised export waits. Foundry's
+  `clearFinished` mirrors this, because the two lists are drawn in one window.
+
+**AND ONE FIELD ARRIVES ON THE INVOKE:** `HostInvokeContext.pendingRow` — the host row
+id the act's own work must wait behind, present when the act was ordered from something
+that has not happened yet (a grayed step, a grayed EPUB). Absent is every host act
+before this wave. Ignoring it is allowed and costs a failed row rather than a wrong
+book: `exportEpubFromStep` refuses by name when the step it was to export never landed.
+
+**`HostInvokeContext.cleaned` NOW ANSWERS OVER THE PROMISES TOO.** A narration ordered
+from a cleanup that has not landed answers `true`, because the EPUB the host will be
+handed is itself chained behind that cleanup and cannot exist until it lands.
+
+**NO NEW CHANNEL AND NO LANDED/GONE EVENT.** Four plan doors took one optional trailing
+argument (`workspace:plan-export`, `-translation`, `-simplify`, `-clean` now take a
+step id the press was aimed at); no channel was added, renamed or removed, so
+docs/IPC-CHANNELS.md owed no regeneration. Everything else is derivation over the rows
+push that already exists — do not add an event for it.
+
 ## 9. Ground rules worth inheriting
 
 Whatever route you take, these are the invariants the formats promise:

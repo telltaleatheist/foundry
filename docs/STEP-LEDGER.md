@@ -322,3 +322,57 @@ createElement'd nodes. Never match files by basename across directories —
 compare project-relative paths. Long WHY decision comments in the codebase's
 own voice. Do not commit unless asked; the main session verifies and commits.
 No filenames in UI labels — steps are named by action, in words.
+
+## Pending nodes — added 2026-09-07 (Owen's promised-chain ruling)
+
+> *"if i queue cleanup, i want a grayed out step to appear where the item will be
+> when it finishes. i should be able to run jobs against the grayed out row.
+> everything under it that i run will also be grayed out."*
+
+**NOTHING PENDING IS EVER WRITTEN TO `project.json`, AND THAT IS THE WHOLE DESIGN.**
+A step in this file is a RECORD OF SOMETHING THAT HAPPENED: `parseLedger` refuses one
+whose parent is missing, `RETENTION_OF` says what its payload cost, the delete confirm
+names what erasing it destroys, and the sweep unlinks the file it points at. A promise
+has none of those — no payload, no cost, nothing to erase — so storing one would mean
+every reader of a ledger learning to tell a fact from an intention, and the day one of
+them forgot, a book's history would claim a translation that never ran. It is
+`cleanupInEffect`'s own ruling ("*it is DERIVED and it is never stored*") applied to
+Foundry's own promises.
+
+**THEY ARE DERIVED FROM QUEUE ROWS.** A row carries `Job.mints` — the id of the node it
+will land — and `shared/pending.ts` turns a live row into a synthetic `LedgerStep`:
+id = `mints`, parent = `Job.parentStep`, action = the row's kind, retention out of
+`RETENTION_OF`, `createdAt` off the row. `params` is ABSENT (a promised translation
+cannot say which language until it lands; the row's title is a sentence and this
+codebase does not read facts back out of sentences) and `payload` is the empty string,
+which is the one field a promise genuinely cannot have.
+
+**`LedgerStep` GAINED NO `pending` FIELD.** `STEP_FIELDS` is a closed list and
+`parseLedger` refuses a step carrying anything outside it, so an optional marker here
+would be a field the parser has to admit — which is a field somebody can write into a
+`project.json`, which is a promise stored on a disk. Whether a standing is pending is
+carried BESIDE the step (`Standing`, shared/pending.ts).
+
+**THE WALKS GO THROUGH THEM, THROUGH ONE COMPOSITION.** `withPending(ledger, promises)`
+returns a ledger whose `steps` include the synthetic ones, and every existing walk —
+`translationInEffect`, `textPassInEffect`, `cleanupInEffect`, `editsInEffect` — answers
+through a promised chain unchanged, because they all resolve a parent by looking it up
+in `ledger.steps`. Threading an `extra` argument through five exported functions and
+their callers would have been five chances to pass it in four places and forget the
+fifth, and the fifth is the one that renders the uncleaned words.
+
+**STANDING ON ONE DOES NOT MOVE THE POINTER.** Main refuses `ledger:go` to a step that
+does not exist and is right to: the pointer names a row of this file. So the standing
+splits for as long as the promise lasts — the ledger goes on pointing at the last real
+row and the WINDOW aims one step further down (`LedgerService.standOnPromise`). The
+tiles and the dialogs read the aim, the document pane does not move (there is no book
+at a step nothing has made yet), and the aim is discharged by being kept: when the row
+lands, the position moves onto that very step and the promise stops existing.
+
+**A PLAN MADE UNDER ONE IS DEFERRED.** Everything deterministic is composed at the
+press — the records path, the step id, the stamp path, the export's own name in
+`final/` — and everything that had to be read off a chain is left absent, with
+`deferred: { from }` saying so. At SPAWN the same plan function is asked again with the
+now-real row, the materialised fields are merged in, and the run proceeds as an
+ordinary one. If the step never landed, the job fails by name: a promise whose parent
+was lost must not quietly run against the position instead.
