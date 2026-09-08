@@ -89,7 +89,7 @@ import { decodeEntityAt, parseXml, type XmlElement, type XmlNode } from '../epub
 import { BookError, readFoundryBook, type BookDocument } from '../translate/book.js';
 import { findBlocks, spliceAll, type BlockSite } from '../translate/blocks.js';
 import { TranslationBank } from '../translate/bank.js';
-import { DEFAULT_OLLAMA_ENDPOINT, DEFAULT_TRANSLATE_MODEL } from '../translate/run.js';
+import { DEFAULT_OLLAMA_ENDPOINT } from '../translate/run.js';
 import type { Transport } from '../translate/ollama.js';
 
 import { blockDigest } from './digest.js';
@@ -101,7 +101,9 @@ import {
   narrationStampMeta, narrationTextStamp, NARRATION_TEXT_STAMP_NAME, type NarrationTextStamp,
 } from './stamp.js';
 import type { NarrationNumberTarget, NarrationTextRewrite } from './targets.js';
-import { askAboutEach, EVERY_CLASS, NORMALIZER_VERSION } from './tts-number-normalizer.js';
+import {
+  askAboutEach, DEFAULT_NORMALIZER_MODEL, EVERY_CLASS, NORMALIZER_VERSION,
+} from './tts-number-normalizer.js';
 import type {
   NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
 } from './tts-number-normalizer.js';
@@ -185,7 +187,11 @@ export interface CleanEpubOptions {
   outPath: string;
   /** Default `DEFAULT_OLLAMA_ENDPOINT`. */
   endpoint?: string;
-  /** Default `DEFAULT_TRANSLATE_MODEL`. */
+  /**
+   * Default `DEFAULT_NORMALIZER_MODEL` — Clean text carries its OWN declared
+   * default (Owen's 2026-09-02 ruling), not the translate default, which
+   * belongs to a different pass. The 27b is chosen by typing it into Settings.
+   */
   model?: string;
   /** Leave the weights loaded when the run ends. */
   keepModel?: boolean;
@@ -338,7 +344,7 @@ function isRefusal(status: string): boolean {
 export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOutcome> {
   const started = Date.now();
   const at = new Date().toISOString();
-  const model = opts.model ?? DEFAULT_TRANSLATE_MODEL;
+  const model = opts.model ?? DEFAULT_NORMALIZER_MODEL;
   const endpoint = opts.endpoint ?? DEFAULT_OLLAMA_ENDPOINT;
   const epubPath = path.resolve(opts.epubPath);
   const outPath = path.resolve(opts.outPath);

@@ -89,7 +89,7 @@ import { bookRowPlan, bookTitlePlan, readBookFile } from '../translate/bookrows.
 import type { BookBlock } from '../translate/bookrows.js';
 import { chapterPosition, TranslationRecords } from '../translate/records.js';
 import { spliceTableGrid, type TableGrid } from '../translate/tablecells.js';
-import { DEFAULT_OLLAMA_ENDPOINT, DEFAULT_TRANSLATE_MODEL } from '../translate/run.js';
+import { DEFAULT_OLLAMA_ENDPOINT } from '../translate/run.js';
 import type { Transport } from '../translate/ollama.js';
 
 import { blockDigest, bookPositionTexts } from './digest.js';
@@ -101,7 +101,7 @@ import { markerCharacters, markerSegments } from './segments.js';
 import { narrationTextStamp, type NarrationTextStamp } from './stamp.js';
 import type { NarrationNumberTarget } from './targets.js';
 import {
-  askAboutEach, classifyEdit, EVERY_CLASS, NORMALIZER_VERSION,
+  askAboutEach, classifyEdit, DEFAULT_NORMALIZER_MODEL, EVERY_CLASS, NORMALIZER_VERSION,
 } from './tts-number-normalizer.js';
 import type {
   NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
@@ -188,7 +188,11 @@ export interface CleanTextOptions {
   stampPath: string;
   /** Default `DEFAULT_OLLAMA_ENDPOINT`. */
   endpoint?: string;
-  /** Default `DEFAULT_TRANSLATE_MODEL` — Owen's standard for every task. */
+  /**
+   * Default `DEFAULT_NORMALIZER_MODEL` — Clean text carries its OWN declared
+   * default (Owen's 2026-09-02 ruling), not the translate default, which
+   * belongs to a different pass. The 27b is chosen by typing it into Settings.
+   */
   model?: string;
   /** Leave the weights loaded when the run ends. */
   keepModel?: boolean;
@@ -352,7 +356,7 @@ function isRefusal(status: string): boolean {
 export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOutcome> {
   const started = Date.now();
   const at = new Date().toISOString();
-  const model = opts.model ?? DEFAULT_TRANSLATE_MODEL;
+  const model = opts.model ?? DEFAULT_NORMALIZER_MODEL;
   const endpoint = opts.endpoint ?? DEFAULT_OLLAMA_ENDPOINT;
 
   const { text: bookText, where } = openBook(opts.bookPath);

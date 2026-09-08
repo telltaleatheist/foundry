@@ -370,8 +370,9 @@ not fail a pass that had nothing to ask it.
 
 ### The model
 
-`qwen3.8:27b` by default (`DEFAULT_TRANSLATE_MODEL` — Owen, 2026-08-22: 27b is
-the standard for every task), **temperature 0**, `num_predict` 2048, one call
+`qwen3.5:9b-q8_0` by default (`DEFAULT_NORMALIZER_MODEL` — Owen, 2026-09-02:
+this pass carries its own default, and the 27b is chosen by typing it into
+Settings), **temperature 0**, `num_predict` 2048, one call
 per block, over `/api/chat` through the engine's own Ollama client
 (`src/translate/ollama.ts`). The context window is pinned ONCE for the whole
 book, because Ollama reloads the runner on any change to it. The weights are

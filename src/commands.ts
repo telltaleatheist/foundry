@@ -63,6 +63,7 @@ import {
   translateEpub,
   type RewriteMode,
 } from './translate/run.js';
+import { DEFAULT_NORMALIZER_MODEL } from './clean/tts-number-normalizer.js';
 import { versionString } from './version.js';
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1043,7 +1044,7 @@ const CT_MODEL: OptionSpec = {
   name: 'model',
   type: 'string',
   placeholder: '<name>',
-  describe: `The model that reads the residue. Default ${DEFAULT_TRANSLATE_MODEL}, temperature 0.`,
+  describe: `The model that reads the residue. Default ${DEFAULT_NORMALIZER_MODEL}, temperature 0.`,
 };
 
 const CT_KEEP_MODEL: OptionSpec = {
