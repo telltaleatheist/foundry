@@ -424,6 +424,15 @@ that the row the host *mints* carries them):
 5. **`row.forStep`** — unchanged and already required; listed here only because these
    five are the whole of what a minted row owes.
 
+> **`request.concurrency` (2026-09-08, `CleanRequest` only)** — an optional whole
+> number of blocks in flight, put on the line as `--concurrency <n>` and left off
+> entirely when absent, so an absent one is the engine's own default (4) rather than a
+> copy of it. It changes the speed and never the text. Nothing is asked of the host: it
+> is stored with the rest of the request (BookForge keeps requests verbatim) and read
+> by Foundry's own argv. `request.keepModel` landed beside it on the same terms —
+> `--keep-model` only when it is `true`, because the engine releases the weights at the
+> end of a run on its own and there is no flag for "release" to invent.
+
 > `into` and `mode` are FACTS, not the row's sentence. `Job.title` already reads
 > "Simplify — plain terms", and Foundry's tree deliberately does not parse it: this
 > codebase does not read facts back out of sentences. Copy the request's own values.
