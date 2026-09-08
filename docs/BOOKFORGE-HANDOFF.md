@@ -243,6 +243,13 @@ CROSS-REPO CONTRACT and BookForge reads both:
 * the progress lines are `clean-text: <done>/<total>` per block and a final
   `clean-text: <n> blocks, <m> changed, <k> edits refused in <s>s`. BookForge
   mirrors those shapes, so they do not move — **on both routes**.
+* **the model and the endpoint come out of `userData/app-settings.json`**, keys
+  `cleanTextModel` and `ollamaUrl` (Owen, 2026-09-08). `cleanTextModel` is Clean
+  text's OWN setting — never `defaultLlmModel`, which seeds translate, simplify
+  and analyse — and unset it is `DEFAULT_CLEAN_TEXT_MODEL` (`qwen3.5:9b-q8_0`,
+  app/shared/pipeline.ts). Hosted, that userData is BookForge's too, so both
+  Clean text doors read the one file and cannot run against different models.
+  Over IPC it is `llm:defaults` → `cleanModel`, written by `llm:set-clean-model`.
 
 **The bare-EPUB route is a FAILSAFE and never the standard method** (Owen,
 2026-09-05): `foundry clean-text --epub <in.epub> --out <out.epub>`. It exists
