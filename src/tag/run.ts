@@ -55,10 +55,10 @@ import {
   type FlagCandidate,
 } from '../analyze/rank.js';
 import { stageNumCtx } from '../analyze/verify.js';
+import { openModelServer, type ModelServer } from '../translate/model-server.js';
 import {
   fetchTransport,
   normaliseEndpoint,
-  requireModel,
   unloadModel,
   type Transport,
 } from '../translate/ollama.js';
@@ -258,7 +258,20 @@ export async function tagDocument(opts: TagOptions): Promise<TagResult> {
 
   const transport = opts.transport ?? fetchTransport();
   const endpoint = normaliseEndpoint(opts.endpoint);
-  await requireModel(transport, endpoint, opts.model);
+  /*
+   * PROVED THROUGH `openModelServer`, which is `requireModel` plus the fact of
+   * WHICH server this is. `tag` speaks to an Ollama and only an Ollama today —
+   * there is no `--server` on this command — so the kind is written here rather
+   * than read from an option. It is a value and not a branch: the day this
+   * command wants a vLLM, the flag is the whole of the change, because
+   * everything under `askConstrained` already asks both (docs/VLLM.md).
+   */
+  const server = await openModelServer({
+    kind: 'ollama',
+    transport,
+    endpoint,
+    model: opts.model,
+  });
 
   /*
    * The stages this command SHARES with analyze say `analyze:` at the front of
@@ -286,7 +299,7 @@ export async function tagDocument(opts: TagOptions): Promise<TagResult> {
     const candidates = plan.length === 0
       ? []
       : await rankCandidates(document.sentences, plan, opts, shared, ensureWorker);
-    result = await answerStage({ document, candidates, opts, transport, endpoint });
+    result = await answerStage({ document, candidates, opts, transport, endpoint, server });
   } finally {
     startedWorker()?.stop();
     /*
@@ -377,8 +390,9 @@ async function answerStage(args: {
   opts: TagOptions;
   transport: Transport;
   endpoint: string;
+  server: ModelServer;
 }): Promise<TagResult> {
-  const { opts, transport, endpoint } = args;
+  const { opts, transport, server } = args;
   const { log } = opts;
   const model = opts.model;
 
@@ -411,7 +425,7 @@ async function answerStage(args: {
   let degraded = 0;
   for (const [index, job] of jobs.entries()) {
     asked += 1;
-    const outcome = await askAboutness(transport, endpoint, model, job.prompt, numCtx);
+    const outcome = await askAboutness(transport, server, job.prompt, numCtx);
     if (outcome.applies === null) {
       /*
        * A DEGRADATION IS A "NO", NEVER A "YES". The call failed, or the answer
@@ -441,7 +455,7 @@ async function answerStage(args: {
   }
 
   asked += 1;
-  const suggested = await askSuggestions(transport, endpoint, model, suggestPrompt, numCtx);
+  const suggested = await askSuggestions(transport, server, suggestPrompt, numCtx);
   if (suggested.tags === null) {
     /*
      * AND SO IS A MISSING SUGGESTION. The output has two fields and both are

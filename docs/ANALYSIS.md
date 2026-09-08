@@ -197,6 +197,25 @@ Ollama preflight it was pointed at a dead port for.
 
 ---
 
+## 2c. Which server answers the verdicts (Wave 58, 2026-09-08)
+
+Either an Ollama or a vLLM — `--server ollama|vllm`, default `ollama`, declared
+and never guessed from the URL. **docs/VLLM.md** owns the whole story.
+
+The verdicts do not move: same prompts, same schema, same temperature 0, same
+verdict-cache key. What changes is the spelling of the constraint — Ollama's
+`format` on `/api/generate` against `response_format: {type:"json_schema"}` on
+`/v1/chat/completions`, the same grammar-constrained decode underneath — and how
+many calls may be in flight. `--concurrency` defaults to **1** under Ollama,
+which is exactly the sequential stage §5 describes, and **12** under vLLM, which
+batches the calls in flight together. The pool dispatches strongest-first as
+always, and the flagged categories are composed by walking the jobs' own order
+afterwards, so a pool changes how long the stage takes and never what it wrote.
+
+Under vLLM `--model` may be omitted: the served id is used and written into the
+report header. **The NLI ranker is a resident Python worker and none of this
+reaches it** — the ranking half of a run costs exactly what it always cost.
+
 ## 3. Sentences — the first segmenter in the project
 
 Nothing in `src/` splits sentences today; translate's unit is the block, on

@@ -52,12 +52,14 @@
  * to reason about one line, the model talks itself out of real flags. So the
  * schema is not optional and there is no opt-out.
  */
+import type { ModelServer } from '../translate/model-server.js';
 import {
   normaliseEndpoint,
   takesThinkField,
   OllamaError,
   type Transport,
 } from '../translate/ollama.js';
+import { constrainedChatBody, readChatAnswer } from '../translate/vllm.js';
 import type { FlagWindow, WindowCategory } from './rank.js';
 
 /**
@@ -311,14 +313,49 @@ export interface ConstrainedAnswer {
  */
 export async function askConstrained(
   transport: Transport,
-  endpoint: string,
-  model: string,
+  server: ModelServer,
   prompt: string,
   numCtx: number,
   schema: Record<string, unknown>,
   predictTokens: number,
 ): Promise<ConstrainedAnswer> {
-  const base = normaliseEndpoint(endpoint);
+  /*
+   * ── TWO DIALECTS, ONE QUESTION ─────────────────────────────────────────────
+   *
+   * `--server vllm` (docs/VLLM.md) puts an OpenAI-compatible server on the other
+   * end. The question is identical — same prompt string, same schema object,
+   * same temperature 0, same token ceiling — and so is the CONSTRAINT: Ollama's
+   * `format` and vLLM's `response_format: {type:"json_schema"}` are the same
+   * grammar-constrained decode under two spellings, which is why this can be a
+   * transport branch rather than a second way of asking.
+   *
+   * WHAT DOES NOT CROSS IS `num_ctx`. A vLLM's window is fixed when the server
+   * is launched, so `stageNumCtx`'s whole argument — one size per stage because
+   * Ollama reloads the runner on a change — has no counterpart there and the
+   * number is simply not sent. `capFor` clamps the ANSWER against what the
+   * server said it can hold, which is the part that still matters.
+   *
+   * AND THE DEGRADATION VOCABULARY IS SHARED. Both branches answer with a
+   * sentence rather than throwing, for this function's own reason: one bad call
+   * must not end a stage making hundreds of tiny ones.
+   */
+  if (server.kind === 'vllm') {
+    const answer = await readChatAnswer(
+      transport,
+      server.endpoint,
+      constrainedChatBody(server.model, prompt, schema, predictTokens, server.maxModelLen),
+    );
+    if (answer.text === null) return { text: null, degraded: answer.degraded ?? 'no answer' };
+    if (answer.truncated === true) {
+      return {
+        text: null,
+        degraded: `the answer hit the ${predictTokens}-token ceiling, so it was cut off`,
+      };
+    }
+    return { text: answer.text };
+  }
+  const base = normaliseEndpoint(server.endpoint);
+  const model = server.model;
   let response: { status: number; body: string };
   try {
     response = await transport.post(
@@ -369,13 +406,12 @@ export async function askConstrained(
  */
 export async function askVerdict(
   transport: Transport,
-  endpoint: string,
-  model: string,
+  server: ModelServer,
   prompt: string,
   numCtx: number,
 ): Promise<VerdictOutcome> {
   const answer = await askConstrained(
-    transport, endpoint, model, prompt, numCtx, VERDICT_SCHEMA, VERDICT_PREDICT_TOKENS,
+    transport, server, prompt, numCtx, VERDICT_SCHEMA, VERDICT_PREDICT_TOKENS,
   );
   if (answer.text === null) return { verdict: null, degraded: answer.degraded ?? 'no answer' };
   const verdict = parseVerdict(answer.text);

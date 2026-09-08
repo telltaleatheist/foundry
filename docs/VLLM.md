@@ -6,8 +6,9 @@ mac or pc. cuda graphs/vllm would probably be the best for all three features.
 go ahead."*
 
 The three features are **translate**, **simplify** (`translate --rewrite`) and
-the **narration cleanup** (`clean-text`). All three now run against either an
-Ollama or a vLLM, chosen by a flag, with nothing else about the pass changed.
+the **narration cleanup** (`clean-text`). **analyze** joined them an hour later —
+Owen: *"lets add analyze. why not."* All four now run against either an Ollama or
+a vLLM, chosen by a flag, with nothing else about the pass changed.
 
 ---
 
@@ -29,6 +30,7 @@ llama.cpp's, so a serial caller hands it a batch of one and gains nothing.
 ```
 foundry translate  … [--server ollama|vllm] [--ollama <url>]   [--model <name>]
 foundry clean-text … [--server ollama|vllm] [--endpoint <url>] [--model <name>]
+foundry analyze    … [--server ollama|vllm] [--ollama <url>]   [--model <name>]
 ```
 
 `--server` is **declared, never sniffed from the URL**. A sniff is right until a
@@ -46,7 +48,7 @@ What the choice changes, and nothing else does:
 | `--model` absent | the act's declared default | **the served model**, resolved and recorded |
 | No-think switch | `think: false` (a real field) | `chat_template_kwargs: {enable_thinking: false}` |
 | Context window | `num_ctx` per request, pinned once a book | the server's `--max-model-len`, fixed at launch |
-| `--concurrency` default | 4 | 12 |
+| `--concurrency` default | 4 (analyze: 1) | 12 |
 | `--keep-model` / release | `keep_alive: 0` on a bodyless call | **a declared no-op** (§5) |
 
 Unchanged on both: the prompts byte for byte, the temperature, the retries, the
@@ -55,8 +57,40 @@ validators, the records/bank cache, the stamp, `NORMALIZER_VERSION`,
 cleaned through vLLM are the same pass asked of different plumbing.**
 
 Files: `src/translate/vllm.ts` (the transport), `src/translate/model-server.ts`
-(the one place that chooses), and three call sites — `src/translate/run.ts`,
-`src/clean/run.ts`, `src/clean/epub.ts`.
+(the one place that chooses), and four call sites — `src/translate/run.ts`,
+`src/clean/run.ts`, `src/clean/epub.ts`, `src/analyze/run.ts`.
+
+### analyze asks a different KIND of question, and that needed its own branch
+
+The three text acts ask for prose on `/api/chat`. `analyze` (and `tag`) ask a
+CLOSED question and constrain the decode to the legal answers — measured both
+more accurate and about five times cheaper than asking politely and parsing
+hopefully (`src/analyze/verify.ts`'s header). Ollama takes the schema as
+`format` on `/api/generate`; the OpenAI spelling is
+`response_format: {type: "json_schema"}`, which vLLM implements with the same
+grammar-constrained decoding underneath. So `askConstrained` dispatches on the
+server and both branches send the same schema object, the same prompt string,
+the same temperature 0 and the same token ceiling.
+
+Two details worth knowing. The vLLM call sends **one user message and no system
+message**, because Ollama's `/api/generate` applies the chat template to
+`prompt` — `/v1/completions` would be the literal counterpart of the route and
+the wrong counterpart of the request, handing the model an untemplated string.
+And a degradation stays a degradation on both routes: one bad call must not end a
+stage making hundreds of tiny ones.
+
+**analyze's concurrency default is 1, not 4.** Its stage was deliberately
+sequential — Ollama serialises per model anyway, so a pool there buys queueing —
+and that is unchanged: an Ollama run is byte for byte the run it always was. Under
+vLLM it becomes 12, and the stage (hundreds of tiny closed questions over one
+loaded model) is the shape that gains most. The pool dispatches in the same
+strongest-first order Owen ruled, and the findings are composed by walking the
+jobs' own order afterwards, so what a pool changes is how long the stage takes
+and never what it wrote.
+
+`foundry tag` asks its two closed questions through the same door and therefore
+already speaks both dialects — it simply has no `--server` flag yet, which is
+now the whole of what adding it would take.
 
 ---
 
@@ -183,10 +217,12 @@ vllm serve <model> \
 
 ## 8. What was deliberately not done
 
-- **`analyze` still speaks Ollama only.** It was not in the ask, its engine path
-  (`src/analyze/run.ts`) calls the Ollama client directly, and it has a second
-  model (the NLI worker) with its own lifecycle. Adding it is a small piece of
-  the same shape when somebody wants it.
+- **`foundry tag` has no `--server` flag.** Its two closed questions go through
+  the same `askConstrained` door analyze uses, so the transport is already there;
+  only the option and its pass-through are missing.
+- **analyze's NLI ranker is untouched.** It is a resident Python worker with its
+  own model and its own lifecycle; none of this reaches it, and the ranking half
+  of a run costs exactly what it always cost.
 - **No measurement.** Nothing here claims a speedup. The pool's real gain
   against a real vLLM is Owen's to measure on his own card, which is also the
   only card the answer would be true of.

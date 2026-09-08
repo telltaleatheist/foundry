@@ -264,6 +264,111 @@ export function completionsBody(
 }
 
 /**
+ * ── THE CLOSED QUESTION, IN vLLM'S DIALECT ──────────────────────────────────
+ *
+ * `analyze` and `tag` do not ask for prose: they ask a question whose answers
+ * are enumerated, and they constrain the DECODE to the legal ones rather than
+ * asking politely and parsing hopefully (analyze/verify.ts's header carries the
+ * measurement — constrained was both more accurate and about five times
+ * cheaper). Ollama takes the schema as `format` on `/api/generate`; the
+ * OpenAI-compatible spelling is `response_format: {type: "json_schema"}`, which
+ * vLLM implements with the same grammar-constrained decoding underneath.
+ *
+ * ── A USER TURN AND NO SYSTEM MESSAGE, WHICH IS NOT A SHORTCUT ──────────────
+ *
+ * Ollama's `/api/generate` applies the model's chat template to `prompt` — one
+ * user turn, no system message — so the model sees a templated turn there and
+ * must see the same shape here. `/v1/completions` would be the literal
+ * counterpart of the ROUTE and the wrong counterpart of the REQUEST: it takes
+ * the string raw, past the template, and would hand the model something it was
+ * never trained to read. The prompts themselves are unchanged, byte for byte.
+ *
+ * ── `strict: true`, AND THE SCHEMA IS THE CALLER'S ──────────────────────────
+ *
+ * The name is a label the protocol requires and nothing reads it back. The
+ * schema is passed through exactly as the caller wrote it, because the caller
+ * is the one place that knows what a legal answer is.
+ */
+export function constrainedChatBody(
+  model: string,
+  prompt: string,
+  schema: Record<string, unknown>,
+  maxTokens: number,
+  maxModelLen: number | null = null,
+): string {
+  const body: Record<string, unknown> = {
+    model,
+    stream: false,
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0,
+    max_tokens: capFor('', prompt, maxTokens, maxModelLen),
+    response_format: {
+      type: 'json_schema',
+      json_schema: { name: 'answer', schema, strict: true },
+    },
+  };
+  if (takesThinkField(familyOf(model))) {
+    body['chat_template_kwargs'] = { enable_thinking: false };
+  }
+  return JSON.stringify(body);
+}
+
+/**
+ * What one chat answer carries, for a caller that treats a bad call as a
+ * DEGRADATION rather than an error.
+ *
+ * `complete` throws, because a translation that cannot reach its server has
+ * nothing to say. A stage making hundreds of tiny closed-question calls is the
+ * other case: one bad call must not end it (analyze/verify.ts), so this reads
+ * the same answer and hands back what happened.
+ */
+export interface VllmAnswer {
+  text: string | null;
+  degraded?: string;
+  /** True where the answer was cut off at `max_tokens` rather than finished. */
+  truncated?: boolean;
+}
+
+/** Read one `/v1/chat/completions` answer without throwing. See `VllmAnswer`. */
+export async function readChatAnswer(
+  transport: Transport,
+  endpoint: string,
+  body: string,
+): Promise<VllmAnswer> {
+  const base = normaliseVllmEndpoint(endpoint);
+  let response: { status: number; body: string };
+  try {
+    response = await transport.post(`${base}/chat/completions`, body);
+  } catch (error) {
+    return { text: null, degraded: (error as Error).message };
+  }
+  if (response.status !== 200) {
+    return {
+      text: null,
+      degraded: `vllm at ${base} answered ${response.status}: `
+        + `${response.body.trim().slice(0, 200) || '(no body)'}`,
+    };
+  }
+  let parsed: { choices?: { message?: { content?: unknown }; finish_reason?: unknown }[] };
+  try {
+    parsed = JSON.parse(response.body) as typeof parsed;
+  } catch {
+    return { text: null, degraded: `vllm at ${base} answered 200 with something that is not JSON` };
+  }
+  const choice = parsed.choices?.[0];
+  if (choice === undefined || typeof choice.message?.content !== 'string') {
+    return {
+      text: null,
+      degraded: `vllm at ${base} answered without choices[0].message.content`,
+    };
+  }
+  return {
+    text: withoutThinking(choice.message.content),
+    ...(choice.finish_reason === 'length' ? { truncated: true } : {}),
+  };
+}
+
+/**
  * A leading `<think>…</think>` block, taken off the front.
  *
  * ── Narrow on purpose ───────────────────────────────────────────────────────

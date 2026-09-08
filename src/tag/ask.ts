@@ -26,6 +26,7 @@
  * fabrication that reads like evidence.
  */
 import { askConstrained } from '../analyze/verify.js';
+import type { ModelServer } from '../translate/model-server.js';
 import type { Transport } from '../translate/ollama.js';
 import { normalTag } from './input.js';
 
@@ -161,13 +162,12 @@ export function parseApplies(text: string): boolean | null {
 /** Ask whether the document concerns one tag. */
 export async function askAboutness(
   transport: Transport,
-  endpoint: string,
-  model: string,
+  server: ModelServer,
   prompt: string,
   numCtx: number,
 ): Promise<AboutnessOutcome> {
   const answer = await askConstrained(
-    transport, endpoint, model, prompt, numCtx, ABOUTNESS_SCHEMA, ABOUTNESS_PREDICT_TOKENS,
+    transport, server, prompt, numCtx, ABOUTNESS_SCHEMA, ABOUTNESS_PREDICT_TOKENS,
   );
   if (answer.text === null) return { applies: null, degraded: answer.degraded ?? 'no answer' };
   const applies = parseApplies(answer.text);
@@ -213,13 +213,12 @@ export function parseSuggestions(text: string): string[] | null {
 /** Ask what else this document would be called. */
 export async function askSuggestions(
   transport: Transport,
-  endpoint: string,
-  model: string,
+  server: ModelServer,
   prompt: string,
   numCtx: number,
 ): Promise<SuggestOutcome> {
   const answer = await askConstrained(
-    transport, endpoint, model, prompt, numCtx, SUGGEST_SCHEMA, SUGGEST_PREDICT_TOKENS,
+    transport, server, prompt, numCtx, SUGGEST_SCHEMA, SUGGEST_PREDICT_TOKENS,
   );
   if (answer.text === null) return { tags: null, degraded: answer.degraded ?? 'no answer' };
   const tags = parseSuggestions(answer.text);

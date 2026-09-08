@@ -67,7 +67,7 @@ import {
   DEFAULT_CLEAN_CONCURRENCY, DEFAULT_NORMALIZER_MODEL,
 } from './clean/tts-number-normalizer.js';
 import {
-  DEFAULT_VLLM_CONCURRENCY, isServerKind, SERVER_KINDS, type ServerKind,
+  defaultEndpointFor, DEFAULT_VLLM_CONCURRENCY, isServerKind, SERVER_KINDS, type ServerKind,
 } from './translate/model-server.js';
 import { versionString } from './version.js';
 
@@ -984,6 +984,19 @@ const AN_FETCH: OptionSpec = {
   describe: 'Let the worker download the entailment model this once. Also FOUNDRY_NLI_FETCH=1.',
 };
 
+/**
+ * ITS OWN SPEC, on `CT_CONCURRENCY`'s ruling: a help line has to be right about
+ * THIS command's default, and analyze's is not the other two's. One is not
+ * timidity here — Ollama serialises per model, so a pool against it buys
+ * queueing (`verifyStage`) — and under vLLM `concurrencyFor` answers 12.
+ */
+const AN_CONCURRENCY: OptionSpec = {
+  name: 'concurrency',
+  type: 'string',
+  placeholder: '<n>',
+  describe: `Verify calls in flight. Default 1 on ollama, ${DEFAULT_VLLM_CONCURRENCY} on vllm. Changes speed, never a verdict.`,
+};
+
 const AN_FRESH: OptionSpec = {
   name: 'fresh',
   type: 'boolean',
@@ -1774,12 +1787,31 @@ async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
    */
   const fetch = flag(args, 'fetch-nli-model') || process.env['FOUNDRY_NLI_FETCH'] === '1';
 
+  const server = serverKind(args);
+  // translate's rule and translate's sentence, because it is the same flag
+  // answering the same question about the same kind of pool.
+  const concurrency = optionalString(args, 'concurrency');
+  if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
+    throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
+  }
+  /*
+   * AN ABSENT `--model` MEANS TWO DIFFERENT THINGS and the server decides which.
+   * An Ollama holds a library, so the run needs a name and gets the declared
+   * default; a vLLM serves one model, so the absence IS the answer and the
+   * engine asks the server (src/translate/vllm.ts).
+   */
+  const named = optionalString(args, 'model');
+
   const result = await analyzeBook({
     bookPath,
     outPath,
     ...(categoriesPath !== undefined ? { categoriesPath } : {}),
-    model: optionalString(args, 'model') ?? DEFAULT_TRANSLATE_MODEL,
-    endpoint: optionalString(args, 'ollama') ?? DEFAULT_OLLAMA_ENDPOINT,
+    ...(named !== undefined
+      ? { model: named }
+      : (server === 'vllm' ? {} : { model: DEFAULT_TRANSLATE_MODEL })),
+    endpoint: optionalString(args, 'ollama') ?? defaultEndpointFor(server ?? 'ollama'),
+    ...(server !== undefined ? { server } : {}),
+    ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     nli: {
       ...(nliPython !== undefined ? { python: nliPython } : {}),
       ...(nliHome !== undefined ? { home: nliHome } : {}),
@@ -3347,7 +3379,8 @@ export const COMMANDS: readonly Command[] = [
     name: 'analyze',
     summary: 'Read a book against the categories: entailment ranks it, an Ollama model judges stance.',
     usage: '--book <book.jsonl> --out <report.jsonl> [--categories <cats.json>] [--model <name>]'
-      + ' [--ollama <url>] [--nli-python <path>] [--nli-home <dir>] [--fresh]',
+      + ' [--ollama <url>] [--server <ollama|vllm>] [--concurrency <n>]'
+      + ' [--nli-python <path>] [--nli-home <dir>] [--fresh]',
     detail: [
       'THE BOOK, READ AGAINST THE CATEGORIES. Every sentence of every prose block',
       'is scored against every category\'s stance hypotheses by a zero-shot',
@@ -3422,9 +3455,20 @@ export const COMMANDS: readonly Command[] = [
       'RUNTIME HONESTY: ranking is minutes and verification can be an hour on a',
       'hot book. Passages are verified STRONGEST FIRST, so a run you interrupt',
       'has already finished the findings most worth trusting.',
+      '',
+      'TWO KINDS OF SERVER. --server ollama (the default) asks each verdict on',
+      '/api/generate with the schema as `format`; --server vllm asks the same',
+      'question of an OpenAI-compatible server with the same schema as',
+      'response_format, and batches the calls in flight together — so',
+      `--concurrency defaults to ${DEFAULT_VLLM_CONCURRENCY} there and to 1 on ollama, which serialises`,
+      'per model anyway. The verdicts do not move: same prompts, same schema,',
+      'same temperature 0, and the answers are put back into strongest-first',
+      'order before a finding is composed. --model may be left off under vLLM;',
+      'the served id is used and written into the report header. The NLI ranker',
+      'is a Python worker and is untouched by any of this.',
     ].join('\n'),
     options: [
-      AN_BOOK, AN_OUT, AN_CATEGORIES, AN_MODEL, AN_OLLAMA,
+      AN_BOOK, AN_OUT, AN_CATEGORIES, AN_MODEL, AN_OLLAMA, LLM_SERVER, AN_CONCURRENCY,
       AN_NLI_PYTHON, AN_NLI_HOME, AN_FETCH, AN_FRESH,
     ],
     run: runVlmAnalyze,

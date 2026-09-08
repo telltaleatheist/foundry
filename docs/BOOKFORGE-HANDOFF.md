@@ -1109,9 +1109,19 @@ graphs/vllm would probably be the best for all three features. go ahead."*
 **docs/VLLM.md** in this repo is the whole story; this is the contract half.
 
 **The flag.** `--server ollama|vllm`, default `ollama`, on `foundry translate`
-(which is also simplify, via `--rewrite`) and `foundry clean-text` (both doors).
-**Declared, never sniffed from the URL** — do not expect foundry to work out
-what is on a port. `analyze` is Ollama-only for now, deliberately.
+(which is also simplify, via `--rewrite`), `foundry clean-text` (both doors) and
+`foundry analyze`. **Declared, never sniffed from the URL** — do not expect
+foundry to work out what is on a port.
+
+**analyze went in the same day** (Owen: *"lets add analyze. why not"*). It asks a
+CLOSED question with the decode constrained, so its vLLM body is
+`/v1/chat/completions` with `response_format: {type:"json_schema"}` carrying the
+same schema Ollama gets as `format`, one user message and no system message
+(because Ollama's `/api/generate` templates its prompt — `/v1/completions` would
+hand the model an untemplated string). Its `--concurrency` default is **1 under
+Ollama** and 12 under vLLM. Its NLI ranker is a Python worker and is untouched.
+`foundry tag` shares the same door and already speaks both dialects; it has no
+`--server` flag yet.
 
 **The URL is the flag it always was**: `--ollama <url>` on translate,
 `--endpoint <url>` on clean-text. Under vLLM it defaults to

@@ -4098,7 +4098,7 @@ other column IS the original.
 
 ---
 
-### Wave 58 — vLLM for the three text acts (Owen, 2026-09-08) — BUILT
+### Wave 58 — vLLM for the four language acts (Owen, 2026-09-08) — BUILT
 
 Owen: *"lets build in vllm batching. ollama batching doesnt work. its an
 unfinished feature ollama tried to implement but isnt accessible on the mac or
@@ -4126,15 +4126,31 @@ them, and Ollama's batching is not reachable on either machine.
   `openModelRunner`. The served name is resolved BEFORE the cache keys are
   computed (`cleanKey`, the bank key), which is the one case where a run with
   nothing left to ask still touches the server.
-- **`src/commands.ts`** — `--server ollama|vllm` on `translate` and both
-  `clean-text` doors, refused by name for anything else, with the help prose and
-  usage lines to match.
+- **`src/commands.ts`** — `--server ollama|vllm` on `translate`, both
+  `clean-text` doors and `analyze`, refused by name for anything else, with the
+  help prose and usage lines to match.
+- **analyze, added an hour later** (*"lets add analyze. why not."*). It asks a
+  different KIND of question — a closed one, with the decode constrained to the
+  legal answers — so `askConstrained` (src/analyze/verify.ts) grew the second
+  dialect: `response_format: {type:"json_schema"}` against Ollama's `format`,
+  one user turn and no system message because `/api/generate` templates its
+  prompt, and the degradation vocabulary shared by both branches.
+  `verifyStage` gained a pool whose default is **1 under Ollama** — the
+  sequential stage, unchanged, byte for byte — and 12 under vLLM; it dispatches
+  in the same strongest-first order and composes the findings from the jobs' own
+  order afterwards, so what a pool changes is how long the stage takes and never
+  what it wrote. `foundry tag` asks through the same door and therefore already
+  speaks both dialects; it has no `--server` flag yet, which is now the whole of
+  what adding it would take.
 - **App** — `AppSettings.llmServer` / `vllmUrl` / `vllmModel`; `llm:defaults`
   answers `server` and resolves the model/URL for the chosen kind; new
   `llm:servers` / `llm:set-servers`; a **Server** select on the settings card
   with the vLLM pair beside it; `TranslateRequest.server` / `CleanRequest.server`
-  carried from the three dialogs; the queue writes `--server vllm` and omits a
-  blank `--model`.
+  / `AnalyzeRequest.server` carried from all four dialogs; the queue writes
+  `--server vllm` and omits a blank `--model` on all three command lines.
+  Wiring Analyse was not optional once the setting existed: `llm:defaults`
+  answers the vLLM URL to every dialog, so an unwired Analyse would have sent
+  that URL with an Ollama tag and no flag.
 - **`docs/VLLM.md`** (new) — the flag, the four real differences, who owns the
   server's life (BookForge's arbiter, never foundry), why the stamp gained no
   `precision` key, the launch recipe, and what was deliberately left out.
@@ -4147,8 +4163,10 @@ them, and Ollama's batching is not reachable on either machine.
 
 **Deferred out loud, not silently:**
 
-- **`analyze` is Ollama-only.** Not in the ask; it calls the Ollama client
-  directly and carries a second model (the NLI worker) with its own lifecycle.
+- **`foundry tag` has no `--server` flag.** Its two closed questions already go
+  through the dialect-aware door; only the option and its pass-through are absent.
+- **analyze's NLI ranker is untouched.** A resident Python worker with its own
+  model and lifecycle; the ranking half of a run costs what it always cost.
 - **No measurement.** The speedup is Owen's to measure on his own card, and the
   concurrency default of 12 is borrowed from `DEFAULT_VLM_CONCURRENCY`, not
   measured for text.

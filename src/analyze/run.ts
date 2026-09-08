@@ -33,10 +33,11 @@ import * as fs from 'node:fs';
 
 import { stripBom } from '../bom.js';
 import {
+  concurrencyFor, openModelServer, releaseModel, type ModelServer, type ServerKind,
+} from '../translate/model-server.js';
+import {
   fetchTransport,
   normaliseEndpoint,
-  requireModel,
-  unloadModel,
   type Transport,
 } from '../translate/ollama.js';
 import { parseBookFile } from '../vlm/book-file.js';
@@ -117,6 +118,23 @@ const PROSE: ReadonlySet<string> = new Set([
  */
 const SCORE_BATCH = 500;
 
+/**
+ * How many verify calls are in flight at once when nobody said a number.
+ *
+ * ── ONE UNDER OLLAMA, AND THAT IS THE OLD BEHAVIOUR EXACTLY ─────────────────
+ *
+ * `verifyStage`'s header has always said why: Ollama serialises requests per
+ * model anyway, so a pool there buys queueing rather than throughput. Nothing
+ * about an Ollama run moves — same order, same progress line, same report.
+ *
+ * ── AND vLLM IS THE REASON THAT SENTENCE NEEDED A DEFAULT AT ALL ────────────
+ *
+ * `concurrencyFor` answers 12 under vLLM, which batches the requests in flight
+ * TOGETHER (docs/VLLM.md). The stage is hundreds of tiny closed questions over
+ * one loaded model — the shape that gains most from it.
+ */
+const DEFAULT_ANALYZE_CONCURRENCY = 1;
+
 export interface AnalyzeOptions {
   /** The book file. Read, never written. */
   bookPath: string;
@@ -124,10 +142,30 @@ export interface AnalyzeOptions {
   outPath: string;
   /** A `--categories` file, or null for every built-in category. */
   categoriesPath?: string | null;
-  /** The Ollama model that answers the verdicts. */
-  model: string;
-  /** The Ollama server. Never started, never stopped by this program. */
+  /**
+   * The model that answers the verdicts.
+   *
+   * Under `--server vllm` this may be absent, and absent MEANS something there:
+   * a vLLM serves exactly one model, so the run asks the server what it is,
+   * uses it, and writes that name into the verdict cache key and the report
+   * header (src/translate/vllm.ts). Under Ollama it is required by the caller's
+   * own default, because an Ollama holds a library.
+   */
+  model?: string;
+  /** The server. Never started, never stopped by this program. */
   endpoint: string;
+  /** Which kind of server answers — `--server`. Default `ollama`. */
+  server?: ServerKind;
+  /**
+   * Verify calls in flight at once. Default `DEFAULT_ANALYZE_CONCURRENCY` under
+   * Ollama, `DEFAULT_VLLM_CONCURRENCY` under vLLM.
+   *
+   * It changes the SPEED and never a verdict: every call is an independent
+   * closed question at temperature 0, the answers are put back into the jobs'
+   * own order before a single finding is composed, and the cache is keyed by
+   * the question rather than by when it was asked.
+   */
+  concurrency?: number;
   /** `--nli-python`, `--nli-home`, `--fetch-nli-model`. */
   nli: Omit<NliWorkerOptions, 'log'>;
   /** `--fresh`: ask everything again rather than reusing what is stored. */
@@ -234,8 +272,20 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
   const report = opened.report;
 
   const transport = opts.transport ?? fetchTransport();
+  const kind = opts.server ?? 'ollama';
   const endpoint = normaliseEndpoint(opts.endpoint);
-  await requireModel(transport, endpoint, opts.model);
+  /*
+   * PROVED FIRST, and now it also RESOLVES: under vLLM an absent model means
+   * the served one, and the answer has to be in hand before the verdict keys
+   * are composed (`verdictKey` hashes the model's name), or this run would file
+   * its answers under a name that did not answer them.
+   */
+  const server = await openModelServer({
+    kind,
+    transport,
+    endpoint,
+    ...(opts.model === undefined ? {} : { model: opts.model }),
+  });
 
   let worker: NliWorker | null = null;
   const ensureWorker = async (): Promise<NliWorker> => {
@@ -314,8 +364,9 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
 
     const windows = await rankWindows(sentences, plan, scoreTexts, log);
     result = await verifyStage({
-      windows, sentences, plan, report, transport, endpoint,
-      model: opts.model, hypotheses, bankSha, generation, log,
+      windows, sentences, plan, report, transport, server,
+      concurrency: opts.concurrency ?? concurrencyFor(kind, DEFAULT_ANALYZE_CONCURRENCY),
+      hypotheses, bankSha, generation, log,
     });
   } finally {
     startedWorker()?.stop();
@@ -325,27 +376,49 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
      * fail a run that produced its report — a server that has already gone away
      * has, by definition, released what this was asking it to release.
      */
-    const freed = await unloadModel(transport, endpoint, opts.model);
-    log(freed
-      ? `analyze: asked ollama to unload "${opts.model}" — the card is free for the next job.`
-      : `analyze: ollama did not acknowledge unloading "${opts.model}". If it is still resident it `
-        + 'will fall out on its own idle timer.');
+    const outcome = await releaseModel(transport, kind, server.endpoint, server.model);
+    log(outcome === 'not-ours'
+      ? 'analyze: nothing to unload — a vLLM process IS its weights, and only stopping the server '
+        + 'frees the card, which is not one job\'s decision to make (translate/model-server.ts).'
+      : outcome === 'released'
+        ? `analyze: asked ollama to unload "${server.model}" — the card is free for the next job.`
+        : `analyze: ollama did not acknowledge unloading "${server.model}". If it is still resident `
+          + 'it will fall out on its own idle timer.');
   }
   return result;
 }
 
 /**
- * The verify stage: one question per (window, category), sequential, in
- * DESCENDING window score.
- *
- * SEQUENTIAL is not timidity. Ollama serialises requests per model anyway, so
- * concurrency here buys queueing rather than throughput, and it would make the
- * progress line a lie about which passage is being judged.
+ * The verify stage: one question per (window, category), in DESCENDING window
+ * score, `concurrency` of them in flight at once.
  *
  * DESCENDING is Owen's ruling and it is the answer to the cost of capturing
  * everything: the strongest passages are verified first, so a run interrupted
  * an hour in has already finished the findings most worth trusting, and the
  * append-as-landed report makes them readable before the loose tail is done.
+ * A POOL DOES NOT WEAKEN THAT — the jobs are DISPATCHED in the same descending
+ * order and only land out of it, so what is finished first is still what was
+ * worth finishing first.
+ *
+ * ── SEQUENTIAL IS STILL THE DEFAULT UNDER OLLAMA, and it is still not timidity ─
+ *
+ * Ollama serialises requests per model anyway, so a pool there buys queueing
+ * rather than throughput. `DEFAULT_ANALYZE_CONCURRENCY` is 1 and an Ollama run
+ * is byte for byte the run it always was. vLLM is what changed the sentence:
+ * it batches the requests in flight together, and this stage — hundreds of tiny
+ * closed questions over one loaded model — is the shape that gains most.
+ *
+ * ── WHAT THE POOL IS NOT ALLOWED TO MOVE ───────────────────────────────────
+ *
+ * The findings. Verdicts are collected into a map and the flagged categories
+ * are composed AFTERWARDS by walking `jobs` in their own order, so a window's
+ * `also` list is in descending score whatever order the answers came back in.
+ * `askAboutEach`'s rule in the cleanup, for its reason: a pool may change how
+ * long a run takes and must never change what it wrote.
+ *
+ * The progress line counts calls FINISHED rather than an index, which is the
+ * only honest reading of it once more than one is in the air — and at
+ * concurrency 1 that is the same number it always printed.
  */
 async function verifyStage(args: {
   windows: readonly FlagWindow[];
@@ -353,8 +426,8 @@ async function verifyStage(args: {
   plan: readonly RankPlan[];
   report: AnalysisReport;
   transport: Transport;
-  endpoint: string;
-  model: string;
+  server: ModelServer;
+  concurrency: number;
   hypotheses: string;
   bankSha: string;
   generation: string | undefined;
@@ -380,7 +453,7 @@ async function verifyStage(args: {
         category,
         passage: joined,
         prompt,
-        key: verdictKey(joined, category.category, args.model, prompt),
+        key: verdictKey(joined, category.category, args.server.model, prompt),
       });
     }
   }
@@ -391,21 +464,33 @@ async function verifyStage(args: {
    * differ only by the length of their passage — per-call sizing would buy
    * reloads and nothing else.
    */
-  const numCtx = stageNumCtx(jobs.map((job) => job.prompt), args.model);
+  const numCtx = stageNumCtx(jobs.map((job) => job.prompt), args.server.model);
   const cached = jobs.filter((job) => report.verdict(job.key) !== undefined).length;
+  /*
+   * A vLLM IS NOT TOLD A WINDOW, so the line must not claim one. Its context is
+   * fixed when the server is launched and `num_ctx` has no counterpart on that
+   * route (`askConstrained`); saying "at num_ctx 8192" there would be this
+   * program reporting a setting it did not send.
+   */
   log(
-    `analyze: ${windows.length} passage(s) and ${jobs.length} verify call(s) at num_ctx ${numCtx} `
-    + `on ${args.model}; ${cached} of them are already answered and cost nothing.`,
+    `analyze: ${windows.length} passage(s) and ${jobs.length} verify call(s) `
+    + (args.server.kind === 'vllm' ? '' : `at num_ctx ${numCtx} `)
+    + `on ${args.server.model}`
+    + (args.concurrency > 1 ? `, up to ${args.concurrency} in flight` : '')
+    + `; ${cached} of them are already answered and cost nothing.`,
   );
 
-  const flaggedByWindow = new Map<FlagWindow, WindowCategory[]>();
   let asked = 0;
   let degraded = 0;
-  for (const [index, job] of jobs.entries()) {
+  let finished = 0;
+  let next = 0;
+  const answers = new Map<Job, 'flag' | 'skip'>();
+
+  const judge = async (job: Job): Promise<void> => {
     let verdict = report.verdict(job.key);
     if (verdict === undefined) {
       asked += 1;
-      const outcome = await askVerdict(args.transport, args.endpoint, args.model, job.prompt, numCtx);
+      const outcome = await askVerdict(args.transport, args.server, job.prompt, numCtx);
       if (outcome.verdict === null) {
         /*
          * A DEGRADATION IS A SKIP AND A WARNING, NEVER A FLAG. There are three
@@ -429,12 +514,38 @@ async function verifyStage(args: {
         report.addVerdict(job.key, verdict);
       }
     }
-    if (verdict === 'flag') {
-      const list = flaggedByWindow.get(job.window);
-      if (list) list.push(job.category);
-      else flaggedByWindow.set(job.window, [job.category]);
+    answers.set(job, verdict);
+    finished += 1;
+    log(`analyze: verify ${finished}/${jobs.length} (${job.category.category})`);
+  };
+
+  /*
+   * THE POOL: workers pull from one index, so the jobs go OUT in the array's
+   * own descending order and a worker that finishes early takes the next
+   * strongest rather than a slice it was handed at the start. At concurrency 1
+   * this is the `for` loop it replaced, one job at a time in the same order.
+   */
+  const workers = Math.max(1, Math.min(args.concurrency, jobs.length));
+  const pull = async (): Promise<void> => {
+    for (let at = next; at < jobs.length; at = next) {
+      next = at + 1;
+      await judge(jobs[at]!);
     }
-    log(`analyze: verify ${index + 1}/${jobs.length} (${job.category.category})`);
+  };
+  await Promise.all(Array.from({ length: workers }, pull));
+
+  /*
+   * AND THE FINDINGS ARE COMPOSED FROM THE JOBS' OWN ORDER, never from the
+   * order the answers landed in. `windowFinding` reads this list as "strongest
+   * flagged category first", which is true of `jobs` by construction and would
+   * be a lie about a pool's completion order.
+   */
+  const flaggedByWindow = new Map<FlagWindow, WindowCategory[]>();
+  for (const job of jobs) {
+    if (answers.get(job) !== 'flag') continue;
+    const list = flaggedByWindow.get(job.window);
+    if (list) list.push(job.category);
+    else flaggedByWindow.set(job.window, [job.category]);
   }
 
   /*
@@ -467,7 +578,7 @@ async function verifyStage(args: {
       ...(args.generation !== undefined ? { generation: args.generation } : {}),
       nli: NLI_MODEL_ID,
       hypotheses: args.hypotheses,
-      verify: args.model,
+      verify: args.server.model,
       capture: { threshold: CAPTURE_THRESHOLD, rescue: RESCUE_FLOOR },
       categories: args.plan.map((one) => one.category),
       untuned: untunedNames(args.plan),
