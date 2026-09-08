@@ -144,6 +144,50 @@ also the reason to pick one server per machine and stay there.
 moved, the stamp's shape is untouched, and every existing book, records file,
 bank and stamp reads exactly as before.
 
+### RULED 2026-09-08: the key stays verbatim, and is not canonicalised
+
+Raised from the Mac: the same weights at the same precision carry three
+spellings across Owen's two machines — `qwen3.5:9b-mlx-bf16` (Ollama's MLX
+runner), `qwen3.5:9b-bf16` (Ollama's llama.cpp), `Qwen3.5-9B-bf16` (the vLLM
+served name) — and the projects live on a shared library, so a book cleaned on
+one machine re-asks every block on the other. The proposal was a small table
+mapping known spellings onto a canonical *weights + precision* id.
+
+**Refused, and here is the argument, so it is not re-had.**
+
+The key answers exactly one question — *may this answer be reused?* — and the
+table would answer **yes** for a pair nobody has measured. The same weights
+through different kernels, different sampler code and different tokenizer edge
+handling agree on most blocks at temperature 0 and are not known to agree on all
+of them.
+
+Its failure modes point the wrong way. A MISSING entry costs GPU: loud,
+recoverable, obvious. A WRONG entry silently ships a book carrying answers from a
+stack that never produced them, and nothing downstream can tell.
+
+And it would be keyed on a string somebody types at server launch. §6 makes
+`--served-model-name` the provenance record precisely because foundry cannot
+discover a precision; making that same string decide cache identity would let a
+typo at launch change which answers a book inherits — one string doing two jobs,
+and the second one failing quietly.
+
+So a different stack is a different sampler, the key says so, and a cross-machine
+re-clean is the price.
+
+**Offered and NOT built** (Owen's to want): a run whose model differs from the
+one named in the stamp beside the records could say so in its opening sentence,
+before it asks anything — *"this book's records were written by X; this run is Y,
+so every block is asked again."* One line, no new state, no table. It turns the
+re-clean from a discovery into a fact somebody can act on.
+
+**Filed separately, and NOT under this ruling:** two machines writing one
+project on a shared library have no coordination, and that behaves the same
+whatever the spellings are. The records file appends, so nothing is lost from it,
+but materialisation takes the LAST row per position and the stamp is a single
+file replaced outright — so the later run's text and its claim about the model
+win. Identical keys would have made the second run cheap, not safe. BookForge
+holds it as its own open item.
+
 ---
 
 ## 5. Who owns the server's life — RULED, and not Foundry
