@@ -203,15 +203,45 @@ vllm serve <model> \
 - **CUDA graphs are on by default** — that is `enforce_eager` being false, so
   the thing to do about them is *not pass `--enforce-eager`*. There is nothing
   for foundry to configure.
-- **Prefix caching pays here specifically.** All three acts send the same long
-  system prompt on every block; with prefix caching its KV is computed once for
-  the whole book instead of once per block.
-- `--max-model-len` is what `capFor` reads back through `/v1/models`. Setting it
-  short buys KV cache for a bigger batch and lowers the ceiling on a long
-  paragraph's answer; 8192 matches what the Ollama path pinned for translate.
+- **Prefix caching pays, and pays in COMPUTE rather than in batch depth.** All
+  four acts send the same long system prompt on every block; with prefix caching
+  its prefill is done once for the whole book instead of once per block, which
+  the first live run confirmed at a 95% hit rate. What it does NOT buy on these
+  particular models is room for more requests — see the hybrid note below.
+- `--max-model-len` is what `capFor` reads back through `/v1/models`. It caps
+  how long ONE sequence may get and reserves nothing; 8192 matches what the
+  Ollama path pinned for translate.
 - Then in the app: **Settings → Language model → Server → vLLM**, with the URL
-  and (optionally) the served model beside it. The three dialogs open against it
+  and (optionally) the served model beside it. The four dialogs open against it
   from that moment; the queue puts `--server vllm` on every line it composes.
+
+### What decides the batch depth on THESE models (measured 2026-09-08)
+
+Worth writing down because both sessions guessed it wrong twice before reading
+the config. The Qwen 3.5 9B and 3.8 27B are **hybrid**: three of every four
+layers are linear attention (Gated DeltaNet) carrying a fixed-size recurrent
+state per sequence, and only one in four is full attention with a KV cache.
+
+The consequence is that the ordinary reasoning about KV does not apply. Per-token
+KV is tiny — tens of kilobytes — but the per-sequence recurrent state is tens to
+hundreds of megabytes, and vLLM's hybrid allocator pads the attention page to
+match that state. A sequence therefore costs pages of roughly 1,600 tokens
+rather than 16. That is why a 3.3 GB pool on the 9B reported 22,420 tokens and
+admitted **7** concurrent: page granularity, not bytes.
+
+So on these models:
+
+- **`--kv-cache-dtype fp8` buys little.** KV is already the small half.
+- **Prefix caching buys little DEPTH** (pages are too coarse to share much),
+  though it still buys the prefill compute above.
+- **`--mamba-ssm-cache-dtype float16` is the knob that matters** — it halves the
+  state and therefore the page, and therefore roughly doubles how many sequences
+  are admitted.
+
+None of this reaches foundry: `--concurrency` asks for a number in flight and
+vLLM admits what it can, queueing the rest. Twelve against an admission of seven
+is the harmless direction. It is recorded here so the next person sizing a run
+starts from the right mechanism.
 
 ---
 
@@ -223,9 +253,10 @@ vllm serve <model> \
 - **analyze's NLI ranker is untouched.** It is a resident Python worker with its
   own model and its own lifecycle; none of this reaches it, and the ranking half
   of a run costs exactly what it always cost.
-- **No measurement.** Nothing here claims a speedup. The pool's real gain
-  against a real vLLM is Owen's to measure on his own card, which is also the
-  only card the answer would be true of.
+- **The 27B is unmeasured.** The 9B has now been measured (§9) and the 27B has
+  not: it is a 21 GB 4-bit build on a 24 GB card, so its batch depth is the open
+  question, and every number about it in this file is arithmetic rather than a
+  reading.
 - **The concurrency default of 12 is not a measurement either.** It is the
   number `DEFAULT_VLM_CONCURRENCY` was measured at against a vLLM on this
   project's own hardware, borrowed because it is the same scheduler being fed.
@@ -233,3 +264,25 @@ vllm serve <model> \
   reach for.
 - **No tests were added** (house rule: none unasked). None was invalidated —
   823 still pass.
+
+---
+
+## 9. The first live run — measured 2026-09-08
+
+BookForge's launcher, Qwen3.5-9B-bf16 on port 8300, WSL, RTX 3090 Ti; foundry
+19f5e70 through BookForge's own CLI clean door with `--server vllm` and no
+`--model`.
+
+| | Ollama | vLLM |
+|---|---|---|
+| clean-text, 1,001 blocks | 110 blocks/min | **458 blocks/min** (131 s) |
+
+**4.2×**, and not the ceiling: seven requests decoding with three queued, a
+95% prefix-cache hit rate, the card at 99%, and a 3.3 GB pool left after 18.3 GB
+of weights at `gpu_memory_utilization` 0.90.
+
+Two things this proved beyond the speed. The **discovery path**: `--model` was
+omitted, the run asked the server, and the stamp records `Qwen3.5-9B-bf16` — the
+served name really is the record (§6). And that **the pass did not change what it
+decides**: 209 blocks changed and 99 edits refused, the shapes an Ollama run of
+the same book gives.

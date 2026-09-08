@@ -1184,6 +1184,30 @@ the one set the dialog was looking at. The queue puts `--server vllm` on the lin
 and OMITS `--model` when the field is blank. **Your own Clean text door composes
 its own command line — that one is yours to teach the flag.**
 
+**2026-09-08 (later) — MEASURED, and one architectural fact worth keeping.**
+
+First live run, your launcher + foundry 19f5e70: clean-text, 1,001 blocks,
+**458 blocks/min against Ollama's 110 — 4.2×**, Qwen3.5-9B-bf16 on a 3090 Ti.
+`--model` omitted, so the stamp recorded the served name; 209 blocks changed and
+99 edits refused, which are an Ollama run's own shapes. The pass got faster and
+decided the same things.
+
+**The batch-depth mechanism on these models is NOT the usual one**, and both
+sessions guessed it wrong twice before your session read the config. Qwen 3.5 9B
+and 3.8 27B are hybrid: three of four layers are linear attention with a
+fixed-size recurrent state per sequence, one in four is full attention with KV.
+Per-token KV is tens of kilobytes; the per-sequence state is tens to hundreds of
+megabytes, and vLLM's hybrid allocator pads the attention page to match it — so a
+sequence costs pages of ~1,600 tokens rather than 16. That is why a 3.3 GB pool
+reported 22,420 tokens and admitted seven. Consequently `--kv-cache-dtype fp8`
+and prefix caching buy little DEPTH (prefix caching still buys the prefill
+compute, at a measured 95% hit rate), and `--mamba-ssm-cache-dtype float16` is
+the knob that roughly doubles admission.
+
+None of it reaches foundry — `--concurrency` asks and vLLM admits what it can,
+queueing the rest, which is the harmless direction. Written into docs/VLLM.md §7
+and §9 so the next person sizing a run starts from the right mechanism.
+
 ## #bookforgenotes
 
 **2026-08-16 — channel audit answered; what BookForge is building now.**
