@@ -273,6 +273,18 @@ the *reading*, which is the newest snapshot of the one live overlay there is.
 
 ---
 
+## 4b. Which server answers
+
+`--server ollama|vllm`, default `ollama`, declared and never sniffed from the
+URL. It changes the transport (`/api/chat` against `/v1/chat/completions`), the
+endpoint default, whether `--model` may be omitted (under vLLM it may: the
+served id is used and recorded), and the concurrency default (12 against 4).
+It changes nothing about the prompt, the temperature, the verification or the
+records. One consequence worth knowing before switching: the model name is part
+of the bank/records key, so answers do not carry across the two servers — see
+**docs/VLLM.md**, which owns the whole story including who may stop the server
+(not foundry).
+
 ## 5. Blast radius, checked
 
 Every place that binds to a generation, verified against this design:

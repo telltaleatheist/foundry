@@ -168,7 +168,10 @@ import {
   checkMarkers, maskBlock, MarkerError, restoreMarkers, stripMarkers,
   type MarkerCounter, type MaskedBlock,
 } from './markers.js';
-import { chat, fetchTransport, requireModel, unloadModel, type Transport } from './ollama.js';
+import {
+  askModel, concurrencyFor, defaultEndpointFor, openModelServer, releaseModel, type ServerKind,
+} from './model-server.js';
+import { fetchTransport, type Transport } from './ollama.js';
 import {
   chapterPosition, openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
 } from './records.js';
@@ -196,8 +199,16 @@ export class TranslateError extends Error {
  */
 export const DEFAULT_TRANSLATE_MODEL = 'qwen3.8:27b';
 
-/** Ollama's own default, which is where it is unless somebody moved it. */
-export const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
+/**
+ * Ollama's own default, which is where it is unless somebody moved it.
+ *
+ * DECLARED IN `model-server.ts` and re-exported here. The value belongs beside
+ * vLLM's default and beside the rule that picks between them — one file
+ * answering "where is that kind of server" — and every caller in this repo has
+ * always imported it from this module, so moving the declaration without leaving
+ * the name here would be a rename dressed up as a refactor.
+ */
+export { DEFAULT_OLLAMA_ENDPOINT } from './model-server.js';
 
 /**
  * How many requests are in flight at once, unless somebody says otherwise.
@@ -434,6 +445,16 @@ export interface TranslateOptions {
   from?: string;
   model?: string;
   endpoint?: string;
+  /**
+   * Which kind of server is on the other end — `--server`. Default `ollama`.
+   *
+   * DECLARED, NEVER SNIFFED, and `model-server.ts` argues that at length. What
+   * it changes here is the transport and the two things that hang off it: the
+   * endpoint default (`defaultEndpointFor`) and how many requests are worth
+   * having in flight (`concurrencyFor`). The prompts, the temperature, the
+   * verification and the bank are the same on both.
+   */
+  server?: ServerKind;
   /** Free text appended to the system prompt, verbatim. */
   instructions?: string;
   /**
@@ -1411,19 +1432,30 @@ function planChunks(
  * Ollama serving three people is not something one book's end should empty.
  */
 export async function translateEpub(opts: TranslateOptions): Promise<TranslateReport> {
+  const kind = opts.server ?? 'ollama';
   const model = opts.model ?? DEFAULT_TRANSLATE_MODEL;
-  const endpoint = opts.endpoint ?? DEFAULT_OLLAMA_ENDPOINT;
+  const endpoint = opts.endpoint ?? defaultEndpointFor(kind);
   const transport = opts.transport ?? fetchTransport();
   try {
     return await runTranslation(opts);
   } finally {
     if (opts.keepModel !== true) {
-      const released = await unloadModel(transport, endpoint, model);
+      /*
+       * `model` HERE IS THE ONE THAT WAS ASKED FOR, not the one that answered —
+       * this line runs on the failure path too, where the run may never have
+       * reached the server to resolve it. It is only ever used in the ollama
+       * branch, where the two are the same string by `requireModel`'s own
+       * exact-match rule; under vLLM the release asks nothing and names nothing.
+       */
+      const outcome = await releaseModel(transport, kind, endpoint, model);
       opts.log(
-        released
-          ? `translate: asked ollama to unload "${model}" — the card is free for the next job.`
-          : `translate: ollama did not acknowledge unloading "${model}". If it is still resident it `
-            + 'will fall out on its own idle timer; nothing about the book depends on this.',
+        outcome === 'not-ours'
+          ? 'translate: nothing to unload — a vLLM process IS its weights, and only stopping the '
+            + 'server frees the card, which is not one job\'s decision to make (model-server.ts).'
+          : outcome === 'released'
+            ? `translate: asked ollama to unload "${model}" — the card is free for the next job.`
+            : `translate: ollama did not acknowledge unloading "${model}". If it is still resident it `
+              + 'will fall out on its own idle timer; nothing about the book depends on this.',
       );
     }
   }
@@ -1531,10 +1563,19 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       + `least 1, not ${opts.concurrency}.`,
     );
   }
-  const concurrency = opts.concurrency ?? DEFAULT_TRANSLATE_CONCURRENCY;
+  const kind = opts.server ?? 'ollama';
+  const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_TRANSLATE_CONCURRENCY);
 
-  const model = opts.model ?? DEFAULT_TRANSLATE_MODEL;
-  const endpoint = opts.endpoint ?? DEFAULT_OLLAMA_ENDPOINT;
+  /*
+   * THE MODEL IS NOT RESOLVED YET, and that is the change vLLM brought. Under
+   * Ollama a run must name a model because the server holds a library; under
+   * vLLM the server serves one and naming it is retyping its launch argument, so
+   * an absent `--model` means "whatever is being served" and the answer comes
+   * back from `openModelServer` below. Everything that records a model reads it
+   * from there, so the record can never name something that did not answer.
+   */
+  const wanted = opts.model ?? (kind === 'vllm' ? undefined : DEFAULT_TRANSLATE_MODEL);
+  const endpoint = opts.endpoint ?? defaultEndpointFor(kind);
   const transport = opts.transport ?? fetchTransport();
   const to = readLanguage(opts.to, '--to');
   const from = opts.from === undefined ? null : readLanguage(opts.from, '--from');
@@ -1559,7 +1600,13 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    * the whole of what a person needs, and burying it under a page of parse
    * progress makes them read the page first.
    */
-  await requireModel(transport, endpoint, model);
+  const server = await openModelServer({
+    kind,
+    transport,
+    endpoint,
+    ...(wanted === undefined ? {} : { model: wanted }),
+  });
+  const model = server.model;
 
   /*
    * What this run does about the bank it was pointed at, decided once, done
@@ -2197,7 +2244,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    * and the one language involved, which is the whole of the difference.
    */
   opts.log(
-    `translate: ${model} at ${endpoint}, `
+    `translate: ${model} at ${server.endpoint} (${server.kind}), `
     + (opts.rewrite === undefined
       ? `${from === null ? 'detected source' : from.name} → ${to.name}`
       : `rewriting in ${to.name} (${opts.rewrite})`)
@@ -2622,7 +2669,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     let lastComplaint = '';
 
     for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-      const answer = unfence(await chat(transport, endpoint, model, system, sourceText)).trim();
+      const answer = unfence(await askModel(transport, server, system, sourceText)).trim();
       const complaint = checkAnswer(sourceText, answer);
       if (complaint === null) { accepted = answer; break; }
       lastComplaint = complaint;
@@ -2659,7 +2706,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     let lastComplaint = '';
 
     for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-      const answer = unfence(await chat(transport, endpoint, model, system, payload)).trim();
+      const answer = unfence(await askModel(transport, server, system, payload)).trim();
       const parsed = parseChunkAnswer(chunk.kind, chunk.parts.length, chunk.rowSizes, answer);
       if ('parts' in parsed) {
         return new Map(chunk.parts.map((part, i) => [part, parsed.parts[i]!] as const));

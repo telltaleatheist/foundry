@@ -1,5 +1,16 @@
 /**
- * clean/runner — the model, wired to the engine's own Ollama client.
+ * clean/runner — the model, wired to whichever server this machine runs.
+ *
+ * ── ONE SEAM, TWO SERVERS ───────────────────────────────────────────────────
+ *
+ * `--server ollama|vllm` (2026-09-08). The choice is made in
+ * `translate/model-server.ts` and nothing below this line knows about it: the
+ * prompt is the same bytes, the temperature is the same zero, the validators and
+ * the records and the stamp are untouched. What changes is the transport, and
+ * one thing that hangs off it — `pinContextTo` is an OLLAMA instruction, because
+ * a vLLM's window is fixed when the server is launched and cannot be set per
+ * request. The pass still measures the longest request; on a vLLM it says so
+ * rather than claiming to have pinned anything.
  *
  * ── WHY THE VENDORED DRIVER'S OWN TRANSPORT DID NOT COME ACROSS ─────────────
  *
@@ -41,9 +52,9 @@
  * normalized under it. `num_predict` is BookForge's own fixed 2048.
  */
 import {
-  chat, fetchTransport, normaliseEndpoint, requireModel, unloadModel, type ChatTuning,
-  type Transport,
-} from '../translate/ollama.js';
+  askModel, openModelServer, releaseModel, type ServerKind,
+} from '../translate/model-server.js';
+import { fetchTransport, type ChatTuning, type Transport } from '../translate/ollama.js';
 import type { NumberNormalizerRunner } from './tts-number-normalizer.js';
 
 /**
@@ -80,9 +91,20 @@ export function contextWindowFor(systemPrompt: string, longestInput: string): nu
   return Math.min(Math.max(wanted, CTX_BUCKET), CTX_MAX);
 }
 
-export interface OllamaRunnerOptions {
+export interface ModelRunnerOptions {
+  /**
+   * The model to ask for, ALWAYS a name by the time it reaches here.
+   *
+   * Under vLLM a run may leave `--model` off and mean "whatever is served", and
+   * that is resolved by the CALLER (`run.ts`, `epub.ts`) rather than here —
+   * because the records cache keys every block on the model's name
+   * (`cleanKey`), and a key computed before the server was asked would file this
+   * run's answers under a name that is not the one that answered.
+   */
   model: string;
   endpoint: string;
+  /** Which kind of server is on the other end. Default `ollama`. */
+  server?: ServerKind;
   /** Injected so the tests can drive the whole pass with no server. */
   transport?: Transport;
   /**
@@ -108,12 +130,17 @@ export interface OllamaRunnerOptions {
  * was silent, which is the only thing the person about to type `ollama serve`
  * needs from this program.
  */
-export async function openOllamaRunner(
-  options: OllamaRunnerOptions,
+export async function openModelRunner(
+  options: ModelRunnerOptions,
 ): Promise<NumberNormalizerRunner> {
   const transport = options.transport ?? fetchTransport();
-  const endpoint = normaliseEndpoint(options.endpoint);
-  await requireModel(transport, endpoint, options.model);
+  const kind = options.server ?? 'ollama';
+  const server = await openModelServer({
+    kind,
+    transport,
+    endpoint: options.endpoint,
+    model: options.model,
+  });
 
   let tuning: ChatTuning = {
     temperature: 0,
@@ -122,26 +149,48 @@ export async function openOllamaRunner(
   };
 
   return {
-    model: options.model,
+    model: server.model,
     pinContextTo(systemPrompt: string, longestInput: string): void {
       const numCtx = contextWindowFor(systemPrompt, longestInput);
       tuning = { ...tuning, numCtx };
+      /*
+       * A vLLM IS TOLD NOTHING ABOUT ITS WINDOW, so this must not claim to have
+       * pinned one. The window was fixed with `--max-model-len` when the server
+       * was launched and the KV cache was allocated against it; the measurement
+       * is still worth printing, because a longest request the server cannot
+       * hold is the reason a run is about to fail and the number is how somebody
+       * relaunches it right.
+       */
       options.log(
-        `clean-text: ${options.model} at ${endpoint}, temperature 0, context ${numCtx} tokens `
-        + `(pinned once, from the longest of this book's requests at ${longestInput.length} `
-        + 'characters)',
+        server.kind === 'vllm'
+          ? `clean-text: ${server.model} at ${server.endpoint} (vllm), temperature 0. The context `
+            + 'window is the server\'s own, fixed when it was launched, so nothing is pinned here'
+            + `; this book's longest request is ${longestInput.length} characters`
+            + `${server.maxModelLen === null ? '' : ` against --max-model-len ${server.maxModelLen}`}.`
+          : `clean-text: ${server.model} at ${server.endpoint}, temperature 0, context ${numCtx} `
+            + `tokens (pinned once, from the longest of this book's requests at `
+            + `${longestInput.length} characters)`,
       );
     },
     async generate(input: string, systemPrompt: string): Promise<string> {
-      return chat(transport, endpoint, options.model, systemPrompt, input, tuning);
+      return askModel(transport, server, systemPrompt, input, tuning);
     },
     async release(): Promise<void> {
       if (options.keepModel === true) return;
-      const unloaded = await unloadModel(transport, endpoint, options.model);
-      if (!unloaded) {
+      const outcome = await releaseModel(transport, kind, server.endpoint, server.model);
+      if (outcome === 'not-ours') {
         options.log(
-          `clean-text: ${endpoint} did not acknowledge the request to unload ${options.model}. The `
-          + 'book is written; a server that has already gone away has released the memory anyway.',
+          `clean-text: ${server.endpoint} is a vLLM and keeps its model — the weights ARE the `
+          + 'process, so only stopping the server frees the card, and that is not one pass\'s '
+          + 'decision to make (translate/model-server.ts).',
+        );
+        return;
+      }
+      if (outcome === 'refused') {
+        options.log(
+          `clean-text: ${server.endpoint} did not acknowledge the request to unload `
+          + `${server.model}. The book is written; a server that has already gone away has `
+          + 'released the memory anyway.',
         );
       }
     },

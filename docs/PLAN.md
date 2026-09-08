@@ -4098,6 +4098,65 @@ other column IS the original.
 
 ---
 
+### Wave 58 — vLLM for the three text acts (Owen, 2026-09-08) — BUILT
+
+Owen: *"lets build in vllm batching. ollama batching doesnt work. its an
+unfinished feature ollama tried to implement but isnt accessible on the mac or
+pc. cuda graphs/vllm would probably be the best for all three features. go
+ahead."* The three are translate, simplify and the narration cleanup. Every one
+of them already ran a POOL of requests; a pool only pays if the server batches
+them, and Ollama's batching is not reachable on either machine.
+
+- **`src/translate/vllm.ts`** (new) — the OpenAI-compatible transport.
+  `normaliseVllmEndpoint` (appends `/v1` when the URL has no version segment),
+  `servedModels` / `requireServedModel` (proof first, and `--model` may be
+  omitted because a vLLM serves exactly one), `capFor` (clamps `max_tokens`
+  against `max_model_len`, because vLLM 400s where Ollama would generate less),
+  `completionsBody` (`chat_template_kwargs:{enable_thinking:false}` for the qwen3
+  family, `num_ctx` deliberately dropped), `withoutThinking` (a leading
+  `<think>` block only — the template kwarg is advisory where Ollama's field is
+  enforced).
+- **`src/translate/model-server.ts`** (new) — the ONE place that chooses.
+  `ServerKind`, `defaultEndpointFor`, `openModelServer`, `askModel`,
+  `releaseModel`, `concurrencyFor` (12 under vLLM, the act's 4 under Ollama),
+  and `DEFAULT_OLLAMA_ENDPOINT` moved here and re-exported from
+  `translate/run.ts` so no caller's import moved.
+- **`src/translate/run.ts`, `src/clean/run.ts`, `src/clean/epub.ts`,
+  `src/clean/runner.ts`** — the three call sites, plus the runner renamed
+  `openModelRunner`. The served name is resolved BEFORE the cache keys are
+  computed (`cleanKey`, the bank key), which is the one case where a run with
+  nothing left to ask still touches the server.
+- **`src/commands.ts`** — `--server ollama|vllm` on `translate` and both
+  `clean-text` doors, refused by name for anything else, with the help prose and
+  usage lines to match.
+- **App** — `AppSettings.llmServer` / `vllmUrl` / `vllmModel`; `llm:defaults`
+  answers `server` and resolves the model/URL for the chosen kind; new
+  `llm:servers` / `llm:set-servers`; a **Server** select on the settings card
+  with the vLLM pair beside it; `TranslateRequest.server` / `CleanRequest.server`
+  carried from the three dialogs; the queue writes `--server vllm` and omits a
+  blank `--model`.
+- **`docs/VLLM.md`** (new) — the flag, the four real differences, who owns the
+  server's life (BookForge's arbiter, never foundry), why the stamp gained no
+  `precision` key, the launch recipe, and what was deliberately left out.
+  Pointers from CLEAN-TEXT.md and TRANSLATION-STEPS.md; the contract half in
+  BOOKFORGE-HANDOFF.md `#foundrynotes`.
+- **Gates:** 823 tests, `bun run typecheck`, app electron typecheck, renderer
+  `tsc -p tsconfig.app.json`, `ng build`. No test added (house rule); none
+  invalidated. Nothing on disk is invalidated either — no version constant
+  moved and the stamp's shape is untouched.
+
+**Deferred out loud, not silently:**
+
+- **`analyze` is Ollama-only.** Not in the ask; it calls the Ollama client
+  directly and carries a second model (the NLI worker) with its own lifecycle.
+- **No measurement.** The speedup is Owen's to measure on his own card, and the
+  concurrency default of 12 is borrowed from `DEFAULT_VLM_CONCURRENCY`, not
+  measured for text.
+- **No `precision` in the stamp.** Foundry cannot discover a dtype; the served
+  name is the record, so `--served-model-name` must be honest (docs/VLLM.md §6).
+
+---
+
 ## 8. Session hygiene
 
 - Push everything to main; the user has standing authorization.

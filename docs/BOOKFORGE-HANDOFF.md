@@ -1101,6 +1101,79 @@ copy from the sha the go-signal on the message channel names, which includes
 both. Your acknowledged plan — subtree copy, electron devDep pinned to ^29,
 the three smoke items in your Wave 3 gate — is exactly right.
 
+**2026-09-08 — vLLM IS LANDED for translate, simplify and clean-text. Here is
+exactly what the server side must provide, and what foundry will never do to it.**
+
+Owen: *"lets build in vllm batching. ollama batching doesnt work… cuda
+graphs/vllm would probably be the best for all three features. go ahead."*
+**docs/VLLM.md** in this repo is the whole story; this is the contract half.
+
+**The flag.** `--server ollama|vllm`, default `ollama`, on `foundry translate`
+(which is also simplify, via `--rewrite`) and `foundry clean-text` (both doors).
+**Declared, never sniffed from the URL** — do not expect foundry to work out
+what is on a port. `analyze` is Ollama-only for now, deliberately.
+
+**The URL is the flag it always was**: `--ollama <url>` on translate,
+`--endpoint <url>` on clean-text. Under vLLM it defaults to
+`http://localhost:8000/v1`, and `/v1` is appended if the URL you pass has no
+version segment, so `http://box:8300` and `http://box:8300/v1` are the same
+thing. **Pick your port freely — 8300 is fine, foundry has no opinion.**
+
+**The wire, exactly.** `GET {base}/models` to prove the server and read
+`max_model_len`; then `POST {base}/chat/completions` per block with
+`{model, stream:false, messages:[{role:"system"},{role:"user"}], temperature,
+max_tokens}` plus `chat_template_kwargs:{enable_thinking:false}` for any qwen3
+family name. Same system+user split as the Ollama path, byte for byte the same
+prompts. The answer is read from `choices[0].message.content`, and a leading
+`<think>…</think>` block is stripped defensively (the template kwarg is
+advisory in a way Ollama's `think:false` is not).
+
+**The model string.** Whatever `--served-model-name` you launch with, verbatim —
+foundry sends back exactly the id `/v1/models` reported. **You do not have to
+tell us the name at all**: with `--model` omitted, foundry uses the one served
+model and records THAT name in the bank key, the records key and the narration
+stamp. If a name IS passed it is proved against the served list and a mismatch
+refuses by name before a single block is read.
+
+**Name it honestly.** The stamp's `model` field is the only record of what
+cleaned a book, and it is the whole record — the shelved `precision` key was NOT
+built, because foundry cannot discover a dtype and a confidently wrong precision
+is worse than none. So `--served-model-name Qwen3.5-9B-bf16`, not a mimicked
+Ollama tag, or two books cleaned at two precisions become indistinguishable.
+**No `stampVersion` bump, no new stamp field, no change to anything you read.**
+
+**In flight.** `--concurrency` defaults to **12** under vLLM (4 under Ollama) for
+all three acts; override per run if the card wants it smaller. Prefix caching is
+worth enabling on your side: all three send the same long system prompt on every
+block. CUDA graphs are on unless you pass `--enforce-eager`; nothing here
+configures them.
+
+**Lifetime is YOURS and foundry will not touch it.** `release()` is a declared
+no-op under vLLM and both callers say so in the log: a vLLM process is its
+weights, only stopping it frees the card, and the thing that decides when the
+card changes hands has to watch every job rather than one of them. Your arbiter
+starting it before a text pass and stopping it after — refusing a render while
+it is up — is exactly right. Foundry never starts, stops, warms or reconfigures
+it, and a server that is not answering ends the run naming the URL that was
+silent.
+
+**Nothing already on disk is invalidated.** No version constant moved. The one
+consequence to know: the model NAME is part of the records/bank cache key, so a
+book cleaned through `qwen3.5:9b-q8_0` re-asks every block when it is next
+cleaned through `Qwen/Qwen3.5-9B`. Correct rather than a defect — two stacks at
+two precisions are two answers — and a reason to pick one server per machine.
+
+**The app half, for the re-vendor.** Settings → Language model gains a **Server**
+select plus a vLLM URL and served-model field; both servers' settings are kept at
+once so switching back costs no retyping. `llm:defaults` now also answers
+`server` and resolves the model/URL for whichever is chosen; two new channels,
+`llm:servers` and `llm:set-servers`, read and write the stored pair.
+`TranslateRequest.server` / `CleanRequest.server` (`'vllm'`, absent = ollama)
+ride on the request so the kind, the URL and the model name that must agree are
+the one set the dialog was looking at. The queue puts `--server vllm` on the line
+and OMITS `--model` when the field is blank. **Your own Clean text door composes
+its own command line — that one is yours to teach the flag.**
+
 ## #bookforgenotes
 
 **2026-08-16 — channel audit answered; what BookForge is building now.**

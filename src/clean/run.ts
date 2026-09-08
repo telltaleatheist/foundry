@@ -96,14 +96,16 @@ import { bookRowPlan, readBookFile } from '../translate/bookrows.js';
 import type { BookBlock } from '../translate/bookrows.js';
 import { TranslationRecords } from '../translate/records.js';
 import { spliceTableGrid, type TableGrid } from '../translate/tablecells.js';
-import { DEFAULT_OLLAMA_ENDPOINT } from '../translate/run.js';
-import type { Transport } from '../translate/ollama.js';
+import {
+  concurrencyFor, defaultEndpointFor, openModelServer, type ServerKind,
+} from '../translate/model-server.js';
+import { fetchTransport, type Transport } from '../translate/ollama.js';
 
 import { blockDigest, bookPositionTexts } from './digest.js';
 import { narrationTextPrompt } from './prompt.js';
 import { applySpans, CleanTextError, punctuateBlocks, segmentsAfter } from './punctuate.js';
 import type { PunctuationStageRecord } from './punctuate.js';
-import { openOllamaRunner } from './runner.js';
+import { openModelRunner } from './runner.js';
 import { markerCharacters, markerSegments } from './segments.js';
 import { narrationTextStamp, type NarrationTextStamp } from './stamp.js';
 import type { NarrationNumberTarget } from './targets.js';
@@ -203,8 +205,20 @@ export interface CleanTextOptions {
    */
   model?: string;
   /**
+   * Which kind of server is on the other end — `--server`. Default `ollama`.
+   *
+   * DECLARED, NEVER SNIFFED (translate/model-server.ts). It changes the
+   * transport and the two things that hang off it — where the server is by
+   * default, and how many blocks are worth having in flight — and nothing about
+   * what this pass decides: same prompt, same temperature 0, same validators,
+   * same `NORMALIZER_VERSION`. A book cleaned through Ollama and the same book
+   * cleaned through vLLM are the same pass asked of different plumbing.
+   */
+  server?: ServerKind;
+  /**
    * How many blocks are asked about at once. Default
-   * `DEFAULT_CLEAN_CONCURRENCY`.
+   * `DEFAULT_CLEAN_CONCURRENCY` under Ollama, `DEFAULT_VLLM_CONCURRENCY` under
+   * vLLM (`concurrencyFor`).
    *
    * It changes NOTHING about what this pass decides — not the transform, not
    * the prompt, not a version constant, not a record already written. The
@@ -377,8 +391,26 @@ function isRefusal(status: string): boolean {
 export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOutcome> {
   const started = Date.now();
   const at = new Date().toISOString();
-  const model = opts.model ?? DEFAULT_NORMALIZER_MODEL;
-  const endpoint = opts.endpoint ?? DEFAULT_OLLAMA_ENDPOINT;
+  const kind = opts.server ?? 'ollama';
+  const endpoint = opts.endpoint ?? defaultEndpointFor(kind);
+  const transport = opts.transport ?? fetchTransport();
+  /*
+   * ── THE MODEL'S NAME IS NEEDED BEFORE ANY QUESTION IS ASKED ────────────────
+   *
+   * `cleanKey` hashes it into every block's cache key, so a run that learned the
+   * name later would file this run's answers under a name that is not the one
+   * that answered, and the next run would ask the whole book again.
+   *
+   * Under Ollama the name is always known here — the declared default, or what
+   * was typed. Under vLLM an absent `--model` means "whatever this server is
+   * serving" (translate/vllm.ts argues why), and the only way to know that is to
+   * ask. THAT IS THE ONE CASE where a run with nothing left to ask still touches
+   * the server, and it is the honest one: a run that did not name its model
+   * cannot know what it already answered.
+   */
+  const model = opts.model ?? (kind === 'vllm'
+    ? (await openModelServer({ kind, transport, endpoint })).model
+    : DEFAULT_NORMALIZER_MODEL);
 
   const { text: bookText, where } = openBook(opts.bookPath);
   const book = readBookFile(bookText, where);
@@ -608,10 +640,11 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    */
   const runner = opts.runner ?? (asks.length === 0
     ? NOTHING_TO_ASK
-    : await openOllamaRunner({
+    : await openModelRunner({
       model,
       endpoint,
-      ...(opts.transport === undefined ? {} : { transport: opts.transport }),
+      server: kind,
+      transport,
       ...(opts.keepModel === undefined ? {} : { keepModel: opts.keepModel }),
       log: opts.log,
     }));
@@ -637,7 +670,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     },
     'every-block',
     EVERY_CLASS,
-    opts.concurrency ?? DEFAULT_CLEAN_CONCURRENCY,
+    opts.concurrency ?? concurrencyFor(kind, DEFAULT_CLEAN_CONCURRENCY),
   );
 
   // ── The verdicts, applied ─────────────────────────────────────────────────

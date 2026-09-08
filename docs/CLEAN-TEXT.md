@@ -631,6 +631,23 @@ digit (`12 - and` → `12—and`), which it could not before: the find classifie
 number edit and the replacement was refused for carrying a digit.
 
 
+## Which server it runs against
+
+Either an Ollama or a vLLM, chosen by `--server ollama|vllm` (default `ollama`)
+and never guessed from the URL. Under vLLM the route is
+`/v1/chat/completions`, `--model` may be left off and the served id is used and
+recorded in the stamp, `--concurrency` defaults to 12 instead of 4, and nothing
+is unloaded at the end because the weights ARE the server process. Nothing about
+what this pass DECIDES changes — same prompt, same temperature 0, same rules,
+same version constants, same stamp shape — so no book already on disk is
+invalidated by the choice. **docs/VLLM.md** is the whole of it.
+
+The one thing to carry away here: the records cache keys every block on the
+model's NAME, so a book cleaned through `qwen3.5:9b-q8_0` re-asks every block
+when it is next cleaned through `Qwen/Qwen3.5-9B`. That is correct — two servers
+at two precisions are two answers — and it is the reason to pick one server per
+machine.
+
 ## Where it runs
 
 > The three doors below are **BookForge's**, over an EPUB, and they are recorded
