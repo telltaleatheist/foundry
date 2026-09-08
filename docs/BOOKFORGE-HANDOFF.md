@@ -557,6 +557,23 @@ your node reconciliation reads — a `runJob` that bypassed the row would break
 your own narrate. What disappears hosted is the WAITING: the row is born
 `running`, never held, never queued.
 
+> **`exportEpubFromStep(projectDir, stepId, { to })` — added 2026-09-08, Owen's
+> "Narrate implies an export" ruling** (*"any time the user narrates it should
+> imply an epub export … maybe it shouldnt even show the epub unless they
+> intentionally generate one … i dont want 16 outdated epubs hanging around"*).
+> With `to` — an ABSOLUTE `.epub` path OUTSIDE every project in the library, refused
+> by name otherwise — the EPUB is written there and NOWHERE this app keeps: not in
+> `final/`, not in the tray, not rotated, not drawn in the tree, and NOT announced
+> through `onExport`. The promise resolves with the same `ExportLanding` carrying
+> `unfiled: true`; that is the only word anybody hears. Everything else is
+> unchanged: a promised step still plans deferred and waits on `after`, the
+> narration receipt, the metadata edits and the mint block's inheritance all ride,
+> because the request carries the project as `home` (`ConversionRequest.home`) and
+> the queue asks that before it asks the path. Leave `to` off and you get the
+> filed export you always got. The row still crosses your queue hosted with
+> `outputPath` = your path — it belongs to no project, so Foundry files it under
+> none and draws no promised card for it, which is the point.
+
 **ONLY WHAT A PERSON PRESSED IN THE HOSTED WINDOW ROUTES.** The `queue:*` IPC
 doors route to your `enqueue`. Work you ordered through the mount seam does not —
 specifically `exportEpubFromStep`, which enqueues on Foundry's internal queue.
