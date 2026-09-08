@@ -584,6 +584,29 @@ your own narrate. What disappears hosted is the WAITING: the row is born
 **ONLY WHAT A PERSON PRESSED IN THE HOSTED WINDOW ROUTES.** The `queue:*` IPC
 doors route to your `enqueue`. Work you ordered through the mount seam does not —
 specifically `exportEpubFromStep`, which enqueues on Foundry's internal queue.
+
+> **Read that last sentence literally — amended 2026-09-08 after it cost a day.**
+> An export you order through `exportEpubFromStep` NEVER reaches your `enqueue`
+> and NEVER appears in your queue's own records, deferred or not. **Await the
+> promise it returns**; do not watch your rows for the file. A BookForge branch
+> raced its own queue for the export's row, saw a row that cannot exist, resolved
+> null, and re-asked on each fallback — three presses left six queued exports in
+> Foundry's list and six empty scratch folders, none of it visible anywhere.
+>
+> Which is now half-fixed on this side: **the hosted shelf draws every LIVE row of
+> Foundry's own** (`shelfJobs`), not just the never-routed kinds, so an export
+> waiting behind your cleanup is visible and its ✕ reaches it (`ourRow` routes the
+> two gestures on whose list the id is in, never on the row's kind). An implied
+> export — one given `to` — is titled **"Book for narration — &lt;file&gt;"**, matching
+> the words your own landing row uses; every other export keeps its filename. A
+> settled row still leaves this app's list at the settle, so nothing accumulates.
+>
+> One consequence to watch: a host-ordered export WITHOUT `to` lands in the
+> project's `final/`, so it now also draws a promised (grayed) export card in the
+> tree while it waits, exactly as a queued export pressed in the window does. If
+> you draw a landing row of your own for the same act, that is two cards for one
+> thing — say so and we will decide which one goes. An implied export cannot
+> collide: its path is outside every project, so no promised card is drawn for it.
 **Corrected 2026-08-23: the Export dialog no longer routes either.** Owen ruled
 that only long or resource-heavy work belongs in a queue; an export pressed in
 the dialog runs at the press (`queue:run` → `runNow` → `runJob`, detached), the
