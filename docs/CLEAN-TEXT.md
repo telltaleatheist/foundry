@@ -30,7 +30,8 @@ remembers.
 ```
 foundry clean-text --book <book.jsonl> --records <out.records.jsonl>
                    --stamp <out.stamp.json> [--generation <id>]
-                   [--endpoint <url>] [--model <name>] [--keep-model]
+                   [--endpoint <url>] [--model <name>] [--concurrency <n>]
+                   [--keep-model]
 ```
 
 `--generation` is `translate`'s field in `translate`'s words — the app's binding
@@ -52,7 +53,8 @@ exactly how a translation reaches a file.
 
 ```
 foundry clean-text --epub <in.epub> --out <out.epub>
-                   [--endpoint <url>] [--model <name>] [--keep-model]
+                   [--endpoint <url>] [--model <name>] [--concurrency <n>]
+                   [--keep-model]
 ```
 
 > Owen, 2026-09-05: the bare-EPUB cleanup **STAYS as a FAILSAFE** — a user who
@@ -377,6 +379,47 @@ per block, over `/api/chat` through the engine's own Ollama client
 (`src/translate/ollama.ts`). The context window is pinned ONCE for the whole
 book, because Ollama reloads the runner on any change to it. The weights are
 released when the run ends unless `--keep-model` says the machine is shared.
+
+### How many at once — `--concurrency <n>`
+
+**Default 4** (`DEFAULT_CLEAN_CONCURRENCY`, beside the model default in
+`src/clean/tts-number-normalizer.ts`), on both doors. It is `translate`'s number
+for `translate`'s reason: Ollama batches concurrent requests and a serial run
+leaves the GPU idle between blocks, and stage 3 asks one question per block of
+the whole book — 4,283 of them on the book this was measured against — so the
+serial loop **was** the cost of the pass.
+
+> Owen, 2026-09-08: he wants the cleanup batched, and had assumed the three text
+> acts already shared a pipeline. They did not: `translate` has run a worker pool
+> since it existed, and this pass asked one block at a time with nothing else in
+> flight.
+
+Like `translate`'s, the 4 is **a starting point and not a measurement** — unlike
+`--vlm-concurrency`, whose 12 is a measured knee — because the right number is a
+property of the GPU and of the model's size. A server pinned to one parallel slot
+(`OLLAMA_NUM_PARALLEL=1`) will queue the four and gain nothing; that is a setting
+on the server, not a reason to type a different number here.
+
+**IT CHANGES NOTHING ABOUT WHAT THE PASS DECIDES.** Not the transform, not the
+prompt, not `NORMALIZER_VERSION`, not `PUNCTUATION_SPEC_VERSION`, not the records
+key, and not one record already written — **a book cleaned at any concurrency is
+the same book, and an already-cleaned book does not become stale for this.** The
+only thing in flight is requests:
+
+* every input is composed from the **book** before the first request goes out —
+  the block's own rule-applied text and its two rule-applied neighbours — so no
+  request can read another request's answer;
+* the runner is stateless per call (one `chat()` over HTTP) and the one mutable
+  thing it holds, the pinned context window, is written once before the pool
+  starts;
+* temperature is 0, so an answer is a function of its input;
+* and the answers are written back into `decisions` by walking the blocks in the
+  **book's** order after the pool has finished, so the records file, the receipt
+  and the log come out in the same order a serial run produced.
+
+What does change is `clean-text: <done>/<total>`: it counts blocks **finished**
+rather than a position, which is what keeps a progress bar drawn from it
+monotonic when the answers stop arriving in order.
 
 ---
 

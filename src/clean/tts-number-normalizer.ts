@@ -143,6 +143,31 @@ export const NORMALIZER_VERSION = 'n6';
  */
 export const DEFAULT_NORMALIZER_MODEL = 'qwen3.5:9b-q8_0';
 
+/**
+ * How many blocks are in flight against the model at once, unless a caller says
+ * otherwise.
+ *
+ * FOUR, BECAUSE IT IS TRANSLATE'S FOUR AND THE ARGUMENT IS THE SAME ONE.
+ * `DEFAULT_TRANSLATE_CONCURRENCY` says it out loud — a starting point rather
+ * than a measurement, chosen to be obviously better than one because a serial
+ * run leaves the GPU idle between requests and Ollama batches concurrent ones,
+ * and small enough that it cannot be the reason somebody's server started
+ * swapping. Nothing about this pass changes that reasoning: it is the same
+ * server, the same client, one short request per block, and the blocks are
+ * independent of each other by construction (see `askAboutEach`'s
+ * `concurrency`). A cleanup asks one question per block of the whole book —
+ * 4,283 of them on the book this was measured against — so the serial loop WAS
+ * the cost of the pass.
+ *
+ * A SERVER PINNED TO ONE PARALLEL SLOT GAINS NOTHING, and that is a fact about
+ * the server rather than a reason to pick a different number here: an Ollama
+ * with `OLLAMA_NUM_PARALLEL=1` queues the four and answers them one at a time,
+ * which is exactly the run this default replaces and no worse than it. The
+ * knob to turn in that case is on the server; the flag is here for the machine
+ * where four is the wrong four.
+ */
+export const DEFAULT_CLEAN_CONCURRENCY = 4;
+
 /** How much of the model's answer to keep in the record when it will not parse. */
 const RAW_ANSWER_EXCERPT = 600;
 
@@ -1998,7 +2023,43 @@ export async function askAboutEach(
    */
   ask: 'digit-bearing' | 'every-block' = 'digit-bearing',
   policy: NumberEditPolicy = NUMBERS_ONLY,
+  /**
+   * ── HOW MANY REQUESTS ARE IN FLIGHT AT ONCE ────────────────────────────────
+   *
+   * WHY THIS IS SAFE TO DO AT ALL, stated as three facts about the loop below
+   * rather than as a hope about the server:
+   *
+   *  1. THE RUNNER IS STATELESS PER CALL. `generate` is one `chat()` over an
+   *     HTTP transport (`clean/runner.ts`) and the only mutable thing it closes
+   *     over is `tuning`, which nothing but `pinContextTo` ever writes — and
+   *     that runs ONCE, before the pool starts. There is no conversation, no
+   *     cursor and no accumulated context for a second request to disturb.
+   *  2. EVERY INPUT WAS COMPOSED BEFORE THE LOOP. `inputs` is built above from
+   *     each block's own rule-applied text and its two rule-applied neighbours,
+   *     out of the book — never out of another block's ANSWER. So no request in
+   *     flight can be reading a string another request is about to change.
+   *  3. TEMPERATURE IS 0 and the retry rules re-ask at the same settings, so an
+   *     answer is a function of its input and nothing else.
+   *
+   * What a pool therefore changes is the ORDER ANSWERS ARRIVE IN, and answers
+   * are keyed by block. The `decisions` map is still filled by walking `asks`
+   * in order after the pool has finished, so the map's insertion order — and
+   * with it every record line this pass writes — is byte-for-byte what a serial
+   * run produced. `done` counts answers FINISHED, not a position, for the reason
+   * translate's own comment gives: out of order, a count is the only honest
+   * number to draw a bar from.
+   *
+   * THE DEFAULT IS 1, so a caller that does not ask gets the serial loop this
+   * function has always been, call for call.
+   */
+  concurrency: number = 1,
 ): Promise<{ decisions: Map<string, AskOutcome>; parseFailed: number; asked: number }> {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error(
+      `The number-normalization pass takes a positive whole number of requests in flight, not `
+      + `"${concurrency}".`);
+  }
+
   // ── The deterministic pass, first and for everything ──────────────────────
   const ruledOf = new Map<string, NumberRuleOutcome>();
   for (const ask of asks) ruledOf.set(ask.key, applyNumberRules(ask.text, ask.segments));
@@ -2042,47 +2103,86 @@ export async function askAboutEach(
   runner.pinContextTo?.(
     systemPrompt, [...inputs.values()].reduce((a, b) => (b.length > a.length ? b : a), ''));
 
+  /*
+   * ── THE POOL, AND WHY THE ANSWERS ARE NOT WRITTEN WHERE THEY LAND ──────────
+   *
+   * `decisions` is a Map, and a Map remembers the order things were put into it.
+   * Everything downstream of this function walks it in that order — the receipt's
+   * `units`, the record lines, the log — so if answers were set as they arrived
+   * the file a book produced would depend on how the network felt that evening.
+   *
+   * So the pool writes into a SCRATCH map and nothing else, and `decisions` is
+   * filled afterwards by walking `asks` in the one order that is a property of
+   * the book: the same walk the serial loop made, taking each block either from
+   * the rules or from the scratch map. The requests overlap; the file does not.
+   */
+  const jobs = asks.filter((one) => inputs.has(one.key));
+  const answered = new Map<string, AskOutcome>();
   let parseFailed = 0;
   let done = 0;
   try {
-    for (const ask of asks) {
-      const input = inputs.get(ask.key);
-      if (input === undefined) { settleByRules(ask); continue; }
+    /*
+     * `concurrency` workers pulling from one shared cursor. A THROWN PLACEMENT
+     * ERROR STILL ENDS THE PASS: the worker rejects, `Promise.all` surfaces the
+     * first rejection, and the `finally` below still gives the VRAM back. The
+     * other workers' requests are already out and cannot be cancelled — nothing
+     * in `NumberNormalizerRunner` can — but the pass is over either way and
+     * nothing is written.
+     */
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const index = next;
+        next += 1;
+        const one = jobs[index];
+        if (one === undefined) return;
+        const input = inputs.get(one.key)!;
 
-      const ruled = ruledOf.get(ask.key)!;
-      const fromRules = ruleRewrites(ruled);
-      const answer = await askForEdits(runner, systemPrompt, input);
-      if ('parseFail' in answer) {
-        parseFailed++;
-        decisions.set(ask.key, {
-          status: 'UNIT_PARSE_FAIL', accepted: fromRules, records: ruleRecords(ruled),
-          rawAnswer: answer.parseFail, ruled,
-        });
-      } else {
-        // Validated against the text the model was SHOWN, then moved back onto
-        // the original: the two differ by exactly the rules' own length deltas.
-        const spans = ruleSpansInApplied(ruled);
-        const { accepted, records } =
-          validateNumberEdits(ruled.text, ruled.segments, answer.edits, spans, policy);
-        const mapped = accepted.map((edit) => {
-          const at = toOriginalOffset(spans, edit.at);
-          if (ask.text.slice(at, at + edit.find.length) !== edit.find) {
-            throw new Error(
-              `The number-normalization pass could not place "${edit.find}" back into ${ask.key}: `
-              + `the original text at ${at} reads "${ask.text.slice(at, at + edit.find.length)}". `
-              + 'Nothing was written.');
-          }
-          return { find: edit.find, replace: edit.replace, at };
-        });
-        decisions.set(ask.key, {
-          status: 'ANSWERED',
-          accepted: [...fromRules, ...mapped].sort((a, b) => a.at - b.at),
-          records: [...ruleRecords(ruled), ...records],
-          ruled,
-        });
+        const ruled = ruledOf.get(one.key)!;
+        const fromRules = ruleRewrites(ruled);
+        const answer = await askForEdits(runner, systemPrompt, input);
+        if ('parseFail' in answer) {
+          parseFailed++;
+          answered.set(one.key, {
+            status: 'UNIT_PARSE_FAIL', accepted: fromRules, records: ruleRecords(ruled),
+            rawAnswer: answer.parseFail, ruled,
+          });
+        } else {
+          // Validated against the text the model was SHOWN, then moved back onto
+          // the original: the two differ by exactly the rules' own length deltas.
+          const spans = ruleSpansInApplied(ruled);
+          const { accepted, records } =
+            validateNumberEdits(ruled.text, ruled.segments, answer.edits, spans, policy);
+          const mapped = accepted.map((edit) => {
+            const at = toOriginalOffset(spans, edit.at);
+            if (one.text.slice(at, at + edit.find.length) !== edit.find) {
+              throw new Error(
+                `The number-normalization pass could not place "${edit.find}" back into ${one.key}: `
+                + `the original text at ${at} reads "${one.text.slice(at, at + edit.find.length)}". `
+                + 'Nothing was written.');
+            }
+            return { find: edit.find, replace: edit.replace, at };
+          });
+          answered.set(one.key, {
+            status: 'ANSWERED',
+            accepted: [...fromRules, ...mapped].sort((a, b) => a.at - b.at),
+            records: [...ruleRecords(ruled), ...records],
+            ruled,
+          });
+        }
+        // A COUNT, NOT A POSITION. Out of order the index of the block that just
+        // landed says nothing about how much of the book is done, and two of them
+        // can name the same fraction twice.
+        done++;
+        onProgress?.(done, total, 'Normalizing numbers');
       }
-      done++;
-      onProgress?.(done, total, 'Normalizing numbers');
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, () => worker()));
+
+    // The book's order, restored. See the comment above the pool.
+    for (const one of asks) {
+      if (!inputs.has(one.key)) { settleByRules(one); continue; }
+      decisions.set(one.key, answered.get(one.key)!);
     }
 
     if (parseFailed > total * MAX_PARSE_FAIL_SHARE) {

@@ -102,7 +102,8 @@ import {
 } from './stamp.js';
 import type { NarrationNumberTarget, NarrationTextRewrite } from './targets.js';
 import {
-  askAboutEach, DEFAULT_NORMALIZER_MODEL, EVERY_CLASS, NORMALIZER_VERSION,
+  askAboutEach, DEFAULT_CLEAN_CONCURRENCY, DEFAULT_NORMALIZER_MODEL, EVERY_CLASS,
+  NORMALIZER_VERSION,
 } from './tts-number-normalizer.js';
 import type {
   NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
@@ -193,6 +194,18 @@ export interface CleanEpubOptions {
    * belongs to a different pass. The 27b is chosen by typing it into Settings.
    */
   model?: string;
+  /**
+   * How many blocks are asked about at once. Default
+   * `DEFAULT_CLEAN_CONCURRENCY`.
+   *
+   * The book route's field, in the book route's words, because it is the same
+   * pass over the same runner: it changes nothing about what is decided — not
+   * the transform, not the prompt, not a version constant, not an answer
+   * already banked — only how many requests are in flight while it is decided.
+   * The answers are put back into the book's order before a byte is spliced
+   * (`askAboutEach`).
+   */
+  concurrency?: number;
   /** Leave the weights loaded when the run ends. */
   keepModel?: boolean;
   /** Injected so the tests drive the whole pass with no server and no GPU. */
@@ -542,6 +555,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
     },
     'every-block',
     EVERY_CLASS,
+    opts.concurrency ?? DEFAULT_CLEAN_CONCURRENCY,
   );
 
   // ── The verdicts, applied, and the answers banked as they land ────────────

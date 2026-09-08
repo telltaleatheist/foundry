@@ -63,7 +63,9 @@ import {
   translateEpub,
   type RewriteMode,
 } from './translate/run.js';
-import { DEFAULT_NORMALIZER_MODEL } from './clean/tts-number-normalizer.js';
+import {
+  DEFAULT_CLEAN_CONCURRENCY, DEFAULT_NORMALIZER_MODEL,
+} from './clean/tts-number-normalizer.js';
 import { versionString } from './version.js';
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1054,6 +1056,22 @@ const CT_KEEP_MODEL: OptionSpec = {
 };
 
 /**
+ * ITS OWN SPEC RATHER THAN `TR_CONCURRENCY`, though the two flags are spelled
+ * the same and both default to four today. What a help line has to be right
+ * about is THIS command's default, and the two numbers are declared in two
+ * places — `DEFAULT_CLEAN_CONCURRENCY` and `DEFAULT_TRANSLATE_CONCURRENCY` —
+ * exactly as the two models are (Owen's 2026-09-02 ruling for `--model`). A
+ * shared spec would print translate's number on this page the day somebody
+ * moved one of them, which is a help page lying about the run it documents.
+ */
+const CT_CONCURRENCY: OptionSpec = {
+  name: 'concurrency',
+  type: 'string',
+  placeholder: '<n>',
+  describe: `Blocks in flight at once. Default ${DEFAULT_CLEAN_CONCURRENCY}. Changes the speed, never the text.`,
+};
+
+/**
  * The argv layer, and nothing else.
  *
  * Every refusal about the FILES is the engine's (`src/clean/run.ts`): a book
@@ -1074,6 +1092,15 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
    * a flag this command accepted and dropped on the floor is how somebody ends
    * up looking for a file that was never going to exist.
    */
+  // A count of requests, and the only readings of "0", "-2" and "four" are
+  // mistakes — translate's rule and translate's sentence, because it is the same
+  // flag answering the same question. Checked before either door, since both
+  // pass it through to the same pool.
+  const concurrency = optionalString(args, 'concurrency');
+  if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
+    throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
+  }
+
   const epubIn = optionalString(args, 'epub');
   if (epubIn !== undefined) {
     const bookRoute = (['book', 'records', 'stamp', 'generation'] as const)
@@ -1098,6 +1125,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
         ? {} : { endpoint: optionalString(args, 'endpoint')! }),
       ...(optionalString(args, 'model') === undefined
         ? {} : { model: optionalString(args, 'model')! }),
+      ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
       ...(flag(args, 'keep-model') ? { keepModel: true } : {}),
       log,
     });
@@ -1124,6 +1152,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
       ? {} : { endpoint: optionalString(args, 'endpoint')! }),
     ...(optionalString(args, 'model') === undefined
       ? {} : { model: optionalString(args, 'model')! }),
+    ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(flag(args, 'keep-model') ? { keepModel: true } : {}),
     ...(optionalString(args, 'generation') === undefined
       ? {} : { generation: optionalString(args, 'generation')! }),
@@ -3701,8 +3730,10 @@ export const COMMANDS: readonly Command[] = [
     name: 'clean-text',
     summary: 'Clean a book\'s text for a narrator: punctuation, numbers as words, the model on every block.',
     usage: '--book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
-      + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--keep-model]'
-      + '  |  --epub <in.epub> --out <out.epub> [--endpoint <url>] [--model <name>] [--keep-model]',
+      + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--concurrency <n>]'
+      + ' [--keep-model]'
+      + '  |  --epub <in.epub> --out <out.epub> [--endpoint <url>] [--model <name>]'
+      + ' [--concurrency <n>] [--keep-model]',
     detail: [
       'THE THIRD TEXT ACT. translate turns a book into another language, --rewrite',
       'turns it into plainer prose, and this turns it into the text a NARRATOR is',
@@ -3741,6 +3772,23 @@ export const COMMANDS: readonly Command[] = [
       'a digit test would never show the model one. One call per block, temperature',
       '0, and the cost is accepted because the pass runs ONCE and the book keeps',
       'the result.',
+      '',
+      `--concurrency puts N of those calls in flight at once, default `
+      + `${DEFAULT_CLEAN_CONCURRENCY} —`,
+      'translate\'s number for translate\'s reason: Ollama batches concurrent',
+      'requests and a serial run leaves the GPU idle between blocks, which on a',
+      'book of four thousand blocks IS the pass. It is a starting point and not a',
+      'measurement, because the right number is a property of your GPU and your',
+      'model\'s size; a server pinned to one parallel slot (OLLAMA_NUM_PARALLEL=1)',
+      'will queue them and gain nothing, which is a setting on the server rather',
+      'than a reason to type a different number here.',
+      '',
+      'IT CHANGES THE SPEED AND NOTHING ELSE. The blocks are independent questions,',
+      'each composed from the book before the first request goes out and answered',
+      'at temperature 0, so no request can read another\'s answer; the answers are',
+      'put back into the book\'s own order before a record is written. A book',
+      'cleaned at 1 and the same book cleaned at 8 are the same book, byte for',
+      'byte, and a book already cleaned does not become stale for it.',
       '',
       'THE MODEL NEVER RETURNS REWRITTEN TEXT. It returns an anchored edit list —',
       '{find, replace} pairs, each a verbatim span of the block — and every edit',
@@ -3849,7 +3897,7 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_EPUB_IN, CT_EPUB_OUT,
-      CT_ENDPOINT, CT_MODEL, CT_KEEP_MODEL, TR_GENERATION,
+      CT_ENDPOINT, CT_MODEL, CT_CONCURRENCY, CT_KEEP_MODEL, TR_GENERATION,
     ],
     run: runCleanText,
   },

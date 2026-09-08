@@ -101,7 +101,8 @@ import { markerCharacters, markerSegments } from './segments.js';
 import { narrationTextStamp, type NarrationTextStamp } from './stamp.js';
 import type { NarrationNumberTarget } from './targets.js';
 import {
-  askAboutEach, classifyEdit, DEFAULT_NORMALIZER_MODEL, EVERY_CLASS, NORMALIZER_VERSION,
+  askAboutEach, classifyEdit, DEFAULT_CLEAN_CONCURRENCY, DEFAULT_NORMALIZER_MODEL, EVERY_CLASS,
+  NORMALIZER_VERSION,
 } from './tts-number-normalizer.js';
 import type {
   NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
@@ -194,6 +195,19 @@ export interface CleanTextOptions {
    * belongs to a different pass. The 27b is chosen by typing it into Settings.
    */
   model?: string;
+  /**
+   * How many blocks are asked about at once. Default
+   * `DEFAULT_CLEAN_CONCURRENCY`.
+   *
+   * It changes NOTHING about what this pass decides — not the transform, not
+   * the prompt, not a version constant, not a record already written. The
+   * blocks are independent questions composed before the first request and
+   * answered at temperature 0, so the only thing a pool moves is the order the
+   * answers arrive in, and they are put back in the book's order before
+   * anything is written (`askAboutEach`). A book cleaned at 1 and the same book
+   * cleaned at 8 are the same book.
+   */
+  concurrency?: number;
   /** Leave the weights loaded when the run ends. */
   keepModel?: boolean;
   /**
@@ -586,6 +600,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     },
     'every-block',
     EVERY_CLASS,
+    opts.concurrency ?? DEFAULT_CLEAN_CONCURRENCY,
   );
 
   // ── The verdicts, applied ─────────────────────────────────────────────────
