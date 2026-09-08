@@ -62,6 +62,30 @@ highlight already uses.**
   walk `changedIds` — both parties watch `reveal` and scroll themselves to the
   block, wrapping at either end.
 
+## 2a. The door, on the act itself — 2026-09-08
+
+Owen ordered a cleanup, waited for it, opened the book and expected to be shown
+what had changed. Nothing was lit — and nothing was wrong: the highlight above
+is drawn only **inside** a comparison, and reaching one meant finding the
+compare picker in the book's head row and then aiming it, by hand, at the step
+the cleanup was made from. A feature nobody can find from where they are
+standing is a feature that is not there.
+
+So the card's *from here* footer now offers **Compare** on a text-pass row —
+`TEXT_PASS_ACTIONS`, which is the one kind of step whose whole product is a
+difference from its parent. It is offered only when the row's `step.parent` is
+still in that project's ledger (an id naming a removed step would open an empty
+column) and never on a **promised** row (nothing has been made yet, so there is
+no side to compare). The press stands on the row and then calls
+`startCompare(step.parent)` — standing is not a cost here but half the gesture:
+the comparison is drawn between the POSITION and the compared step, so somebody
+who pressed Compare on a cleanup must end up standing on the cleanup, looking
+back at what it was made from.
+
+It makes nothing and consumes nothing, so it is not a make-act: `pressed` leaves
+`made` null for it and the unapplied-changes card is not raised. `enabled`
+already opens `true`, so the changes are lit the moment the column arrives.
+
 ## 3. Why on demand, and not the stored diff Owen guessed at
 
 *"Probably via a stored diff that runs while the job runs"* was a guess at

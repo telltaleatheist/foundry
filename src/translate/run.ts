@@ -1875,8 +1875,39 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
      * file and therefore the same cost cache, and the same progress line. A
      * title is one short line, so a whole book's worth of them is one request
      * beside the two thousand a book costs.
+     *
+     * ── AND ONLY WHEN THE RUN IS A TRANSLATION. Owen, 2026-09-08 ─────────────
+     *
+     * *"for translate, we need it to translate the epub spine, so the green
+     * dotted line will not be changed. for translate, it will. simplify/cleanup,
+     * no."* — said over a cleaned book whose chapter marker read *"four. two
+     * thousand eleven: Silo one"* where the book prints **4 / 2110 / Silo 1**.
+     *
+     * A `--rewrite` run is this same function asked a different question (see
+     * `RewriteMode` at the top of this file): the words stay in the language
+     * they are already in and only their prose changes. That is exactly the case
+     * where a division's name must be left alone. The name is not prose — it is
+     * the book's own LABEL for a division, the string the renderer draws on the
+     * green dotted line, the nav lists and the exported EPUB puts in its spine.
+     * Moving it while the page it labels stays put is a change to the book's
+     * STRUCTURE, and nobody asked for one. A translation is the single act where
+     * the label has to move with the words, because an English book under a
+     * German contents page is the defect this pass was written to fix.
+     *
+     * The plan is still computed on a rewrite, and deliberately: the number of
+     * titles left as printed is the fact worth logging, and it costs one pass
+     * over the header to know it.
      */
-    const titles = bookTitlePlan(bookFile);
+    const spine = bookTitlePlan(bookFile);
+    if (opts.rewrite !== undefined && spine.length > 0) {
+      opts.log(
+        `translate: ${spine.length} chapter title(s) LEFT AS PRINTED — this run is a `
+        + `${opts.rewrite} rewrite rather than a translation, and a division's name is the book's `
+        + 'own label for that division rather than prose. Only a real translation asks about the '
+        + 'spine, so the green dotted lines carry the names exactly as the book prints them.',
+      );
+    }
+    const titles = opts.rewrite === undefined ? spine : [];
     const counter: MarkerCounter = { paired: 0, atomic: 0 };
     const titleParts: PendingBlock[] = [];
     for (const one of titles) {

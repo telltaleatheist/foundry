@@ -124,15 +124,56 @@ A stamp already in the package is **replaced in its own place**, never joined.
 
 ### Which blocks — the plan is `translate`'s, imported
 
-`bookRowPlan` + `bookTitlePlan` (`src/translate/bookrows.ts`), unchanged, so
-**exactly the blocks a translation would touch are the blocks a cleanup
-touches**. That file argues every one of its decisions and each is as true of a
-cleanup as of a translation: a shelved row is not in the book, `Formula` and
-`Picture` are skipped and counted, a `Table` is taken apart into cells and put
-back by splicing rather than by asking a model to preserve a grid, a folio is
-carried without being asked about, and a chapter title is asked for only where
-it cannot be PROVED to be a copy of a heading the run already handled. Sharing
-the plan is what makes the two acts commutable.
+`bookRowPlan` (`src/translate/bookrows.ts`), unchanged, so **exactly the rows a
+translation would touch are the rows a cleanup touches**. That file argues every
+one of its decisions and each is as true of a cleanup as of a translation: a
+shelved row is not in the book, `Formula` and `Picture` are skipped and counted,
+a `Table` is taken apart into cells and put back by splicing rather than by
+asking a model to preserve a grid, and a folio is carried without being asked
+about. Sharing the plan is what makes the two acts commutable.
+
+### The spine is translated and never cleaned — 2026-09-08
+
+Owen, looking at a cleaned book whose chapter marker read *"four. two thousand
+eleven: Silo one"* where the book prints **4 / 2110 / Silo 1**: *"for translate,
+we need it to translate the epub spine, so the green dotted line will not be
+changed. for translate, it will. simplify/cleanup, no."*
+
+`bookTitlePlan` — the book's own division names — is **not** part of this pass's
+plan and no longer imported by `src/clean/run.ts`. The rule is about what the
+string IS, not about the words in it. A division's name is the book's **label**
+for a division rather than its prose: it is not printed in the flow, it is what
+the renderer draws on the green dotted line, what the nav lists, and what the
+exported EPUB puts in its spine. Rewriting it *in the same language* therefore
+changes the book's structure while the page it labels stays exactly as printed.
+
+So the spine moves for a **translation only**, which is the one act where it
+must — an English book under a German contents page is the defect the titles
+pass was written to fix. `src/translate/run.ts` gates its own titles pass on the
+same rule: a `--rewrite` run (a **simplify** step) computes the plan, logs
+`chapter title(s) LEFT AS PRINTED` with the count and the reason, and asks about
+none of them.
+
+**The one title this does not reach, named rather than found.** Materialization
+answers a division's name in three steps (`materialize.ts`, `titledFrom`), and
+the FIRST is the copy derivation: where a title is a provable copy of a heading
+printed at the top of the division, the title is read off that heading's own
+answer. The heading is a row of the book, so a cleanup cleans it, so a title
+derived from it moves with it. That is left exactly as it is, deliberately —
+the derivation exists so that the contents page and the chapter head *cannot
+disagree*, and pinning the spine while the head is cleaned would be the
+`relabelNav` failure with the two answers swapped. What this rule stops is the
+spine being asked about **on its own**: a division somebody renamed, and a part
+divider whose label the page classifier composed out of two blocks — which is
+the shape of the `4 / 2110 / Silo 1` marker Owen was looking at.
+
+**What it costs, said out loud.** A cleaned book's spine keeps the printed form,
+so anything that reads a chapter title aloud gets `4. 2110: Silo 1` as printed,
+digits and all — the narration normalizer never sees that string. That is the
+trade: a chapter marker that agrees with the page beats a marker a voice
+pronounces well. This changes *which* targets are asked and not the transform,
+so neither `NORMALIZER_VERSION` nor `PUNCTUATION_SPEC_VERSION` moves, and a
+book already cleaned re-cleans nothing.
 
 **This is where the engine diverges from BookForge, deliberately.** That pass
 runs `selectNumberTargets`, which drops a **caption** and a **footnote** — and

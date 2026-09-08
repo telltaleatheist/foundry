@@ -78,6 +78,20 @@ same artefact, and only the ledger's story about the order differs.
 >   is what those rows were stamped with and what they keep. A cleanup's row reads
 >   **Cleaned for narration**.
 
+> **2026-09-08 — ONLY A TRANSLATION TOUCHES THE SPINE.** The three actions share
+> the row plan and they no longer share the TITLE plan. Owen: *"for translate, we
+> need it to translate the epub spine, so the green dotted line will not be
+> changed. for translate, it will. simplify/cleanup, no."* A division's name is
+> the book's label for that division rather than its prose — the green dotted
+> line, the nav, the exported spine — so rewriting it in the language it is
+> already in changes the book's structure while the page it labels stays as
+> printed. `translate` asks (`bookTitlePlan`, `src/translate/bookrows.ts`);
+> `simplify`, which reaches the same engine as `translate --rewrite <mode>`,
+> computes the plan only to log `chapter title(s) LEFT AS PRINTED` and asks about
+> none; `clean` no longer builds the targets at all. The consequence is stated in
+> `docs/CLEAN-TEXT.md`: a cleaned or simplified book's spine keeps the printed
+> form, so a voice reading a chapter marker gets `4. 2110: Silo 1` as printed.
+
 
 Already true (`recordGenerated`, `app/electron/projects.ts:2027-2041`): a
 translation lands a ledger step — the only Generate-family product that does —

@@ -18,21 +18,28 @@
  * only ever have been the engine's — which blocks, from where, keyed how, and
  * written into what.
  *
- * ── ONE: EXACTLY THE BLOCKS A TRANSLATION WOULD TOUCH ───────────────────────
+ * ── ONE: EXACTLY THE ROWS A TRANSLATION WOULD TOUCH, AND NOT ITS SPINE ──────
  *
- * `bookRowPlan` + `bookTitlePlan` (src/translate/bookrows.ts), unchanged and
- * imported rather than re-derived. Not "every row of the file": that plan is
- * where a shelved row is not in the book, a `Formula` and a `Picture` are
- * skipped and counted, a `Table` is taken apart into cells and put back by
- * splicing rather than by asking a model to preserve a grid, a folio is carried
- * without being asked about, and a chapter title is asked for only where it
- * cannot be PROVED to be a copy of a heading the run already handled.
+ * `bookRowPlan` (src/translate/bookrows.ts), unchanged and imported rather than
+ * re-derived. Not "every row of the file": that plan is where a shelved row is
+ * not in the book, a `Formula` and a `Picture` are skipped and counted, a
+ * `Table` is taken apart into cells and put back by splicing rather than by
+ * asking a model to preserve a grid, and a folio is carried without being asked
+ * about.
  *
  * Every one of those decisions is argued at length in that file and every one of
  * them is as true of a cleanup as of a translation. Sharing the plan is what
  * makes the two acts commutable: a book that has been cleaned and then
  * translated has had the same population of blocks through both, so a record
  * from either names a position the other one also knows.
+ *
+ * WHAT IS **NOT** SHARED IS `bookTitlePlan` — the book's own division names,
+ * the spine. Owen, 2026-09-08: *"for translate, we need it to translate the epub
+ * spine, so the green dotted line will not be changed. for translate, it will.
+ * simplify/cleanup, no."* A chapter name is the book's LABEL for a division
+ * rather than its prose, and rewriting one in the same language changes the
+ * book's structure. The whole argument, and what it costs a narrator, is at the
+ * end of the plan below and in docs/CLEAN-TEXT.md.
  *
  * IT IS ALSO WHERE THIS DIVERGES FROM BOOKFORGE, DELIBERATELY. That pass runs
  * `selectNumberTargets`, which drops a CAPTION and a FOOTNOTE — and its reason
@@ -85,9 +92,9 @@ import { createHash } from 'node:crypto';
 
 import { ensureDir } from '../fsdirs.js';
 import { stripBom } from '../bom.js';
-import { bookRowPlan, bookTitlePlan, readBookFile } from '../translate/bookrows.js';
+import { bookRowPlan, readBookFile } from '../translate/bookrows.js';
 import type { BookBlock } from '../translate/bookrows.js';
-import { chapterPosition, TranslationRecords } from '../translate/records.js';
+import { TranslationRecords } from '../translate/records.js';
 import { spliceTableGrid, type TableGrid } from '../translate/tablecells.js';
 import { DEFAULT_OLLAMA_ENDPOINT } from '../translate/run.js';
 import type { Transport } from '../translate/ollama.js';
@@ -390,9 +397,17 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   const tables: PendingTable[] = [];
   const fileName = path.basename(where);
 
-  const targetOf = (key: string, block: BookBlock, kind: 'row' | 'chapter'): NarrationNumberTarget => ({
+  /*
+   * EVERY TARGET THIS PASS MAKES IS A ROW, and the kind is written here rather
+   * than taken as an argument because there is no longer a second sort of thing
+   * to ask about — see the spine argument below `plan.groups`. `'chapter'` stays
+   * a legal `NarrationNumberTargetKind` (targets.ts) because `translate` still
+   * produces one and the records both programs read still carry it; what is gone
+   * is this pass's ability to mint one.
+   */
+  const targetOf = (key: string, block: BookBlock): NarrationNumberTarget => ({
     key,
-    kind,
+    kind: 'row',
     file: fileName,
     tag: '',
     statedCategory: block.category.toLowerCase(),
@@ -431,7 +446,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
          * row, when the last cell has settled.
          */
         blocks.push({
-          target: targetOf(`${row.id}#c${part.cell!}`, part, 'row'),
+          target: targetOf(`${row.id}#c${part.cell!}`, part),
           parts: row.id,
           cell: part.cell!,
         });
@@ -439,28 +454,50 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
       continue;
     }
     for (const part of group.parts) {
-      blocks.push({ target: targetOf(part.id, part, 'row'), parts: part.id });
+      blocks.push({ target: targetOf(part.id, part), parts: part.id });
     }
   }
 
   /*
-   * AND THE SPINE, WHICH IS NOT MADE OF ROWS. `bookTitlePlan` is deliberately
-   * short — most titles are a provable copy of a heading this run has already
-   * cleaned, and asking about one would be asking a question twice and shipping
-   * two answers to it. What is left is a division somebody renamed and a part
-   * divider whose label the page classifier composed out of two blocks: neither
-   * can be proved to be a copy of anything, and before this both carried into
-   * the cleaned book exactly as printed.
+   * ── AND NOT THE SPINE. Owen's ruling, 2026-09-08 ────────────────────────────
+   *
+   * He looked at a cleaned book whose chapter marker read *"four. two thousand
+   * eleven: Silo one"* where the book prints **4 / 2110 / Silo 1**, and ruled:
+   * *"for translate, we need it to translate the epub spine, so the green dotted
+   * line will not be changed. for translate, it will. simplify/cleanup, no."*
+   *
+   * This pass used to ask about `bookTitlePlan` (src/translate/bookrows.ts)
+   * alongside the rows, on the reasoning that a division nobody's heading
+   * answers for is a string with words in it like any other. That reasoning was
+   * about the WORDS. It is wrong about what the string IS.
+   *
+   * A DIVISION'S NAME IS THE BOOK'S OWN LABEL FOR A DIVISION, NOT ITS PROSE. It
+   * is not printed in the flow; it is what the renderer draws on the green
+   * dotted line, what the nav lists, and what goes into the exported EPUB's
+   * spine. Rewriting it in the SAME LANGUAGE is therefore a change to the
+   * book's structure rather than to its words — the book still says `4 / 2110 /
+   * Silo 1` on the page while its own table of contents has started calling that
+   * division something else. `translate` is allowed to do it because a
+   * translation is the one act where the label MUST move: an English book under
+   * a German contents page is the defect `bookrows.ts` §spine was written to
+   * fix. A cleanup is not that act, and neither is a simplify — `run.ts`
+   * (translate) now gates its own titles pass on the run being a real
+   * translation for the same ruling.
+   *
+   * WHAT THIS DOES NOT REACH, NAMED RATHER THAN LEFT TO BE FOUND. A title that
+   * is a provable copy of a heading is never in this plan anyway: materialization
+   * reads it off that heading's own answer, and the heading IS a row this pass
+   * cleans. That derivation stays exactly as it is, because it is the thing that
+   * makes the contents page and the chapter head unable to disagree. What is
+   * gone is asking about the spine ON ITS OWN — the renamed division and the
+   * composed part-divider label, which is the shape of the marker Owen saw.
+   *
+   * WHAT IT COSTS, SAID OUT LOUD. The spine of a cleaned book keeps the printed
+   * form, so anything that reads a chapter title aloud gets `4. 2110: Silo 1`
+   * exactly as printed, digits and all — the narration normalizer never sees it.
+   * That is the trade Owen chose: a marker that agrees with the page beats a
+   * marker a voice pronounces well. docs/CLEAN-TEXT.md carries it too.
    */
-  for (const title of bookTitlePlan(book)) {
-    const parts = chapterPosition(title.id);
-    blocks.push({
-      target: targetOf(parts, {
-        id: parts, category: 'Title', text: title.title, page: 0,
-      }, 'chapter'),
-      parts,
-    });
-  }
 
   if (blocks.length === 0) {
     throw new CleanTextError(
