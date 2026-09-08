@@ -4044,6 +4044,60 @@ doors). The name waits.
 
 ---
 
+### Wave 57 — compare shows what changed (Owen, 2026-09-08) — BUILT
+
+> Owen, 2026-09-08: *"I want to be able to compare what changed side-by-side in ai
+> cleanup. It should highlight the changes on each side, like in analysis, so I can
+> see what it was before and what it is now. Maybe on hover it shows the original.
+> Something like that. Same with simplify. It should show the changes. Probably via
+> a stored diff that runs while the job runs."*
+
+**THE DIFF IS COMPUTED ON DEMAND FROM THE TWO SHEETS' OWN ROWS, NOT STORED**, and that
+is the architecture. The compare column already puts one step beside the live one and a
+text pass keeps its block ids, so the rows line up by `row.id`; what was missing was
+the light. `ChangesService` takes each party's replayed rows (the chain and the pending
+stack already in them), asks the ledger which side is older, and word-diffs every block
+both sides flow whose strings differ — memoised per block, so a live edit re-diffs one
+paragraph. Each sheet reads its half and draws it through `cut()`'s existing walk: the
+older side wears `removed` (the strike's red, struck through), the newer `added` (a
+green wash). No `innerHTML`, no overlay, no engine change, and — because it is of
+whatever two lists the columns show — any pair of steps, never stale. Owen's "stored
+diff" was a guess at mechanism; docs/COMPARE-CHANGES.md §3 says why on-demand wins and
+how a stored one would be added if ever wanted. Hover-shows-original is not built: the
+other column IS the original.
+
+- **`shared/word-diff.ts`** — `wordDiff(before, after)`: three-kind tokens (words with
+  inner apostrophes/hyphens, whitespace, punctuation), LCS over tokens in a
+  `Uint16Array` after prefix/suffix stripping, merged `[start, end)` ranges per side.
+  Guard: whole-string ranges when either side exceeds 1500 tokens or fewer than 15% of
+  the shorter side's WORDS are shared (a translation is a rewrite, not confetti).
+- **`core/changes.service.ts`** — `live` / `compared` row signals written by the
+  parties; `order` from the ledger's chronological `steps`; `changes` (per-id
+  `WordDiff`, struck and shelved rows skipped at the source); `liveRanges` /
+  `comparedRanges`; `changedBlocks`, `changedIds`, `enabled`, `reveal` + `step()`.
+  Everything clears when `stage.compare()` goes null.
+- **`book-view.component.ts`** — `Piece.hit` gains `'added' | 'removed'`; `cut()` takes
+  the change ranges as a fourth sorted list on the same cursor; `party` decides which
+  side this pane is; a publishing effect writes `view().rows` in and withdraws only what
+  it wrote; a reveal effect scrolls both parties. `--ink-added: #3a7d44` beside the
+  paper's inks; `.run.added` / `.run.removed` beside `.run.hit`, and both survive the
+  edition register (the compare column's pane is always in it).
+- **`compare-column.component.ts`** — for a book target: the changed-blocks chip, the
+  `Changes` toggle, and ↑↓ through `changedIds` with both columns following.
+- **`docs/COMPARE-CHANGES.md`** — the ask, what was built, why on demand, why no hover,
+  the guard, what is deferred.
+- **Gates:** `app` electron typecheck, renderer `tsc -p tsconfig.app.json`, `ng build`.
+  No test was added (house rule); none was invalidated.
+
+**Deferred out loud, not silently:**
+
+- **Structural changes are not word-diffed.** A block only one side holds is shown by
+  its absence; a row struck on either side is skipped on `litRanges`'s rule.
+- **The walk scrolls and pulses; it does not select** on either sheet.
+- **No stored diff** — §3 of the doc says how one would be added.
+
+---
+
 ## 8. Session hygiene
 
 - Push everything to main; the user has standing authorization.
