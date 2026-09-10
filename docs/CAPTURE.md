@@ -3788,3 +3788,168 @@ Gates green. First things to walk: mark three pages by hand with *Global*
 off, reopen the modal, press it, and check the notice's count against the
 dots that disappear; the same in the split pass, where the crops must not
 move; and the button's absence on a shoot where nothing is its own.
+
+## Wave 52 — a PDF is a stack of photographs somebody already bound (Owen, 2026-09-10) — BUILT
+
+### Owen's ask, verbatim
+
+> *"give me the ability to drag/drop a pdf into a new book, not just
+> images. if i do, it should take each page as an individual image.
+> theres a book that is just a bunch of scanned images that need to be
+> cropped and split and stuff"*
+
+This stage's whole case — a book whose pages are photographs of paper,
+needing a crop, a split and a turn before anything can read them —
+arriving in the one container this stage could not open. A scanner
+wrapping the pages in a PDF before Foundry ever saw them is a fact about
+the delivery, not about the work.
+
+### A dropped PDF now has TWO meanings, and the app asks rather than guesses
+
+A PDF has been *the thing this app opens* since the first day, and that
+is still what most drops mean. It is now also *a bound stack of
+photographs to take apart*. Nothing about the file says which — the same
+scan is both, on different evenings — so:
+
+| Where it lands | What happens |
+| --- | --- |
+| A capture project's light table is in front | Straight to pages. No card: on a table of page cards a PDF has only ever had one possible meaning, and what it used to get was main's refusal — *".pdf is not a photograph this stage reads"* — which was the right answer to a question this side should never have let be asked. |
+| Anywhere else, standalone | One card, once for the whole drop: **Open it** / **Make a book from its pages**. Dismissing does nothing at all. |
+| Hosted | Unchanged — it opens. `IntakeWorkspaceService.available` is the one place that decides it, for the reason images fall through there too: a project born in a hosted window would land in a library the host is not keeping. |
+
+The card is raised once per DROP and not once per file: somebody handing
+over four scans at a time means the same thing by all four.
+
+**The dismissal does nothing, ruled.** Falling back to opening was
+considered — it is what the window did before the card existed, and a tab
+is cheap to close. It is out because a dismissal is a person saying *not
+this*, and answering it with an action is the card overruling them.
+
+### Who does what — the mint's split, read backwards
+
+- **The renderer rasterizes.** pdf.js lives there and has since the
+  viewer was written; main has no rasterizer at all, and adding one would
+  be a second PDF engine in a second language for a job the first one
+  already does.
+- **Main stages the pages on disk** and answers with paths, because
+  `capture:intake` takes paths.
+- **`capture:intake` is UNCHANGED, and that is the point.** From intake
+  onward a page of an exploded PDF is indistinguishable from a photograph
+  off a phone. The recipe, the editor, the mint and the read never learn
+  a PDF was involved.
+
+Three new doors, all in `capture:` (docs/IPC-CHANNELS.md, count 114):
+`pdf-stage-begin`, `pdf-stage-page`, `pdf-stage-release`. One page per
+call, for `mint-page`'s reason exactly — a 300-page scan is gigabytes and
+a call carrying the book would hold all of it in one heap.
+
+### The numbers, and why each one is that number
+
+- **300 dpi** (`PDF_PAGE_DPI`) — the same number the mint DECLARES on the
+  way out, and for the same reason: a page box is in points, 72 to the
+  inch, and 300 dpi is what a page of paper is scanned at. A book that
+  came in as a 300 dpi scan comes out of this at roughly the pixels it
+  was scanned with. A US Letter page lands at 2550×3300, measured.
+- **Not the embedded image's own resolution**, which was considered. A
+  page that is one full-bleed scan could be rasterized at exactly its
+  image's resolution; a page that is two images, or an image under a text
+  layer, could not. One number right for every page beats a clever one
+  that is exactly right for the easy pages.
+- **5000 px long edge** (`PDF_PAGE_MAX_EDGE`) — a guard on the CANVAS,
+  not a quality setting. Browsers cap a canvas's area and longest side,
+  and not identically on every platform; an A0 page would ask for 14,000
+  px at 300 dpi and come back blank with no error at all.
+- **PNG, not JPEG** — the one place this differs from the mint. The
+  staged file becomes intake's ORIGINAL, and intake takes a PNG's bytes
+  as the working copy *byte for byte*. So the pixels pdf.js drew are the
+  pixels the editor crops, with no encoder in between and no ringing
+  baked into a bilevel scan that OCR then has to read through. It also
+  means intake does no re-encode at all on this path.
+- **The canvas is painted white first.** A PDF page has no background of
+  its own, so an unpainted canvas is transparent — and everything
+  downstream treats these as photographs of paper.
+
+### The staging area, and why it is %TEMP% when the mint refused it
+
+The mint stages inside the project, on the argument that a visible mess
+in one folder beats an invisible one in `%TEMP%`. That argument does not
+reach here, because **there may be no project yet**: a PDF dropped on
+Home explodes onto the intake workspace, which is a table of loose images
+that has not been told what book it is. Staging inside a project would
+mean inventing one before the person had named anything.
+
+So one rule for both doors, and the mess is **swept rather than left**:
+`pdfStageBegin` deletes every staging directory this run is not holding
+open before it makes a new one. A crash mid-explosion costs the next drop
+one `rm`. No quit hook to forget to register, no age heuristic to be
+wrong about.
+
+Releasing is separate from the last page because the two doors let go at
+different moments: a light table intakes and releases in one breath; a
+drop on Home leaves the pages on the workspace table until somebody says
+which book they are, which may be an hour later or never. The workspace
+carries the handle per item (`WorkspaceImage.stage`) and frees a staging
+when the last card naming it leaves — computed from the SURVIVORS, so two
+cards of one PDF removed one at a time do not free it under each other.
+
+**A dropped photograph's path is the person's own file and is never
+deleted.** The permission is carried per item rather than inferred from
+anything about the path.
+
+### A stop, which the intake deliberately has not got
+
+The intake modal's refusal stands and is argued where it is: a wasm
+decode cannot be interrupted, so a button there would stop between
+photographs at best. A page is a canvas render taking a fraction of a
+second, and a 600-page scan is minutes a person may well have started by
+accident. Stopping leaves a staging directory that deletes itself and a
+library untouched, because nothing has been intaken while it runs.
+
+The two passes share one card (`CaptureProgressComponent`) and are never
+on screen together — the explosion finishes before the intake it feeds is
+asked for. The lead sentence differs because the waits differ: an intake
+blocks MAIN and the window really cannot answer; this runs in the
+renderer with the UI thread free between pages.
+
+### A page that will not draw is named, never skipped
+
+Refused pages are counted and named in the notice with their page numbers
+(the numbers are in the names — `scan p0007.png`, padded to the book's own
+width). Taking the whole scan down for one page would cost the other 599;
+skipping it silently would be a book quietly short a leaf.
+
+### pdf.js is loaded with a dynamic `import()`, and that is load-bearing
+
+`PdfPagesService` is `providedIn: 'root'` and is reached from the shell, so
+a static import would drag half a megabyte of pdf.js out of the lazy chunk
+it lives in (the viewer's route) and into the INITIAL bundle — measured at
+949 kB → 1.44 MB — parsed on every launch whether or not anybody drops a
+PDF. The specifier must stay identical to `PdfViewComponent`'s (the legacy
+build, for the `toHex` reason argued there); a typo costs a second copy of
+pdf.js in the bundle.
+
+### Walked, end to end, in the running app
+
+Driven over CDP against a synthetic image-only scan, and then with a REAL
+OS-level file drag (`Input.dispatchDragEvent`):
+
+- Six-page scan dropped on Home → card raised naming the file → *Make a
+  book from its pages* → progress card counted 0…6 → six workspace cards
+  named `scanned-book p001.png`…`p006.png`.
+- Staged PNGs on disk: 2550×3300 each, six distinct hashes.
+- Select all → *Create new book from 6 images…* → named → *6 photographs
+  added*, recipe holds 6 photos and 6 order entries at 2550×3300, the
+  bank's PNGs byte-identical to what pdf.js drew, workspace emptied, and
+  the staging directory swept.
+- A second PDF dropped on the open light table: **no card**, straight to
+  intake. A variant whose pages render identically came back *3 already in
+  this project — copied once, not twice* (content-addressing doing its
+  job); a genuinely different one took the grid from 6 to 10.
+- Escape on the card: card gone, no pages, no tab, nothing.
+- *Stop* halfway: *Reading stop-me.pdf was stopped. Nothing was added.*
+- *Open it*: the viewer opens the PDF and draws it, workspace untouched —
+  the gesture this window has always had, intact.
+- **Two PDFs in one drop → ONE card**, plural throughout: *2 PDFs · What
+  are these? · Open them / Make books from their pages*. Letting both run
+  landed 6 + 4 = 10 cards; pressing *Stop* during the first ended the
+  whole gesture — no second pass started, nothing landed, one toast.
