@@ -616,6 +616,22 @@ specifically `exportEpubFromStep`, which enqueues on Foundry's internal queue.
 > you draw a landing row of your own for the same act, that is two cards for one
 > thing — say so and we will decide which one goes. An implied export cannot
 > collide: its path is outside every project, so no promised card is drawn for it.
+>
+> **Narrowed 2026-09-11 — "every live row of Foundry's own" never meant the rows
+> we mint for YOUR work.** When your pump calls `runJob`, Foundry mints a row of
+> its own for that run (it carries the landings, the settle, the guards and the
+> ✕), and for three days the hosted shelf published that row BESIDE the one you
+> pushed through `setHostQueueRows`. One Clean text drew two identical grayed
+> "Cleaned for narration" cards under one step, both running, both 4% (Owen,
+> 2026-09-11) — identical by construction, because the tree keys a promised card
+> on `Job.mints` and the twin copies it verbatim. Those rows are now left out of
+> the shelf by name (`hostScheduled`, electron/job-queue.ts). **Nothing on your
+> side changes and no wire shape moved** — the queue still counts the twin
+> everywhere it counts real work; it is simply not drawn, because your row for the
+> same job is. What stays drawn is only work your list has never heard of: the
+> seam-ordered export above, environment installs and mints. **One thing to know:
+> a row you never push is a row nobody draws** — the shelf is the scheduler's
+> list, so keep pushing your live rows per project as you do now.
 **Corrected 2026-08-23: the Export dialog no longer routes either.** Owen ruled
 that only long or resource-heavy work belongs in a queue; an export pressed in
 the dialog runs at the press (`queue:run` → `runNow` → `runJob`, detached), the
