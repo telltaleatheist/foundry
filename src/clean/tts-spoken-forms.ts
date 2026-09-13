@@ -268,6 +268,15 @@ export function abbreviationContextRefusal(
  * refused it, and both stamped the book `n6`/`s1` — so nothing downstream could
  * tell the two results apart, and the difference reached the audio.
  *
+ * `wwi` and `wwii` were the next two, the same day: BookForge added them to
+ * the JSON on 2026-09-13 and the sha keeper REPINNED this file with a paragraph
+ * of prose instead of noticing the list was two entries short. Neither is said
+ * as a word; they are here because "kept as printed, never spelled" is what
+ * this set MEANS operationally (the JSON's own `_spokenAsWordNote` says so),
+ * and an edit reading "WWII" as "W W I I" was accepted here and refused there.
+ * A keeper that compares the SET to the JSON, not the file's hash, is what
+ * catches the third one; that keeper is BookForge's to write.
+ *
  * IT IS NOT READ FROM THAT FILE AND MUST NOT BE. This engine compiles to a
  * single binary (`bun build --compile`) that runs on machines with no BookForge
  * checkout at all. The copy stays; what catches a future divergence is a keeper
@@ -283,7 +292,7 @@ export function abbreviationContextRefusal(
  */
 export const SPOKEN_AS_WORD: ReadonlySet<string> = new Set([
   'nasa', 'nato', 'unesco', 'unicef', 'opec', 'aids', 'laser', 'radar', 'scuba', 'nafta',
-  'ascii', 'gestapo', 'gulag', 'interpol', 'covid',
+  'ascii', 'gestapo', 'gulag', 'interpol', 'covid', 'wwi', 'wwii',
 ]);
 
 /**

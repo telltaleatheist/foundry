@@ -58,7 +58,18 @@ import { fetchTransport, type ChatTuning, type Transport } from '../translate/ol
 import type { NumberNormalizerRunner } from './tts-number-normalizer.js';
 
 /**
- * How much answer one block may generate, in tokens. BookForge's number, kept.
+ * How much answer one block may generate, in tokens.
+ *
+ * BookForge has TWO edit-list budgets and this is the think-OFF one: its
+ * number-normalizer runner's `NUMBER_NUM_PREDICT` (2048), sized for the JSON
+ * alone because that pass sends `think:false`. Its other, `EDITLIST_NUM_PREDICT`
+ * (6144), is cogito's in-band chain-of-thought budget and would size every
+ * window three times larger than a pass that does not think needs — BookForge's
+ * own comment on the 2048 says exactly that. This pass does not think (Crucible
+ * will apply that from the model's manifest; until then `enable_thinking:false`
+ * goes on the wire), so the two numbers are not a disagreement about one fact.
+ * A manifest that turned thinking ON for the clean model would make 2048 clip
+ * the reasoning, and that is a manifest defect, not a reason to triple this.
  *
  * An edit list is bounded by the edits a paragraph can carry — the validator
  * accepts at most 24 — so this is not a length derived from the block the way
