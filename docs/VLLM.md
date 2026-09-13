@@ -330,3 +330,108 @@ omitted, the run asked the server, and the stamp records `Qwen3.5-9B-bf16` — t
 served name really is the record (§6). And that **the pass did not change what it
 decides**: 209 blocks changed and 99 edits refused, the shapes an Ollama run of
 the same book gives.
+
+---
+
+## 10. Headers an endpoint wants — added 2026-09-13
+
+A server can sit behind something that wants to know who is calling. The one
+this was built against wants two headers on every request: a bearer token it
+minted, and a constant naming the API version the caller speaks. A request
+missing the second is refused with **426**, not 401, which is worth knowing
+because it looks nothing like an authentication failure.
+
+**Foundry carries an opaque MAP, not a token.** One environment variable:
+
+```
+FOUNDRY_ENDPOINT_HEADERS={"Authorization":"Bearer <token>","X-Crucible-Api":"1"}
+```
+
+Every request to the endpoint carries every pair in it, on **both** doors — the
+page reader and the four text acts. Foundry does not know which pair is the
+credential and does not need to; the day a server wants a third header, or a
+different one, or none, nothing in `src/` changes. That is deliberate: a
+`FOUNDRY_API_TOKEN` would have carried the secret and left the version constant
+to be hardcoded, which is teaching this program what one particular product is,
+inside files whose whole job is to know only that something at a URL speaks
+OpenAI. **The word for that product does not appear in `src/`.**
+
+### Why the environment, and never a flag
+
+A command line is the most copied thing a program has — pasted into bug reports,
+printed by the queue that composed it (`app/electron/job-queue.ts` can spell one
+without spawning it), listed by the process table, remembered by shells. A secret
+on one is a secret in all of those afterwards.
+
+The settings file is the honest alternative and loses on one point.
+`fromFlagOrSettings` **prints** a settings-sourced value into the run log,
+deliberately — a run reading through an endpoint nobody typed must say where the
+URL came from, or the file becomes spooky action. Keeping a secret out of a code
+path that prints values *by design* is a rule somebody has to remember every time
+that code is touched. The environment's weakness is inheritance, and that is
+fixed **once, mechanically**, at each spawn. A mechanical fix beats a remembered
+one.
+
+So `backend.endpointHeaders` in `settings.json` exists as the fallback for a
+person running the CLI by hand, the environment wins when both are present, and
+that one setting is the only one never echoed.
+
+### What it refuses
+
+- **A malformed map refuses the run**, never gets dropped. Dropping it would
+  either fail at the server with an error about something else, or — worse —
+  reach a server that does not require the headers and *succeed*, having
+  silently stopped doing what it was configured to do.
+- `content-type`, `content-length` and `host` are refused by name: foundry sets
+  them, and a map that changed `content-type` would describe the body as
+  something it is not.
+- **No error ever quotes a value.** They name the key and where the map came
+  from. A message that printed the value to be helpful would write the token into
+  the log this design exists to keep it out of.
+
+### The rasteriser never sees it
+
+`src/vlm/bridge.ts` spawns Python three times, and all three now pass an explicit
+`env` with the map removed. `vlm_page.py` renders pages and runs MLX locally and
+makes no HTTP request at all, so a credential in its environment could only leak,
+never be used. It **strips** rather than allowlists: an allowlist breaks the first
+time somebody adds a fourth spawn, and the repair for that is always to pass
+everything again, which puts the secret back.
+
+## 11. Two refusals that used to look identical
+
+**The page reader now asks what the server serves.** It used to send a model name
+and hope, so every way that could be wrong arrived as the same bare 4xx on page
+one — wrong weights, nothing resident, a name that moved when an upstream org
+renamed itself, the wrong machine entirely. One listing separates them, against a
+run about to cost GPU-minutes a page.
+
+A server that **will not** list is allowed to proceed, and says so. Strict about
+what it claims to understand, silent about what it makes no claim about: a server
+that answers the listing has stated what it serves, and a name absent from that
+statement is worth refusing; a server that does not answer has stated nothing,
+and refusing there would break working setups over a check the server never
+agreed to. That is the absence of a check said out loud, not a fallback.
+
+It runs **behind the same seam as the reading it guards** (`VlmBridge.confirmModel`).
+A caller injecting a bridge is saying nothing in this run reaches the outside
+world, and a check that went straight to `fetch` would have made that false — the
+suite would have started depending on whatever was listening on port 8000.
+
+**A text act refuses a page-reading model.** vLLM's default port is 8000, a
+reading server is usually on 8000, and this program shipped 8000 as the default
+for *both* doors. Turn the text acts to `vllm`, leave the URL alone, and a cleanup
+dialled a vision model — and because a text act with no `--model` asks the server
+what it serves and *accepts the answer*, nothing refused. The prose went to a page
+reader, the answer was banked under that model's name, and the name was stamped
+into the EPUB as provenance: **a wrong answer, cached, recorded as true.**
+
+Moving the default port would have made that rarer without making it less severe.
+So `isPageReadingModel` (`src/vlm/models.ts`) is asked instead, matching on the
+segment after the last slash so a renamed org or an MLX conversion still matches,
+and the refusal names the shared-port cause.
+
+**Both are the same correction**, and it is worth naming because it will come up
+again: *adopting a discovered name instead of asserting an intended one.*
+`requireServedModel` was already right about this — it compares and refuses rather
+than adopting — which is why the fix for one door was the fix for the other.

@@ -256,6 +256,47 @@ export const VLM_MODELS: readonly VlmModelDef[] = [
  */
 export const DEFAULT_VLM_MODEL_ID = 'dots-ocr';
 
+/**
+ * Is this served name a model that READS PAGES rather than one that writes prose?
+ *
+ * ── Why a TEXT act asks ─────────────────────────────────────────────────────
+ *
+ * vLLM's own default port is 8000; so is the port a reading server is usually
+ * started on; and so is the default this program ships for BOTH doors. A
+ * machine that turns the text acts to `vllm` and leaves the URL alone therefore
+ * points a cleanup at a vision model. Nothing refused it, because a text act
+ * with no `--model` ASKS the server what it serves and accepts the answer — so
+ * the prose went to a page reader, the answer was banked under that model's
+ * name, and the name was stamped into the EPUB as provenance. A wrong answer,
+ * cached, and recorded as true.
+ *
+ * Moving the default port would have made that rarer without making it less
+ * severe, and a silent wrong answer nobody can see is the worst class this
+ * project has. So the text door asks this question and refuses by name. It is
+ * the same correction as `requireServedModel`: COMPARE AND REFUSE, never adopt
+ * what discovery handed back.
+ *
+ * ── Matched on the last path segment, deliberately ──────────────────────────
+ *
+ * One set of weights wears several names — an org that renamed itself, an MLX
+ * conversion, a server started under a name of somebody's choosing. The segment
+ * after the last slash survives all of those, so that is what is compared. A
+ * false positive costs a refusal that naming a model explicitly overrides; a
+ * false negative costs a silently ruined book.
+ */
+const pageReadingName = (name: string): string =>
+  (name.split('/').pop() ?? '').trim().toLowerCase();
+
+const PAGE_READING_NAMES: ReadonlySet<string> = new Set(
+  VLM_MODELS.flatMap((model) => [model.id, model.repo, model.endpointModel])
+    .filter((name): name is string => name !== undefined && name.length > 0)
+    .map(pageReadingName),
+);
+
+export function isPageReadingModel(served: string): boolean {
+  return PAGE_READING_NAMES.has(pageReadingName(served));
+}
+
 /** Look one up by id, or fail naming every id there is. */
 export function requireVlmModel(id: string): VlmModelDef {
   const found = VLM_MODELS.find((m) => m.id === id);

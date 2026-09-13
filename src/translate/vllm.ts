@@ -47,6 +47,7 @@
  *    `releaseModel`'s in model-server.ts: it is about who owns the server's life
  *    rather than about this file being unable to ask.
  */
+import { explainHttpRefusal } from '../backend/http-refusal.js';
 import { answerBudget, takesThinkField, type ChatTuning, type Transport } from './ollama.js';
 
 /** The server did not do its job. Always names the endpoint. */
@@ -345,8 +346,7 @@ export async function readChatAnswer(
   if (response.status !== 200) {
     return {
       text: null,
-      degraded: `vllm at ${base} answered ${response.status}: `
-        + `${response.body.trim().slice(0, 200) || '(no body)'}`,
+      degraded: `${base} ${explainHttpRefusal(response.status, '', response.body)}`,
     };
   }
   let parsed: { choices?: { message?: { content?: unknown }; finish_reason?: unknown }[] };
@@ -413,8 +413,8 @@ export async function complete(
   );
   if (response.status !== 200) {
     throw new VllmError(
-      `vllm at ${base} answered ${response.status} for model "${served.id}": `
-      + `${response.body.trim().slice(0, 400) || '(no body)'}`,
+      `${base}, for model "${served.id}", `
+      + explainHttpRefusal(response.status, '', response.body),
     );
   }
   let parsed: unknown;

@@ -41,8 +41,9 @@
 import {
   chat, normaliseEndpoint, requireModel, unloadModel, type ChatTuning, type Transport,
 } from './ollama.js';
+import { isPageReadingModel } from '../vlm/models.js';
 import {
-  complete, DEFAULT_VLLM_ENDPOINT, normaliseVllmEndpoint, requireServedModel,
+  complete, DEFAULT_VLLM_ENDPOINT, normaliseVllmEndpoint, requireServedModel, VllmError,
   type ServedModel,
 } from './vllm.js';
 
@@ -129,6 +130,19 @@ export async function openModelServer(options: {
   if (kind === 'vllm') {
     const endpoint = normaliseVllmEndpoint(options.endpoint);
     const served: ServedModel = await requireServedModel(transport, endpoint, options.model);
+    // The one thing a text act must not accept from discovery. See
+    // `isPageReadingModel` (vlm/models.ts) for the whole reason; the short of
+    // it is that both doors default to :8000, and a cleanup answered by a page
+    // reader is banked and stamped as if it were prose.
+    if (isPageReadingModel(served.id)) {
+      throw new VllmError(
+        `${endpoint} is serving "${served.id}", which is a model that READS PAGE IMAGES — a text `
+        + 'act cannot use it, and a book cleaned or translated through it would be nonsense '
+        + 'banked under its name. This is almost always one URL doing two jobs: the reading '
+        + 'server and the text server both default to port 8000. Point this act at the text '
+        + 'server, or name a text model with --model if this one really does serve both.',
+      );
+    }
     return { kind, endpoint, model: served.id, maxModelLen: served.maxModelLen };
   }
   const endpoint = normaliseEndpoint(options.endpoint);

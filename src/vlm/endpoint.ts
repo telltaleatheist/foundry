@@ -35,6 +35,8 @@
  */
 import * as fs from 'node:fs';
 
+import { explainHttpRefusal } from '../backend/http-refusal.js';
+
 export class VlmEndpointError extends Error {
   constructor(message: string) {
     super(message);
@@ -100,6 +102,13 @@ export interface VlmEndpointOptions {
   concurrency: number;
   pages: readonly EndpointRequest[];
   onPage: (page: EndpointPageResult) => void;
+  /**
+   * What this endpoint wants on every request — an opaque map, never
+   * interpreted here. A server behind a private router wants a bearer token
+   * and its own API-version constant; this file does not know which is which,
+   * and `backend/endpoint-headers.ts` explains why it must not.
+   */
+  headers?: Readonly<Record<string, string>>;
 }
 
 /** The cap for this page, whether the caller fixed one or answers per page. */
@@ -157,7 +166,7 @@ async function readOnePage(
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { ...(opts.headers ?? {}), 'content-type': 'application/json' },
       body: JSON.stringify({
         model: opts.model,
         temperature: 0,
@@ -178,9 +187,9 @@ async function readOnePage(
   }
 
   if (!response.ok) {
-    const body = (await response.text()).slice(0, 400);
     throw new VlmEndpointError(
-      `page ${page.number}: ${url} answered ${response.status} ${response.statusText}. ${body}`,
+      `page ${page.number}: ${url} `
+      + explainHttpRefusal(response.status, response.statusText, await response.text()),
     );
   }
 

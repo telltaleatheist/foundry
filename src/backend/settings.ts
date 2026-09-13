@@ -38,6 +38,18 @@ export interface BackendSettings {
   vllmPython?: string;
   /** Local interpreter with PyMuPDF (and mlx-vlm on Apple silicon). Same as --python. */
   python?: string;
+  /**
+   * Headers every request to `endpointUrl` carries — an opaque map, validated
+   * but never interpreted. This is the FALLBACK path, for a person running the
+   * CLI by hand; the app and the queue set `$FOUNDRY_ENDPOINT_HEADERS` instead,
+   * which wins. See `backend/endpoint-headers.ts` for why there are two.
+   *
+   * IT IS THE ONE SETTING THAT IS NEVER ECHOED. `fromFlagOrSettings` prints
+   * what it took from this file so a run says where its configuration came
+   * from; a map that may hold a credential is the exception, and it is
+   * deliberately not routed through that helper.
+   */
+  endpointHeaders?: Readonly<Record<string, string>>;
 }
 
 export interface FoundrySettings {
@@ -142,6 +154,19 @@ export function loadSettings(): FoundrySettings {
   if (b['wslDistro'] !== undefined) backend.wslDistro = requireString(b['wslDistro'], 'backend.wslDistro');
   if (b['vllmPython'] !== undefined) backend.vllmPython = requireString(b['vllmPython'], 'backend.vllmPython');
   if (b['python'] !== undefined) backend.python = requireString(b['python'], 'backend.python');
+  if (b['endpointHeaders'] !== undefined) {
+    const raw = b['endpointHeaders'];
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new SettingsError('settings.json: "backend.endpointHeaders" must be an object');
+    }
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+      // The VALUE is never quoted back, here or anywhere: this map may hold a
+      // credential (backend/endpoint-headers.ts). The key is enough to fix it.
+      headers[name] = requireString(value, `backend.endpointHeaders.${name}`);
+    }
+    backend.endpointHeaders = headers;
+  }
 
   result.backend = backend;
   return result;

@@ -46,7 +46,10 @@ import {
 } from './bridge.js';
 import { capFor, worthRetrying } from './band.js';
 import { looksLikeRunaway } from './runaway.js';
-import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint } from './endpoint.js';
+import { resolveEndpointHeaders } from '../backend/endpoint-headers.js';
+import { fetchTransport } from '../translate/ollama.js';
+import { servedModels } from '../translate/vllm.js';
+import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint, VlmEndpointError } from './endpoint.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
 import {
   openReadingsBank,
@@ -88,6 +91,57 @@ export function pixelBudget(model: VlmModelDef, viaEndpoint: boolean): number | 
     );
   }
   return model.maxPixels;
+}
+
+/**
+ * Ask the server what it is serving, and refuse a name it does not have.
+ *
+ * ── Why this is worth a round trip ──────────────────────────────────────────
+ *
+ * Until this existed the endpoint path sent a model name and hoped. Every way
+ * that could be wrong arrived as the same bare 4xx on page one: a server
+ * holding different weights, a server holding nothing, a name that moved when
+ * an upstream org renamed itself, a URL pointing at the wrong machine entirely.
+ * One listing separates them, and it costs one request against a run that is
+ * about to cost GPU-minutes a page.
+ *
+ * ── Why a server that will not list is ALLOWED to proceed ───────────────────
+ *
+ * Strict about what it claims to understand, silent about what it makes no
+ * claim about. A server that answers the listing has stated what it serves, and
+ * a name absent from that statement is a mismatch worth refusing before the
+ * first page. A server that does not answer it has stated nothing — and turning
+ * that into a refusal would break working setups to enforce a check the server
+ * never agreed to. So the run says the check could not be made, and goes on to
+ * ask the question it came to ask.
+ *
+ * This is NOT a fallback: nothing different is substituted. It is the absence
+ * of a check, said out loud.
+ */
+async function confirmServedModel(
+  label: string,
+  endpoint: string,
+  wanted: string,
+  headers: Readonly<Record<string, string>> | undefined,
+  log: (line: string) => void,
+): Promise<void> {
+  let served;
+  try {
+    served = await servedModels(fetchTransport(undefined, headers), endpoint);
+  } catch (err) {
+    log(
+      `${label}: could not read the model listing at ${endpoint} `
+      + `(${(err as Error).message.split(/\r?\n/)[0]}), so "${wanted}" goes unchecked`,
+    );
+    return;
+  }
+  if (served.some((one) => one.id === wanted)) return;
+  throw new VlmEndpointError(
+    `${endpoint} is not serving "${wanted}". It is serving: `
+    + `${served.map((one) => one.id).join(', ') || '(nothing)'}. `
+    + 'Name one of those with --vlm-endpoint-model, or point --vlm-endpoint at the machine '
+    + 'holding the model this run wants.',
+  );
 }
 
 export function renderPath(dir: string, page: number): string {
@@ -139,6 +193,21 @@ export function replaysCompletedBank(opts: {
 export interface VlmBridge {
   readPages: typeof readPagesWithVlm;
   fromEndpoint: typeof readPagesFromEndpoint;
+  /**
+   * The pre-flight that asks the server what it serves, BEHIND THE SAME SEAM as
+   * the reading it guards.
+   *
+   * It belongs here and not beside the dispatch because of what this interface
+   * is FOR: a caller that injects a bridge is saying "nothing in this run
+   * reaches the outside world". A check that went straight to `fetch` would
+   * have made that false — the suite would have started depending on whatever
+   * happens to be listening on port 8000, and a machine with a different model
+   * up would fail tests about something else entirely.
+   *
+   * Optional, so an injected bridge that stubs the outside stubs ALL of it and
+   * the check is simply not made. The real bridge always carries it.
+   */
+  confirmModel?: typeof confirmServedModel;
 }
 
 export interface ReadPhaseOptions {
@@ -249,7 +318,8 @@ export interface ReadPhase {
  */
 export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPhase> {
   const { label, model, maxPixels, rendersDir } = opts;
-  const bridge = opts.bridge ?? { readPages: readPagesWithVlm, fromEndpoint: readPagesFromEndpoint };
+  const bridge = opts.bridge
+    ?? { readPages: readPagesWithVlm, fromEndpoint: readPagesFromEndpoint, confirmModel: confirmServedModel };
   const viaEndpoint = opts.endpoint !== undefined;
   const geometric = model.dialect === 'dots-json';
   const notInBook = new Set(opts.skipPages);
@@ -411,6 +481,14 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
         + `${opts.endpoint} and no model reads anything`,
       );
     } else {
+      /*
+       * Resolved ONCE for the run, and only where a request is actually going to
+       * be made -- the banked-everything branch above reaches no server at all
+       * and must keep not reaching one.
+       */
+      const headers = resolveEndpointHeaders();
+      const servedName = opts.endpointModel ?? model.endpointModel ?? model.repo;
+      await bridge.confirmModel?.(label, opts.endpoint!, servedName, headers, opts.log);
       opts.log(`${label}: ${wanted.length} page(s) to ${opts.endpoint}, ${concurrency} at a time`);
       const endpointStarted = Date.now();
       let done = 0;
@@ -448,10 +526,11 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
 
       await bridge.fromEndpoint({
         endpoint: opts.endpoint!,
-        model: opts.endpointModel ?? model.endpointModel ?? model.repo,
+        model: servedName,
         prompt: model.prompt,
         maxTokens: capForPage,
         concurrency,
+        ...(headers !== undefined ? { headers } : {}),
         pages: wanted.map((p) => ({ number: p.number, imagePath: renderPath(rendersDir, p.number) })),
         onPage: (page) => {
           done += 1;
@@ -521,10 +600,11 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
         );
         await bridge.fromEndpoint({
           endpoint: opts.endpoint!,
-          model: opts.endpointModel ?? model.endpointModel ?? model.repo,
+          model: servedName,
           prompt: model.prompt,
           maxTokens: model.maxTokens,
           concurrency,
+          ...(headers !== undefined ? { headers } : {}),
           pages: misjudged.map((number) => ({ number, imagePath: renderPath(rendersDir, number) })),
           onPage: (page) => {
             const render = sizes.get(page.number);

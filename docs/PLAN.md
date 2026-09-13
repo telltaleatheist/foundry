@@ -4185,3 +4185,66 @@ them, and Ollama's batching is not reachable on either machine.
   agent must be told so explicitly rather than trusting its memory of what
   it wrote. (This happened on 2026-08-15 to both wave-2 units; the tree
   was clean and both rebuilt from scratch.)
+
+### Wave 59 — an endpoint that wants headers (Owen, 2026-09-13) — BUILT
+
+Owen is standing up an inference server that may be on this PC, on the Mac, or
+on a rented droplet, and whose router refuses a request that arrives without a
+credential **and** a protocol-version constant. His ruling on the shape, after a
+long coordination with the BookForge session: Foundry does **not** distribute
+work and does not schedule; it uses **one server at a time**, told to it. The
+registry, the pick and the credential all belong to whoever schedules.
+
+So what landed here is only the engine's half, and it is deliberately ignorant.
+
+- **`src/backend/endpoint-headers.ts`** — the map, and the one place that
+  decides where it came from. `$FOUNDRY_ENDPOINT_HEADERS` first, then
+  `backend.endpointHeaders` in `settings.json`, then none. **A map, never a
+  token**: a `FOUNDRY_API_TOKEN` would have carried the secret and left the
+  version constant to be hardcoded, which is the moment this program learns what
+  one particular server IS. It does not, and the product's name appears nowhere
+  in `src/`.
+- **Never a flag.** A command line is the most copied thing a program has, and
+  `job-queue.ts` can spell one without spawning it. The settings file loses to
+  the environment on one point only, and it is decisive: `fromFlagOrSettings`
+  prints settings-sourced values into the run log *by design*, so a secret there
+  stays safe only while every future author remembers. Inheritance — the
+  environment's weakness — is fixed once, mechanically, at each spawn. **A
+  mechanical fix beats a remembered one.**
+- **`src/backend/http-refusal.ts`** — 426, 401/403, 404 and a
+  `model_not_resident` body each get a sentence. Everything else keeps the
+  server's own words and gets no interpretation, because a confident explanation
+  of an unrecognised status sends the reader where the bug is not.
+- **The rasteriser's three spawns pass an explicit `env` with the map removed.**
+  `vlm_page.py` makes no HTTP request at all; it was only ever going to inherit
+  a credential it could not use. **Stripped, not allowlisted** — an allowlist
+  breaks on the fourth spawn and gets repaired by passing everything again.
+- **The page reader asks what is served** before it sends, and refuses a name
+  the listing lacks, naming both. A server that will not list proceeds with the
+  absence of the check said out loud. It sits behind `VlmBridge.confirmModel`,
+  the same seam as the reading — a caller that injects a bridge is saying this
+  run reaches nothing, and a check that went straight to `fetch` made that false
+  and quietly coupled the suite to port 8000.
+- **A text act refuses a page-reading model** (`isPageReadingModel`). Both doors
+  shipped `http://localhost:8000/v1` as their default and a reading server is
+  usually on 8000, so turning the text acts to `vllm` and leaving the URL alone
+  dialled a vision model — and a text act with no `--model` asks the server what
+  it serves and *accepts the answer*. Prose to a page reader, banked under its
+  name, stamped into the EPUB as provenance: a wrong answer, cached, recorded as
+  true. The defaults did **not** move; moving them would have made it rarer
+  without making it less severe.
+
+**The one lesson, because it produced two of these.** Both the port collision and
+the cache-key risk that came out of the same conversation are *adopting a
+discovered name instead of asserting an intended one*. `requireServedModel` was
+already right — it compares and refuses rather than adopting — which is why one
+fix served both doors.
+
+**Not done, and waiting on Owen:** the server registry itself. Up to four
+entries with a URL, a name and its headers, picked per job, with the pin holding
+rather than falling back. The picker must read the host's list when Foundry is
+hosted and app settings when it is not — one dialog over a list-provider, never
+two registries live at once. Nothing above presumes it.
+
+Gates: 830 bun tests (none added, none invalidated), `bun run typecheck`, both
+app `tsc` configs, `ng build`.

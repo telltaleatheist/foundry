@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 // See `scriptPath()` for why this is text rather than a file on disk.
 import VLM_PAGE_SOURCE from './vlm_page.py' with { type: 'text' };
 
+import { withoutEndpointHeaders } from '../backend/endpoint-headers.js';
 import { defaultLocalPythonCandidates } from '../backend/probe.js';
 import { ensureDir } from '../fsdirs.js';
 import type { VlmModelDef } from './models.js';
@@ -371,7 +372,15 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
     ...(opts.rendersDir ? { rendersDir: path.resolve(opts.rendersDir) } : {}),
   });
 
-  const proc = spawn(python, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const proc = spawn(python, [script], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    // The child gets the environment MINUS the endpoint's headers. It renders
+    // pages and runs MLX locally and makes no HTTP request at all (`vlm_page.py`
+    // imports no HTTP client), so a credential here could only ever leak, never
+    // be used. This option is not redundant: without it a spawn inherits the
+    // parent's whole environment. See `backend/endpoint-headers.ts`.
+    env: withoutEndpointHeaders(),
+  });
 
   let document: VlmDocumentInfo | null = null;
   let loadSeconds = 0;
@@ -591,7 +600,15 @@ export async function cropPageRenders(opts: {
     })),
   });
 
-  const proc = spawn(python, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const proc = spawn(python, [script], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    // The child gets the environment MINUS the endpoint's headers. It renders
+    // pages and runs MLX locally and makes no HTTP request at all (`vlm_page.py`
+    // imports no HTTP client), so a credential here could only ever leak, never
+    // be used. This option is not redundant: without it a spawn inherits the
+    // parent's whole environment. See `backend/endpoint-headers.ts`.
+    env: withoutEndpointHeaders(),
+  });
   const written: { name: string; path: string }[] = [];
   const stderrTail: string[] = [];
 
@@ -686,7 +703,15 @@ export async function readPdfTextLayer(opts: {
   const script = scriptPath();
   const config = JSON.stringify({ mode: 'textlayer', pdf: path.resolve(opts.pdfPath) });
 
-  const proc = spawn(python, [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const proc = spawn(python, [script], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    // The child gets the environment MINUS the endpoint's headers. It renders
+    // pages and runs MLX locally and makes no HTTP request at all (`vlm_page.py`
+    // imports no HTTP client), so a credential here could only ever leak, never
+    // be used. This option is not redundant: without it a spawn inherits the
+    // parent's whole environment. See `backend/endpoint-headers.ts`.
+    env: withoutEndpointHeaders(),
+  });
   const layer = new Map<number, VlmLayerSpan[]>();
   const stderrTail: string[] = [];
 

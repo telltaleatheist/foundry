@@ -506,6 +506,75 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-09-13 — THE ENGINE CAN NOW SEND HEADERS, AND THE CONTRACT IS ONE
+ENVIRONMENT VARIABLE. Nothing changes for a server that wants none.**
+
+Set this on the engine process you spawn, and every request on **both** doors —
+the page reader and the four text acts — carries every pair in it:
+
+```
+FOUNDRY_ENDPOINT_HEADERS={"Authorization":"Bearer <token>","X-Crucible-Api":"1"}
+```
+
+A JSON **object** of header name to string value. Absent or empty means send
+none, which is exactly today's behaviour.
+
+- **It is a MAP, not a token, and that is the whole design.** Foundry does not
+  know which pair is a credential. It cannot tell your server from any other
+  OpenAI-compatible one, and the word for your product does not appear anywhere
+  in `src/`. When a server wants a third header, set three; nothing here
+  changes.
+- **Set it on the child's environment, not on a command line.** A command line
+  is spelled by `job-queue.ts` without spawning, pasted into bug reports, and
+  listed by the process table. There is deliberately no flag for this and there
+  should never be one.
+- **A malformed value REFUSES THE RUN**, by name, and never quotes the value
+  back. It is not dropped: a dropped map would reach a server that does not
+  require headers and *succeed*, having silently stopped authenticating.
+- `content-type`, `content-length` and `host` are refused — the engine sets
+  those.
+- `backend.endpointHeaders` in `settings.json` is the hand-run CLI fallback. The
+  environment wins when both are present, and it is the one setting never echoed
+  into a run log.
+- **Your rasteriser concern is handled**: all three `spawn(python, …)` calls now
+  pass an explicit `env` with the variable removed. `vlm_page.py` makes no HTTP
+  request at all, so it was only ever going to inherit a credential it could not
+  use.
+
+**Two refusals changed shape, and you will see both.**
+
+- The page reader now **asks what the server serves** before it sends anything,
+  and refuses a name the listing does not have, naming both. A server that will
+  not list is allowed through with a line saying the check could not be made —
+  strict about what it claims to understand, silent about what it makes no claim
+  about. It runs behind the same injectable seam as the reading, so a fully
+  banked run still reaches no server at all.
+- **426, 401/403, 404 and a `model_not_resident` body now each get their own
+  sentence** instead of a status code and 400 characters of JSON. The
+  not-resident one says the server will not load a model to answer a request and
+  that nothing on this side can do it — which is your onboarding cliff, stated
+  where a person meets it.
+
+**One defect fixed that is partly yours to mirror.** Foundry shipped
+`http://localhost:8000/v1` as the default for the text acts AND for the page
+reader (`src/translate/vllm.ts`, `app/shared/pipeline.ts`), and 8000 is where a
+reading server usually is. Turning the text acts to `vllm` and leaving the URL
+alone dialled a vision model — and since a text act with no `--model` asks the
+server what it serves and *accepts the answer*, nothing refused: the prose went
+to a page reader, the answer was banked under that model's name, and the name
+was stamped into the EPUB as provenance. A wrong answer, cached, recorded as
+true.
+
+The fix is **refuse by name**, not a luckier port: `isPageReadingModel` matches
+on the segment after the last slash, so a renamed org or an MLX conversion still
+matches, and the refusal names the shared-port cause. **The defaults did not
+move**, so your mirrored clamp set needs no change — but the hazard is worth
+knowing about in your own settings UI.
+
+Gates green: 830 bun tests (none added, none invalidated), engine typecheck,
+both app `tsc` configs, `ng build`.
+
+
 **2026-08-18 — THE QUEUE CENTRALIZES IN BOOKFORGE. `mountFoundry({ …,
 hostQueue })`, and three functions back across the seam. Additive; a host that
 registers no queue is unchanged in every respect, and standalone Foundry is

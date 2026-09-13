@@ -51,6 +51,8 @@
  * (ARCHITECTURE §5).
  */
 
+import { resolveEndpointHeaders } from '../backend/endpoint-headers.js';
+
 /** The server did not do its job. Always names the endpoint. */
 export class OllamaError extends Error {
   constructor(message: string) {
@@ -88,7 +90,24 @@ export interface Transport {
  */
 const REQUEST_TIMEOUT_MS = 300_000;
 
-export function fetchTransport(timeoutMs: number = REQUEST_TIMEOUT_MS): Transport {
+/**
+ * The real transport, and the one place the endpoint's headers are attached.
+ *
+ * They are resolved HERE rather than threaded from each command because they
+ * are a property of the endpoint, not of the act: every door in this program
+ * that speaks HTTP goes through this function, so attaching them here is what
+ * makes "these headers, on every request to this endpoint" true without seven
+ * call sites remembering. `resolveEndpointHeaders` is the one place that
+ * decides where they came from; see `backend/endpoint-headers.ts`.
+ *
+ * A caller may pass a map explicitly — tests do — and passing `{}` means the
+ * run deliberately sends none.
+ */
+export function fetchTransport(
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+  headers: Readonly<Record<string, string>> | undefined = resolveEndpointHeaders(),
+): Transport {
+  const extra = headers ?? {};
   const call = async (url: string, init: RequestInit): Promise<HttpResponse> => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -105,10 +124,13 @@ export function fetchTransport(timeoutMs: number = REQUEST_TIMEOUT_MS): Transpor
     }
   };
   return {
-    get: (url) => call(url, { method: 'GET' }),
+    get: (url) => call(url, { method: 'GET', headers: { ...extra } }),
     post: (url, body) => call(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      // The endpoint's headers first, so `content-type` is ours whatever a map
+      // says. `parseEndpointHeaders` already refuses that name; this ordering
+      // means the refusal is belt and the body's honesty is braces.
+      headers: { ...extra, 'content-type': 'application/json' },
       body,
     }),
   };
