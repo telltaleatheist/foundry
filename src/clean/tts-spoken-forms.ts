@@ -253,10 +253,37 @@ export function abbreviationContextRefusal(
  * The prompt says so ("NASA, NATO, UNESCO, laser, radar") and the validator has
  * to agree: an edit that spells one of these out is refused, because it is a
  * change nobody asked for in the direction the prompt forbids.
+ *
+ * ── THIS LIST IS HALF OF A PAIR, AND THE PAIR DIVERGED ──────────────────────
+ *
+ * BookForge runs the same pass from its own copy, which reads
+ * `python/narrator/text/caps_acronyms.json` — a file whose own comment calls
+ * itself "THE ONE ACRONYM LIST, read by THREE code paths so they can never
+ * drift". It was created on 2026-09-06. This copy was ported on 2026-09-05, one
+ * day earlier, so the unification reached three paths and missed this one: the
+ * list that exists to prevent drift caused some, by arriving a day late.
+ *
+ * `covid` was the entry that differed, found 2026-09-13. Until then this
+ * validator ACCEPTED an edit reading "COVID" as "C O V I D" while BookForge's
+ * refused it, and both stamped the book `n6`/`s1` — so nothing downstream could
+ * tell the two results apart, and the difference reached the audio.
+ *
+ * IT IS NOT READ FROM THAT FILE AND MUST NOT BE. This engine compiles to a
+ * single binary (`bun build --compile`) that runs on machines with no BookForge
+ * checkout at all. The copy stays; what catches a future divergence is a keeper
+ * comparing the two, which is BookForge's `tools/test-foundry-clean-text-vendor.js`.
+ *
+ * NO VERSION BUMP CAME WITH THE FIX, deliberately. `n6` has meant "with COVID"
+ * in the other implementation of this same pass since 2026-09-06; this copy was
+ * behind the spec it claimed, so conforming to it is a repair and not a new
+ * rule. A bump would have marked every cleaned book in existence stale
+ * (`narrationTextGate`) to correct books that contain the word COVID and were
+ * cleaned in this one-week window — and `NORMALIZER_VERSION`'s own header says a
+ * bump here is a cross-repo event.
  */
 export const SPOKEN_AS_WORD: ReadonlySet<string> = new Set([
   'nasa', 'nato', 'unesco', 'unicef', 'opec', 'aids', 'laser', 'radar', 'scuba', 'nafta',
-  'ascii', 'gestapo', 'gulag', 'interpol',
+  'ascii', 'gestapo', 'gulag', 'interpol', 'covid',
 ]);
 
 /**
