@@ -62,7 +62,7 @@ Files: `src/translate/vllm.ts` (the transport), `src/translate/model-server.ts`
 
 ### analyze asks a different KIND of question, and that needed its own branch
 
-The three text acts ask for prose on `/api/chat`. `analyze` (and `tag`) ask a
+The three text acts ask for prose on `/api/chat`. `analyze` asks a
 CLOSED question and constrain the decode to the legal answers — measured both
 more accurate and about five times cheaper than asking politely and parsing
 hopefully (`src/analyze/verify.ts`'s header). Ollama takes the schema as
@@ -87,10 +87,6 @@ loaded model) is the shape that gains most. The pool dispatches in the same
 strongest-first order Owen ruled, and the findings are composed by walking the
 jobs' own order afterwards, so what a pool changes is how long the stage takes
 and never what it wrote.
-
-`foundry tag` asks its two closed questions through the same door and therefore
-already speaks both dialects — it simply has no `--server` flag yet, which is
-now the whole of what adding it would take.
 
 ---
 
@@ -291,9 +287,6 @@ starts from the right mechanism.
 
 ## 8. What was deliberately not done
 
-- **`foundry tag` has no `--server` flag.** Its two closed questions go through
-  the same `askConstrained` door analyze uses, so the transport is already there;
-  only the option and its pass-through are missing.
 - **analyze's NLI ranker is untouched.** It is a resident Python worker with its
   own model and its own lifecycle; none of this reaches it, and the ranking half
   of a run costs exactly what it always cost.

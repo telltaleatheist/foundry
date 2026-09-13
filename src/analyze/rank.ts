@@ -354,13 +354,13 @@ function words(prefix: readonly number[], from: number, to: number): number {
  * category. Keeping every category above the floor is what makes 10/10 and
  * 11/11 reachable at all.
  *
- * EXPORTED for `foundry tag` (docs/TAGGING.md), which ranks a document against a
- * lawyer's own tag vocabulary and needs exactly this pass — the same worker, the
- * same floor, the same rescue rule — with a different kind of label in the plan
- * and no windowing after it, because that command reports no locations. It is
- * shared rather than copied so the widest-net posture is one body of code.
+ * It stands on its own, rather than inside the walk below, because the two
+ * levels are measured separately and a change to one must be readable against
+ * the other. It was EXPORTED until 2026-09-13 for `foundry tag`, which ranked a
+ * document against somebody's own vocabulary through this exact pass; that
+ * command is gone and this is file-local again.
  */
-export async function scoreSentenceLevel(
+async function scoreSentenceLevel(
   sentences: readonly BookSentence[],
   plan: readonly RankPlan[],
   score: ScoreTexts,
@@ -431,9 +431,9 @@ export async function scoreSentenceLevel(
  * is a much weaker version of the same argument, and briefcase never measured
  * it. The rule is left where it was measured.
  *
- * EXPORTED for `foundry tag`, with `scoreSentenceLevel` and for its reason.
+ * File-local, with `scoreSentenceLevel` and for its reason.
  */
-export async function scoreWindowLevel(
+async function scoreWindowLevel(
   sentences: readonly BookSentence[],
   plan: readonly RankPlan[],
   sentenceLevel: readonly FlagCandidate[],

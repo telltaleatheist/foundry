@@ -1205,8 +1205,6 @@ same schema Ollama gets as `format`, one user message and no system message
 (because Ollama's `/api/generate` templates its prompt — `/v1/completions` would
 hand the model an untemplated string). Its `--concurrency` default is **1 under
 Ollama** and 12 under vLLM. Its NLI ranker is a Python worker and is untouched.
-`foundry tag` shares the same door and already speaks both dialects; it has no
-`--server` flag yet.
 
 **The URL is the flag it always was**: `--ollama <url>` on translate,
 `--endpoint <url>` on clean-text. Under vLLM it defaults to

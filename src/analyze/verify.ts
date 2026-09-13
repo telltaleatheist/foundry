@@ -201,10 +201,9 @@ Respond with JSON only: {"verdict":"flag"} or {"verdict":"skip"}`;
  * reader can see it, and generic in the schema so the second command that asks
  * a model a closed question does not have to write this object again.
  *
- * `foundry tag` (docs/TAGGING.md) asks two of them — does this document concern
- * this tag, and what else would you call it — and neither is a verdict. What is
- * shared is everything the measurements in this file's header are about: the
- * schema rather than the string 'json', temperature 0, and the `think` rule.
+ * What it carries is everything the measurements in this file's header are
+ * about: the schema rather than the string 'json', temperature 0, and the
+ * `think` rule. A second closed question added later gets those for free.
  */
 export function constrainedBody(
   model: string,
@@ -283,11 +282,11 @@ export interface ConstrainedAnswer {
 /**
  * Ask the server one closed question and hand back what it said.
  *
- * The transport half of `askVerdict`, standing on its own so `foundry tag` asks
- * its two questions through the same door rather than through a second copy of
- * the trap below. It parses the ENVELOPE and nothing else: what the answer MEANS
- * is the caller's, because a verdict, an aboutness answer and a list of tags are
- * three different readings of one string.
+ * The transport half of `askVerdict`, standing on its own so that asking a
+ * closed question and deciding what the answer MEANS stay separate. It parses
+ * the ENVELOPE and nothing else, because the same string is read differently
+ * depending on what was asked — and because the trap below must have exactly one
+ * copy.
  *
  * ── THE THINKING-MODEL TRAP, AND IT IS NOT OPTIONAL ─────────────────────────
  *

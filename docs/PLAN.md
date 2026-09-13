@@ -3519,61 +3519,22 @@ Owen's hand-walk of Wave 51, in two corrections. Full record at
 
 ---
 
-### Wave 52 — `tag`: one document, against somebody's own vocabulary (Owen, 2026-08-26) — BUILT
+### Wave 52 — `tag` (Owen, 2026-08-26) — BUILT, then REMOVED 2026-09-13
 
-An engine command for Owen's wife, a lawyer with a personal tag vocabulary
-("christian nationalism", "free speech", "ban"). Her own software loops over
-her documents, converts each to plain text and shells `foundry tag` once per
-document; it answers a SET — which of her tags apply, plus new ones the
-document suggests — and nothing else. Argued in full in **`docs/TAGGING.md`**;
-this row is the index and the status.
+An engine command for Owen's wife, a lawyer with a personal tag vocabulary: her
+software converted each document to plain text and shelled `foundry tag` once
+per document, which answered which of her tags applied and what else the
+document suggested.
 
-`foundry tag --doc <file.txt> --tags <tags.txt> [--out <file.json>]`, plus
-analyze's shared `--model` / `--ollama` / `--nli-python` / `--nli-home` /
-`--fetch-nli-model`. `src/tag/` (input, evidence, ask, run), reusing
-`src/analyze/`'s machinery rather than copying it: the sentence segmenter, the
-resident NLI worker, both ranking passes (`scoreSentenceLevel` /
-`scoreWindowLevel`, EXPORTED for this), and the constrained-call envelope
-(`askConstrained`, extracted out of `askVerdict` — the schema, temperature 0,
-the `think` rule and the thinking-model trap are one body of code now). Same
-widest net, same 0.2 / 0.15 floors, no sensitivity knob, no fallbacks.
+**Removed at Owen's instruction on 2026-09-13** — *"it was a test feature for my
+wife, who built it elsewhere"*. `src/tag/`, the command, its options and
+`docs/TAGGING.md` are gone. It only ever consumed analyze's machinery (the NLI
+bridge, the sentence splitter, the constrained ask) and provided nothing to it,
+so nothing else moved; `resolveNliPython` and `node:fs` left `commands.ts` with
+it as their last callers there.
 
-**The decisions, each of which could have gone the other way:**
-
-1. **Aboutness, not stance.** analyze asks whether the AUTHOR asserts a claim;
-   a tag is a subject heading, so an opinion striking a ban down is about
-   "ban" and about "free speech". The hypothesis is `about <tag>`, written to
-   COMPLETE the pipeline's default template rather than to replace it — the
-   template is the calibration and is still never edited.
-2. **No locations, and that is the whole size difference.** Where a tag matched
-   is analyze's job; building the locator twice would be two answers that could
-   disagree. It is also what allows this command to normalise a hard-wrapped
-   paragraph before segmenting it, which analyze is forbidden to do.
-3. **No report file.** One document is minutes, so answers are held in memory
-   and written once. analyze's append-and-fsync report exists because a book is
-   hours.
-4. **`--out` is optional here alone** — the caller is a loop reading a pipe, so
-   without it the JSON goes to stdout; with it the PATH is the last stdout line,
-   the house convention.
-5. **An empty tags file is a legal run** (suggestions only, and no interpreter
-   is required for it); an absent one is exit 2. Missing doc, missing tags file
-   and a missing interpreter are all refused before any work, as usage errors.
-6. **A degraded call is a "no"**, an all-degraded verify stage refuses, and a
-   failed suggestion call refuses — an empty `suggested` would be a claim the
-   run did not make.
-
-**The output JSON is a cross-repo contract** (`{"applies":[…],"suggested":[…]}`,
-both keys always present, her spelling and her order in `applies`): fields added
-never renamed, changes announced before they ship — analyze's header posture and
-vtt-book's decode recipe, again.
-
-**Deferred out loud:** no tuning against a legal vocabulary (the floors are
-analyze's, unmeasured here — the first real audit is what should move them); no
-app surface, because the caller is her own software; no near-duplicate folding
-beyond case/quotes/dashes/trailing plural; no test, per the standing rule.
-Proved end to end on this PC against a scratch opinion: 8 sentences, 3 of 4 tags
-applied (`employment law` correctly not), 7 suggestions, and an empty-vocabulary
-run that started no worker at all.
+The row stays so the history is not silently rewritten: this command existed,
+shipped, and was deliberately withdrawn.
 
 ### Wave 53 — first-run setup, and the analysis worker's own Python (Owen, 2026-08-26) — BUILT
 
@@ -4139,9 +4100,7 @@ them, and Ollama's batching is not reachable on either machine.
   sequential stage, unchanged, byte for byte — and 12 under vLLM; it dispatches
   in the same strongest-first order and composes the findings from the jobs' own
   order afterwards, so what a pool changes is how long the stage takes and never
-  what it wrote. `foundry tag` asks through the same door and therefore already
-  speaks both dialects; it has no `--server` flag yet, which is now the whole of
-  what adding it would take.
+  what it wrote.
 - **App** — `AppSettings.llmServer` / `vllmUrl` / `vllmModel`; `llm:defaults`
   answers `server` and resolves the model/URL for the chosen kind; new
   `llm:servers` / `llm:set-servers`; a **Server** select on the settings card
@@ -4163,8 +4122,6 @@ them, and Ollama's batching is not reachable on either machine.
 
 **Deferred out loud, not silently:**
 
-- **`foundry tag` has no `--server` flag.** Its two closed questions already go
-  through the dialect-aware door; only the option and its pass-through are absent.
 - **analyze's NLI ranker is untouched.** A resident Python worker with its own
   model and lifecycle; the ranking half of a run costs what it always cost.
 - **No measurement.** The speedup is Owen's to measure on his own card, and the
