@@ -35,7 +35,7 @@
  * of them forgot a clause. So `actGates()` is the whole answer, every act at
  * once, and the tiles read it.
  *
- * ── FOUR PLACES IT DELIBERATELY DOES NOT REFUSE ─────────────────────────────
+ * ── FIVE PLACES IT DELIBERATELY DOES NOT REFUSE ─────────────────────────────
  *
  * 1. **A HOSTED WINDOW.** The work goes to the HOST's queue and runs on the
  *    host's compute — BookForge requires Crucible and has no ollama fallback at
@@ -43,13 +43,15 @@
  *    machine has pulled an ollama tag would dark a rail whose jobs never touch
  *    this machine's models. So hosted is lit, and the sentence says whose
  *    compute it is.
- * 2. **A LANGUAGE SERVER THAT IS NOT OLLAMA.** `llmServer: 'vllm'` is the
- *    OpenAI-compatible door (`--server openai`) pointed at a shared inference
- *    service, and the weights are over there. This machine's own memory is not
- *    what binds, so neither the floor nor the CPU rule applies. It is NOT probed
- *    here: a reachability check on every gate read would put a network timeout
- *    behind a tooltip, and an unreachable server already refuses by name at the
- *    seam that actually sends the request (`confirmServedModel`).
+ * 2. **A CRUCIBLE ON THIS MACHINE THAT SERVES THE CLASS.** The weights are on
+ *    that server, so this machine's own memory is not what binds and neither
+ *    the floor nor the CPU rule applies (`localCrucibleServes`). A REMOTE
+ *    Crucible is not consulted here at all: a reachability check on every gate
+ *    read would put a network timeout behind a tooltip, and an unreachable
+ *    server already refuses by name at the seam that sends the request. The
+ *    machine-wide `llmServer: 'vllm'` setting that used to be this clause was
+ *    retired with the registry (docs/SLOTS.md §7, package C) — an
+ *    OpenAI-compatible server is a SLOT now, not a setting.
  * 3. **CLEAN TEXT ON A PROCESSOR.** The CPU rule covers translate, simplify and
  *    analysis, and stops there. A cleanup is only ever offered in a hosted
  *    window (Owen, 2026-09-05), where clause 1 has already lit it; applying the
