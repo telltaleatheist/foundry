@@ -4892,7 +4892,7 @@ The two things, measured:
 | what | where | size | what it is |
 |---|---|---|---|
 | conda env `dots` | WSL Ubuntu, `/home/telltale/anaconda3/envs/dots` | 9.8 GB | the Foundry-era vLLM environment the retired launcher ran dots.ocr in (vllm 0.11.0, torch 2.8.0, transformers 4.57.1) |
-| `foundry-blocks-v1-4b.gguf` | `%LOCALAPPDATA%\foundry\models\` | 7.5 GB | a MODEL, not an environment — Owen's own fine-tune from the pre-VLM era (docs/BLOCKS_TRAINING.md at the `pre-vlm-strip` tag), referenced by nothing since 7a0d7a4, and ALREADY PUBLISHED on its mirror, Hugging Face `owenmorgan/foundry-models` — so this local file is a download, not the only copy |
+| `foundry-blocks-v1-4b.gguf` | `%LOCALAPPDATA%\foundry\models\` | 7.5 GB | a MODEL, not an environment — Owen's own fine-tune from the pre-VLM era (docs/BLOCKS_TRAINING.md at the `pre-vlm-strip` tag), referenced by nothing since 7a0d7a4, and ALREADY PUBLISHED on its mirror, Hugging Face `owenmorgan/foundry-models` — so this local file is a download, not the only copy. **DELETED 2026-09-14** on Owen's word, after the mirror was proven to hold the same 8,051,285,248 bytes (`x-linked-size`, sha256 etag 4b991fca…) |
 
 **What is worth keeping from each, and it is not a tarball of either.** A conda
 env is not relocatable (PHASE14 §7.2a found the same thing for pip's shebangs),
