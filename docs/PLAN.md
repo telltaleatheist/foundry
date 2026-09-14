@@ -4689,9 +4689,10 @@ that machine connects by reading `<CRUCIBLE_HOME>/pairing` — nobody types.
 | L | DELETIONS (PHASE15 §5.3, plus Owen's "no ollama fallbacks"): `cloud-providers.ts`, the cloud card, `ComputeSlotKind 'cloud'`, `placeOnCloud`, `FOUNDRY_ENDPOINT_HEADERS` from an app-held key, `model-lineup-local.json` (the floor is `CatalogRow.floors` alone), the engine's `--server anthropic` and `--server ollama` doors, the wizard's Ollama step and pull, `llm:defaults`/`openingModelFor` (the engine's route decides the model; the dialogs lose the model field), the local slot, **`page-reader.ts` and its two cards** (ruled below), act-gates' own "can this machine do it" reasoning and the CPU rule | I, J, K **and the gate below** | gated |
 
 **The gate on L, restated with BookForge:** a host-mode server plus an
-`ollama`/`anthropic` upstream serve text, AND `pages` answers `enabled: true`
-from a host-mode server on a clean Windows box with no WSL AND a real page comes
-back parsed (PHASE15 §3.10, c803aa3). Nothing on the no-Crucible fallback is
+`ollama`/`anthropic` upstream serve text, AND `pages` and `clean` answer
+`enabled: true` from a `llama-windows` server on a clean Windows box with no
+WSL AND a real page comes back parsed and a real block comes back cleaned
+(PHASE15 §3.10, 56cfe37). Nothing on the no-Crucible fallback is
 deleted before that is watched, because deleting it on a promise strands the
 person Foundry exists for.
 
@@ -4704,8 +4705,16 @@ extension of the foundry app. without it, foundry can simply open a file and loo
 at it … if it uses the GPU (as dots does), it should probably be crucible-side …
 crucible can decide if the user's system is even capable of running it … it
 should be a pass-through thin client UI for the crucible engine."* So host mode
-gains **`llama-windows`** (BookForge's name): a llama-server child for `pages`,
-no packs, no env, no lease, the 9B text class later by the same mechanism.
+gains **`llama-windows`** (BookForge's name) — and Owen then AMENDED it in
+BookForge's session (crucible 56cfe37, §0 amended block, §3.5, §3.10): **Windows
+IS a backend**, `backend_kind = "llama-windows"`, like `mlx-darwin`. A
+llama-server child per resident model, a GGUF catalog block (dots-ocr; qwen3.5-9b
+Q8_0; qwen3.8-27b Q4_K_M), lease and settle apply, and it serves the llm classes
+AND `pages`. The five Python job types answer `needs_wsl` with one sentence. WSL
+stays the PREFERRED engine (parallel dots under vLLM) and the host offers it as
+the upgrade from day one. For Foundry this is the ordinary local route with a
+resident model — package K's existing path — so nothing in K changes; only L's
+exit grew.
 Foundry's launcher is the spec, handed over at
 `C:\tmp\foundry-page-reader-spec\` the way the vLLM launcher was. Two of its
 facts changed on the port, deliberately (§3.10): the llama.cpp release is PINNED
