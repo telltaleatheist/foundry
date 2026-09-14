@@ -8,6 +8,18 @@
 > — but it should go through the normal doors accessible on windows or mac. if
 > we want the speed tricks, we can connect to a crucible server."*
 
+> **Superseded in part, 2026-09-14 evening — read docs/PLAN.md Wave 62 and
+> crucible `docs/PHASE15-HOST.md` first.** Owen: *"they dont have ollama
+> fallbacks or cloud anything at all … one contract, one SDK, one API."* The
+> Crucible server is the one door; routes and upstreams (Anthropic, OpenAI, an
+> Ollama) are the ENGINE's settings and Foundry draws a window onto them; a
+> no-WSL Windows box runs a host-mode server. §1's "works without Crucible"
+> vision, §2's `ollama`/`anthropic` doors, §3's local and cloud slots and §5b
+> are therefore on their way out — kept until Wave 62's gate is watched. What
+> stays exactly as written: the registry, the lease, the four 409s, atomic
+> placement, coordinate-on-connect, and the page reader (its fate is Wave 62's
+> one open question).
+
 ## 1. The vision, in Owen's words
 
 - *"foundry should work if they have no idea what theyre doing and they just

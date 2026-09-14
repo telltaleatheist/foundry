@@ -4646,3 +4646,68 @@ the book alone. **Untested by hand:** nobody has registered a real Crucible
 against this build — the provider's three answers, the capability read and the
 whole §5b path have been reasoned and typechecked, not watched.
 
+### Wave 62 — Crucible is the one door: routes, upstreams, the settings window, the pairing file (Owen, 2026-09-14 evening) — BUILDING
+
+**The contract is crucible `docs/PHASE15-HOST.md` (ce9f76d).** Every name on the
+wire is owned there; a name Foundry needs that the doc lacks is added THERE first.
+This entry is Foundry's half of it and supersedes docs/SLOTS.md §1–§3 where they
+disagree (SLOTS.md carries a note pointing here).
+
+**Owen's ruling, in his words:** *"bookforge/foundry gain a simple contract: send
+commands to the crucible server. period. they dont have ollama fallbacks or cloud
+anything at all … one contract, one SDK, one API, one communication method."* And:
+*"Bookforge and foundry setup/settings should be able to configure crucible
+settings. If the user enters an anthropic api key, it should pass through to
+crucible … the user shouldn't have to interact with crucible almost at all but
+should have access to it if they want to."* BookForge's addition, which Owen
+agreed: Crucible is the SINGLE SOURCE OF TRUTH for settings — a key entered in
+Foundry is saved in the engine and BookForge uses it too.
+
+**What that means here, in the doc's vocabulary.** A CLASS (`clean translate
+simplify analysis pages`) has a ROUTE on a server: `local` (the selected local
+model) or an UPSTREAM model id `<upstream>/<model>` where the upstream is exactly
+one of `anthropic`, `openai`, `ollama`. The route is the engine's setting (`GET/PUT
+/v1/settings`), keys are write-only there, and `GET /v1/capability` says the
+route per class with `selected` = the model an app sends. Crucible FORWARDS an
+upstream chat itself (§3.4), so Foundry sends every text act to the server's
+`/openai/v1` with `capability.selected` as `--model` — the same call whether the
+model is local or upstream, which is the point. A no-WSL Windows box runs a
+HOST-MODE server (`backend_kind = "none"`, a child of the `crucible host` tray
+process) that serves echo + settings + upstream forwarding and answers every card
+class `enabled: false` with one sentence. One server answers `:7100` per machine:
+WSL when the `crucible` distro exists, host mode otherwise, never both. An app on
+that machine connects by reading `<CRUCIBLE_HOME>/pairing` — nobody types.
+
+**Packages, in build order.** Each lands with its own note below.
+
+| # | Package | Depends on | Status |
+|---|---|---|---|
+| H | Coordinate-on-connect: catalog read first, module posted only when something is missing, followed/waited/refused by name; the row says what is happening in BookForge's words | SDK 0.6.0 (vendored) | building |
+| I | The settings WINDOW: Settings › AI routes card + the wizard's AI step draw `GET /v1/settings` for the chosen server and write through `PUT`; per-class route rows, three upstream cards, Test before Save; nothing stored in app-settings.json | PHASE15 §3.1–3.2, §5.2 | building |
+| J | Connect three ways, in order, automatic: the pairing file → `local`; a pasted connect code (SDK `parsePairing`); "get one on this machine" through `@crucible/bootstrap install()` when it ships (the door keeps refusing by name until then) | PHASE15 §3.6, §5.1 | building |
+| K | Dispatch + gates on the route: `--model capability.selected`; no lease and no card lane when the route is upstream (a per-server `[cloud]` lane, width 2, as BookForge); tiles lit iff an enabled server's capability row says `enabled`, dark with the row's own `reason` | H, I | next |
+| L | DELETIONS (PHASE15 §5.3, plus Owen's "no ollama fallbacks"): `cloud-providers.ts`, the cloud card, `ComputeSlotKind 'cloud'`, `placeOnCloud`, `FOUNDRY_ENDPOINT_HEADERS` from an app-held key, `model-lineup-local.json` (the floor is `CatalogRow.floors` alone), the engine's `--server anthropic` and `--server ollama` doors, the wizard's Ollama step and pull, `llm:defaults`/`openingModelFor` (the engine's route decides the model; the dialogs lose the model field), the local slot | I, J, K **and the gate below** | gated |
+
+**The gate on L, restated with BookForge:** a host-mode server plus an
+`ollama`/`anthropic` upstream serve text on a clean Windows box with no WSL.
+Nothing on the no-Crucible fallback is deleted before that is watched, because
+deleting it on a promise strands the person Foundry exists for.
+
+**THE ONE OPEN QUESTION — pages on a box without WSL.** PHASE15 §3.3/§3.5 say
+`pages` answers `enabled: false` in host mode: *"Windows is never a backend"*, no
+llama-server, no GGUF. Foundry's page reader (`page-reader.ts`: llama-server from
+the llama.cpp release, CUDA or CPU, the dots GGUF pair) runs on Windows TODAY, and
+page reading is the one act with no upstream — no cloud serves dots.ocr. Owen,
+this morning: *"if theres no install and no wsl, crucible manages the
+conversations between dots and whatever else from windows."* The two positions
+conflict. The proposed reconciliation, put to BookForge: host mode gains a `pages`
+class served by a llama-server CHILD (Foundry's launcher logic moved into the
+host-mode server, the way Ollama is llama.cpp one layer down) — "Windows is never
+an accelerator backend for job types and packs" stays true, and a machine that
+cannot run WSL2 still converts a PDF. Until ruled, `page-reader.ts` is NOT in
+package L and the friend keeps their EPUB.
+
+**Owed to Owen from Wave 61, now answered by the contract:** (a) the dialogs'
+model field — GONE, the route is the engine's; (b) page reads to a remote
+Crucible — the same read, `CRUCIBLE_READS` flips when K lands; (c) the release
+version — still his.
