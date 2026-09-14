@@ -28,7 +28,7 @@
  * translating a book somebody has edited possible at all, and it is why nothing
  * on this route consults an overlay, a curation or any other record of what was
  * decided. Everything below — the masking, the chunking, the verification, the
- * bank, the records file — is one implementation shared by both doors; what
+ * bank, the records file — is one implementation shared by every door; what
  * differs is which list of words and names the plan is built from. R6 collapses
  * them (docs/RENDERER.md §9).
  *
@@ -139,7 +139,7 @@
  * sent at all. The bank staying authoritative is also what makes a resume
  * idempotent: however many times a run is killed, the same book comes out.
  *
- * `--concurrency` puts N chunks in flight at once, because both doors run
+ * `--concurrency` puts N chunks in flight at once, because every door runs
  * concurrent requests together and a serial run leaves the GPU idle between
  * them — far more so on the OpenAI door, which is why its default is twelve and
  * Ollama's is four (`concurrencyFor`, model-server.ts). What
@@ -175,7 +175,7 @@ import {
   askModel, concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel,
   type ServerKind,
 } from './model-server.js';
-import { fetchTransport, type Transport } from './transport.js';
+import { fetchTransport, usageLine, type Transport } from './transport.js';
 import {
   chapterPosition, openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
 } from './records.js';
@@ -449,7 +449,7 @@ export interface TranslateOptions {
    * exactly one, made resident by the operator before this run was spawned — and
    * the served id is what the bank is keyed by. On `--server ollama` absent is
    * REFUSED by name: an Ollama holds a library. A name that is given is proved
-   * against the server on both doors before any block travels.
+   * against the server on every door before any block travels.
    */
   model?: string;
   /** The server. Required: the caller resolves each door's default (commands.ts). */
@@ -1451,13 +1451,23 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
     const outcome = await releaseModel(transport, kind, opts.endpoint, opts.model ?? '');
     opts.log(
       outcome === 'not-ours'
-        ? `${act}: nothing to unload — this run never loaded a model, and taking one off a server `
-          + 'somebody else put it on is not one job\'s decision to make (model-server.ts).'
+        ? `${act}: nothing to unload — this run never loaded a model, and nothing on the other end `
+          + 'is this job\'s to take down (model-server.ts).'
         : outcome === 'released'
           ? `${act}: asked ollama to unload "${opts.model}" — the card is free for the next job.`
           : `${act}: ollama did not acknowledge unloading "${opts.model}". If it is still resident `
             + 'it will fall out on its own idle timer; nothing about the book depends on this.',
     );
+    /*
+     * WHAT THE RUN SPENT, once, last, and in this act's own prefix. It is in the
+     * `finally` beside the release for the release's reason: a run that DIED
+     * after four hundred requests spent what it spent, and a count that only
+     * printed on the happy path would be missing from exactly the runs somebody
+     * is trying to account for. Null — and therefore silent — where no server
+     * reported usage at all; see `usageLine`.
+     */
+    const spent = usageLine(act);
+    if (spent !== null) opts.log(spent);
   }
 }
 
@@ -1569,11 +1579,11 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_TRANSLATE_CONCURRENCY);
 
   /*
-   * THE MODEL IS NOT RESOLVED YET, and the two doors read its absence
-   * differently. On the OpenAI door the server holds one resident model and
-   * naming it is retyping a choice the operator already made, so an absent
-   * `--model` means "whatever is being served"; on Ollama an absent one is
-   * refused by name, because that server holds a library. Either way the answer
+   * THE MODEL IS NOT RESOLVED YET, and the doors read its absence differently.
+   * On the OpenAI door the server holds one resident model and naming it is
+   * retyping a choice the operator already made, so an absent `--model` means
+   * "whatever is being served"; on Ollama and on a cloud provider an absent one
+   * is refused by name, because those hold a library and a catalog. Either way the answer
    * comes back from `openModelServer` below, and everything that records a model
    * reads it from there, so the record can never name something that did not
    * answer.
@@ -1608,6 +1618,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     kind,
     transport,
     endpoint,
+    log: opts.log,
     ...(wanted === undefined ? {} : { model: wanted }),
   });
   const model = server.model;

@@ -1,6 +1,6 @@
 /**
  * backend/http-refusal — turning a status code into a sentence a person can act
- * on, for the two doors that speak to an OpenAI-compatible server.
+ * on, for every door that speaks HTTP to somebody else's inference service.
  *
  * ── Why this exists ─────────────────────────────────────────────────────────
  *
@@ -30,7 +30,11 @@
  * IT NAMES NO PRODUCT. `426` means a version header is missing whoever is
  * serving; `model_not_resident` is a string some servers use and others do not.
  * The sentences describe the CONDITION, never the vendor — this program must
- * not be able to tell one OpenAI-compatible server from another.
+ * not be able to tell one OpenAI-compatible server from another. That rule is
+ * what let the Anthropic dialect (`translate/anthropic.ts`) use this file
+ * unchanged when it landed: 401 means the same thing at a cloud provider that it
+ * means behind a private router, and a sentence that had named a product would
+ * have had to be written a second time to say so.
  */
 
 /** How much of a server's own answer is worth quoting back. */

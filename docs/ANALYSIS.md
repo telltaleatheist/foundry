@@ -58,7 +58,7 @@ work, exit 1 after):
 ```
 foundry analyze --book <key.book.jsonl> --out <report.jsonl>
                     [--categories <cats.json>]
-                    [--model <name>] [--endpoint <url>] [--server <openai|ollama>]
+                    [--model <name>] [--endpoint <url>] [--server <openai|ollama|anthropic>]
                     [--nli-python <path>] [--fresh]
 ```
 
@@ -204,7 +204,7 @@ server preflight it was pointed at a dead port for.
 
 ## 2c. Which server answers the verdicts (Wave 58, 2026-09-08; two doors again since 2026-09-14)
 
-**`--server openai|ollama`, declared and never sniffed** — docs/SLOTS.md §2 is
+**`--server openai|ollama|anthropic`, declared and never sniffed** — docs/SLOTS.md §2 is
 the ruling and **docs/VLLM.md** owns the whole story. Briefly: `openai` (the
 default) speaks `/v1/chat/completions` to anything OpenAI-compatible, `ollama`
 speaks `/api/generate` to the Ollama on this machine.

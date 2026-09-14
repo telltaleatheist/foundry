@@ -1,6 +1,6 @@
-# The two inference doors for the text acts
+# The three inference doors for the text acts
 
-> **2026-09-14 — TWO DOORS, AND THE LOCAL ONE IS BACK.** For one night this
+> **2026-09-14 — THE LOCAL DOOR IS BACK, AND A CLOUD ONE JOINED IT.** For one night this
 > document said there was a single OpenAI-compatible door and that Foundry could
 > not run without an inference service. Owen reversed the premise the same night
 > and **docs/SLOTS.md is the plan of record**: *"foundry should be prepared to
@@ -13,9 +13,12 @@
 > Ollama unload is unconditional, Package A's headline ruling) and there are no
 > act-level model defaults (`--model` is REQUIRED on Ollama, refused by name when
 > it is absent). The `openai` KIND was spelled `vllm` before — renamed because
-> that door serves Crucible, a local llama-server, a vLLM and a cloud provider
+> that door serves Crucible, a local llama-server, a vLLM and OpenAI's own API
 > alike; `src/translate/vllm.ts` keeps its filename so this document's
-> measurements keep their addresses. The current contract is §§1–5.
+> measurements keep their addresses. **A THIRD DOOR LANDED THE SAME DAY**:
+> `--server anthropic` (Package F, docs/SLOTS.md §6), which is a dialect and
+> not a URL — `/v1/messages`, a top-level `system`, content blocks, a forced
+> tool for a constrained answer. The current contract is §§1–5.
 
 Owen, 2026-09-08, the ruling that put the door in: *"lets build in vllm
 batching. ollama batching doesnt work. its an unfinished feature ollama tried to
@@ -31,7 +34,9 @@ door `--server` names, and nothing a pass DECIDES changes with it.
 ## 1. Why, in one paragraph
 
 Every one of the acts is a POOL of requests over a book of thousands of blocks —
-twelve in flight by default on the OpenAI door, four on Ollama. A pool only pays
+twelve in flight by default on the OpenAI door, four on Ollama and four on a
+cloud provider (§2a says why a provider's four is a rate limit rather than a
+card). A pool only pays
 if the server runs the requests *together*, and that is what the OpenAI door is
 for: continuous batching, one CUDA graph replayed across the batch, and
 throughput that climbs with the number of requests in flight. **The pool is the
@@ -46,37 +51,43 @@ the OpenAI door is the speed tier rather than the only one.
 ## 2. The flags, and what the engine decides for itself
 
 ```
-foundry translate  … [--server <openai|ollama>] [--endpoint <url>] [--model <name>] [--concurrency <n>]
-foundry clean-text … [--server <openai|ollama>] [--endpoint <url>] [--model <name>] [--concurrency <n>]
-foundry analyze    … [--server <openai|ollama>] [--endpoint <url>] [--model <name>] [--concurrency <n>]
+foundry translate  … [--server <openai|ollama|anthropic>] [--endpoint <url>] [--model <name>] [--concurrency <n>]
+foundry clean-text … [--server <openai|ollama|anthropic>] [--endpoint <url>] [--model <name>] [--concurrency <n>]
+foundry analyze    … [--server <openai|ollama|anthropic>] [--endpoint <url>] [--model <name>] [--concurrency <n>]
 ```
 
 `--server` is **declared, never sniffed from the URL**, and an unknown value is
-refused by name (`--server takes openai or ollama, not "x"`). A sniff gets it
-right until it doesn't — a proxy in front of both, an Ollama on 8000 because
-somebody moved it — and what a wrong guess costs is not an error but a book
-translated by a model nobody chose.
+refused by name (`--server takes openai, ollama or anthropic, not "x"`). A sniff
+gets it right until it doesn't — a proxy in front of both, an Ollama on 8000
+because somebody moved it — and what a wrong guess costs is not an error but a
+book translated by a model nobody chose.
 
 `--endpoint` is the server. Absent on the `openai` door, the engine reads
 `backend.endpointUrl` from its settings — **the same setting the reading door
 reads**, because on that door it is the same server: the page reader and the text
 models are made resident on it in turn. Absent on `ollama` it is
-`http://localhost:11434`, and the SETTING IS NOT CONSULTED there: handing an
-OpenAI-compatible URL to a run that is about to speak `/api/tags` would point a
-person's Ollama job at their vLLM. The app passes the flag on every line it
-composes, so a job never depends on the engine's fallback.
+`http://localhost:11434` and absent on `anthropic` it is
+`https://api.anthropic.com`, and the SETTING IS NOT CONSULTED on either: handing
+an OpenAI-compatible URL to a run about to speak `/api/tags` or `/v1/messages`
+would point a person's local or cloud job at their vLLM. The app passes the flag
+on every line it composes, so a job never depends on the engine's fallback.
 
-| | `openai` (default) | `ollama` |
-|---|---|---|
-| Who is on the other end | Crucible, a local llama-server, a vLLM, a cloud provider | the friend's own Ollama |
-| Route | `POST /v1/chat/completions` | `POST /api/chat` |
-| Model proof | `GET /v1/models`, exact id match; the listing's `id` is what every record names | `GET /api/tags`, exact tag or its `:latest`; the refusal lists what it HAS |
-| `--model` absent | **the served model**, resolved before any cache key and recorded | **refused by name** — an Ollama holds a library, and there is no act-level default to fall back on |
-| Thinking switch | `chat_template_kwargs: {enable_thinking: false}` for the qwen3 family — on its way to a server-side manifest default | `think: false`, same family rule, and never on a model without thinking support (qwen2.5 answers a 400 naming the field) |
-| Context window | the server's, read back as `max_model_len`; a request is sized INTO it, and one that cannot fit is refused by name before it is sent | `num_ctx` per request, PINNED once a book (`contextWindowFor`) or once a stage (`stageNumCtx`), because Ollama reloads the runner on any change |
-| `--concurrency` default | 12 (`DEFAULT_TEXT_CONCURRENCY`) | 4 (`DEFAULT_OLLAMA_CONCURRENCY`) |
-| Loading | **never** — the operator makes a model resident before a pass is spawned (§5) | **never** — foundry does not pull and does not warm |
-| End of the run | **nothing** — a pass ending is not a reason to take a model off a card somebody else owns | **unloaded, always** (`keep_alive: 0`), success or failure, and there is no flag to keep it |
+| | `openai` (default) | `ollama` | `anthropic` |
+|---|---|---|---|
+| Who is on the other end | Crucible, a local llama-server, a vLLM, **or OpenAI's own API** | the friend's own Ollama | Anthropic's API, or a proxy that speaks it |
+| Route | `POST /v1/chat/completions` | `POST /api/chat` | `POST /v1/messages` |
+| The system prompt | a `{role:'system'}` message | a `{role:'system'}` message | a top-level `system` field |
+| Credential | whatever the header map holds (`Authorization: Bearer …` at OpenAI) | none | `x-api-key` from the header map; `anthropic-version: 2023-06-01` is added by the ENGINE, because it is a property of the dialect and not of the endpoint |
+| Model proof | `GET /v1/models`, exact id match; the listing's `id` is what every record names | `GET /api/tags`, exact tag or its `:latest`; the refusal lists what it HAS | `GET /v1/models`, exact id match — and a listing that does not answer SKIPS the check OUT LOUD rather than refusing |
+| `--model` absent | **the served model**, resolved before any cache key and recorded; over more than one it is refused, quoting up to twelve ids and counting the rest | **refused by name** — an Ollama holds a library, and there is no act-level default to fall back on | **refused by name** — a provider holds a catalog, which is the same argument |
+| Thinking switch | `chat_template_kwargs: {enable_thinking: false}` for the qwen3 family — on its way to a server-side manifest default. No `gpt-*` or `o*` name matches that rule, so a provider never sees the field | `think: false`, same family rule, and never on a model without thinking support (qwen2.5 answers a 400 naming the field) | **nothing is sent** — Claude models do not reason unless asked, so the absence of a field is the setting |
+| Context window | the server's, read back as `max_model_len`; a request is sized INTO it, and one that cannot fit is refused by name before it is sent. A provider publishes none, so `capFor` gets null and the wanted budget goes out unclamped | `num_ctx` per request, PINNED once a book (`contextWindowFor`) or once a stage (`stageNumCtx`), because Ollama reloads the runner on any change | the provider's: nothing read back, nothing pinned, nothing measured |
+| The constrained answer (`analyze`) | `response_format: {type:'json_schema', json_schema:{…, strict:true}` | `format: <the schema object>` on `/api/generate` | one tool whose `input_schema` IS that schema, forced with `tool_choice: {type:'tool', name}`; the verdict is read from the `tool_use` block's `input` |
+| Truncation signal | `finish_reason === 'length'` | `done_reason === 'length'` | `stop_reason === 'max_tokens'` |
+| A 429 | **waited out**, not the end of the run (§2a) | never asked for — Ollama queues instead | **waited out**, and a 529 "overloaded" with it |
+| `--concurrency` default | 12 (`DEFAULT_TEXT_CONCURRENCY`) | 4 (`DEFAULT_OLLAMA_CONCURRENCY`) | 4 (`DEFAULT_CLOUD_CONCURRENCY`) |
+| Loading | **never** — the operator makes a model resident before a pass is spawned (§5) | **never** — foundry does not pull and does not warm | **never** — there is nothing to load |
+| End of the run | **nothing** — a pass ending is not a reason to take a model off a card somebody else owns | **unloaded, always** (`keep_alive: 0`), success or failure, and there is no flag to keep it | **nothing** — there was never a card |
 
 The unload is Owen's, 2026-09-13: *"ollama should always, always bring down the
 model as soon as the job is done. they arent chatting with it, theyre using it
@@ -91,23 +102,85 @@ the same book cleaned through the other are the same pass asked of different
 plumbing — the bank does not carry across, and §4 says why that is right.
 
 Files: `src/translate/transport.ts` (HTTP as a value, and the numbers and rules
-both doors share), `src/translate/vllm.ts` (the OpenAI dialect),
-`src/translate/ollama.ts` (the Ollama dialect),
+every door shares — including the rate-limit wait and the usage tally),
+`src/translate/vllm.ts` (the OpenAI dialect), `src/translate/ollama.ts` (the
+Ollama dialect), `src/translate/anthropic.ts` (the Anthropic dialect),
 `src/translate/model-server.ts` (the choice, the proof and the record), and four
 call sites — `src/translate/run.ts`, `src/clean/run.ts`, `src/clean/epub.ts`,
 `src/analyze/run.ts`.
+
+### 2a. Cloud providers — Package F (Owen, 2026-09-14)
+
+Owen: *"give them the option of connecting an api key for openai or claude
+instead of using the 27b or the 9b. if the user wants to they can use usage
+credits from a cloud model… for weaker systems."* **Text acts only** — page
+reading stays local — and it is a deliberate per-job choice in the app, never
+something `any` falls through to (docs/SLOTS.md §3).
+
+**Only ONE of the two needed a dialect.** OpenAI's own API is an
+OpenAI-compatible server, so it is the door that already existed: `--server
+openai --endpoint https://api.openai.com/v1`, `--model` named because a listing
+of dozens has no default, and the key in the header map as
+`{"Authorization": "Bearer sk-…"}`. Anthropic is a different wire end to end,
+so it is `--server anthropic`.
+
+**What is sent.** On `anthropic`: `{model, system, messages:[{role:'user',
+content}], max_tokens, temperature}` to `POST <endpoint>/v1/messages`, where
+`max_tokens` is `ChatTuning.numPredict ?? answerBudget` unclamped, and the
+answer is `content[0].text`. For a verdict, that body plus one tool whose
+`input_schema` is the caller's schema and a `tool_choice` forcing it. On
+`openai`, byte for byte what a vLLM has always been sent.
+
+**What is NEVER sent.** No thinking switch on `anthropic` (the absence is the
+setting) and none to any provider on `openai` either, because `takesThinkField`
+matches the qwen3 family prefix and no hosted model name does. No window field,
+no `num_ctx`, no load, no unload, no `keep_alive`. No `max_completion_tokens`:
+the `openai` door sends `max_tokens` to everything, because deciding otherwise
+per request would mean sniffing the URL or the model name, and the honest shape
+for a provider whose wire genuinely differs is a DECLARED kind of its own —
+which is exactly what `anthropic` is. A model that refuses `max_tokens` answers
+400 naming the field, and that message is quoted back verbatim.
+
+**What a 429 does.** It is a **busy signal, not a dead server** — the one
+status where this program's "it will not be there on the second attempt either"
+rule is exactly wrong. `withBusyWait` (transport.ts) honours `retry-after` when
+the provider sends one (seconds or an HTTP date, capped at 60), else backs off
+from 2 s doubling to 30 s, up to **six attempts**, LOGGING each wait with the
+status, the reason and the number of seconds; after the sixth the response is
+handed back untouched and the block takes its normal failure path. Anthropic's
+529 "overloaded" is read the same way and is declared by that door alone. Every
+other 5xx and every transport failure still ends the run. The wait lives in ONE
+place both cloud doors call, and Ollama never calls it.
+
+**What a run costs.** Both providers return token counts —
+`usage.prompt_tokens`/`completion_tokens` at OpenAI,
+`usage.input_tokens`/`output_tokens` at Anthropic — and they are accumulated
+per run and printed as ONE line at the end, in the act's own prefix:
+
+```
+translate: 412 requests, 1,203,441 tokens in, 388,120 out
+```
+
+**foundry does not price it.** Prices change weekly and differ per key and tier;
+a number invented here would be wrong in a way that looks authoritative. The app
+multiplies. The tally is reset by `openModelServer`, which every run calls
+exactly once before its first request, and a door that reported no usage at all
+prints nothing rather than a line of zeroes.
 
 ### analyze asks a different KIND of question
 
 The three text acts ask for prose. `analyze` asks a CLOSED question and
 constrains the decode to the legal answers — measured both more accurate and
 about five times cheaper than asking politely and parsing hopefully
-(`src/analyze/verify.ts`'s header). The two doors spell that constraint
-differently and mean the same thing: `response_format: {type: "json_schema"}` on
-a chat turn here, `format: <the schema object>` on `/api/generate` there, both
-grammar-constrained decoding underneath. `askConstrained` sends the schema
-object, the prompt string, temperature 0 and a small token ceiling either way,
-and adds `num_ctx` on the Ollama side only.
+(`src/analyze/verify.ts`'s header). The three doors spell that constraint three
+ways and mean one thing: `response_format: {type: "json_schema"}` on a chat turn
+here, `format: <the schema object>` on `/api/generate` there, and on `anthropic`
+a single TOOL whose `input_schema` is that same schema object with `tool_choice`
+forcing it — all three grammar-constrained decoding underneath, and the third
+executes nothing: the forced call IS the answer, read from its `input` and
+re-serialised so `parseVerdict` sees one string whichever door produced it.
+`askConstrained` sends the schema object, the prompt string, temperature 0 and a
+small token ceiling every way, and adds `num_ctx` on the Ollama side only.
 
 **Ollama's thinking trap is ported, and it is not optional.** Measured in
 briefcase with qwen3.8:27b: a JSON grammar sent to a THINKING model constrains
@@ -124,7 +197,7 @@ the model something it was never trained to read. And a degradation stays a
 degradation: one bad call must not end a stage making hundreds of tiny ones.
 
 **analyze's concurrency default is 12 like the others on the OpenAI door, and 4
-on Ollama.** It was 1 on Ollama for its whole history, and four there mostly buys
+on Ollama and on `anthropic`.** It was 1 on Ollama for its whole history, and four there mostly buys
 queueing rather than throughput — Ollama serialises per model unless its own
 parallelism was turned up — but a pool never moved a verdict on either door.
 The pool dispatches in the same strongest-first order Owen ruled,

@@ -56,6 +56,7 @@ import type { ModelServer } from '../translate/model-server.js';
 import type { Transport } from '../translate/transport.js';
 import { readGenerateAnswer } from '../translate/ollama.js';
 import { constrainedChatBody, readChatAnswer } from '../translate/vllm.js';
+import { constrainedToolBody, readMessageAnswer } from '../translate/anthropic.js';
 import type { FlagWindow, WindowCategory } from './rank.js';
 
 /**
@@ -245,21 +246,30 @@ export interface ConstrainedAnswer {
  * depending on what was asked — and because the trap below must have exactly one
  * copy.
  *
- * ── TWO DIALECTS, ONE QUESTION ──────────────────────────────────────────────
+ * ── THREE DIALECTS, ONE QUESTION ────────────────────────────────────────────
  *
- * The question is identical on both doors — same prompt string, same schema
+ * The question is identical on every door — same prompt string, same schema
  * object, same temperature 0, same token ceiling — and so is the CONSTRAINT:
- * Ollama's `format` on `/api/generate` and the OpenAI door's `response_format:
- * {type:"json_schema"}` on a chat turn are the same grammar-constrained decode
- * under two spellings, which is why this can be a transport branch rather than a
- * second way of asking.
+ * Ollama's `format` on `/api/generate`, the OpenAI door's `response_format:
+ * {type:"json_schema"}` on a chat turn, and Anthropic's single forced TOOL whose
+ * `input_schema` is that same schema object are three spellings of one
+ * grammar-constrained decode, which is why this can be a transport branch rather
+ * than a second way of asking. The third is the least obvious of the three and
+ * is argued where it is written (`constrainedToolBody`, translate/anthropic.ts):
+ * nothing is executed and nothing is handed back to the model — `tool_choice`
+ * naming the tool is simply that API's way of saying "your next output is an
+ * object of this shape". Its answer arrives as the tool call's `input`, and the
+ * dialect re-serialises it, so what reaches `parseVerdict` below is the same
+ * string whichever door produced it.
  *
  * WHAT DOES NOT CROSS IS `num_ctx`. It is a request option on Ollama, where
  * `stageNumCtx`'s whole argument applies — one size per stage, because that
  * server reloads the runner on a change. The OpenAI door's window was fixed when
  * its model was made resident, so the number is simply not sent there and
  * `capFor` clamps the ANSWER against what the server said it can hold, which is
- * the part that still matters.
+ * the part that still matters. A provider publishes no window at all, so
+ * neither the size nor the clamp applies there and the token ceiling goes out
+ * as it was measured.
  *
  * AND THE DEGRADATION VOCABULARY IS SHARED. A transport failure, a non-200 and
  * an answer that is not the door's documented shape all come back as
@@ -299,11 +309,17 @@ export async function askConstrained(
     ? await readGenerateAnswer(
       transport, server.endpoint, server.model, prompt, numCtx, schema, predictTokens,
     )
-    : await readChatAnswer(
-      transport,
-      server.endpoint,
-      constrainedChatBody(server.model, prompt, schema, predictTokens, server.maxModelLen),
-    );
+    : server.kind === 'anthropic'
+      ? await readMessageAnswer(
+        transport,
+        server.endpoint,
+        constrainedToolBody(server.model, prompt, schema, predictTokens),
+      )
+      : await readChatAnswer(
+        transport,
+        server.endpoint,
+        constrainedChatBody(server.model, prompt, schema, predictTokens, server.maxModelLen),
+      );
   if (answer.truncated === true) {
     return {
       text: null,

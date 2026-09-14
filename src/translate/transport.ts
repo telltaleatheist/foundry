@@ -1,7 +1,7 @@
 /**
  * translate/transport — HTTP as a value, and the numbers every act shares.
  *
- * ── THE SERVER IS SOMEBODY ELSE'S, AND THERE ARE TWO KINDS OF IT ────────────
+ * ── THE SERVER IS SOMEBODY ELSE'S, AND THERE ARE THREE KINDS OF IT ──────────
  *
  * This file sends HTTP and reads what comes back. It does not start a server,
  * does not stop one and does not pull a model. Owen's ruling of 2026-09-13/14
@@ -16,10 +16,12 @@
  * renamed out of `ollama.ts` to say so. The rename stands and the dialect came
  * back beside it: `ollama.ts` now holds ONLY the Ollama dialect — `/api/chat`
  * with `num_ctx` per request, `/api/tags`, `keep_alive: 0`, the `/api/generate`
- * schema-constrained verdict — and `vllm.ts` holds only the OpenAI one. Which
- * of the two is spoken is DECLARED on `--server`, never sniffed from the URL.
+ * schema-constrained verdict — `vllm.ts` holds only the OpenAI one, and
+ * `anthropic.ts` (Owen, 2026-09-14, docs/SLOTS.md §6 Package F) holds only
+ * Anthropic's `/v1/messages`. Which of the three is spoken is DECLARED on
+ * `--server`, never sniffed from the URL.
  *
- * ── WHAT IS STILL HERE, AND WHY IT IS HERE AND NOT IN EITHER DIALECT ────────
+ * ── WHAT IS STILL HERE, AND WHY IT IS HERE AND NOT IN ANY DIALECT ───────────
  *
  * `Transport` is the seam the tests drive the whole verification loop through
  * without a GPU; `fetchTransport` is the one real implementation and the one
@@ -27,8 +29,18 @@
  * measurements shared by every act, and `takesThinkField` is the rule for which
  * model families take a thinking switch — one rule, spelled two ways on the
  * wire (`think: false` there, `chat_template_kwargs` here). They are the
- * act-independent and dialect-independent half; the two other files are the
+ * act-independent and dialect-independent half; the three other files are the
  * dialects.
+ *
+ * TWO MORE THINGS MOVED IN HERE WITH PACKAGE F, and both are here for the same
+ * reason the thinking rule is: they are true of MORE THAN ONE dialect and a
+ * second copy would be a second answer. `withBusyWait` is the rate-limit wait
+ * both cloud doors share — a 429 is not a dead server, it is "not yet" — and
+ * the usage tally (`recordUsage`, `usageLine`) is the run's one count of what
+ * it spent, accumulated wherever a server reports it and printed once at the
+ * end by the act. Neither is Ollama's: a local Ollama queues instead of
+ * rate-limiting, and it reports its counts under different names nobody is
+ * billing for.
  *
  * ONE BLOCK PER REQUEST, AND THE ONE EXCEPTION. Measured: at paragraph
  * granularity a 14b model translates German prose reliably, and batching
@@ -67,6 +79,22 @@ export class TransportError extends Error {
 export interface HttpResponse {
   status: number;
   body: string;
+  /**
+   * The response's own headers, lower-cased, where the transport had any.
+   *
+   * ADDED FOR EXACTLY ONE READER and deliberately not for general use:
+   * `withBusyWait` needs `retry-after`, because a provider that says how long
+   * to wait has told this program something better than any backoff curve it
+   * could invent. Optional because a fake transport does not have to make one
+   * up — a missing map is read as "it did not say", which is the honest
+   * reading, and the backoff takes over.
+   *
+   * Nothing here is ever logged except the number of seconds parsed out of
+   * `retry-after`. A response header is not a credential, but the rule in this
+   * program is that header VALUES do not reach the log, and one exception would
+   * be the beginning of the rule not holding.
+   */
+  headers?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -76,10 +104,27 @@ export interface HttpResponse {
  * the verification loop — a dropped marker, an echo, an empty answer, a retry
  * that succeeds — without a live server and without a GPU. Nothing else in this
  * command is hard to test; this is the one seam that matters.
+ *
+ * ── THE OPTIONAL `headers` ARGUMENT IS THE DIALECT'S, NOT THE ENDPOINT'S ────
+ *
+ * The endpoint's headers are a property of the ENDPOINT and are attached once,
+ * inside `fetchTransport`, so that no call site has to remember them. What this
+ * argument carries is the other kind: a header that is a property of the
+ * DIALECT — `anthropic-version: 2023-06-01` is required by Anthropic's API of
+ * every caller, whatever endpoint it is reached at and whoever owns the
+ * credential, so the engine sends it itself rather than asking the app to put a
+ * protocol constant in a credential map.
+ *
+ * It is optional, so a transport written before this existed — every fake in
+ * the tests — still satisfies the type and simply ignores it.
  */
 export interface Transport {
-  get(url: string): Promise<HttpResponse>;
-  post(url: string, body: string): Promise<HttpResponse>;
+  get(url: string, headers?: Readonly<Record<string, string>>): Promise<HttpResponse>;
+  post(
+    url: string,
+    body: string,
+    headers?: Readonly<Record<string, string>>,
+  ): Promise<HttpResponse>;
 }
 
 /**
@@ -105,6 +150,16 @@ const REQUEST_TIMEOUT_MS = 300_000;
  *
  * A caller may pass a map explicitly — tests do — and passing `{}` means the
  * run deliberately sends none.
+ *
+ * ── THE THREE LAYERS OF HEADERS, AND WHY THEY ARE IN THIS ORDER ─────────────
+ *
+ * A dialect's own constants go on FIRST, the endpoint's map second, and
+ * `content-type` last. So a map wins over a dialect constant — a person who
+ * wrote `anthropic-version` into their own map for THIS endpoint has said
+ * something specific and gets it — and `content-type` wins over everything,
+ * because the body really is JSON and a header that said otherwise would be
+ * this program lying about what it sent. `parseEndpointHeaders` already refuses
+ * that name, so the ordering is belt and the refusal is braces.
  */
 export function fetchTransport(
   timeoutMs: number = REQUEST_TIMEOUT_MS,
@@ -116,7 +171,9 @@ export function fetchTransport(
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
-      return { status: response.status, body: await response.text() };
+      const seen: Record<string, string> = {};
+      response.headers.forEach((value, name) => { seen[name.toLowerCase()] = value; });
+      return { status: response.status, body: await response.text(), headers: seen };
     } catch (error) {
       const reason = (error as Error).name === 'AbortError'
         ? `no answer in ${(timeoutMs / 1000).toFixed(0)}s`
@@ -127,15 +184,213 @@ export function fetchTransport(
     }
   };
   return {
-    get: (url) => call(url, { method: 'GET', headers: { ...extra } }),
-    post: (url, body) => call(url, {
+    get: (url, dialect) => call(url, { method: 'GET', headers: { ...dialect, ...extra } }),
+    post: (url, body, dialect) => call(url, {
       method: 'POST',
-      // The endpoint's headers first, so `content-type` is ours whatever a map
-      // says. `parseEndpointHeaders` already refuses that name; this ordering
-      // means the refusal is belt and the body's honesty is braces.
-      headers: { ...extra, 'content-type': 'application/json' },
+      headers: { ...dialect, ...extra, 'content-type': 'application/json' },
       body,
     }),
+  };
+}
+
+/**
+ * Where a line that nobody threaded a sink to goes.
+ *
+ * `commands.ts`'s own `log` writes to stderr — "progress and diagnostics go to
+ * stderr; command RESULTS go to stdout" — so this is the same file descriptor
+ * the act's lines are already on, reached without threading a sink through four
+ * acts, two dialects and a retry loop to arrive at it. A default of SILENCE was
+ * the alternative and it is the wrong one: a run that waited half a minute on a
+ * rate limit and said nothing looks like a run that hung.
+ */
+function stderrLine(line: string): void {
+  process.stderr.write(`${line}\n`);
+}
+
+/**
+ * ── A RATE LIMIT IS A BUSY SIGNAL, NOT A DEAD SERVER (docs/SLOTS.md §3) ─────
+ *
+ * Everywhere else in this program the rule is that a server which did not
+ * answer will not answer on the second attempt either, and a retry only delays
+ * the message. A 429 is the one status where that reasoning is exactly wrong:
+ * the provider is there, it understood the request, and it has said "not yet".
+ * Ending a two-thousand-block book on the first one would throw away hours of
+ * work over a condition whose whole meaning is that waiting fixes it. Anthropic
+ * has a second status with the same meaning — 529, its own "overloaded" — and
+ * it is passed in by that door rather than assumed here, because 529 is not a
+ * standard status and reading it this way at an endpoint that meant something
+ * else by it would be a guess.
+ *
+ * WHAT IS NOT RETRIED IS EVERYTHING ELSE, and that is deliberate: a 5xx other
+ * than the one a door declares, a 4xx about the request itself, and a transport
+ * failure all end the run as they always did. A retry on those is the thing
+ * this program has refused to do since the beginning.
+ *
+ * `retry-after` WINS WHEN IT IS THERE. A provider that says how long to wait
+ * knows something no backoff curve does; it is capped at a minute so a
+ * misconfigured proxy answering `retry-after: 86400` cannot park a book for a
+ * day. Where it is absent the wait doubles from two seconds and stops at
+ * thirty, which is long enough to outlast a token bucket refilling and short
+ * enough that six attempts is under two minutes rather than an afternoon.
+ *
+ * AND IT IS BOUNDED. Six attempts, then the response is handed back EXACTLY as
+ * it arrived and the caller's normal failure path runs — the block is refused
+ * with the provider's own words in it. A limit that retried forever would turn
+ * "your key is over its monthly cap" into a job that never finishes and never
+ * says why.
+ *
+ * ONE COPY, AND THE CALLERS DO NOT KNOW ABOUT IT. Both cloud doors send through
+ * here; Ollama does not, because a local Ollama queues rather than refusing and
+ * a wait there would be a wait for nothing.
+ */
+const BUSY_ATTEMPTS = 6;
+const BUSY_FIRST_WAIT_MS = 2_000;
+const BUSY_MAX_WAIT_MS = 30_000;
+const RETRY_AFTER_CAP_MS = 60_000;
+
+/** What a status MEANS, for the line the wait is announced with. */
+function busyReason(status: number): string {
+  if (status === 429) return 'rate limited';
+  if (status === 529) return 'overloaded';
+  return `busy (${status})`;
+}
+
+/**
+ * `retry-after` in milliseconds, or null where the server did not say.
+ *
+ * The header is defined as either a number of seconds or an HTTP date, and
+ * providers send both; reading only the first would silently fall back to the
+ * backoff for the other, which is a smaller mistake than guessing but still a
+ * worse wait than the one that was offered. A value that is neither, or is in
+ * the past, is read as "it did not say".
+ */
+export function retryAfterMs(headers: Readonly<Record<string, string>> | undefined): number | null {
+  const said = headers?.['retry-after'];
+  if (said === undefined || said.trim().length === 0) return null;
+  const seconds = Number(said.trim());
+  if (Number.isFinite(seconds)) {
+    return seconds <= 0 ? 0 : Math.min(seconds * 1000, RETRY_AFTER_CAP_MS);
+  }
+  const at = Date.parse(said);
+  if (Number.isNaN(at)) return null;
+  const wait = at - Date.now();
+  return wait <= 0 ? 0 : Math.min(wait, RETRY_AFTER_CAP_MS);
+}
+
+/** Send, and wait out the statuses this door declares to mean "not yet". */
+export async function withBusyWait(
+  send: () => Promise<HttpResponse>,
+  options: {
+    /** The statuses that mean "wait" on THIS door. Never Ollama's. */
+    retryOn: readonly number[];
+    /** The URL the wait is about, for the line. Never carries a credential. */
+    where: string;
+    log?: (line: string) => void;
+  },
+): Promise<HttpResponse> {
+  const log = options.log ?? stderrLine;
+  let backoff = BUSY_FIRST_WAIT_MS;
+  for (let attempt = 1; ; attempt += 1) {
+    const response = await send();
+    if (!options.retryOn.includes(response.status)) return response;
+    if (attempt >= BUSY_ATTEMPTS) {
+      log(
+        `${options.where} answered ${response.status} (${busyReason(response.status)}) on attempt `
+        + `${attempt} of ${BUSY_ATTEMPTS} — that is the last one, so this request is refused with `
+        + 'the provider\'s own answer.',
+      );
+      return response;
+    }
+    const said = retryAfterMs(response.headers);
+    const wait = said ?? backoff;
+    log(
+      `${options.where} answered ${response.status} (${busyReason(response.status)}) — waiting `
+      + `${(wait / 1000).toFixed(1)}s${said === null ? '' : ' (its own retry-after)'} and asking `
+      + `again, attempt ${attempt + 1} of ${BUSY_ATTEMPTS}.`,
+    );
+    await new Promise<void>((resolve) => { setTimeout(resolve, wait); });
+    backoff = Math.min(backoff * 2, BUSY_MAX_WAIT_MS);
+  }
+}
+
+/**
+ * ── WHAT THE RUN SPENT, COUNTED WHERE IT IS REPORTED ────────────────────────
+ *
+ * Owen, 2026-09-14: a cloud provider's cost is the thing the person chose it
+ * with, and a run that will not say what it used is a run they cannot budget.
+ * Both cloud dialects hand back token counts on every answer — OpenAI as
+ * `usage.prompt_tokens`/`completion_tokens`, Anthropic as
+ * `usage.input_tokens`/`output_tokens` — and a local vLLM reports the same
+ * OpenAI-shaped numbers, so the tally is kept whenever a server offers one
+ * rather than only when the door is a cloud one. It is a count of REQUESTS AND
+ * TOKENS and nothing else: **this program does not price it**. Prices change
+ * weekly, they differ per key and per tier, and a number invented here would be
+ * wrong in a way that looks authoritative. The app multiplies.
+ *
+ * A PROCESS IS A RUN, which is what makes a module-level tally honest here: the
+ * CLI is spawned once per job, and `openModelServer` — called exactly once, and
+ * before any request — resets it, so the count can never belong to two runs. A
+ * test harness that drives several runs in one process gets the same reset for
+ * the same reason.
+ */
+export interface UsageTally {
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+let tally: UsageTally = { requests: 0, inputTokens: 0, outputTokens: 0 };
+
+/** One answer's counts. A door that read none of them calls this with zeroes. */
+export function recordUsage(inputTokens: number, outputTokens: number): void {
+  tally = {
+    requests: tally.requests + 1,
+    inputTokens: tally.inputTokens + inputTokens,
+    outputTokens: tally.outputTokens + outputTokens,
+  };
+}
+
+/** The run starts here. See the header: one process, one run, one count. */
+export function forgetUsage(): void {
+  tally = { requests: 0, inputTokens: 0, outputTokens: 0 };
+}
+
+export function usageSoFar(): UsageTally {
+  return tally;
+}
+
+/**
+ * The one line an act prints at the end of a run, or null where there is
+ * nothing to say.
+ *
+ * NULL RATHER THAN A LINE OF ZEROES: a door that reported no usage at all —
+ * Ollama, or a server that omits the field — has told this program nothing, and
+ * printing "0 tokens" would be a claim about a run that really did generate
+ * text. Silence is the honest answer to a server that did not count.
+ */
+export function usageLine(act: string): string | null {
+  if (tally.requests === 0) return null;
+  const n = (value: number): string => value.toLocaleString('en-US');
+  return `${act}: ${n(tally.requests)} requests, ${n(tally.inputTokens)} tokens in, `
+    + `${n(tally.outputTokens)} out`;
+}
+
+/**
+ * `usage` in an answer, in whichever of the two spellings this door uses.
+ *
+ * ONE READER FOR BOTH because the fact is one fact — how many tokens went in
+ * and how many came out — and the two providers merely named the fields
+ * differently. A door passes the object it parsed; anything missing reads as
+ * zero, because a provider that omitted a count did not charge this run nothing,
+ * it simply did not say, and inventing a number would be worse than a low one.
+ */
+export function readUsage(usage: unknown): { input: number; output: number } {
+  const row = (usage ?? {}) as Record<string, unknown>;
+  const num = (value: unknown): number =>
+    (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0);
+  return {
+    input: num(row['prompt_tokens']) + num(row['input_tokens']),
+    output: num(row['completion_tokens']) + num(row['output_tokens']),
   };
 }
 
@@ -159,9 +414,16 @@ export function normaliseEndpoint(endpoint: string): string {
  * no thinking support — qwen2.5 answers such a request with a 400 naming the
  * field, and a run would fail on block one. An OpenAI-compatible server takes
  * `chat_template_kwargs: {enable_thinking: false}`, which a template that does
- * not want it simply ignores. The two doors ask the same question of the same
- * string and write two different bodies, which is exactly the shape a shared
- * rule with a dialect file either side of it is for.
+ * not want it simply ignores. The two LOCAL doors ask the same question of the
+ * same string and write two different bodies, which is exactly the shape a
+ * shared rule with a dialect file either side of it is for.
+ *
+ * THE ANTHROPIC DOOR NEVER ASKS IT, and that is not an omission. Claude models
+ * do not reason unless a request asks them to, so the switch there is the
+ * ABSENCE of a field rather than a field set to false — and `anthropic.ts`
+ * therefore never calls this. A `gpt-*` or `o*` name reaching the OpenAI door
+ * fails this prefix too, which is what keeps `chat_template_kwargs` — a field a
+ * provider would reject outright — off a cloud request.
  *
  * THIS IS ON ITS WAY OUT OF THE WIRE ON THE OpenAI DOOR. That server is growing
  * per-model sampling and thinking defaults applied on its side, at which point a
@@ -225,14 +487,16 @@ export function answerBudget(source: string): number {
  * is bounded by the edits a paragraph can carry, and `answerBudget`'s ratio is
  * derived from a TRANSLATION's length, which an edit list is not.
  *
- * ── AND `numCtx` IS A FIELD ONE OF THE TWO DOORS HAS ───────────────────────
+ * ── AND `numCtx` IS A FIELD EXACTLY ONE OF THE THREE DOORS HAS ────────────
  *
- * The context window is a per-request option on Ollama and a property of the
- * SERVER on an OpenAI-compatible one. So this carries it and `ollama.ts` is the
- * only file that reads it: `completionsBody` drops it, because a vLLM's window
- * was fixed when the model was made resident and the KV cache was allocated
- * against it, and there is no request that can move it — there a request is
- * sized INTO the window instead (`capFor`, vllm.ts).
+ * The context window is a per-request option on Ollama, a property of the SERVER
+ * on an OpenAI-compatible one, and a property of the PROVIDER on the cloud one.
+ * So this carries it and `ollama.ts` is the only file that reads it:
+ * `completionsBody` drops it, because a vLLM's window was fixed when the model
+ * was made resident and the KV cache was allocated against it, and there is no
+ * request that can move it — there a request is sized INTO the window instead
+ * (`capFor`, vllm.ts). `messagesBody` drops it too, and does not even size
+ * against a window, because a provider publishes no number to size against.
  *
  * It is OPTIONAL rather than required-and-ignored because most callers have no
  * opinion: translate wants the one number its measurements were taken at, and a

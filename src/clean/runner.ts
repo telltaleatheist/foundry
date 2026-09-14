@@ -1,13 +1,13 @@
 /**
  * clean/runner — the model, wired to whichever server this machine is pointed at.
  *
- * ── ONE SEAM, TWO SERVERS ───────────────────────────────────────────────────
+ * ── ONE SEAM, THREE SERVERS ─────────────────────────────────────────────────
  *
- * `--server openai|ollama`. The choice is made in `translate/model-server.ts`
- * and nothing below this line knows about it: the prompt is the same bytes, the
- * temperature is the same zero, the validators and the records and the stamp are
- * untouched. What changes is the transport and the two things that hang off it,
- * and this file is where both of them show:
+ * `--server openai|ollama|anthropic`. The choice is made in
+ * `translate/model-server.ts` and nothing below this line knows about it: the
+ * prompt is the same bytes, the temperature is the same zero, the validators and
+ * the records and the stamp are untouched. What changes is the transport and the
+ * two things that hang off it, and this file is where both of them show:
  *
  *  - THE WINDOW. `pinContextTo` is an OLLAMA instruction — that server takes
  *    `num_ctx` per request and fully reloads the runner on a change, so the size
@@ -18,13 +18,18 @@
  *    measures the longest request against what the server said it can hold and
  *    REFUSES BY NAME if it does not fit, rather than sending a request that
  *    comes back truncated and is counted as a parse failure against the 10%
- *    share that fails the run. The log line says which of the two happened,
- *    because a line claiming a pinned window on a server that was told nothing
- *    would be this program reporting a setting it did not send.
+ *    share that fails the run. On a cloud provider there is no published window
+ *    to measure against, so the check has nothing to compare and lets the book
+ *    through — the same answer `fitsWindow` gives any server that reported
+ *    nothing, and the provider names its own limit if a block exceeds it. The
+ *    log line says which of the three happened, because a line claiming a pinned
+ *    window on a server that was told nothing, or a fitted one against a window
+ *    nobody published, would be this program reporting a check it did not make.
  *  - THE END OF THE RUN. `release` gives the card back, and on Ollama it always
  *    does (Owen's ruling; `releaseModel`, translate/model-server.ts). On the
- *    OpenAI door it asks nothing: the operator put the model there and a pass
- *    ending is not a reason to take it off.
+ *    other two it asks nothing: on the OpenAI door the operator put the model
+ *    there and a pass ending is not a reason to take it off, and on a provider
+ *    there was never a card.
  *
  * ── WHY THE VENDORED DRIVER'S OWN TRANSPORT DID NOT COME ACROSS ─────────────
  *
@@ -51,10 +56,12 @@
  *    over whatever comes back, which finds the object inside the tags the prompt
  *    asks for. What made BookForge's extractor necessary is a REASONING model
  *    emitting a `<think>` block that could contain a JSON object of its own —
- *    and both doors send the thinking switch off for every qwen3 family model,
- *    with the OpenAI one also stripping a leading `<think>` block if one arrives
- *    anyway (`withoutThinking`). A model that thinks past that produces a parse
- *    failure, which is a recorded disposition and not a silently wrong answer.
+ *    and both LOCAL doors send the thinking switch off for every qwen3 family
+ *    model, with the OpenAI one also stripping a leading `<think>` block if one
+ *    arrives anyway (`withoutThinking`); on `anthropic` there is nothing to
+ *    switch, because Claude models do not reason unless a request asks them to.
+ *    A model that thinks past that produces a parse failure, which is a recorded
+ *    disposition and not a silently wrong answer.
  *
  * ── TEMPERATURE 0, AND IT IS NOT THIS FILE'S TO REVISE ──────────────────────
  *
@@ -67,7 +74,9 @@
 import {
   askModel, openModelServer, releaseModel, type ServerKind,
 } from '../translate/model-server.js';
-import { fetchTransport, type ChatTuning, type Transport } from '../translate/transport.js';
+import {
+  fetchTransport, usageLine, type ChatTuning, type Transport,
+} from '../translate/transport.js';
 import { fitsWindow, promptTokens, VllmError } from '../translate/vllm.js';
 import type { NumberNormalizerRunner } from './tts-number-normalizer.js';
 
@@ -160,6 +169,7 @@ export async function openModelRunner(options: ModelRunnerOptions): Promise<Numb
     transport,
     endpoint: options.endpoint,
     model: options.model,
+    log: options.log,
   });
   let tuning: ChatTuning = { temperature: 0, numPredict: EDIT_LIST_NUM_PREDICT };
 
@@ -197,10 +207,16 @@ export async function openModelRunner(options: ModelRunnerOptions): Promise<Numb
         );
       }
       options.log(
-        `clean-text: ${server.model} at ${server.endpoint} (openai), temperature 0. The context `
-        + 'window is the server\'s own, fixed when the model was made resident, so NOTHING IS '
-        + `PINNED here${server.maxModelLen === null ? '' : ` (${server.maxModelLen} tokens)`}; `
-        + `this book's longest request is ${longestInput.length} characters and fits.`,
+        `clean-text: ${server.model} at ${server.endpoint} (${server.kind}), temperature 0. The `
+        + 'context window is '
+        + (server.kind === 'anthropic'
+          ? 'the provider\'s own and it publishes no number, so NOTHING IS PINNED here and '
+            + 'nothing was measured against it; this book\'s longest request is '
+            + `${longestInput.length} characters, and a provider that cannot hold one will say so `
+            + 'by name.'
+          : 'the server\'s own, fixed when the model was made resident, so NOTHING IS '
+            + `PINNED here${server.maxModelLen === null ? '' : ` (${server.maxModelLen} tokens)`}; `
+            + `this book's longest request is ${longestInput.length} characters and fits.`),
       );
     },
     async generate(input: string, systemPrompt: string): Promise<string> {
@@ -218,18 +234,29 @@ export async function openModelRunner(options: ModelRunnerOptions): Promise<Numb
       if (outcome === 'not-ours') {
         options.log(
           `clean-text: nothing to unload at ${server.endpoint} — this pass never loaded a model, `
-          + 'and taking one off a card somebody else put it on is not one pass\'s decision to '
-          + 'make (translate/model-server.ts).',
+          + 'and nothing on the other end is this pass\'s to take down '
+          + '(translate/model-server.ts).',
         );
-        return;
+      } else {
+        options.log(
+          outcome === 'released'
+            ? `clean-text: asked ollama to unload ${server.model} — the card is free for the next `
+              + 'job.'
+            : `clean-text: ${server.endpoint} did not acknowledge the request to unload `
+              + `${server.model}. The book is written; a server that has already gone away has `
+              + 'released the memory anyway.',
+        );
       }
-      options.log(
-        outcome === 'released'
-          ? `clean-text: asked ollama to unload ${server.model} — the card is free for the next job.`
-          : `clean-text: ${server.endpoint} did not acknowledge the request to unload `
-            + `${server.model}. The book is written; a server that has already gone away has `
-            + 'released the memory anyway.',
-      );
+      /*
+       * WHAT THE RUN SPENT, once, last. It is printed here rather than by the
+       * callers because this is the only place in the clean-text pass that runs
+       * after the last request on every route — the book file's and the bare
+       * EPUB's — and a count printed twice would read as two runs. Null where
+       * no server reported any usage at all (Ollama), which is silence rather
+       * than a line of zeroes; see `usageLine`.
+       */
+      const spent = usageLine('clean-text');
+      if (spent !== null) options.log(spent);
     },
   };
 }

@@ -2330,7 +2330,7 @@ export function normalizedTextPaths(
  * a book file (docs/BOOK-FILE.md) whose rows are the blocks themselves, before
  * any spine, nav or OPF exists, and writes RECORDS rather than a second book —
  * `src/clean/run.ts`, which is the door that replaces this function. Everything
- * above this line is shared by both doors unchanged: the rules, the validators,
+ * above this line is shared by every door unchanged: the rules, the validators,
  * the one-token law, the retry rules, the parse-failure gate and `askAboutEach`
  * itself. What was cut is exactly the part that could only ever mean something
  * inside an EPUB, and it was cut rather than left to rot because it would not

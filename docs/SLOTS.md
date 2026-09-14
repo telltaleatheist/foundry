@@ -33,18 +33,25 @@
 
 ## 2. The doors (engine)
 
-Two dialects, **declared, never sniffed from the URL**:
+Three dialects, **declared, never sniffed from the URL**:
 
 | `--server` | who is on the other end | model | window | end of run |
 |---|---|---|---|---|
 | `openai` (default) | Crucible, a local llama-server, vLLM, or a cloud provider — anything OpenAI-compatible | absent = the served model; a given name is proved | the server's, read back as `max_model_len`; a request that cannot fit is refused by name before it is sent | **nothing** — the engine never loads or unloads on this door |
 | `ollama` | the friend's local Ollama | **required** (an Ollama holds a library; the app's picker names it) | `num_ctx` pinned once a book | **unloaded, always** (`keep_alive: 0`); no flag to keep it |
+| `anthropic` | Anthropic's API, or a proxy that speaks it | **required** (a provider holds a catalog); checked against `GET /v1/models`, and a listing that does not answer skips the check OUT LOUD | the provider's — nothing read back, nothing pinned | **nothing** |
 
 Everything else is dialect-agnostic and stays: the prompts, temperature, the
 validators, the bank/records/stamp keyed by the served model id, the act
 naming (`translate:` / `simplify:`), the header map (`FOUNDRY_ENDPOINT_HEADERS`).
 Cloud OpenAI is the `openai` door plus a credential in the header map. Anthropic
-is a third dialect and a later package (§6).
+is a third dialect and LANDED with Package F (§6): `POST /v1/messages`, a
+top-level `system`, `x-api-key` through the header map with
+`anthropic-version: 2023-06-01` added by the engine, a forced tool for a
+constrained verdict, and `https://api.anthropic.com` when `--endpoint` is absent.
+On both cloud doors a **429 is a wait, not a dead server** (§3): `retry-after`
+honoured, else 2 s doubling to 30 s, six attempts, each wait logged; and each run
+prints one line counting its requests and tokens, which the app prices.
 
 ## 3. Slots (app)
 
@@ -125,5 +132,5 @@ store is a different file. So the rule is ownership, not sharing:
 | C | App: server registry (name, url, headers), drag order, enable; slots; per-row `waitFor`; dispatch: header map per spawn, capability read for the model, `load-model` before spawn, the three 409s rendered by name | Crucible SDK shapes | next |
 | D | Catalog: generated lineup JSON, tile gating, CPU rule | BookForge's `[local]` block | after C |
 | E | Setup/settings: Crucible install offer + connect-to-existing; Ollama wizard stays; dots download; page-reader row | B, C | after C |
-| F | Cloud slots: OpenAI (the `openai` door + key), Anthropic (third dialect); per-job opt-in; 429 as the wait; cost shown | C | later |
+| F | Cloud slots: OpenAI (the `openai` door + key), Anthropic (third dialect); per-job opt-in; 429 as the wait; cost shown | C | **ENGINE HALF LANDED** 2026-09-14; app half after C |
 | — | Lease client (transport.ts) | Owen's ruling, Crucible's routes | owed |

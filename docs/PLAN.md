@@ -4269,7 +4269,8 @@ Wave 60 is void and was never published.
 
 **Package A — landed.** `--server openai|ollama` is back on translate,
 clean-text and analyze, declared and refused by name when it is neither
-(`--server takes openai or ollama, not "x"`). The kind is `openai` rather than
+(`--server takes openai or ollama, not "x"` — a third door joined it in
+Package F below). The kind is `openai` rather than
 `vllm` because that door serves a shared inference service, a local
 llama-server, a vLLM and a cloud provider alike; `src/translate/vllm.ts` keeps
 its filename so docs/VLLM.md's measurements keep their addresses, and
@@ -4301,6 +4302,66 @@ App, minimal: `modelArgs` spells `--server ollama` when the request's kind is
 not the app's `'vllm'` — the app's `LlmServerKind` is still `'ollama' | 'vllm'`
 and its rename is Package C, so the mapping is written down at the seam. The
 full slot model, the registry and the pickers are C.
+
+#### Package F (engine half) — LANDED 2026-09-14
+
+**A cloud provider is a door for the text acts.** Owen: *"give them the option of
+connecting an api key for openai or claude instead of using the 27b or the 9b. if
+the user wants to they can use usage credits from a cloud model… for weaker
+systems."* Text acts only — page reading stays local — and the per-job
+choice is the app's (Package F, app half; not built here).
+
+OpenAI needed no new dialect and that was checked rather than assumed: it is
+`--server openai` with a URL and an `Authorization` header in the existing map.
+Four things were confirmed and two mended. An absent `--model` over a catalog
+hits the existing "serving N models" refusal, whose quoted list is now BOUNDED
+(twelve ids, then a count) and whose advice no longer tells a cloud user to make
+a model resident. `chat_template_kwargs` cannot reach a provider, because
+`takesThinkField` matches the qwen3 family prefix and no `gpt-*` or `o*` name
+does — recorded in a comment at the send site. `response_format` with
+`strict: true` is exactly what OpenAI wants and is unchanged. `max_model_len` is
+absent from a provider's listing, so `capFor` gets null and the wanted budget
+goes out unclamped. And `max_tokens` STAYS `max_tokens`: the models that want
+`max_completion_tokens` are not served by sniffing the URL or the model name
+— the honest shape for a genuinely different wire is a DECLARED kind, which is
+what the third door is, and a fourth is not built until somebody needs one.
+
+**`--server anthropic` is that third kind**, in a new `src/translate/anthropic.ts`
+holding only that dialect: `POST <endpoint>/v1/messages`, a top-level `system`,
+`content[0].text` for the answer, `stop_reason === 'max_tokens'` for truncation,
+and for `analyze` one tool whose `input_schema` is the caller's schema forced
+with `tool_choice` — the same grammar-constrained decode in a third spelling,
+with `askConstrained`'s degradation vocabulary untouched. `--model` is REQUIRED
+(a provider holds a catalog, exactly Ollama's argument) and is checked against
+`GET /v1/models`; a listing that does not answer SKIPS the check OUT LOUD, on
+`confirmServedModel`'s rule that an unperformed check is said and not hidden.
+The key arrives through the header map as `x-api-key`; the engine adds
+`anthropic-version: 2023-06-01` itself, because a protocol constant is a property
+of the dialect and not of the endpoint. Nothing is loaded, unloaded or pinned,
+the default endpoint is `https://api.anthropic.com`, and no thinking field is
+sent at all — Claude models do not reason unless asked.
+
+**A 429 is the busy signal on both cloud doors** (SLOTS.md §3). `withBusyWait`
+(transport.ts) is the ONE place: `retry-after` honoured when present (seconds or
+an HTTP date, capped at 60), else backoff from 2 s doubling to 30 s, six
+attempts, each wait logged with the status, the reason and the seconds, then the
+block's normal failure path with the provider's own words in it. Anthropic's 529
+is declared by that door beside 429; every other 5xx and every transport failure
+still ends the run, and Ollama never calls the wait at all.
+
+**Cost is shown and never priced.** `usage` is read in both cloud spellings
+(`prompt_tokens`/`completion_tokens`, `input_tokens`/`output_tokens`),
+accumulated per run, reset by `openModelServer`, and printed as one line in the
+act's prefix: `translate: 412 requests, 1,203,441 tokens in, 388,120 out`. The
+app multiplies by a price; the engine does not, because prices change weekly and
+differ per key.
+
+Also: `ServerKind` is `'openai' | 'ollama' | 'anthropic'` and the refusal names
+all three (`--server takes openai, ollama or anthropic, not "x"`);
+`DEFAULT_CLOUD_CONCURRENCY` is 4 because a rate limit is per key rather than per
+card; `textEndpoint`'s settings fallback does not apply to the Anthropic door,
+for the reason it does not apply to Ollama's. The app is untouched: its
+`LlmServerKind` is its own type and Package C owns its rename.
 
 #### Package B — LANDED 2026-09-13
 

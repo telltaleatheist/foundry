@@ -275,7 +275,7 @@ the *reading*, which is the newest snapshot of the one live overlay there is.
 
 ## 4b. Which server answers
 
-**Two kinds, on `--server openai|ollama`, declared and never sniffed** (Owen's
+**Three kinds, on `--server openai|ollama|anthropic`, declared and never sniffed** (Owen's
 reframe of 2026-09-14; docs/SLOTS.md §2 is the ruling).
 
 * `openai`, the default — the OpenAI-compatible door at `--endpoint`, with
