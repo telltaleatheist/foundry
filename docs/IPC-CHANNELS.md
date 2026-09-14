@@ -1,5 +1,51 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
+**TWO DOORS AND ONE PUSH ON 2026-09-14 — AUTOMATIC COORDINATION WITH EVERY
+CONNECTED CRUCIBLE. COUNTED BY SCRIPT OVER `app/electron/ipc.ts`: 134
+`ipcMain.handle` call sites, 134 distinct channel names, zero `ipcMain.on`.**
+Nothing was removed, nothing was renamed, and no existing shape narrowed.
+
+**AND THE STANDING FAILURE HAPPENED AGAIN, WHICH IS THE THIRD TIME THIS FILE
+HAS HAD TO SAY SO.** The head below said **130** and the source measured **132**
+before this change — two doors added under a stale figure. The figure above was
+measured by the same script it names, over the file as it now stands. A FIGURE
+QUOTED AS A GATE IS A MEASUREMENT OR IT IS DECORATION.
+
+- **`crucible:coordination` → `CrucibleCoordinationMap`** — where coordination
+  stands with every server it has anything to say about, keyed by registry
+  name. A server absent from the map has not been asked yet, which is a real
+  answer and deliberately not a member of the state union: "idle" drawn as a row
+  would be a screen announcing the absence of news. A READ — it starts nothing.
+- **`crucible:coordinate` (name) → `CrucibleCoordinationState`** — coordinate
+  with one named server now. Idempotent and concurrency-safe: a second call
+  while one is in flight joins the first rather than racing it into the
+  `task_busy` the whole design exists to avoid. It does not reject — every way a
+  conversation with a machine can end is a STATE, "there is no server called
+  that" included. **There is no button behind it**: coordination runs by itself
+  on every enabled server at app start, on `crucible:add`, on
+  `crucible:add-local`, and on every entry a `crucible:save` added by name or
+  switched back on (crucible `docs/PHASE14-ENVPACKS.md` §4a, Owen 2026-09-14:
+  presence of the app is the request, and the enable switch in Settings is the
+  one opt-out). This door exists for a screen that has just learnt about a
+  server and would otherwise wait for a push already sent.
+- **`crucible:coordination-changed` (push, `CrucibleCoordinationState`)** — one
+  server's state, every time it moves. It CARRIES A PAYLOAD where
+  `acts:gates-changed` and `models:changed` deliberately do not, and the reason
+  is the shape of the news: those two say "ask again" about a composed answer
+  that costs a probe, while this is a single small value the renderer already
+  holds a mirror of — a push that only said "something moved" would make every
+  window re-read the whole map on every byte of a download. Broadcast to every
+  window, because coordination starts at APP START, before any window has asked
+  for anything.
+
+**NO TOKEN CROSSES EITHER DOOR, in either direction**, which is the rule the
+whole `crucible:` family keeps: a state names a server, a phase, what is
+missing, and whatever sentence the SERVER itself wrote about the holder of its
+card. The vendored module (`app/shared/foundry.module.json`) is read in main and
+posted from main; the renderer is never told what is in it, and does not need to
+be — the words are composed from the MISSING list in
+`app/src/app/core/crucible-words.ts`.
+
 **THREE DOORS AND A NEW FAMILY ON 2026-09-14 — WAVE 61 PACKAGE F (APP HALF).
 COUNTED BY SCRIPT OVER `app/electron/ipc.ts`: 130 `ipcMain.handle` call sites,
 130 distinct channel names, zero `ipcMain.on`.** Nothing was removed, nothing was
@@ -761,6 +807,8 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `crucible:set-new-jobs-wait-for` | `top` or `any` — what a new row's `waitFor` starts as. Answers with what was stored. |
 | `crucible:install-plan` | The hand sequence for installing a Crucible on this machine, composed for this platform: the numbered steps with every command copyable, the elevated ones listed apart, the README link and the wheel. A read — the only process it spawns is `wsl.exe -l -v`. |
 | `crucible:install` | The driven install. REJECTS on every machine today with the same sentence the disabled button wears — `@crucible/bootstrap` ships with Crucible's next release. The door refuses as well as the button, because a disabled control over an open door is a decoration. |
+| `crucible:coordination` | Where coordination stands with every server it has anything to say about, keyed by registry name. A server absent from the map has not been asked yet. A read — it starts nothing. |
+| `crucible:coordinate` | Coordinate with one named server NOW: read `/v1/info` and `/v1/catalog`, compare the vendored module, and post a `module` task ONLY when something is missing. Idempotent — a second call while one is in flight joins the first. It never rejects; every ending is a state. There is no button behind it, because coordination is automatic on every enabled server (§4a). |
 | `reading:confirm-re-read` | Compose the "read this book again?" card, which spends GPU on a yes. |
 | `recents:clear` | Forget every recent. |
 | `recents:forget` | Forget one. |
@@ -791,9 +839,15 @@ push, payload `{projectDir, done, total, file}`.
 
 ## Pushes main makes at the renderer
 
-Seventeen, and every one of them is a state change the renderer holds a mirror of
-or a question it has to answer. Eleven go to every window through `broadcast`
+Nineteen, and every one of them is a state change the renderer holds a mirror of
+or a question it has to answer. Thirteen go to every window through `broadcast`
 (`app/electron/window.ts`); the other six are sent to one window's `webContents`.
+
+(The head of this section said "Seventeen … Eleven … six", which does not add up
+and did not match the table below it before `crucible:coordination-changed` was
+added to either. The figures above were counted over the table and over
+`broadcast(` in `app/electron/`, on the same rule the door count keeps: a figure
+quoted as a gate is a measurement or it is decoration.)
 
 | Channel | What it says |
 | --- | --- |
@@ -801,6 +855,7 @@ or a question it has to answer. Eleven go to every window through `broadcast`
 | `models:changed` | The weights on this disk moved without this window doing it — docs/SLOTS.md §5b's automatic removal, which fires from `crucible:save` and once at startup. No payload, for `acts:gates-changed`'s reason: the inventory costs a directory walk and has one composer. |
 | `app:navigate` | Go to a route — File→Settings, and nothing else today. |
 | `capture:intake-progress` | One dropped photograph copied, hashed and decoded — one push per path asked for, plus a closing one. |
+| `crucible:coordination-changed` | Where coordination with one server got to, every time it moves — checking, stocked, preparing (with the module task's own frames), waiting on a named holder, refused, unreachable. It CARRIES the state where `acts:gates-changed` carries nothing, because this is a small value the renderer mirrors rather than a composed answer that costs a probe: a payload-free push would make every window re-read the whole map on every byte of a download. Broadcast, because coordination starts at app start, before any window has asked anything. |
 | `document:opened` | A document was admitted and should open in a tab. |
 | `document:relocated` | An opened document moved onto the project's working copy; the tab follows. |
 | `env:install-progress` | An environment install changed phase. |

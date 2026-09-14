@@ -4682,15 +4682,16 @@ that machine connects by reading `<CRUCIBLE_HOME>/pairing` — nobody types.
 
 | # | Package | Depends on | Status |
 |---|---|---|---|
-| H | Coordinate-on-connect: catalog read first, module posted only when something is missing, followed/waited/refused by name; the row says what is happening in BookForge's words | SDK 0.6.0 (vendored) | building |
+| H | Coordinate-on-connect: catalog read first, module posted only when something is missing, followed/waited/refused by name; the row says what is happening in BookForge's words | SDK 0.6.0 (vendored) | **LANDED** (below) |
 | I | The settings WINDOW: Settings › AI routes card + the wizard's AI step draw `GET /v1/settings` for the chosen server and write through `PUT`; per-class route rows, three upstream cards, Test before Save; nothing stored in app-settings.json | PHASE15 §3.1–3.2, §5.2 | building |
 | J | Connect three ways, in order, automatic: the pairing file → `local`; a pasted connect code (SDK `parsePairing`); "get one on this machine" through `@crucible/bootstrap install()` when it ships (the door keeps refusing by name until then) | PHASE15 §3.6, §5.1 | building |
 | K | Dispatch + gates on the route: `--model capability.selected`; no lease and no card lane when the route is upstream (a per-server `[cloud]` lane, width 2, as BookForge); tiles lit iff an enabled server's capability row says `enabled`, dark with the row's own `reason` | H, I | next |
 | L | DELETIONS (PHASE15 §5.3, plus Owen's "no ollama fallbacks"): `cloud-providers.ts`, the cloud card, `ComputeSlotKind 'cloud'`, `placeOnCloud`, `FOUNDRY_ENDPOINT_HEADERS` from an app-held key, `model-lineup-local.json` (the floor is `CatalogRow.floors` alone), the engine's `--server anthropic` and `--server ollama` doors, the wizard's Ollama step and pull, `llm:defaults`/`openingModelFor` (the engine's route decides the model; the dialogs lose the model field), the local slot, **`page-reader.ts` and its two cards** (ruled below), act-gates' own "can this machine do it" reasoning and the CPU rule | I, J, K **and the gate below** | gated |
 
 **The gate on L, restated with BookForge:** a host-mode server plus an
-`ollama`/`anthropic` upstream serve text, AND `pages` answers `enabled: true`,
-on a clean Windows box with no WSL. Nothing on the no-Crucible fallback is
+`ollama`/`anthropic` upstream serve text, AND `pages` answers `enabled: true`
+from a host-mode server on a clean Windows box with no WSL AND a real page comes
+back parsed (PHASE15 §3.10, c803aa3). Nothing on the no-Crucible fallback is
 deleted before that is watched, because deleting it on a promise strands the
 person Foundry exists for.
 
@@ -4706,7 +4707,13 @@ should be a pass-through thin client UI for the crucible engine."* So host mode
 gains **`llama-windows`** (BookForge's name): a llama-server child for `pages`,
 no packs, no env, no lease, the 9B text class later by the same mechanism.
 Foundry's launcher is the spec, handed over at
-`C:\tmp\foundry-page-reader-spec\` the way the vLLM launcher was.
+`C:\tmp\foundry-page-reader-spec\` the way the vLLM launcher was. Two of its
+facts changed on the port, deliberately (§3.10): the llama.cpp release is PINNED
+(one constant, no runtime listing, no fallback tag), and Crucible never adopts a
+foreign process — the child sits on an ephemeral port Crucible chooses,
+`port_in_use` refused by name. The catalog gains an `engine` subject kind
+(`llama-cpp`); `foundry.module.json` lists it once the server lands it and is
+re-vendored then, and the coordination words gain a line for that kind.
 
 **The line, refined with Owen:** not GPU versus CPU but MODEL INFERENCE versus
 DETERMINISTIC work. Inference — dots on any card or on a CPU, the text models,
@@ -4721,3 +4728,40 @@ the card) is inference by that rule and belongs in Crucible as its own class.
 model field — GONE, the route is the engine's; (b) page reads to a remote
 Crucible — the same read, `CRUCIBLE_READS` flips when K lands; (c) the release
 version — still his.
+
+#### Package H — coordination with every connected engine — LANDED 2026-09-14
+
+**Finding a Crucible IS the request. There is no button, no consent step, and
+no per-server question — the enable switch in Settings is the one opt-out.**
+
+crucible docs/PHASE14-ENVPACKS.md §4a, Owen 2026-09-14: *"lets make it as simple
+as possible."* On app start (every enabled server, loopback first), on an add,
+and on any entry a save named or switched back on, Foundry READS `/v1/info` and
+`/v1/catalog`, compares `app/shared/foundry.module.json`, and posts
+`{type:'module'}` ONLY when something is missing. Nothing missing is a read and
+nothing else — a Crucible runs ONE task at a time, so an all-`skipped` task is a
+task BookForge collides with on `task_busy` and one our own lease refuses
+`server_busy`. `task_busy` is FOLLOWED, never re-posted; `server_busy` is a WAIT
+naming the holder verbatim (20 s × 90, then it stops asking); a refusal about the
+REQUEST fails once by name and is remembered for the session. A run that ends
+`done` re-measures capability and moves the tiles (`afterRegistryChanged`).
+
+IT RUNS HOSTED TOO, and the union of two modules on one server is the contract —
+what is suppressed hosted is the drawing, not the asking. `electron/crucible-
+coordinate.ts` owns the mechanism, `shared/coordinate-wire.ts` carries FACTS, and
+every word a person reads is `src/app/core/crucible-words.ts`, mirroring
+BookForge's so the two apps never tell one person two stories about one machine.
+Two doors and one push (`crucible:coordination`, `crucible:coordinate`,
+`crucible:coordination-changed`; docs/IPC-CHANNELS.md, count 134). The Servers
+card's Open button reads "Open engine console" and the card says "GPU engine
+(Crucible)" once, then "engine".
+
+**Deliberate divergences from BookForge's file:** no injected deps (no keeper to
+inject them; house rule); an unknown name or a disabled entry is `unreachable`
+with the sentence that says which; the start-up sweep lives at `registerIpc()`'s
+tail so it runs hosted; a save's diff is by name and `enabled` false→true only (a
+rename or a drag is not a connection); a throwing push listener is caught so a
+dead window cannot abandon a task on someone else's machine. **Unwatched:** no
+live Crucible answered during the build — the SSE follow, the join, the settle
+loop and the refusal memory are BookForge's logic against the same SDK typings,
+typechecked, not exercised.

@@ -57,6 +57,7 @@
  */
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 
+import type { CrucibleCoordinationMap } from '@shared/coordinate-wire';
 import type { CrucibleServerView } from '@shared/slots';
 import type {
   EnvCatalogItem,
@@ -70,6 +71,7 @@ import type {
   PageReaderState,
 } from '@shared/types';
 import { CrucibleDoorsComponent } from '../crucible-doors/crucible-doors.component';
+import { coordinationWords } from '../../core/crucible-words';
 import { QueueService } from '../../core/queue.service';
 import { UiService } from '../../core/ui.service';
 import { api } from '../../core/foundry';
@@ -328,6 +330,19 @@ const STEPS: readonly StepDef[] = [
                 Already registered: {{ crucibleNames() }}. Settings › Servers is where these are
                 ranked and switched off.
               </p>
+              <!--
+                AND WHAT FOUNDRY HAS ALREADY SAID TO EACH OF THEM.
+                crucible docs/PHASE14-ENVPACKS.md §4a: finding an engine is the
+                request, so this step offers nothing to press about it — it says
+                what is happening. One line per REGISTERED server, and a server
+                nothing has asked about yet draws none, because "idle" written
+                out is a screen announcing the absence of news.
+              -->
+              @for (server of crucibleServers(); track server.name) {
+                @if (coordinationOf(server.name); as said) {
+                  <p class="small">{{ server.name }} — {{ said }}</p>
+                }
+              }
             }
             <app-crucible-doors (changed)="loadCrucible()" />
           }
@@ -708,6 +723,16 @@ export class SetupWizardComponent {
   protected readonly profileSaid = signal('');
   /** The registry, so the Crucible step can say what is already there. */
   protected readonly crucibleServers = signal<CrucibleServerView[]>([]);
+  /**
+   * And what Foundry has already said to each of them, by stored name.
+   *
+   * The same map the Servers card draws, from the same push, so the wizard and
+   * Settings cannot tell one person two stories about one machine. Loaded AND
+   * listened to: coordination starts at app start, before this wizard exists,
+   * so a step that only listened would draw nothing about a server that was
+   * already `stocked` when it opened.
+   */
+  protected readonly coordination = signal<CrucibleCoordinationMap>({});
 
   /** Step ids moved past without doing the thing. A Set would not survive JSON. */
   protected readonly skipped = signal<string[]>([]);
@@ -752,6 +777,16 @@ export class SetupWizardComponent {
         this.warming.set(false);
         void this.loadReader();
       }
+    });
+    /*
+     * COORDINATION IS NOT SOMETHING THIS SCREEN STARTS, so it is only heard.
+     * The sweep runs at app start on every enabled server (crucible
+     * docs/PHASE14-ENVPACKS.md §4a), and somebody standing on this step while a
+     * model downloads onto the Mac should watch it move rather than find out by
+     * pressing Next twice.
+     */
+    api.crucible.onCoordination((state) => {
+      this.coordination.update((all) => ({ ...all, [state.server]: state }));
     });
 
     /*
@@ -838,6 +873,7 @@ export class SetupWizardComponent {
     if (!api) return;
     const view = await api.crucible.settings();
     this.crucibleServers.set(view.servers);
+    this.coordination.set(await api.crucible.coordination());
     /*
      * AND THE OLLAMA STEP'S FACTS, because registering a local Crucible changes
      * them: a class it serves is a class this wizard must not pull a second copy
@@ -851,6 +887,18 @@ export class SetupWizardComponent {
   /** The registered servers, named, for the one line the step prints about them. */
   protected crucibleNames(): string {
     return this.crucibleServers().map((server) => server.name).join(', ');
+  }
+
+  /**
+   * One engine's coordination sentence, or null when nothing has asked it yet.
+   *
+   * EVERY WORD OF IT IS `core/crucible-words.ts`'s — the same function the
+   * Servers card calls, because main sends facts and the copy has one owner
+   * (crucible ARCHITECTURE.md R1).
+   */
+  protected coordinationOf(name: string): string | null {
+    const state = this.coordination()[name];
+    return state === undefined ? null : coordinationWords(state);
   }
 
   // ── Steps ─────────────────────────────────────────────────────────────────

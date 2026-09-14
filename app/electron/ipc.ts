@@ -28,9 +28,16 @@ import { probeCloud, writeCloudProviders } from './cloud-providers';
 import { openCrucibleUi } from './crucible-ui';
 import { heldSet, openingModelFor } from './llm-catalog';
 import {
+  coordinateEveryServer,
+  coordinateServer,
+  coordinationStates,
+  onCoordination,
+} from './crucible-coordinate';
+import {
   addCrucibleServer,
   addLocalCrucible,
   cloudSettingsView,
+  crucibleServers,
   crucibleSettingsView,
   computeSlots,
   probeCrucible,
@@ -573,6 +580,68 @@ async function afterRegistryChanged(): Promise<void> {
     console.log(`[slots] ${removed}`);
     broadcast('models:changed', null);
   }
+}
+
+/**
+ * COORDINATE WITH A SERVER BECAUSE SOMETHING CONNECTED US TO IT.
+ *
+ * crucible `docs/PHASE14-ENVPACKS.md` §4a: every time Foundry finds a Crucible
+ * it makes sure that Crucible has what Foundry needs — nobody presses anything.
+ * The moments are app start (every enabled server), a server being added, and a
+ * server being switched back on or newly named by a registry save; all of them
+ * go through `crucible-coordinate.ts`'s one function, which is also what makes
+ * two of them arriving together ONE run.
+ *
+ * A FAILED COORDINATION NEVER FAILS THE ACT THAT TRIGGERED IT. The server was
+ * added, the switch was flipped; what did not happen is a conversation with a
+ * machine, and that is the coordination STATE's to say, in the row. So this
+ * catches everything and logs ONE line — and `coordinateServer` is already
+ * written never to throw, which makes this the belt to that braces rather than
+ * the place the outcome is decided.
+ */
+async function coordinateWithServer(name: string, because: string): Promise<void> {
+  try {
+    const state = await coordinateServer(name);
+    console.log(`[crucible] "${name}" coordinated ${because}: ${state.phase}`);
+  } catch (err) {
+    console.error(
+      `[crucible] could not coordinate with "${name}" ${because}: `
+      + `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * WHICH SERVERS A REGISTRY SAVE CONNECTED US TO — new by name, or switched on.
+ *
+ * `crucible:save` replaces the whole list in one message (see
+ * `writeCrucibleServers` for why it is one door), so "what just changed" is a
+ * DIFF and there is nowhere else to take it from. Two answers count as a
+ * connection and the rest do not:
+ *
+ *   - a name the registry did not have before is a server this app has just met;
+ *   - `enabled` going false → true is the exact reverse of the one gesture that
+ *     means "not that one" (Owen, 2026-09-14), so switching it back on is the
+ *     moment to find out what it is missing.
+ *
+ * A RENAMED, RE-ADDRESSED OR RE-TOKENED ROW IS NOT IN THIS LIST unless its name
+ * is new, and that is the honest reading of a card that saves on every edit: a
+ * person dragging rows around has connected to nothing, and coordinating with
+ * six servers because one of them moved up the order would be this app spending
+ * somebody's afternoon on a reorder.
+ */
+function serversConnectedBySave(
+  before: readonly { name: string; enabled: boolean }[],
+  after: readonly { name: string; enabled: boolean }[],
+): string[] {
+  const was = new Map(before.map((entry) => [entry.name.toLowerCase(), entry.enabled]));
+  return after
+    .filter((entry) => {
+      if (!entry.enabled) return false;
+      const previously = was.get(entry.name.toLowerCase());
+      return previously === undefined || previously === false;
+    })
+    .map((entry) => entry.name);
 }
 
 export function registerIpc(): void {
@@ -3304,8 +3373,24 @@ export function registerIpc(): void {
    */
   ipcMain.handle('crucible:settings', () => crucibleSettingsView());
   ipcMain.handle('crucible:save', async (_event, servers: CrucibleServerEdit[]) => {
+    /*
+     * READ BEFORE THE WRITE, because the only thing that can say which servers
+     * this save CONNECTED us to is the pair of lists (see
+     * `serversConnectedBySave`). Names and flags only — no token is read here
+     * and none is compared.
+     */
+    const before = crucibleServers().map((entry) => ({ name: entry.name, enabled: entry.enabled }));
     writeCrucibleServers(servers);
     await afterRegistryChanged();
+    /*
+     * A SERVER THAT WAS JUST SWITCHED ON, OR JUST NAMED, IS A SERVER THIS APP
+     * HAS JUST CONNECTED TO (PHASE14 §4a). Not awaited: a save must not sit on
+     * a catalog read, let alone on a half-hour wait for somebody else's card,
+     * and the row draws the run's own state as it arrives.
+     */
+    for (const name of serversConnectedBySave(before, crucibleServers())) {
+      void coordinateWithServer(name, 'it was added or switched back on');
+    }
     /*
      * THE WHOLE VIEW, not just the list, because saving a server CHANGES THE
      * SLOTS — enabling a loopback entry takes the local slot away — and a card
@@ -3344,11 +3429,34 @@ export function registerIpc(): void {
   ipcMain.handle('crucible:add', async (_event, name: string, url: string, token: string) => {
     addCrucibleServer(name, url, token);
     await afterRegistryChanged();
+    /*
+     * A SERVER THAT HAS JUST BEEN ADDED IS A SERVER THIS APP HAS JUST CONNECTED
+     * TO (PHASE14 §4a), so it is coordinated with immediately. The NAME the
+     * registry stored is used rather than the one that was typed, because
+     * `addCrucibleServer` normalises whitespace and a coordination run keyed on
+     * an un-normalised name would be a second row under a name no card draws.
+     */
+    const stored = crucibleServers().find(
+      (entry) => entry.name.toLowerCase() === name.replace(/\s+/g, ' ').trim().toLowerCase(),
+    );
+    if (stored !== undefined) void coordinateWithServer(stored.name, 'it was added');
     return crucibleSettingsView();
   });
   ipcMain.handle('crucible:add-local', async (_event, name: string) => {
     const answer = await addLocalCrucible(name);
-    if (answer.outcome === 'added') await afterRegistryChanged();
+    if (answer.outcome === 'added') {
+      await afterRegistryChanged();
+      /*
+       * THE SAME MOMENT, one door along — and the name is the ANSWER's, not the
+       * argument's: `addLocalCrucible` falls back to the server's own name when
+       * the box was left empty, so the argument may be the empty string while a
+       * row called "crucible" now exists.
+       */
+      const added = crucibleServers().find((entry) => entry.url === answer.url);
+      if (added !== undefined) {
+        void coordinateWithServer(added.name, 'the Crucible on this machine was registered');
+      }
+    }
     return answer;
   });
   /**
@@ -3378,6 +3486,31 @@ export function registerIpc(): void {
     writeAppSettings({ wslDistro: distro }).wslDistro);
   ipcMain.handle('crucible:set-new-jobs-wait-for', (_event, choice: NewJobsWaitFor) =>
     writeAppSettings({ newJobsWaitFor: choice }).newJobsWaitFor);
+  /*
+   * ── COORDINATION: THE BUTTON THAT IS NOT THERE ────────────────────────────
+   *
+   * crucible `docs/PHASE14-ENVPACKS.md` §4a. There is no "set up this server
+   * for Foundry" verb and no consent step: presence of the app is the request,
+   * so Foundry coordinates with every enabled server it connects to and a
+   * screen only ever READS the state. `electron/crucible-coordinate.ts` is the
+   * one owner — these two doors start a run and read the map, and neither
+   * composes a sentence, because the words are the renderer's
+   * (`src/app/core/crucible-words.ts`; R1).
+   */
+  ipcMain.handle('crucible:coordination', () => coordinationStates());
+  /**
+   * Coordinate with one named server NOW, and answer the state it reached.
+   *
+   * Idempotent and concurrency-safe in `crucible-coordinate.ts`: a second call
+   * while one is in flight joins the first. So the start sweep and a card that
+   * asks about the same server a moment later are ONE run, not two — which is
+   * the `task_busy` this whole design exists to avoid, manufactured by us.
+   *
+   * IT IS A DOOR AND NOT A BUTTON. Nothing in this app draws a control that
+   * calls it; it exists so a screen that has just learnt about a server can ask
+   * about that server rather than waiting for a push that has already been sent.
+   */
+  ipcMain.handle('crucible:coordinate', (_event, name: string) => coordinateServer(name));
   /*
    * ── THE CLOUD PROVIDERS — Package F's app half (docs/SLOTS.md §3) ─────────
    *
@@ -3542,6 +3675,72 @@ export function registerIpc(): void {
    * first window for a tidy-up nobody is waiting on. A failure is logged and
    * changes nothing — the files stay, and the next registry save asks again.
    */
+  /*
+   * ── EVERY COORDINATION STATE CHANGE, TO EVERY WINDOW ──────────────────────
+   *
+   * And that is not laziness about addressing: coordination starts at APP
+   * START, before any window has asked for anything, and it is the same fact
+   * for the Servers card and for the wizard's Crucible step. A push aimed at
+   * "the sender" would have no sender for the run that matters most.
+   *
+   * THE SECOND HALF IS THE ONE THAT MATTERS TO THE REST OF THE APP. A run that
+   * ends `preparing` with `progress.state === 'done'` means the server SERVES
+   * MORE THAN IT DID — a text engine it had not installed, a model it had not
+   * pulled — and every capability answer this app has cached about it was
+   * measured before that. So the registry's own pass runs: forget, re-measure,
+   * apply §5b's page-reader rule, light the tiles. Wired HERE rather than
+   * inside the coordinate module for the reason its header gives — which
+   * windows exist and what an install does to a tile are facts about the app,
+   * and that module's whole subject is one conversation with one server.
+   *
+   * ONLY ON `done`. A `failed` module leaves behind exactly the steps that
+   * completed (R6), which is a real change, and re-measuring on it would be
+   * right — but a module that failed at step 1 of 4 is also the common case for
+   * a server that is mid-something, and a capability sweep per failure would
+   * put a probe of every registered machine behind every stumble. The next
+   * connect asks again, which is the same answer arriving a moment later.
+   */
+  onCoordination((state) => {
+    broadcast('crucible:coordination-changed', state);
+    if (state.phase !== 'preparing' || state.progress.state !== 'done') return;
+    void afterRegistryChanged().catch((err: unknown) => {
+      console.error(
+        `[crucible] "${state.server}" finished preparing, but the capability sweep that `
+        + `follows it did not: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  });
+
+  /*
+   * ── AND THE FIRST SWEEP, ONCE AT STARTUP ──────────────────────────────────
+   *
+   * crucible `docs/PHASE14-ENVPACKS.md` §4a and Owen, 2026-09-14: *"lets make
+   * it as simple as possible."* Every ENABLED server, loopback entries first,
+   * with no button and no question — the enable switch in Settings is the one
+   * opt-out, because it is the control that already means "not that one".
+   *
+   * IT RUNS HOSTED TOO. The registry is the host's over there and read-only,
+   * and each app still posts its OWN module: the union of the two modules on
+   * one server is the contract. What is suppressed hosted is the DRAWING (the
+   * Servers card is BookForge's), not the asking.
+   *
+   * REGISTERED AFTER THE LISTENER ABOVE, deliberately: the sweep's first
+   * `checking` is published synchronously inside `coordinateServer`, so a
+   * listener added afterwards would miss the first frame of the run it was
+   * added for.
+   *
+   * DELIBERATELY NOT AWAITED, on the same reasoning as the §5b pass below: a
+   * run can end in a half-hour wait on somebody else's card, and nothing on
+   * screen is waiting for it. A failure is a STATE, drawn in the row; the
+   * console line here is for the case where the sweep itself could not start.
+   */
+  void coordinateEveryServer().catch((err: unknown) => {
+    console.error(
+      '[crucible] the start-up coordination sweep did not finish: '
+      + `${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+
   void refreshCrucibleFacts()
     .then(() => applyPageReaderRemoval())
     .then((removed) => {

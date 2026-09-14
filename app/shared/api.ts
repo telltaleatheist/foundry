@@ -9,6 +9,7 @@
  */
 import type { CustomAnalysisCategory } from './analysis-categories';
 import type { BookOutcome } from './book';
+import type { CrucibleCoordinationMap, CrucibleCoordinationState } from './coordinate-wire';
 import type { HostMintMeta, HostNodeAction, HostOffers, HostStatus } from './host-ops';
 import type { ReadAsk } from './ledger';
 import type { BookOp, PendingOutcome, PendingStack } from './ops';
@@ -1468,6 +1469,35 @@ export interface FoundryApi {
      * for. The caller's shape is the same either way — `await`, and catch.
      */
     install(): Promise<void>;
+
+    /**
+     * ── COORDINATION: WHAT EACH SERVER IS MISSING, AND WHAT IS BEING DONE ────
+     *
+     * crucible `docs/PHASE14-ENVPACKS.md` §4a, Owen 2026-09-14. There is NO
+     * button and no consent step: whenever Foundry finds a Crucible it reads
+     * `/v1/info` and `/v1/catalog`, compares the vendored module, and posts a
+     * `module` task ONLY when something is missing. Switching the server off in
+     * Settings is the one opt-out. So the renderer's whole part in this is to
+     * READ a state and draw one sentence — `coordinationWords`,
+     * src/app/core/crucible-words.ts, which is where every word of it lives.
+     */
+    /** Every server coordination has anything to say about. Absent = not asked yet. */
+    coordination(): Promise<CrucibleCoordinationMap>;
+    /**
+     * Coordinate with one named server NOW, and answer where it got to.
+     *
+     * Idempotent: a second call while one is in flight joins the first rather
+     * than racing it into the `task_busy` the whole design exists to avoid. It
+     * does not reject — every way a conversation with a machine can end is a
+     * STATE, including "there is no server called that".
+     */
+    coordinate(name: string): Promise<CrucibleCoordinationState>;
+    /**
+     * Every state change, as it happens — pushed to EVERY window, because
+     * coordination starts at app start, before any window has asked anything.
+     * One server's state per call; the map above is what a screen loads with.
+     */
+    onCoordination(listener: (state: CrucibleCoordinationState) => void): () => void;
   };
 
   /**

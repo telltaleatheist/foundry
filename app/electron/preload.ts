@@ -9,6 +9,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type { FoundryApi, MenuAction } from '../shared/api';
+import type { CrucibleCoordinationState } from '../shared/coordinate-wire';
 import type { HostOffers, HostStatus } from '../shared/host-ops';
 import type {
   AppQuestion,
@@ -253,6 +254,10 @@ const api: FoundryApi = {
     setNewJobsWaitFor: (choice) => ipcRenderer.invoke('crucible:set-new-jobs-wait-for', choice),
     installPlan: () => ipcRenderer.invoke('crucible:install-plan'),
     install: () => ipcRenderer.invoke('crucible:install'),
+    coordination: () => ipcRenderer.invoke('crucible:coordination'),
+    coordinate: (name) => ipcRenderer.invoke('crucible:coordinate', name),
+    onCoordination: (listener) =>
+      subscribe<CrucibleCoordinationState>('crucible:coordination-changed', listener),
   },
 
   cloud: {
