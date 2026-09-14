@@ -53,7 +53,7 @@ import { clientFor, computeSlots, crucibleServerNamed } from './crucible-registr
 import type { CrucibleServerEntry } from './app-settings';
 import { ANY_SLOT, LOCAL_SLOT_NAME, slotNamed, type ComputeSlot } from '../shared/slots';
 import type { LlmServerKind } from '../shared/pipeline';
-import type { JobKind } from '../shared/types';
+import type { JobKind, ModelClass } from '../shared/types';
 
 /**
  * THE CAPABILITY CLASSES, FROZEN, spelled exactly as Crucible's `capability.py`
@@ -66,8 +66,23 @@ import type { JobKind } from '../shared/types';
  * a translate job is running when it's actually a simplify job."* Folding them
  * would make a client ask about `translate` in order to learn whether it may
  * simplify — which is the old lie, one layer down.
+ *
+ * ── AND IT IS `ModelClass` UNDER ANOTHER NAME, DELIBERATELY ─────────────────
+ *
+ * The five words were written out twice — here, and as `ModelClass` in
+ * shared/types.ts, which is what the vendored lineup files a model's row under.
+ * They were identical, and two spellings of one vocabulary is the defect this
+ * repo keeps meeting: the acronym list that was fifteen here and seventeen
+ * there, and the translate floor that one catalog declared and another quietly
+ * lowered. So this is an ALIAS, and the catalog owns the words.
+ *
+ * The name stays because it says which question is being asked — `ModelClass`
+ * is "what may serve this act", `CapabilityClass` is "what a server says it can
+ * do" — and because the day Foundry needs a class Crucible has and no model of
+ * ours does (`tts`, `asr`), this is the one that widens, on purpose, with a
+ * reason written here rather than by drifting.
  */
-export type CapabilityClass = 'clean' | 'translate' | 'simplify' | 'analysis' | 'pages';
+export type CapabilityClass = ModelClass;
 
 /**
  * THE ACT A JOB IS, as the server names it — and the value of `X-Crucible-Act`.

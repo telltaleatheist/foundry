@@ -122,9 +122,6 @@ export class VllmError extends Error {
   }
 }
 
-/** vLLM's own default port and mount, which is where it is unless it was moved. */
-export const DEFAULT_VLLM_ENDPOINT = 'http://localhost:8000/v1';
-
 /**
  * The base URL, with `/v1` on it whether or not somebody typed it.
  *
