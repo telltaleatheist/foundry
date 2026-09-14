@@ -59,6 +59,23 @@ import { api } from '../../core/foundry';
         } @else {
           <p class="detail">{{ it.detail }}</p>
 
+          <!--
+            docs/SLOTS.md §5b. A Crucible ON THIS MACHINE serving pages owns the
+            weights for it here, so Foundry's own copy is a duplicate and has
+            been removed. The Install button below is OFF rather than gone: a
+            button that vanishes teaches somebody the app is broken, and one that
+            is off with a sentence beside it teaches them what took the job over.
+            A REMOTE Crucible deliberately does not land here — the local reader
+            is what works when the Mac is asleep.
+          -->
+          @if (it.supersededBy; as server) {
+            <p class="detail">
+              The Crucible on this machine ({{ server }}) is reading pages, so Foundry does not
+              need its own copy of the reader here. Removing that server, or switching it off,
+              brings this back.
+            </p>
+          }
+
           <!-- ── What is on disk, named ───────────────────────────────── -->
           <ul class="files">
             <li>
@@ -83,7 +100,9 @@ import { api } from '../../core/foundry';
           <!-- ── The download ─────────────────────────────────────────── -->
           <div class="actions">
             @if (!it.installed) {
-              <button class="primary" type="button" [disabled]="busy()" (click)="install()">
+              <button class="primary" type="button"
+                      [disabled]="busy() || it.supersededBy !== null"
+                      (click)="install()">
                 @if (it.downloadBytes !== null) {
                   Download it ({{ size(it.downloadBytes) }})
                 } @else {

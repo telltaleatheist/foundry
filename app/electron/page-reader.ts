@@ -88,6 +88,13 @@ import {
   sha256File,
   unpackArchive,
 } from './env-downloader';
+import { CRUCIBLE_READS } from './crucible-dispatch';
+import {
+  localCrucibleServes,
+  localCrucibleTakeover,
+  refreshCrucibleFacts,
+} from './crucible-provider';
+import { pagesForm, type GgufForm } from './llm-catalog';
 import { probeSystem } from './system-probe';
 import type {
   MachineModelItem,
@@ -140,7 +147,7 @@ export const PAGE_READER_MODEL = 'dots.ocr';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The GGUF pair, from ggml-org's own conversion.
+ * The GGUF pair — AND IT IS NO LONGER THIS FILE'S TO NAME.
  *
  * TWO FILES, NOT ONE, and that is how llama.cpp serves a vision model: the text
  * tower is the model and the vision tower is a separate `mmproj` projector
@@ -148,20 +155,56 @@ export const PAGE_READER_MODEL = 'dots.ocr';
  * `/v1/models`, and then refuses every request that carries an image — which
  * would look exactly like a broken page rather than a missing file.
  *
- * Q8_0 RATHER THAN F16, for both. 1.89 GB + 1.34 GB against 3.56 + 2.53, on a
- * 1.8B model where the quantisation loss is small and the download is a thing a
- * person waits for. It is also the pair that fits beside a translation model on
- * an 8 GB card. This is a choice made without a measurement — see the header's
- * note 1 — and it is the first thing to change if the layout answers badly.
+ * ── WHY THE FOUR CONSTANTS THAT USED TO BE HERE ARE GONE ────────────────────
  *
- * `ggml-org/dots.ocr-GGUF` is the official conversion (the same org that
- * publishes llama.cpp). `anthonym21/dots.ocr-GGUF` carries an equivalent pair
- * and is not used: one source is one thing to verify.
+ * `HF_REPO`, `MODEL_FILE`, `MMPROJ_FILE` and an implied `main` revision were
+ * written down here, and the catalog (`app/shared/model-lineup.json`) wrote the
+ * same four facts down again in its `pages` row. Two owners of "which weights is
+ * the page reader" is a re-vendored catalog quietly disagreeing with what the
+ * installer actually fetches — the settings row would price one pair and the
+ * download would take another. Wave 61 package E made the catalog the owner
+ * (docs/SLOTS.md §4: *"Crucible's manifests are the catalog of record"*) and
+ * this file READS it, through `pagesForm()`.
+ *
+ * WHAT THE CATALOG NAMES TODAY is `anthonym21/dots.ocr-GGUF` at a pinned
+ * COMMIT, `Dots.Ocr-1.8B-Q8_0.gguf` with an **F16** projector — llama.cpp's own
+ * guidance is that the mmproj is small and quantising it costs more than it
+ * saves. That is a different pair from the `ggml-org` Q8/Q8 one this file used
+ * to name, so a machine that installed the reader before this change holds two
+ * superseded files; they are LISTED by `pageReaderFootprint` (which walks the
+ * directory rather than the current pair, precisely so they cannot go
+ * unaccounted) and the Remove button takes the whole directory.
+ *
+ * A REVISION THAT IS A COMMIT, not a branch, and both the index read and the
+ * download URL use it — so a repository re-cut upstream cannot change what a
+ * machine fetches under a checksum recorded against something else.
+ *
+ * NULL IS A REAL ANSWER. A catalog with no `pages` row means this build cannot
+ * install a reader, and every function below refuses by name rather than falling
+ * back to a repository nothing named.
  */
-const HF_REPO = 'ggml-org/dots.ocr-GGUF';
-const MODEL_FILE = 'dots.ocr-Q8_0.gguf';
-const MMPROJ_FILE = 'mmproj-dots.ocr-Q8_0.gguf';
-const MODEL_FILES: readonly string[] = [MODEL_FILE, MMPROJ_FILE];
+function pagesPair(): GgufForm | null {
+  return pagesForm();
+}
+
+/** The two file names, in the order the installer fetches them. Empty when there is no row. */
+function modelFiles(): readonly string[] {
+  const form = pagesPair();
+  return form === null ? [] : [form.file, form.mmproj];
+}
+
+/**
+ * The sentence every refusal about a missing `pages` row shares.
+ *
+ * One spelling, because the three places that hit it — the health read, the
+ * install and the spawn — are three surfaces showing one fact, and three
+ * paraphrases of "the catalog has no page reader in it" would read as three
+ * different faults.
+ */
+const NO_PAGES_ROW =
+  'The model catalog shipped with this build has no page-reader row, so there is nothing to '
+  + 'install or serve. That is app/shared/model-lineup.json, vendored from Crucible — a build '
+  + 'whose catalog lost its dots.ocr entry needs a re-vendor, not a setting.';
 
 /** llama.cpp's own repository. The binaries are its release assets. */
 const LLAMA_REPO = 'ggml-org/llama.cpp';
@@ -581,30 +624,44 @@ function pinnedBuild(choice: BuildChoice, why: string): RemoteBuild {
 }
 
 /**
- * The two GGUF files, from the Hugging Face model index.
+ * The two GGUF files, from the Hugging Face model index AT THE PINNED REVISION.
  *
  * `?blobs=true` is what makes the index carry each file's LFS sha256, which is
  * the only published checksum these weights have. Without it the response lists
  * names and nothing to verify them against.
+ *
+ * THE REVISION IS IN BOTH THE INDEX READ AND THE DOWNLOAD URL, and it has to be
+ * in both or it is in neither: reading `main`'s hashes and then fetching a
+ * pinned commit's bytes would compare a file against a checksum for a different
+ * file and delete it as corrupt. The catalog's `revision` is a commit for the
+ * dots row; a repository that names a branch there is used as written, and the
+ * pin is then whatever that branch is at the moment of the read.
  */
 export async function findModels(): Promise<RemoteAsset[]> {
-  const body = await askJson(`https://huggingface.co/api/models/${HF_REPO}?blobs=true`, 20_000);
+  const form = pagesPair();
+  if (form === null) throw new Error(NO_PAGES_ROW);
+  const revision = encodeURIComponent(form.revision);
+  const body = await askJson(
+    `https://huggingface.co/api/models/${form.hf_repo}/revision/${revision}?blobs=true`,
+    20_000,
+  );
   const siblings = (body as { siblings?: unknown }).siblings;
   const list = Array.isArray(siblings) ? siblings : [];
   const found: RemoteAsset[] = [];
-  for (const name of MODEL_FILES) {
+  for (const name of modelFiles()) {
     const entry = list.find((raw) => (raw as { rfilename?: unknown }).rfilename === name) as
       { rfilename?: string; size?: unknown; lfs?: { sha256?: unknown; size?: unknown } } | undefined;
     if (entry === undefined) {
       throw new Error(
-        `${HF_REPO} no longer carries ${name}. The repository has been re-cut; `
-        + 'the two file names in page-reader.ts need to be brought up to date.',
+        `${form.hf_repo} at ${form.revision} does not carry ${name}. The catalog's page-reader row `
+        + 'names a file that is not in that revision; app/shared/model-lineup.json needs a '
+        + 're-vendor from Crucible.',
       );
     }
     const lfs = entry.lfs ?? {};
     found.push({
       name,
-      url: `https://huggingface.co/${HF_REPO}/resolve/main/${encodeURIComponent(name)}`,
+      url: `https://huggingface.co/${form.hf_repo}/resolve/${revision}/${encodeURIComponent(name)}`,
       bytes: typeof lfs.size === 'number' ? lfs.size : (typeof entry.size === 'number' ? entry.size : null),
       sha256: typeof lfs.sha256 === 'string' ? lfs.sha256.toLowerCase() : null,
     });
@@ -625,13 +682,54 @@ export async function findModels(): Promise<RemoteAsset[]> {
  * describe itself, which is what makes this read cheap enough to call on every
  * render of the settings page.
  */
+/**
+ * THE CRUCIBLE ON THIS MACHINE THAT HAS TAKEN PAGE READING OVER, or null.
+ *
+ * docs/SLOTS.md §5b. When this is set, Foundry's own reader is not needed here:
+ * the settings card says so and its Install button is off (off rather than gone
+ * — a button that vanishes teaches somebody the app is broken), and the §5b
+ * removal is what takes the files. LOCAL ONLY: a remote Crucible deliberately
+ * answers null, because *"the local reader is what works when the Mac is
+ * asleep."*
+ */
+export function pageReaderSuperseded(): string | null {
+  /*
+   * SERVING THE CLASS IS HALF OF TAKING IT OVER. The other half is this app
+   * SENDING page reads there, and while `CRUCIBLE_READS` is false it does not: a
+   * `read` job takes the local path and `job-queue.ts` starts this server before
+   * it resolves a placement at all. Saying "not needed" on the strength of the
+   * capability record alone would dark the Install button on a machine whose
+   * reading still depends on the thing behind it — see the long note in
+   * machine-models.ts, which is the same condition and the same one-constant
+   * reversal.
+   */
+  if (!CRUCIBLE_READS) return null;
+  if (localCrucibleServes('pages') !== 'yes') return null;
+  return localCrucibleTakeover()?.server ?? null;
+}
+
 export async function pageReaderState(keepWarmMinutes: number): Promise<PageReaderState> {
   const profile = await probeSystem();
+  /*
+   * ── IS SOMETHING ON THIS MACHINE ALREADY READING PAGES? ───────────────────
+   *
+   * docs/SLOTS.md §5b. A LOCAL Crucible serving the `pages` class owns the
+   * weights for it here, and Foundry's own copy is a duplicate that has been (or
+   * is about to be) removed — so every surface built from this answer says why
+   * installing is not needed rather than offering a download of four gigabytes
+   * the machine already has in another store.
+   *
+   * The facts are refreshed here rather than read cold because this function is
+   * a settings card being opened, which is exactly when a person deserves a
+   * measurement instead of whatever a tooltip left in the cache.
+   */
+  await refreshCrucibleFacts();
+  const supersededBy = pageReaderSuperseded();
   const choice = buildFor(process.platform, process.arch, profile.cuda.present);
   const record = readRecord();
   const binary = serverBinary();
 
-  const models: PageReaderFile[] = MODEL_FILES.map((name) => {
+  const models: PageReaderFile[] = modelFiles().map((name) => {
     const file = modelPath(name);
     let bytes: number | null = record?.files[name]?.bytes ?? null;
     let present = false;
@@ -643,7 +741,29 @@ export async function pageReaderState(keepWarmMinutes: number): Promise<PageRead
     return { name, bytes, present };
   });
 
-  const installed = binary !== null && models.every((file) => file.present);
+  /*
+   * `models.every` ON AN EMPTY LIST IS TRUE, which is why the pair is asked for
+   * by name here rather than inferred from the list's length being right. A
+   * catalog with no `pages` row produces no files to check and would otherwise
+   * report a reader installed on the strength of a llama-server binary with
+   * nothing to serve.
+   */
+  const installed = pagesPair() !== null && binary !== null && models.every((file) => file.present);
+
+  if (pagesPair() === null) {
+    return {
+      supported: false,
+      platformNote: NO_PAGES_ROW,
+      installed: false,
+      binary: { release: null, asset: null, path: null, accel: 'none' },
+      models,
+      downloadBytes: null,
+      detail: 'There is no page reader in this build\'s catalog.',
+      server: serverStatus(),
+      keepWarmMinutes,
+      supersededBy,
+    };
+  }
 
   if (choice === null) {
     return {
@@ -658,6 +778,7 @@ export async function pageReaderState(keepWarmMinutes: number): Promise<PageRead
       detail: 'Not available on this machine.',
       server: serverStatus(),
       keepWarmMinutes,
+      supersededBy,
     };
   }
 
@@ -685,9 +806,10 @@ export async function pageReaderState(keepWarmMinutes: number): Promise<PageRead
         ? `Installed, but the record of which llama.cpp build this is was lost. It will still serve `
           + `${PAGE_READER_MODEL}; reinstalling would restore the record.`
         : `llama.cpp ${record.release} (${record.accel}), serving ${PAGE_READER_MODEL} from `
-          + `${MODEL_FILES.length} files in ${modelsDir()}.`,
+          + `${modelFiles().length} files in ${modelsDir()}.`,
       server: serverStatus(),
       keepWarmMinutes,
+      supersededBy,
     };
   }
 
@@ -727,6 +849,7 @@ export async function pageReaderState(keepWarmMinutes: number): Promise<PageRead
     detail,
     server: serverStatus(),
     keepWarmMinutes,
+    supersededBy,
   };
 }
 
@@ -887,7 +1010,7 @@ export async function installPageReader(
       if (file.sha256 !== null && actual !== file.sha256) {
         fs.rmSync(dest, { force: true });
         throw new Error(
-          `${file.name} does not match ${HF_REPO} and has been deleted.\n`
+          `${file.name} does not match the checksum the catalog's revision publishes, and has been deleted.\n`
           + `  expected sha256 ${file.sha256}\n  got      sha256 ${actual}`,
         );
       }
@@ -1070,8 +1193,19 @@ export async function ensurePageReader(): Promise<ReadyServer> {
 }
 
 async function startServer(): Promise<ServerStatus> {
+  const form = pagesPair();
+  /*
+   * NO ROW, NO SERVER, and it refuses before it looks at the disk. A catalog
+   * with no `pages` entry has nothing to spell into `-m`, and falling through to
+   * the "not installed yet" sentence below would send somebody to a Settings
+   * button that cannot help them either.
+   */
+  if (form === null) {
+    publish('failed', NO_PAGES_ROW);
+    throw new Error(NO_PAGES_ROW);
+  }
   const binary = serverBinary();
-  const missing = MODEL_FILES.filter((name) => !fs.existsSync(modelPath(name)));
+  const missing = modelFiles().filter((name) => !fs.existsSync(modelPath(name)));
 
   // Named settings rather than symptoms. "llama-server is not on this machine"
   // is a true sentence that tells somebody nothing about what to do; the row in
@@ -1087,8 +1221,8 @@ async function startServer(): Promise<ServerStatus> {
   const record = readRecord();
   const gpu = record?.accel === 'CUDA' || record?.accel === 'Metal';
   const args = [
-    '-m', modelPath(MODEL_FILE),
-    '--mmproj', modelPath(MMPROJ_FILE),
+    '-m', modelPath(form.file),
+    '--mmproj', modelPath(form.mmproj),
     '--alias', PAGE_READER_MODEL,
     // 127.0.0.1 rather than 0.0.0.0. The launcher this replaces bound to all
     // interfaces because it was inside WSL and had to cross that boundary;
@@ -1283,7 +1417,9 @@ export async function stopPageReader(reason = 'asked to stop'): Promise<ServerSt
  */
 export function pageReaderInstalled(): boolean {
   if (serverBinary() === null) return false;
-  return MODEL_FILES.every((name) => {
+  const wanted = modelFiles();
+  if (wanted.length === 0) return false;
+  return wanted.every((name) => {
     try {
       return fs.statSync(modelPath(name)).size > 0;
     } catch {
@@ -1353,20 +1489,46 @@ export function pageReaderFootprint(): { items: MachineModelItem[]; bytes: numbe
     });
   }
 
-  for (const name of MODEL_FILES) {
+  /*
+   * ── THE DIRECTORY, NOT THE CURRENT PAIR ───────────────────────────────────
+   *
+   * This loop used to walk the two file names this module held as constants, and
+   * that was safe only while those names could never change. They can now: the
+   * pair is the CATALOG's (`pagesForm`), and a re-vendored `model-lineup.json`
+   * renames it — as Wave 61's did, from ggml-org's Q8/Q8 pair to anthonym21's
+   * Q8 + F16 one. A machine that installed the reader before such a change holds
+   * files the new pair does not name, and a list built from the new pair would
+   * show a store of "nothing" over four gigabytes of superseded weights: invisible
+   * exactly when somebody is looking at this screen to find disk space.
+   *
+   * So every file in `models/` is listed, and the ones the catalog no longer
+   * names say so. The Remove button takes the whole directory either way.
+   */
+  const wanted = pagesPair();
+  let present: string[] = [];
+  try {
+    present = fs.readdirSync(modelsDir(), { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .sort();
+  } catch { /* no models directory yet, which is 'nothing downloaded'. */ }
+
+  for (const name of present) {
     let bytes: number;
     try {
       bytes = fs.statSync(modelPath(name)).size;
     } catch {
       continue;
     }
-    items.push({
-      name,
-      detail: name === MMPROJ_FILE
-        ? `${PAGE_READER_MODEL}'s vision projector, from ${HF_REPO}.`
-        : `${PAGE_READER_MODEL}'s weights, from ${HF_REPO}.`,
-      bytes,
-    });
+    const detail = wanted === null
+      ? 'A page-reader file. This build\'s catalog has no page-reader row, so nothing here names it.'
+      : name === wanted.mmproj
+        ? `${PAGE_READER_MODEL}'s vision projector, from ${wanted.hf_repo}.`
+        : name === wanted.file
+          ? `${PAGE_READER_MODEL}'s weights, from ${wanted.hf_repo}.`
+          : `Superseded: the catalog now names ${wanted.file} and ${wanted.mmproj}, so this file is `
+            + 'left over from an earlier one and nothing reads it.';
+    items.push({ name, detail, bytes });
   }
 
   const total = items.reduce<number | null>(

@@ -27,13 +27,24 @@
  * a card inventing "freed 0 GB" over an unmeasurable one would be worse than the
  * truth, which is that it could not say.
  *
- * ── AND A CRUCIBLE LINE THAT CURRENTLY SAYS THERE IS NONE ───────────────────
+ * ── AND A CRUCIBLE LINE, WHICH IS NOW A REAL ONE ────────────────────────────
  *
- * The third store is a local Crucible's residency. It is drawn, it is empty, and
- * its sentence says the registry has not landed — package C (docs/SLOTS.md §6).
- * Drawing the empty row now rather than hiding it is the same decision the rest
- * of this screen makes about an absent tier: a store nobody can see is a store
- * nobody knows to look for.
+ * The third store is a local Crucible's residency, read from that server's own
+ * capability record. Its models carry NO SIZES and that is not an omission: the
+ * weights are on the far side of a WSL boundary, or are MLX weights in a Mac's
+ * own cache, and this app has measured none of them. Naming what the server
+ * serves is the honest half and is also the useful half — somebody looking at
+ * this screen is asking whether the 27B is on this machine twice.
+ *
+ * ── AND THE ONE SENTENCE ABOUT A DELETION THIS APP MADE BY ITSELF ───────────
+ *
+ * docs/SLOTS.md §5b: when a LOCAL Crucible takes over page reading, Foundry
+ * removes its own copy of the reader — *"and never silently: the settings row
+ * says what was removed and the gigabytes freed."* That sentence is
+ * `MachineModels.pageReader.detail`, composed in main and printed here, and it
+ * survives the app being closed because main writes it down. The REMOTE case is
+ * the other half of the same rule: nothing is removed, and the row offers it
+ * with a number on it and says which machine page reading would then need.
  */
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 
@@ -54,6 +65,34 @@ import { api } from '../../core/foundry';
       </header>
 
       @if (inventory(); as it) {
+        <!--
+          §5b's SENTENCE, ABOVE THE STORES. Above rather than inside Foundry's
+          own store, because in the case that matters most — the automatic
+          removal — that store is EMPTY, and a sentence explaining an absence has
+          to be somewhere a person will read before they conclude the download
+          failed.
+        -->
+        @if (it.pageReader.server !== null) {
+          <div class="offer">
+            <p class="detail">{{ it.pageReader.detail }}</p>
+            <div class="actions">
+              <button class="ghost danger" [disabled]="busy()" (click)="remove()">
+                {{ busy() ? 'Removing…' : freeing(it) }}
+              </button>
+            </div>
+          </div>
+        } @else {
+          <!--
+            NO BUTTON, because a null server means removing is not a choice this
+            screen may offer: either there is nothing to remove, or the copy on
+            this disk is the one still doing the work. The sentence is main's
+            either way, and it is drawn whichever of those two it is saying.
+            (NO BACKTICKS ANYWHERE IN THIS TEMPLATE — it is a template literal,
+            and one would end it mid-comment. A house pitfall.)
+          -->
+          <p class="detail">{{ it.pageReader.detail }}</p>
+        }
+
         @for (store of it.stores; track store.id) {
           <div class="store">
             <div class="store-head">
@@ -121,6 +160,13 @@ import { api } from '../../core/foundry';
       background: var(--bg-input); color: var(--text-secondary);
     }
 
+    .offer {
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 8px 10px;
+      background: var(--bg-sunken); border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+    }
+
     .store { display: flex; flex-direction: column; gap: 6px; }
     .store + .store { border-top: 1px solid var(--border-subtle); padding-top: 10px; }
     .store-head { display: flex; align-items: baseline; gap: 8px; }
@@ -156,6 +202,13 @@ export class MachineModelsCardComponent {
   constructor() {
     if (!api) return;
     void this.load();
+    /*
+     * THE FILES CAN MOVE WITHOUT THIS CARD DOING IT. Registering the Crucible on
+     * this machine takes page reading over, and §5b's removal fires from main —
+     * so without this the card would go on listing four gigabytes of files that
+     * are not there until somebody navigated away and back.
+     */
+    api.models.onChanged(() => { void this.load(); });
   }
 
   private async load(): Promise<void> {
@@ -187,6 +240,22 @@ export class MachineModelsCardComponent {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  /**
+   * The remote offer's button, with the number on it.
+   *
+   * §5b asks for *"removal with a number on it"*, and the number is the only
+   * thing this card composes rather than takes from main — because it is a
+   * label on a button rather than a claim about what happened. An unmeasurable
+   * directory falls back to the plain verb: this card will not print a
+   * confident size it does not have.
+   */
+  protected freeing(inventory: MachineModels): string {
+    const bytes = inventory.pageReader.bytes;
+    return bytes === null || bytes <= 0
+      ? 'Remove the page reader Foundry downloaded'
+      : `Remove Foundry's page reader (frees ${this.size(bytes)})`;
   }
 
   /** Every store's bytes added up, or a sentence when any of them is unknown. */

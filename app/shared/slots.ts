@@ -235,6 +235,105 @@ export interface CrucibleSettingsView {
   hosted: boolean;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// "Install Crucible here" — the sequence, and the seam that will run it
+// (electron/crucible-install.ts; docs/SETUP.md)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * THE WHEEL, NAMED ONCE.
+ *
+ * Crucible's server is published as a wheel on its GitHub release, and the
+ * version here is the same 0.5.0 that `@crucible/client` is pinned to in
+ * `app/package.json` — the SDK, the bootstrap package and the server are cut
+ * together and their versions are the same number by design. Written here rather
+ * than in the install module because the sequence a person copies and the
+ * sequence `@crucible/bootstrap` would run must name the same file, and two
+ * spellings of a filename is how they stop doing that.
+ */
+export const CRUCIBLE_WHEEL =
+  'https://github.com/telltaleatheist/crucible/releases/download/v0.5.0/crucible-0.5.0-py3-none-any.whl';
+
+/**
+ * One numbered step of the hand sequence, or one of the elevated commands beside
+ * it.
+ *
+ * `command` IS NULL FOR A STEP WITH NOTHING TO TYPE — "come back here and press
+ * the button" is a step, and giving it an empty command string would draw an
+ * empty code box under it. `done` is only ever true for a step this app can
+ * actually CHECK, which today is exactly one: whether a WSL2 distribution
+ * exists. Every other step is something only the machine it runs on knows the
+ * outcome of, and a checkbox that guessed would be worse than no checkbox.
+ */
+export interface CrucibleInstallStep {
+  title: string;
+  detail: string;
+  /** The exact line to run, complete and copyable, or null. */
+  command: string | null;
+  /** True only when this app has verified it. See the note above. */
+  done: boolean;
+}
+
+/**
+ * THE THREE PLATFORMS THE SEQUENCE DIFFERS BY, AND A WORD FOR THE REST.
+ *
+ * `NodeJS.Platform` would be the exact type and is deliberately not used: this
+ * file is imported by the RENDERER, whose tsconfig carries no node types, and a
+ * shared shape that only compiles in main is a shape that will be moved here and
+ * then moved back. The three names are the three the plan actually branches on —
+ * a WSL guest, a launchd agent, a systemd user unit — and `other` is a platform
+ * Crucible has no backend for, which the plan says in as many words rather than
+ * drawing a sequence nobody can run.
+ */
+export type InstallPlatform = 'win32' | 'darwin' | 'linux' | 'other';
+
+/** What `wsl.exe -l -v` said. Empty with a sentence when it could not be asked. */
+export interface WslDistroFacts {
+  /** WSL2 distributions only — WSL1 has no GPU passthrough, so it is not a candidate. */
+  distros: string[];
+  /** The one wsl.exe marks with `*`, or null. Never used as a default: see `wslDistro`. */
+  default: string | null;
+  /** One sentence, whether it worked or not. */
+  detail: string;
+}
+
+/**
+ * EVERYTHING THE "INSTALL CRUCIBLE HERE" DOOR DRAWS.
+ *
+ * One read, composed in main, for the same reason `CrucibleSettingsView` is:
+ * the platform branch, the WSL probe and the step list are one picture, and a
+ * screen that asked for them separately would draw a Windows sequence beside a
+ * "no WSL found" that had not arrived yet.
+ */
+export interface CrucibleInstallPlan {
+  platform: InstallPlatform;
+  /** win32 only; null elsewhere, where there is no guest to install into. */
+  wsl: WslDistroFacts | null;
+  /** The hardware probe's own sentence about this machine. */
+  machine: string;
+  /** The sequence, in order. */
+  steps: CrucibleInstallStep[];
+  /**
+   * The commands that need a privilege this app does not have — elevation, a
+   * reboot, sudo. Listed APART from the sequence, because `@crucible/bootstrap`
+   * draws the same line: it refuses by name and hands the command over rather
+   * than attempting it. Empty on macOS, which needs neither.
+   */
+  elevated: CrucibleInstallStep[];
+  /** Crucible's own README — the argument behind the sequence. */
+  readme: string;
+  /** The release wheel the sequence installs. {@link CRUCIBLE_WHEEL}. */
+  wheel: string;
+  /**
+   * Whether the driven install can run. FALSE ON EVERY MACHINE TODAY —
+   * `@crucible/bootstrap` is released with Crucible's next version and is
+   * deliberately not a dependency until it exists.
+   */
+  driven: boolean;
+  /** The sentence the disabled button wears. Always set, whether driven or not. */
+  drivenWhy: string;
+}
+
 /**
  * Is this URL's host the machine it is read on?
  *

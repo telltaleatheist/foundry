@@ -506,6 +506,130 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-09-14 (later) — PACKAGES C, D AND E ARE ALL IN. This is the whole re-vendor
+delta for the three, in one place: channels added and removed, settings keys
+retired, and where the model catalog now comes from.**
+
+The note that follows covers package C on its own; this supersedes nothing in it
+and adds D and E. Plans of record: docs/SLOTS.md (§7 and the two "landed" sections),
+docs/SETUP.md §5 and §5b, docs/IPC-CHANNELS.md.
+
+### Channels, across all three
+
+**Removed (C).** `llm:servers`, `llm:set-servers`. Delete any bridge entry.
+
+**Added (C).** `slots:list`, `slots:rows-waiting-for`, `crucible:settings`,
+`crucible:save`, `crucible:test`, `crucible:add-local`,
+`crucible:set-wsl-distro`, `crucible:set-new-jobs-wait-for`,
+`queue:set-wait-for`, and `llm:ollama-url` / `llm:set-ollama-url`.
+
+**Added (D).** `acts:gates` + the push `acts:gates-changed`; `models:inventory`,
+`models:remove-page-reader`.
+
+**Added (E).** `crucible:test-at` (probe an unsaved url+token — writes nothing),
+`crucible:add` (add ONE server through the same one writer), `crucible:install-plan`
+(the hand sequence, a read), `crucible:install` (the driven install — **rejects on
+every machine today**), and the push `models:changed`.
+
+**Nothing else was removed in D or E**, and no existing shape narrowed after C's
+`llm:defaults`.
+
+### Settings keys retired (C), and one added (E)
+
+Retired: `AppSettings.llmServer`, `vllmUrl`, `vllmModel`. A stored `vllmUrl`
+becomes nothing — vLLM is Crucible-only by ruling. `LlmServers` and the request
+field `server?: LlmServerKind` went with them.
+
+Added in E: `AppSettings.pageReaderRemoved` — `{server, bytes, at} | null`, the
+RECEIPT for SLOTS.md §5b's automatic removal of Foundry's own page reader. It is
+a receipt and not a flag: nothing reads it to decide whether to remove again.
+Hosted, it cannot be written, because §5b cannot fire in your window at all (see
+below).
+
+### Payloads that widened inside channels that did not move
+
+- `acts:gates` — unchanged shape, but a LOCAL Crucible serving a class now lights
+  that act outright and names the server in `why`.
+- `models:inventory` — `MachineModels.pageReader` (§5b's offer: automatic?, bytes,
+  the remote server page reading would then need, and the sentence), plus a real
+  Crucible store listing what a local server says it serves (no byte counts — this
+  app has measured none of Crucible's weights and will not invent them).
+- `page-reader:state` — `PageReaderState.supersededBy: string | null`.
+- `ollama:choices` — `LlmChoices.crucible: {server, classes} | null`.
+- `ollama:facts` / `ollama:choices` already carried `OllamaFacts.holdings` from D.
+
+### The model catalog is Crucible's file now, and it is TWO files
+
+`app/shared/model-lineup.json` is **Crucible's own `foundry-lineup.json`**,
+vendored byte for byte from `telltaleatheist/crucible` @ `7e63905`
+(`feat/phase6-remote-render`), generated from manifest commit `4e178423…`. Its
+shape is `{generated_from, schema: 1, models:[{id, classes, label, description,
+local:{kind, tag | hf_repo/revision/file/mmproj, downloadGB, needsGB:{value,
+basis}}, minimum, minimumFor}]}`. **Nothing in Foundry edits it** — that is what
+lets a keeper compare our copy against a fresh emission by content. If you vendor
+the app snapshot, vendor this file unchanged with it.
+
+`app/shared/model-lineup-local.json` is **Foundry's own additions**: the smaller
+quantised Qwen tags Ollama serves and Crucible has no manifest for. Every id is
+prefixed `foundry/` so it can never collide with a Crucible id. It exists because
+Foundry's local path is Ollama on whatever card the person owns; **your window
+never reads any of this** — hosted, the tiles are lit wholesale because the work
+is your compute.
+
+Two things worth knowing anyway, because they are facts about the catalog you
+share: `llm-catalog.ts` **sorts the merged list by `needsGB.value`** (neither
+file is sorted, and everything downstream wants smallest-first), and
+`minimum_for` is spelled `minimumFor` now. **The ANALYSIS floor moved** — Crucible
+declares `minimumFor: [translate, simplify, analysis]` on the 4-bit 27B, where
+Foundry's hand-written stopgap had given analysis no floor at all. Translate and
+simplify keep the 9B floor, which the local file declares; where two catalogs each
+declare a floor, the smallest wins.
+
+### The page reader's weights are the catalog's, not page-reader.ts's
+
+`HF_REPO`/`MODEL_FILE`/`MMPROJ_FILE` are gone from `page-reader.ts`; the `pages`
+row is the one owner. It names `anthonym21/dots.ocr-GGUF` at commit `42ab3102…`
+with `Dots.Ocr-1.8B-Q8_0.gguf` + `mmproj-Dots.Ocr-F16.gguf` (F16 projector, per
+llama.cpp's guidance) — a DIFFERENT pair from the `ggml-org` Q8/Q8 one, so a
+machine that installed the reader before this holds two superseded files.
+`pageReaderFootprint` walks the models directory rather than the current pair so
+they are listed and marked rather than going unaccounted.
+
+### §5b cannot fire in a hosted window, and not by a guard
+
+Foundry deletes its own page-reader download only when a LOCAL Crucible has taken
+over the `pages` class. Hosted, the slot list is YOURS and
+`AppSettings.crucibleServers` is empty, so `localCrucibleServes` answers
+`unknown` — which is explicitly not a permission to delete. That is the
+three-valued answer doing the work it was shaped for rather than a `hosted()`
+check that would have to be kept in step with a rule written elsewhere. If you
+ever populate that array in the hosted app, understand that you are also arming
+a deletion.
+
+It also requires `CRUCIBLE_READS` (crucible-dispatch.ts), which is still `false`
+in both programs' copy: a `read` job takes the local path, so removing the reader
+would delete the thing still doing the work. One constant flips it, and it needs
+the read path to resolve its placement before it starts a server.
+
+### And the one thing that is offered but not built
+
+The setup wizard has a **Crucible (optional)** step with three doors — connect to
+one elsewhere, use the one on this machine, install one here — and the Settings
+Servers card mounts the same child component. The third door is a DOCUMENT today:
+the exact hand sequence with copyable commands and the two elevated ones listed
+apart. The button that will drive it is present and **disabled**;
+`driveCrucibleInstall()` is typed against `@crucible/bootstrap` 0.5.0's
+`install()` (transcribed from its `.d.ts`) and rejects. That package is released
+with Crucible's next version and is deliberately not in `app/package.json` yet —
+its peer dependency is `@crucible/client` **0.5.0 exactly**, which is what both
+of us pin. If BookForge wants to drive an install first, the seam and its
+four-step turn-on are documented in docs/SETUP.md §5b, and the work should not be
+done twice.
+
+**None of this step is drawn hosted**, for the same reason the Servers card is
+not: the registry is the host application's while Foundry runs inside it, and
+`writeCrucibleServers` refuses at the door as well as hiding the card.
+
 **2026-09-14 — SLOTS. Foundry has a Crucible registry of its own, a per-row slot
 picker, and a dispatch that reads capability, loads, LEASES and releases. Hosted,
 the slot list is YOURS and the whole feature is off until you offer one.**

@@ -1762,6 +1762,20 @@ export interface PageReaderState {
   detail: string;
   server: ServerStatus;
   keepWarmMinutes: number;
+  /**
+   * THE CRUCIBLE ON THIS MACHINE THAT IS ALREADY READING PAGES, or null.
+   *
+   * docs/SLOTS.md §5b. When this is set, Foundry's own reader is a duplicate:
+   * the download has been removed (or will not be offered), and the card's
+   * Install button says WHY it is not needed rather than disappearing. A button
+   * that vanishes teaches somebody that the app is broken; a button that is off
+   * with a sentence beside it teaches them what took the job over.
+   *
+   * LOCAL ONLY, and a remote Crucible deliberately leaves this null — *"the
+   * local reader is what works when the Mac is asleep"*. The remote case is an
+   * offer on the Models card, not a reason to stop installing.
+   */
+  supersededBy: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1962,6 +1976,23 @@ export interface LlmChoices {
   suggested: string;
   /** The model jobs use today, whether or not setup has ever run. */
   current: string;
+  /**
+   * THE CLASSES A CRUCIBLE ON THIS MACHINE HAS ALREADY TAKEN OVER — null when
+   * none has, which is every machine without one.
+   *
+   * docs/SLOTS.md §5b: *"the app never pulls into [Ollama] while a local Crucible
+   * serves the class."* The wizard honours that by saying so in the rows rather
+   * than by hiding them: the list still describes the machine (that is what the
+   * step is for), each row still says what it costs, and the button that would
+   * spend seventeen gigabytes on a second copy of a model this computer already
+   * has is off, with the server's name beside it.
+   *
+   * A LOCAL SERVER ONLY. A Crucible on the Mac in the other room is a slot, not
+   * an owner of anything on this disk, and it does not stop somebody pulling a
+   * model for the evenings the Mac is asleep — which is the same distinction
+   * §5b draws about deleting.
+   */
+  crucible: { server: string; classes: ModelClass[] } | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2053,9 +2084,48 @@ export interface MachineStore {
 /** The whole inventory, plus where the catalog behind it came from. */
 export interface MachineModels {
   stores: MachineStore[];
+  /**
+   * What SLOTS.md §5b's rule says about the page reader right now — whether it
+   * has been (or would be) removed, what that costs, and which server page
+   * reading then depends on. Carried on the inventory rather than fetched
+   * separately because it is a sentence ABOUT one of the stores above, and a
+   * card that read the two through different doors could draw a store and an
+   * offer that disagree about whether the files are still there.
+   */
+  pageReader: RemovalOffer;
   /** `model-lineup.json`'s own provenance, printed so the table is not anonymous. */
   generatedBy: string;
   generatedAt: string;
+}
+
+/**
+ * WHAT §5b's RULE SAYS ABOUT FOUNDRY'S PAGE-READER DOWNLOAD — computed fresh off
+ * the disk and the server registry every time it is asked for.
+ *
+ * Three shapes in one, told apart by `automatic` and `server`:
+ *   * `automatic: true` — a LOCAL Crucible serves `pages`, so the files are
+ *     Foundry's to remove and have been (or are about to be). `detail` says so.
+ *   * `server` set — a REMOTE Crucible serves `pages`. Nothing was removed;
+ *     `detail` carries §5b's sentence, *"page reading will then need <server> to
+ *     be reachable"*, and the card offers the removal rather than doing it.
+ *   * neither — nothing else on this machine reads pages, and the copy on this
+ *     disk is the one that works.
+ */
+export interface RemovalOffer {
+  /** True only when a LOCAL Crucible is serving `pages`. `unknown` is not true. */
+  automatic: boolean;
+  /** The bytes it would free, measured. Null when the directory could not be walked. */
+  bytes: number | null;
+  /**
+   * The REMOTE server page reading would fall to, or null.
+   *
+   * Null in both of the other two shapes, and for opposite reasons: an automatic
+   * removal's server is on this machine and is named in `detail`, and a machine
+   * with no Crucible at all has nothing to name.
+   */
+  server: string | null;
+  /** The sentence the settings row shows. Always set, including "nothing to offer". */
+  detail: string;
 }
 
 /** What a removal actually did, in the words the settings row prints. */

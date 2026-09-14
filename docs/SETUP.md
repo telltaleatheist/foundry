@@ -30,12 +30,12 @@ asked.
 
 ## 2. The shape
 
-`app/src/app/components/setup-wizard/setup-wizard.component.ts` — six steps,
+`app/src/app/components/setup-wizard/setup-wizard.component.ts` — seven steps,
 mounted by the shell, drawn over everything at z-index 1250.
 
 ```
-Welcome  →  Library  →  Ollama and a model  →  Python environments
-                                                     →  The page reader  →  Ready
+Welcome  →  Library  →  Ollama and a model  →  Crucible (optional)
+              →  Python environments  →  The page reader  →  Ready
 ```
 
 **It is a FLOW, not a question**, and three decisions follow from that:
@@ -140,24 +140,35 @@ whether or not this app is looking.
 
 ## 5. The model lineup
 
-**THE TABLE IS A VENDORED FILE SINCE WAVE 61 PACKAGE D**, not a const:
-`app/shared/model-lineup.json`, read by `app/electron/llm-catalog.ts`. Crucible's
-manifests are the catalog of record (docs/SLOTS.md §4); each carries a `[local]`
-block naming the model's local form — an Ollama tag, or a GGUF plus its mmproj —
-with a memory figure and its BASIS, and a generator
-(`crucible/scripts/gen-foundry-lineup.py`) will emit `foundry-lineup.json` for
-Foundry to vendor. Until that generator exists the file's `generatedBy` says
-`"hand — pending …"` in as many words, and the rows are the ones this const used
-to hold. Sizes are ollama's own published figures for `qwen3.5` (read
-2026-08-26). The shipping line, plus the four `clean` rows the narration cleanup
-picks from and the `pages` row the page reader serves.
+**THE TABLE IS TWO VENDORED FILES SINCE WAVE 61 PACKAGE E**, and neither is a
+const. `app/electron/llm-catalog.ts` reads both and merges them.
 
-One row is NEW, and it is the app's own default: `qwen3.8:27b`
-(`DEFAULT_TRANSLATE_MODEL`) was never in `QWEN_LINEUP`, so the wizard could
-describe and pull every model except the one every dialog opens with. It is there
-now, after `qwen3.5:27b`, carrying the Crucible id BookForge already uses
-(`qwen3.8-27b-4bit`) — which makes it the recommendation on a card that holds
-exactly one 27B.
+`app/shared/model-lineup.json` is **Crucible's own `foundry-lineup.json`**,
+vendored byte for byte from `telltaleatheist/crucible` @ `7e63905`
+(`feat/phase6-remote-render`), itself generated from manifest commit
+`4e178423…`. Crucible's manifests are the catalog of record (docs/SLOTS.md §4);
+each carries a `[local]` block naming the model's local form — an Ollama tag, or
+a GGUF plus its mmproj — with a memory figure and its BASIS, and
+`crucible/scripts/gen-foundry-lineup.py` emits the file. **Nothing in Foundry
+edits it**, which is what lets a keeper compare it against a fresh emission by
+content. It lists three models: `dots-ocr` (pages), `qwen3.5-9b` at bf16 (clean)
+and `qwen3.8-27b-4bit` (translate, simplify, analysis).
+
+`app/shared/model-lineup-local.json` is **Foundry's own additions**, and its
+`note` header argues the case in full. Short version: Crucible's file lists what
+a CRUCIBLE serves, and Foundry's local path is Ollama on whatever card the person
+already owns — which means the smaller quantised Qwen tags that Crucible has no
+manifest for. Dropping them would leave an 8 GB laptop being offered exactly one
+model, 17.7 GB, that the same screen then marks as too big. Every id in that file
+is prefixed `foundry/` so a row of ours can never collide with a Crucible id, and
+the merged row carries `crucible: false` recording which file it came from.
+
+**The merged ORDER is computed**, not read: both files are concatenated and
+sorted by `needsGB.value` (ties on the id), because everything downstream depends
+on smallest-first — `lineupFor` takes the last one that fits, `eligibleFor`
+slices at a floor's POSITION, and the tile gate names "the largest present one".
+Neither file is sorted, and sorting the vendored one in place would break the
+content comparison.
 
 ```
 needsGB = downloadGB + OVERHEAD_GB      OVERHEAD_GB = 1.5
@@ -202,11 +213,131 @@ large; the sentence beside it is the whole intervention.
 **THE TILES ARE A DIFFERENT MATTER, and they DO refuse** (Wave 61 package D,
 docs/SLOTS.md §1). This screen's job is to describe the machine, so it lists
 everything; the dock's job is to not start an eight-day job, so Translate and
-Simplify light only where a model at or above the `minimum_for` floor — the 9B —
+Simplify light only where a model at or above the `minimumFor` floor — the 9B —
 both fits and is installed, and not at all on a machine with no GPU a model can
-use. Analysis takes the same CPU rule with no floor. The gate is
-`app/electron/act-gates.ts`, answered over `acts:gates`, and every refusal names
-the model that would light it.
+use. The gate is `app/electron/act-gates.ts`, answered over `acts:gates`, and
+every refusal names the model that would light it.
+
+**A FLOOR MOVED WHEN THE FILE BECAME CRUCIBLE'S, and it is worth saying out
+loud.** Package D's hand-written table gave ANALYSIS no floor at all, on Owen's
+*"analysis is a sentence at a time and a small model does it, a translation is a
+book."* Crucible's row declares `minimumFor: [translate, simplify, analysis]` —
+*"the smallest model those three may run on"* — so **analysis now floors at the
+4-bit 27B**, and a 12 GB card that used to light the Analysis tile no longer
+does. Foundry did not overrule the catalog of record; if that is wrong it is a
+fact in Crucible's manifests and it is fixed there and re-vendored.
+
+**TWO CATALOGS MAY EACH DECLARE A FLOOR, AND THE SMALLEST WINS.** The local file
+keeps the 9B as the floor for translate and simplify (the two acts Owen named);
+Crucible declares the 27B. `eligibleFor` takes the first declaring row in sorted
+order, which is the smaller — because the two files answer different questions:
+Crucible's floor is what a Crucible will serve, and Foundry's is what an Ollama
+on this desk can be asked for.
+
+**AND THE WIZARD WILL NOT PULL FOR A CLASS A LOCAL CRUCIBLE SERVES**
+(docs/SLOTS.md §5b). The rows still list — the step's job is to describe the
+machine — and each says so, with the server's name, and the Download button is
+off. A REMOTE Crucible changes nothing here: it is a slot, not an owner of
+anything on this disk, and somebody may well want a local model for the evenings
+the Mac is asleep.
+
+## 5b. The Crucible step — three doors, and none of them is a requirement
+
+`STEPS` puts it after Ollama and before the environments. After, because the
+Ollama step is what most people will use and a Crucible offered first would read
+as a requirement; before the environments, because it is a DECISION rather than a
+download and finding it out after paying for two Pythons is finding it out too
+late. Its blurb says in as many words that most people should skip it.
+
+The three doors are `app/src/app/components/crucible-doors/crucible-doors.component.ts`,
+a child component the **Settings → Servers card mounts as well** — one set of
+doors, two hosts, so the two screens cannot drift apart. The Servers card keeps
+the LIST (editing, ranking, switching off); the doors add something new.
+
+1. **Connect to a Crucible server** — name, address, token. **Test** goes through
+   `crucible:test-at`, which does NOT write anything: adding a server in order to
+   find out whether it is a server leaves a dead entry behind every failure. The
+   answer is `client.info()`'s backend/GPU/version, or the SDK's own error
+   sentence, never reworded. **Add** goes through `crucible:add` → the registry's
+   one writer (`writeCrucibleServers`); an existing name is replaced in place,
+   keeping its rank.
+
+2. **Use the Crucible on this machine** — `crucible:add-local`, which reads that
+   server's own `config.toml` (through `wsl.exe -d <distro>` on Windows) so the
+   file stays the token's single owner. The WSL distro field lives inside this
+   door, beside the button that needs it, and there is **no default**: *"the
+   default distro"* is whatever `wsl --set-default` last said, and a token read
+   out of the wrong guest is a wrong token.
+
+3. **Install Crucible here** — today a DOCUMENT and a disabled button.
+
+### The hand sequence, and the two commands Foundry may not run
+
+`crucible:install-plan` composes it for this machine
+(`app/electron/crucible-install.ts`). The only process it spawns is
+`wsl.exe -l -v`, which lists; everything else in the answer is a string to read
+and run. On Windows every line runs **inside the guest**; on macOS and Linux, in
+a terminal on the machine itself.
+
+1. **A WSL2 distribution** — the one step this app can CHECK, and it does: the
+   row says "already here" and names them, or says there is none.
+2. `conda create -n crucible python=3.11 -y`
+3. `conda run -n crucible pip install <the release wheel>` — `CRUCIBLE_WHEEL`,
+   `app/shared/slots.ts`, the same 0.5.0 `@crucible/client` is pinned to.
+4. `conda run -n crucible crucible init --enable-llm` — writes
+   `~/.crucible/config.toml` at 0600 and mints the token. **`llm` and nothing
+   else**: Foundry's two model acts (text, and page reading) are both that job
+   type, and `tts`/`asr`/`align`/`rvc` belong to BookForge's pipeline.
+5. `conda run -n crucible crucible install llm` — several gigabytes, once.
+6. `conda run -n crucible crucible service install` — a systemd user unit, or a
+   launchd agent on the Mac.
+7. `conda run -n crucible crucible capability --write` — until this runs, a
+   client asking what the machine can do is told *undecided*, which is
+   deliberately different news from *nothing fit*.
+8. `conda run -n crucible crucible models pull qwen3.5-9b qwen3.8-27b-4bit dots-ocr`
+9. Come back and press **Use the Crucible on this machine**.
+
+Listed APART, because each needs a privilege this app does not have and must not
+ask for silently — which is `@crucible/bootstrap`'s own rule, quoted from its
+README: *"A missing prerequisite is a named refusal carrying the exact command
+the host must run. Elevation, a reboot, a sudo password — those are the app's to
+obtain."*
+
+* Windows, if there is no distribution yet: `wsl --install -d Ubuntu`, in an
+  ELEVATED PowerShell, **then reboot**. The first launch asks for a username.
+* Linux, to keep the server up when logged out: `sudo loginctl enable-linger "$USER"`.
+* macOS needs neither: its service is a launchd agent.
+
+### The seam, and what turning it on costs
+
+`driveCrucibleInstall()` (`app/electron/crucible-install.ts`) is shaped to
+`@crucible/bootstrap` 0.5.0's `install()` verbatim — the surface is transcribed
+into that file from the package's own `.d.ts` rather than invented. It REJECTS
+today with one sentence, `DRIVEN_INSTALL_UNAVAILABLE`, which is the same sentence
+the disabled button wears; the `crucible:install` door refuses as well, because
+something reachable by an IPC message must refuse at the door or the disabling is
+a decoration.
+
+The package is NOT in `app/package.json`: it is released with Crucible's next
+version and a dependency on a tarball that does not exist is a build that does
+not run. Turning it on is four things, and no caller changes:
+
+1. `npm i @crucible/bootstrap@<release tarball URL>` — its peer dependency is
+   `@crucible/client` **0.5.0 exactly**, which is what this app pins;
+2. swap the local `Bootstrap*` types for `import type … from '@crucible/bootstrap'`;
+3. replace the one `throw` with the `install(…)` call written out in full in the
+   comment directly above it, then `ensureRunning()` → `readLocalConfig()` →
+   `addCrucibleServer(name, url, token)`;
+4. drop the disabled state in the renderer.
+
+Two facts worth carrying: on the Mac, `condaRoots` must include
+`/opt/homebrew/Caskroom/miniconda/base` — the package's three defaults are the
+official installers' paths and a Homebrew cask is none of them, so a `no_conda`
+refusal on a machine that plainly has conda reads as the installer being broken.
+And a failure throws `BootstrapStepFailed` carrying `step`, `exitCode`, `tail`
+and `stepsDone`: print all four, because partial work survives a failure and
+telling somebody which of seven steps did not finish is the difference between
+resuming and starting again.
 
 ## 6. The default model setting
 
@@ -265,12 +396,30 @@ fetches itself:
   and the macOS build (Metal is compiled in) on a Mac. Verified against the
   release's own published sha256. CUDA 12.4 rather than 13.x because 13 needs a
   580-series driver and 12.4 runs on 550 and anything above it.
-* **Two GGUF files** from `ggml-org/dots.ocr-GGUF` — `dots.ocr-Q8_0.gguf`
-  (1.89 GB) and `mmproj-dots.ocr-Q8_0.gguf` (1.34 GB). BOTH, because llama.cpp
-  serves a vision model as a text tower plus a separate projector: a server
-  started without the second loads, answers `/v1/models`, and then refuses every
-  request that carries an image. Verified against the LFS sha256 the Hugging Face
-  model index publishes.
+* **Two GGUF files, NAMED BY THE CATALOG AND NOT BY THIS CODE** (Wave 61
+  package E). `page-reader.ts` held `HF_REPO`/`MODEL_FILE`/`MMPROJ_FILE` as
+  constants and `model-lineup.json`'s `pages` row wrote the same four facts down
+  again; two owners of "which weights is the reader" is a re-vendored catalog
+  quietly disagreeing with what the installer fetches. The row is the owner now,
+  read through `pagesForm()`.
+
+  What it names today is `anthonym21/dots.ocr-GGUF` at commit `42ab3102…` —
+  `Dots.Ocr-1.8B-Q8_0.gguf` plus `mmproj-Dots.Ocr-F16.gguf`, ~4.42 GB, with an
+  **F16 projector** per llama.cpp's own guidance (the mmproj is small and
+  quantising it costs more than it saves). BOTH files, because llama.cpp serves a
+  vision model as a text tower plus a separate projector: a server started
+  without the second loads, answers `/v1/models`, and then refuses every request
+  that carries an image. Verified against the LFS sha256 the Hugging Face model
+  index publishes **at that revision** — the revision is in the index read AND in
+  the download URL, or it is in neither: reading `main`'s hashes and fetching a
+  pinned commit's bytes would compare a file against a checksum for a different
+  file and delete it as corrupt.
+
+  That is a DIFFERENT PAIR from the `ggml-org` Q8/Q8 one this app used to fetch,
+  so a machine that installed the reader before this change holds two superseded
+  files. `pageReaderFootprint` walks the models DIRECTORY rather than the current
+  pair precisely so they cannot go unaccounted — they are listed, marked
+  superseded, and the Remove button takes the whole directory.
 
 The download is **resumable and skips what is already there**, which is the point
 of a 3.2 GB fetch on somebody's home line: a cancel keeps the part file, and the

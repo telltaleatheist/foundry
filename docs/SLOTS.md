@@ -59,7 +59,8 @@ A **slot** is a place a job's compute can go. The queue lists one row per slot.
 
 - **Local** — the machine's own GPU (or CPU). Text acts go to Ollama; page
   reading goes to a local llama-server serving dots.ocr (llama.cpp PR 17575,
-  `ggml-org/dots.ocr-GGUF`), downloaded in setup, never shipped. On the Mac
+  the GGUF pair the catalog's `pages` row names), downloaded in setup, never
+  shipped. On the Mac
   the MLX bridge remains a local reader.
 - **A Crucible server** — one per registered server, in drag order; a
   loopback Crucible **replaces** the local slot (one card, one owner).
@@ -102,8 +103,9 @@ safetensors for vLLM, Crucible on the Mac holds MLX weights. The 27B in each
 store is a different file. So the rule is ownership, not sharing:
 
 - **Nothing ships weights.** dots, the 9B, the 27B are downloaded from their
-  official homes on install (the dots GGUF from ggml-org on Hugging Face,
-  Ollama tags through Ollama's library, Crucible's through its manifests),
+  official homes on install (the dots GGUF pair from the Hugging Face repo the
+  catalog's `pages` row names, Ollama tags through Ollama's library, Crucible's
+  through its manifests),
   verified against the source's published sha256 before use — the same
   discipline as the pinned environment tarballs on the `env-v1` release,
   where a null hash is a refusal to install.
@@ -123,6 +125,18 @@ store is a different file. So the rule is ownership, not sharing:
   (Foundry's own downloads, Ollama's list, a local Crucible's residency) with
   sizes, so duplication is seen rather than discovered from a full disk.
 
+**STATE (Package E, 2026-09-14).** Every bullet above is built. The three-valued
+`localCrucibleServes` answers from the registry's capability reads; a REMOTE
+Crucible's offer is drawn with its number and its sentence; the Ollama wizard
+will not pull for a class a local Crucible serves and says so in the rows;
+Ollama's own store still has no Remove button and never will. The automatic
+deletion carries **one further condition that the bullet assumes and does not
+spell**: reading must actually go to that Crucible. `CRUCIBLE_READS` is still
+false, so a `read` job takes the local path — and deleting the reader on the
+strength of a capability record alone would delete the thing still doing the
+work. While that is so the card shows the sentence and no button. See "Package E
+— landed" below for the one constant that turns it on.
+
 ## 6. Packages, and their order
 
 | # | Package | Depends on | Status |
@@ -131,7 +145,7 @@ store is a different file. So the rule is ownership, not sharing:
 | B | App: delete `vllm-server.ts`; local page reader = llama-server + dots GGUF, downloaded in setup; reading jobs ensure it | nothing | building |
 | C | App: server registry (name, url, headers), drag order, enable; slots; per-row `waitFor`; dispatch: header map per spawn, capability read for the model, `load-model` before spawn, the three 409s rendered by name | Crucible SDK shapes | **LANDED** (§7) |
 | D | Catalog: generated lineup JSON, tile gating, CPU rule | BookForge's `[local]` block | **LANDED** (below) |
-| E | Setup/settings: Crucible install offer + connect-to-existing; Ollama wizard stays; dots download; page-reader row | B, C | after C |
+| E | Setup/settings: Crucible install offer + connect-to-existing; Ollama wizard stays; dots download; page-reader row | B, C | **LANDED** (below) |
 | F | Cloud slots: OpenAI (the `openai` door + key), Anthropic (third dialect); per-job opt-in; 429 as the wait; cost shown | C | **ENGINE HALF LANDED** 2026-09-14; app half after C |
 | G | App: lane capacity derived from the slot list — one lane per compute slot, the bench one card per slot | C | **LANDED** (§7) |
 | — | Lease client | **RULED 2026-09-14** — built in Package C, app-side | **LANDED** (§7) |
@@ -353,3 +367,127 @@ design — they dim and stay pressable, `open-documents.component.ts`) and the f
 dialogs' own refusals still gate on the book alone; a machine gate there is a
 second surface for the same sentence and belongs with package E's settings work.
 The gate does not probe a configured non-Ollama server for reachability.
+
+### Package E — landed 2026-09-14
+
+**The wizard offers Crucible, the two inert seams are live, and the lineup is
+Crucible's file.**
+
+**THREE DOORS, ONE COMPONENT, TWO HOSTS.** Owen: *"offer to install Crucible, or
+to point at one elsewhere."* `crucible-doors.component.ts` is mounted by the
+setup wizard's new **Crucible (optional)** step — after Ollama, before the
+environments — and by the Settings **Servers** card, which keeps the LIST
+(editing, ranking, switching off) and lost its own "Add the Crucible on this
+machine" button to door 2. One set of doors so the two screens cannot teach
+different things about one registry.
+
+1. *Connect to a Crucible server* — Test through `crucible:test-at`, which writes
+   NOTHING (adding a server to find out whether it is a server leaves a dead entry
+   behind every failure); Add through `crucible:add` → `writeCrucibleServers`,
+   the registry's one writer, replacing an existing name in place.
+2. *Use the Crucible on this machine* — package C's `addLocalCrucible`, config.toml
+   through `wsl.exe`, the distro field beside the button that needs it.
+3. *Install Crucible here* — the sequence as numbered steps with every command
+   copyable, the two elevated ones listed apart, and the README link. The button
+   that will drive it is **present and disabled**, wearing main's own sentence.
+
+**The Ollama step is untouched and remains the beginner's path.** The whole
+Crucible step is skippable like every other, and its blurb says most people
+should skip it.
+
+**THE DRIVEN INSTALL IS A SEAM, TYPED AGAINST THE REAL SURFACE.**
+`driveCrucibleInstall()` (`app/electron/crucible-install.ts`) is shaped to
+`@crucible/bootstrap` 0.5.0's `install()` — transcribed from its `.d.ts`, not
+invented — and rejects with `DRIVEN_INSTALL_UNAVAILABLE`, the same sentence the
+button wears. `crucible:install` refuses too: a door reachable by IPC must refuse
+at the door or the disabling is a decoration. The package is deliberately **not**
+in `app/package.json` until Crucible's next release exists. docs/SETUP.md §5b
+lists the four-step change that turns it on, the Mac's `condaRoots` value, and
+what to print off a `BootstrapStepFailed`.
+
+**THE PROVIDER SEAM IS LIVE.** `localCrucibleServes(cls)` (`crucible-provider.ts`)
+reads package C's registry and `GET /v1/capability` — the dispatcher's own
+`readCapability`, exported rather than written twice, with a **3 s timeout on
+this path only** (a placement may wait; a tooltip may not). `yes` when an enabled
+LOOPBACK entry's class row is `enabled` with a non-empty `selected`; `no` when
+every local entry that answered said otherwise; **`unknown`** when there is no
+local entry, nothing has probed, or a local server was silent. The answers are
+cached for 15 s and forgotten on `crucible:save`; `refreshCrucibleFacts()` is
+awaited by `actGates`, `machineModels`, `pageReaderState` and `llmChoices`, and
+the accessors stay synchronous because three of their callers are.
+
+**§5b IS BUILT AND WIRED, AND ITS PRECONDITION HAS TWO HALVES.**
+`applyPageReaderRemoval()` deletes Foundry's own reader and writes a RECEIPT
+(`AppSettings.pageReaderRemoved`: server, bytes, date) so the sentence survives
+the app being closed. It fires from exactly two places — `crucible:save` and once
+at startup — and **never from a read**: a screen that deleted four gigabytes as a
+side effect of being opened is a screen nobody can open safely. Installing the
+reader again tears the receipt up.
+
+**IT ALSO REQUIRES `CRUCIBLE_READS`, AND THAT IS §5b READ EXACTLY RATHER THAN A
+HEDGE.** §5b removes the files *"only when a LOCAL Crucible has TAKEN OVER that
+class"*. Serving it is half of that; the other half is this app SENDING page
+reads there, and it does not: `CRUCIBLE_READS` is still false, a `read` job takes
+the local path, and `job-queue.ts` starts the local llama-server BEFORE it
+resolves a placement at all. Removing on the strength of a capability record
+alone would delete the thing still doing the work, and the next PDF would fail
+with *"the local page reader is not installed yet"* on a machine whose owner had
+done nothing but register their own server. So while that constant is false the
+card shows the sentence and NO button, the page-reader card's Install button
+stays enabled, and the OCR tile does not claim a Crucible is reading pages. **The
+day `CRUCIBLE_READS` flips, all four of those become the automatic behaviour with
+no other change** — the condition is spelled once in `machine-models.ts`, echoed
+in `pageReaderSuperseded` and read by `readGate`. Owen owes the ruling that flips
+it, together with the read path resolving its placement before it starts a
+server. A REMOTE Crucible removes
+nothing and the Models card shows the offer with the number on the button and
+§5b's sentence, *"page reading will then need <server> to be reachable"*. The
+page-reader card's Install button is **off with a sentence** rather than gone.
+The Ollama wizard will not pull for a class a local Crucible serves and says so
+IN THE ROWS (`LlmChoices.crucible`), rather than hiding them. Ollama's own models
+are never removed by this app.
+
+**THE LINEUP IS CRUCIBLE'S FILE, PLUS OURS, MERGED.**
+`app/shared/model-lineup.json` is `foundry-lineup.json` vendored byte for byte
+from crucible `7e63905`; nothing here edits it, so a keeper can compare it by
+content. `app/shared/model-lineup-local.json` is Foundry's own additions — the
+smaller Qwen tags Ollama serves and Crucible has no manifest for — with a `note`
+header arguing why they are KEPT and kept SEPARATE, every id prefixed `foundry/`
+so it can never collide with a Crucible id. `llm-catalog.ts` reads both, derives
+`crucible: true|false` from which file a row came out of, and **sorts the merged
+list by `needsGB.value`** because everything downstream depends on smallest-first
+and neither file is sorted. `minimumFor` replaces `minimum_for`; `minimum` is
+read by nothing (it is `minimumFor.length > 0`, and a boolean cannot say which
+class).
+
+**ONE CONSEQUENCE, STATED RATHER THAN HIDDEN: the ANALYSIS floor moved.**
+Package D gave analysis no floor, on Owen's *"analysis is a sentence at a time
+and a small model does it."* Crucible's `qwen3.8-27b-4bit` row declares
+`minimumFor: [translate, simplify, analysis]`, so analysis now floors at the
+4-bit 27B and a 12 GB card that used to light the Analysis tile does not. Foundry
+did not overrule the catalog of record. If it is wrong it is wrong in Crucible's
+manifests, and it is fixed there and re-vendored. Translate and simplify keep the
+9B floor, which the local file declares — where two catalogs each declare a floor
+the SMALLEST wins, because Crucible's is what a Crucible will serve and ours is
+what an Ollama on this desk can be asked for.
+
+**THE PAGE READER TAKES ITS WEIGHTS FROM THE CATALOG.** `page-reader.ts`'s
+`HF_REPO`/`MODEL_FILE`/`MMPROJ_FILE` constants are gone; `pagesForm()` is the one
+owner. The row names `anthonym21/dots.ocr-GGUF` at commit `42ab3102…` with an F16
+projector, which is a DIFFERENT pair from the one this app used to fetch — so
+`pageReaderFootprint` now walks the models directory rather than the current pair,
+and a superseded file is listed and marked rather than going unaccounted on
+somebody's disk.
+
+**Channels added:** `crucible:test-at`, `crucible:add`, `crucible:install-plan`,
+`crucible:install`, and the push `models:changed`. Nothing was removed.
+
+**Not done, deliberately.** The driven install (above). The tree footer's "from
+here" acts and the four dialogs' own refusals still gate on the book alone — the
+machine gate is the dock's, and a second surface for the same sentence is still
+owed. The gate does not probe a configured non-Ollama endpoint for reachability.
+`CRUCIBLE_READS` is still `false`: a `pages` job still takes the local path even
+where a Crucible serves the class, which is why §5b's removal is about DISK and
+not about routing — the local reader is removed because the Crucible on this
+machine will be asked for pages once that constant flips, and until then the
+machine reads through whatever `backend.endpointUrl` names.

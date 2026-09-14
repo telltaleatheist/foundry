@@ -4459,7 +4459,7 @@ ask about.
 
 `app/electron/act-gates.ts` is the gate: one function, `{lit, why}` per act, all
 five at once, over the new `acts:gates` door with an `acts:gates-changed` push
-behind it. `minimum_for` on the 9B is a FLOOR rather than a name — every row at
+behind it. `minimum_for` on the 9B (spelled `minimumFor` since package E) is a FLOOR rather than a name — every row at
 or above it qualifies, or a 24 GB card holding the 27B would have a dark
 Translate. A machine with no GPU a model can use darks translate, simplify and
 analysis outright. A HOSTED window lights everything: the work runs on the host's
@@ -4468,9 +4468,9 @@ machine's pulls would have been a regression with no upside.
 
 `models:inventory` and `models:remove-page-reader` are SLOTS.md §5b's row: every
 store the app knows, with sizes; a Remove button on Foundry's own downloads and
-on nothing else. §5b's automatic deletion is BUILT AND INERT — the provider seam
-(`crucible-provider.ts`) answers `unknown`, which takes the same branch as `no`,
-and package C replaces the body.
+on nothing else. §5b's automatic deletion was BUILT AND INERT here — the provider
+seam (`crucible-provider.ts`) answered `unknown`, which takes the same branch as
+`no`. **Package E replaced that body**, below.
 
 **Not done, deliberately:** the tree footer's "from here" acts and the four
 dialogs' refusals still gate on the book alone (the footer's buttons dim rather
@@ -4509,3 +4509,83 @@ dealt in queue order because main still does not say which of the two a run took
 Nothing crosses the wire that did not before: no channel added, removed or
 renamed. The full account, including what was deliberately left out, is
 docs/SLOTS.md §7 "Package G — landed" and docs/QUEUE-BOARD.md §2b.
+#### Package E — LANDED 2026-09-14
+
+**The wizard offers Crucible, the two inert seams answer for real, and the model
+lineup is Crucible's own file.** Full account in docs/SLOTS.md "Package E —
+landed"; the wizard step and the hand sequence are docs/SETUP.md §5b.
+
+**Three doors, one component, two hosts.** `crucible-doors.component.ts` is the
+setup wizard's new **Crucible (optional)** step — after Ollama, before the
+environments — and the Settings Servers card mounts the same child, which is what
+stops the two screens teaching different things about one registry. Connect (Test
+without saving, through `crucible:test-at`; Add through `crucible:add` →
+`writeCrucibleServers`); Use the one on this machine (package C's config.toml
+read, WSL distro field beside the button that needs it); Install here (the
+sequence as numbered copyable commands, the two elevated ones apart, the README
+link, and a **disabled** button wearing main's own sentence). The Ollama step is
+untouched and remains the beginner's path; the whole step is skippable and its
+blurb says most people should skip it.
+
+**The driven install is a seam typed against the real surface.**
+`driveCrucibleInstall()` is shaped to `@crucible/bootstrap` 0.5.0's `install()`,
+transcribed from the package's `.d.ts` rather than invented, and rejects with
+`DRIVEN_INSTALL_UNAVAILABLE` — the same sentence the button wears. The package is
+deliberately **not** in `app/package.json` until Crucible's next release exists.
+SETUP.md §5b lists the four-step change, the Mac's `condaRoots` value, and what
+to print off a `BootstrapStepFailed`.
+
+**The provider seam is live.** `localCrucibleServes(cls)` reads package C's
+registry and the dispatcher's own `readCapability` (exported rather than written
+twice) with a 3 s timeout on this path only — a placement may wait, a tooltip may
+not. `yes` / `no` / `unknown`, cached 15 s, forgotten on `crucible:save`, with
+`refreshCrucibleFacts()` awaited by the four composers that show the answer.
+
+**§5b is wired, and its precondition turned out to have two halves.** The
+automatic removal, the receipt that survives a restart
+(`AppSettings.pageReaderRemoved`), the remote OFFER with its number and its *"page
+reading will then need <server> to be reachable"*, the page-reader card's Install
+button off with a sentence, and the Ollama wizard declining to pull for a served
+class — all built. **But it also requires `CRUCIBLE_READS`**, and that is still
+false: a `read` job takes the local path, and `job-queue.ts` starts the local
+llama-server before it resolves a placement at all. Deleting on the strength of a
+capability record alone would delete the thing still doing the work. So while
+that constant is false the card shows the sentence and no button, and the OCR
+tile does not claim a Crucible is reading pages. **One constant flips all four**,
+and it needs Owen's ruling plus the read path resolving its placement first.
+
+**The lineup is two vendored files.** `model-lineup.json` is Crucible's
+`foundry-lineup.json` byte for byte (crucible `7e63905`) — nothing here edits it,
+so a keeper can compare by content. `model-lineup-local.json` is Foundry's own
+additions, the smaller Qwen tags Ollama serves and Crucible has no manifest for,
+every id prefixed `foundry/`, with a `note` header arguing why they are kept and
+kept separate. `llm-catalog.ts` merges and **sorts by `needsGB.value`**, because
+everything downstream wants smallest-first and neither file is sorted.
+`minimum_for` → `minimumFor`.
+
+**One consequence, said out loud: the ANALYSIS floor moved.** Crucible's 27B row
+declares `minimumFor: [translate, simplify, analysis]`, so analysis now floors at
+the 4-bit 27B and a 12 GB card that used to light the Analysis tile does not.
+Foundry did not overrule the catalog of record — if that is wrong it is wrong in
+Crucible's manifests and is fixed there and re-vendored. Translate and simplify
+keep the 9B floor from the local file: where two catalogs each declare a floor the
+SMALLEST wins, because Crucible's is what a Crucible will serve and ours is what
+an Ollama on this desk can be asked for.
+
+**The page reader takes its weights from the catalog.** `page-reader.ts`'s
+`HF_REPO`/`MODEL_FILE`/`MMPROJ_FILE` constants are gone; `pagesForm()` is the one
+owner, and the revision is a pinned commit used in BOTH the index read and the
+download URL. The row names a DIFFERENT pair from the one this app used to fetch
+(`anthonym21/dots.ocr-GGUF`, Q8 + F16 projector), so `pageReaderFootprint` walks
+the models directory rather than the current pair and a superseded file is listed
+and marked rather than going unaccounted on somebody's disk.
+
+**Channels added:** `crucible:test-at`, `crucible:add`, `crucible:install-plan`,
+`crucible:install`, plus the `models:changed` push. Nothing removed.
+
+**Not done, deliberately:** the driven install; `CRUCIBLE_READS`; the tree
+footer's "from here" acts and the four dialogs' own refusals, which still gate on
+the book alone. **Untested by hand:** nobody has registered a real Crucible
+against this build — the provider's three answers, the capability read and the
+whole §5b path have been reasoned and typechecked, not watched.
+

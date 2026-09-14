@@ -10,6 +10,18 @@
  * them in the order they are needed, says what each one costs before fetching
  * a byte of it, and lets every single one be skipped.
  *
+ * ── AND ONE STEP THAT IS NOT A NEED AT ALL ──────────────────────────────────
+ *
+ * Crucible (Wave 61 package E, docs/SLOTS.md) sits after Ollama and offers three
+ * doors — connect to one elsewhere, use one already on this machine, install one
+ * here. Owen: *"foundry should work if they have no idea what theyre doing and
+ * they just want to convert PDFs to EPUB. but if they do know what theyre doing
+ * and they want access to speed, they can use crucible."* So it is the one step
+ * whose blurb says outright that most people should walk past it, the Ollama
+ * step before it is untouched and remains the beginner's path, and the doors
+ * themselves are a child component (`app-crucible-doors`) shared with the
+ * Settings card so the two screens cannot offer different choices.
+ *
  * ── IT IS A FLOW, NOT A QUESTION, AND THAT DECIDES THREE THINGS ─────────────
  *
  * `UiService.dialogs` is the one-modal list, and this is deliberately not on
@@ -45,6 +57,7 @@
  */
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 
+import type { CrucibleServerView } from '@shared/slots';
 import type {
   EnvCatalogItem,
   EnvInstallProgress,
@@ -56,11 +69,12 @@ import type {
   PageReaderProgress,
   PageReaderState,
 } from '@shared/types';
+import { CrucibleDoorsComponent } from '../crucible-doors/crucible-doors.component';
 import { QueueService } from '../../core/queue.service';
 import { UiService } from '../../core/ui.service';
 import { api } from '../../core/foundry';
 
-type StepId = 'welcome' | 'library' | 'ollama' | 'envs' | 'reading' | 'done';
+type StepId = 'welcome' | 'library' | 'ollama' | 'crucible' | 'envs' | 'reading' | 'done';
 
 interface StepDef {
   id: StepId;
@@ -96,6 +110,19 @@ const STEPS: readonly StepDef[] = [
     blurb: 'Translation, simplification and analysis all speak to ollama. This machine gets the largest model that fits it.',
   },
   {
+    /*
+     * AFTER OLLAMA AND BEFORE THE ENVIRONMENTS. After, because the Ollama step
+     * is what most people will use and a Crucible offered first would read as a
+     * requirement. Before the environments, because it is a decision rather than
+     * a download: somebody who connects to a Crucible here has changed what the
+     * rest of setup means, and finding that out after paying for two Pythons
+     * would be finding it out too late.
+     */
+    id: 'crucible',
+    title: 'Crucible (optional)',
+    blurb: 'Most people should skip this. It is how a second machine, or a faster path on this one, gets used.',
+  },
+  {
     id: 'envs',
     title: 'Python environments',
     blurb: 'Prebuilt, hash-checked, and the exact versions foundry was measured with.',
@@ -114,6 +141,7 @@ const STEPS: readonly StepDef[] = [
 
 @Component({
   selector: 'app-setup-wizard',
+  imports: [CrucibleDoorsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (up()) {
@@ -192,6 +220,22 @@ const STEPS: readonly StepDef[] = [
                 </div>
               } @else {
                 <p class="machine">{{ facts.profile.detail }}</p>
+                <!--
+                  docs/SLOTS.md §5b: the app never pulls into Ollama while a
+                  LOCAL Crucible serves the class. Said in the rows rather than
+                  by hiding them — the list's job is to describe this machine,
+                  and a list that silently shortened itself would describe a
+                  different one. The download buttons are off; choosing a row
+                  still works, because the tag it writes is what a job uses if
+                  that server is later switched off.
+                -->
+                @if (facts.crucible; as taken) {
+                  <p class="ok-note">
+                    The Crucible on this machine ({{ taken.server }}) already serves
+                    {{ taken.classes.join(', ') }} here, so Foundry will not pull a second copy of
+                    these models into Ollama.
+                  </p>
+                }
                 <div class="models">
                   @for (option of facts.options; track option.tag) {
                     <button
@@ -225,7 +269,9 @@ const STEPS: readonly StepDef[] = [
                         Use {{ pick.tag }}
                       </button>
                     } @else {
-                      <button class="primary" type="button" [disabled]="busy()" (click)="pullModel()">
+                      <button class="primary" type="button"
+                              [disabled]="busy() || facts.crucible !== null"
+                              (click)="pullModel()">
                         Download {{ pick.tag }} ({{ pick.downloadGB }} GB) and use it
                       </button>
                     }
@@ -246,6 +292,27 @@ const STEPS: readonly StepDef[] = [
             } @else {
               <p class="line">Asking ollama…</p>
             }
+          }
+
+          <!-- ── Crucible ────────────────────────────────────────────────── -->
+          @if (current() === 'crucible') {
+            <p class="lead">
+              Crucible is a separate program that serves models over the network — on this
+              machine or on another one. Foundry does not need it: everything on the last
+              screen works without it, and this step can be skipped for good.
+            </p>
+            <p class="line">
+              What it buys is speed and reach. A Crucible on a machine with a bigger card runs
+              the translation there; a Crucible on this machine replaces the local GPU slot with
+              one that holds its models properly instead of loading and unloading per job.
+            </p>
+            @if (crucibleServers().length > 0) {
+              <p class="ok-note">
+                Already registered: {{ crucibleNames() }}. Settings › Servers is where these are
+                ranked and switched off.
+              </p>
+            }
+            <app-crucible-doors (changed)="loadCrucible()" />
           }
 
           <!-- ── Python environments ─────────────────────────────────────── -->
@@ -622,6 +689,8 @@ export class SetupWizardComponent {
   protected readonly reader = signal<PageReaderState | null>(null);
   protected readonly readerSaid = signal<PageReaderProgress | null>(null);
   protected readonly profileSaid = signal('');
+  /** The registry, so the Crucible step can say what is already there. */
+  protected readonly crucibleServers = signal<CrucibleServerView[]>([]);
 
   /** Step ids moved past without doing the thing. A Set would not survive JSON. */
   protected readonly skipped = signal<string[]>([]);
@@ -698,6 +767,7 @@ export class SetupWizardComponent {
       if (here === 'welcome') void this.loadProfile();
       if (here === 'library') void this.loadLibrary();
       if (here === 'ollama') void this.loadChoices();
+      if (here === 'crucible') void this.loadCrucible();
       if (here === 'envs') void this.loadEnvs();
       if (here === 'reading') void this.loadReader();
     });
@@ -737,6 +807,33 @@ export class SetupWizardComponent {
   private async loadEnvs(): Promise<void> {
     if (!api) return;
     this.envItems.set(await api.env.catalog());
+  }
+
+  /**
+   * The registry, for the Crucible step's "already registered" line.
+   *
+   * Re-read after any of the three doors writes one, because the line is the
+   * only feedback the step gives that an Add landed — the door itself closes and
+   * says nothing more, on the standing rule that main's answer is the truth and
+   * a component holding its own copy of a list is the copy that goes stale.
+   */
+  protected async loadCrucible(): Promise<void> {
+    if (!api) return;
+    const view = await api.crucible.settings();
+    this.crucibleServers.set(view.servers);
+    /*
+     * AND THE OLLAMA STEP'S FACTS, because registering a local Crucible changes
+     * them: a class it serves is a class this wizard must not pull a second copy
+     * of into Ollama (docs/SLOTS.md §5b). Read here rather than on the way back
+     * to that step, so somebody who presses Back finds the rows already saying
+     * so instead of watching them change under the cursor.
+     */
+    if (this.choices() !== null) await this.loadChoices();
+  }
+
+  /** The registered servers, named, for the one line the step prints about them. */
+  protected crucibleNames(): string {
+    return this.crucibleServers().map((server) => server.name).join(', ');
   }
 
   // ── Steps ─────────────────────────────────────────────────────────────────

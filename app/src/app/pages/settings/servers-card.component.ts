@@ -35,6 +35,18 @@
  * are not in that list and are not touched; switching a server off in a settings
  * card is not a cancel.
  *
+ * ── THE THREE DOORS ARE A CHILD, AND THEY ARE THE WIZARD'S THREE ───────────
+ *
+ * Owen's *"offer to install Crucible, or to point at one elsewhere"* is three
+ * doors — connect, use the one here, install one — and they appear both on this
+ * card and in the first-run wizard. They live in `app-crucible-doors` so the two
+ * screens cannot drift apart; this card keeps the LIST, which is a different
+ * job: editing, ranking and switching off servers that already exist.
+ *
+ * So the button that used to read "Add the Crucible on this machine" is gone
+ * from this card and is door 2 of that child. Two buttons doing one thing on one
+ * screen is how somebody learns that one of them must do something else.
+ *
  * ── HOSTED, THE LIST IS SOMEBODY ELSE'S ────────────────────────────────────
  *
  * The vendored app takes its slot list from the host (docs/SLOTS.md §3), because
@@ -45,6 +57,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { CrucibleDoorsComponent } from '../../components/crucible-doors/crucible-doors.component';
 import { ANY_SLOT, isLoopbackUrl } from '@shared/slots';
 import type {
   ComputeSlot,
@@ -73,7 +86,7 @@ interface EditableServer extends CrucibleServerView {
 
 @Component({
   selector: 'app-servers-card',
-  imports: [FormsModule],
+  imports: [FormsModule, CrucibleDoorsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="card">
@@ -149,34 +162,19 @@ interface EditableServer extends CrucibleServerView {
         }
 
         <div class="actions">
-          <button class="ghost" (click)="add()">Add a server</button>
-          <button class="ghost" [disabled]="addingLocal()" (click)="addLocal()">
-            {{ addingLocal() ? 'Reading…' : 'Add the Crucible on this machine' }}
-          </button>
+          <button class="ghost" (click)="add()">Add a row by hand</button>
           <button class="primary" [disabled]="saving()" (click)="save()">
             {{ saving() ? 'Saving…' : 'Save' }}
           </button>
         </div>
-        @if (localNote(); as note) { <p class="small" [class.warn]="localFailed()">{{ note }}</p> }
         @if (problem(); as why) { <p class="warn">{{ why }}</p> }
 
-        @if (isWindows) {
-          <!--
-            THE ONE THING THE LOCAL READ NEEDS AND CANNOT GUESS. Windows is never
-            a Crucible backend, so the server on this machine lives inside WSL and
-            its config.toml is read through that guest. There is deliberately no
-            default: "the default distro" is whatever "wsl --set-default" last
-            said, and a token read out of the wrong guest is a wrong token.
-            (NO BACKTICKS ANYWHERE INSIDE THIS TEMPLATE — it is a template
-            literal, and one would end it mid-comment. A house pitfall.)
-          -->
-          <label class="field">
-            <span class="label">WSL distro (for the local Crucible)</span>
-            <input type="text" placeholder="Ubuntu" name="distro"
-                   [ngModel]="wslDistro()" (ngModelChange)="wslDistro.set($event)"
-                   (blur)="saveDistro()">
-          </label>
-        }
+        <!--
+          THE THREE DOORS. The same child the first-run wizard mounts, so the two
+          screens offer one set of choices — see the module note. The WSL distro
+          field lives inside door 2, beside the button that needs it.
+        -->
+        <app-crucible-doors (changed)="load()" />
 
         <!--
           WHAT A NEW ROW STARTS AS. It is resolved to a slot NAME at the press,
@@ -277,20 +275,15 @@ interface EditableServer extends CrucibleServerView {
 export class ServersCardComponent {
   private readonly queue = inject(QueueService);
 
-  protected readonly isWindows = api?.platform === 'win32';
   protected readonly rows = signal<EditableServer[]>([]);
   protected readonly slots = signal<ComputeSlot[]>([]);
   protected readonly newJobsWaitFor = signal<NewJobsWaitFor>('top');
-  protected readonly wslDistro = signal('');
   protected readonly hosted = signal(false);
   protected readonly saving = signal(false);
   protected readonly saved = signal(false);
   protected readonly problem = signal<string | null>(null);
   protected readonly testing = signal<string | null>(null);
   protected readonly probes = signal<Record<string, CrucibleProbe>>({});
-  protected readonly addingLocal = signal(false);
-  protected readonly localNote = signal<string | null>(null);
-  protected readonly localFailed = signal(false);
   protected readonly orphans = signal<Job[]>([]);
   protected readonly dragFrom = signal<number | null>(null);
 
@@ -304,13 +297,20 @@ export class ServersCardComponent {
     void this.load();
   }
 
-  private async load(): Promise<void> {
+  /**
+   * The whole card, re-read from main.
+   *
+   * PROTECTED rather than private because the three doors below call it: any of
+   * them can add a server, and the list, the slot preview and the orphan check
+   * are all downstream of that. They emit rather than hand a list over — main
+   * answered with the registry as stored, and this is the one reader of it.
+   */
+  protected async load(): Promise<void> {
     if (!api) return;
     const view = await api.crucible.settings();
     this.rows.set(view.servers.map((server) => ({ ...server, key: this.nextKey++, token: null })));
     this.slots.set(view.slots);
     this.newJobsWaitFor.set(view.newJobsWaitFor);
-    this.wslDistro.set(view.wslDistro);
     this.hosted.set(view.hosted);
     void this.refreshOrphans();
   }
@@ -397,36 +397,6 @@ export class ServersCardComponent {
     } finally {
       this.testing.set(null);
     }
-  }
-
-  protected async addLocal(): Promise<void> {
-    if (!api) return;
-    this.addingLocal.set(true);
-    this.localNote.set(null);
-    try {
-      const answer = await api.crucible.addLocal('This machine');
-      if (answer.outcome === 'added') {
-        this.localFailed.set(false);
-        this.localNote.set(
-          `Added ${answer.serverName} at ${answer.url}, read from ${answer.configPath}. `
-          + 'Its token stays that file\'s — press this again after "crucible init" to refresh it.',
-        );
-        this.rows.set(
-          answer.servers.map((server) => ({ ...server, key: this.nextKey++, token: null })),
-        );
-        await this.load();
-      } else {
-        this.localFailed.set(true);
-        this.localNote.set(answer.message);
-      }
-    } finally {
-      this.addingLocal.set(false);
-    }
-  }
-
-  protected async saveDistro(): Promise<void> {
-    if (!api) return;
-    this.wslDistro.set(await api.crucible.setWslDistro(this.wslDistro()));
   }
 
   protected async setNewJobsWaitFor(choice: NewJobsWaitFor): Promise<void> {
