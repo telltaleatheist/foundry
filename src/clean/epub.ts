@@ -89,7 +89,9 @@ import { decodeEntityAt, parseXml, type XmlElement, type XmlNode } from '../epub
 import { BookError, readFoundryBook, type BookDocument } from '../translate/book.js';
 import { findBlocks, spliceAll, type BlockSite } from '../translate/blocks.js';
 import { TranslationBank } from '../translate/bank.js';
-import { DEFAULT_TEXT_CONCURRENCY, openModelServer } from '../translate/model-server.js';
+import {
+  concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, type ServerKind,
+} from '../translate/model-server.js';
 import { fetchTransport, type Transport } from '../translate/transport.js';
 
 import { blockDigest } from './digest.js';
@@ -186,17 +188,21 @@ interface EpubBlock {
 export interface CleanEpubOptions {
   epubPath: string;
   outPath: string;
-  /** The server. Required: there is no default port for a server nobody registered. */
+  /** The server. Required: the caller resolves each door's default (commands.ts). */
   endpoint: string;
   /**
-   * The model that reads the residue. Absent means the one the server holds
-   * (the book route's rule, `run.ts`); a name that is given is proved first.
+   * The model that reads the residue. On the OpenAI door, absent means the one
+   * the server holds; on Ollama an absent name is refused, because that server
+   * holds a library (the book route's rule, `run.ts`). A name that is given is
+   * proved first on both.
    */
   model?: string;
+  /** Which dialect is on the other end — `--server`. Default `openai`. See `run.ts`. */
+  server?: ServerKind;
   /**
    * How many blocks are asked about at once. Default `DEFAULT_TEXT_CONCURRENCY`
-   * (translate/model-server.ts says why twelve; the vendored driver's own
-   * `DEFAULT_CLEAN_CONCURRENCY` was the serial server's four and is not read).
+   * on the OpenAI door and `DEFAULT_OLLAMA_CONCURRENCY` on Ollama
+   * (`concurrencyFor`).
    *
    * The book route's field, in the book route's words, because it is the same
    * pass over the same runner: it changes nothing about what is decided — not
@@ -356,13 +362,15 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
   const started = Date.now();
   const at = new Date().toISOString();
   const endpoint = opts.endpoint;
+  const kind: ServerKind = opts.server ?? 'openai';
   const transport = opts.transport ?? fetchTransport();
   /*
    * Resolved HERE and not at the runner, the book route's rule for the book
    * route's reason one step over: this route writes no records, but it does
    * write a STAMP, and a stamp naming a model that did not answer is a claim
-   * about the file that is not true. An absent `--model` means "whatever is
-   * served", and the only way to know that is to ask.
+   * about the file that is not true. On the OpenAI door an absent `--model`
+   * means "whatever is served", and the only way to know that is to ask; on
+   * Ollama the same ask is what refuses an absent name.
    */
   /*
    * A CALLER-SUPPLIED RUNNER NAMES ITS OWN MODEL, and the server is not asked.
@@ -374,7 +382,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
    */
   const model = opts.model
     ?? opts.runner?.model
-    ?? (await openModelServer({ transport, endpoint })).model;
+    ?? (await openModelServer({ kind, transport, endpoint })).model;
   const epubPath = path.resolve(opts.epubPath);
   const outPath = path.resolve(opts.outPath);
 
@@ -552,7 +560,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
 
   const runner = opts.runner ?? (asks.length === 0
     ? NOTHING_TO_ASK
-    : await openModelRunner({ model, endpoint, transport, log: opts.log }));
+    : await openModelRunner({ model, endpoint, server: kind, transport, log: opts.log }));
 
   const settled = await askAboutEach(
     asks,
@@ -565,7 +573,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
     },
     'every-block',
     EVERY_CLASS,
-    opts.concurrency ?? DEFAULT_TEXT_CONCURRENCY,
+    opts.concurrency ?? concurrencyFor(kind, DEFAULT_TEXT_CONCURRENCY),
   );
 
   // ── The verdicts, applied, and the answers banked as they land ────────────

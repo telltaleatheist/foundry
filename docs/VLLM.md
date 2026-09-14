@@ -1,16 +1,21 @@
-# The one inference door for the text acts
+# The two inference doors for the text acts
 
-> **2026-09-13 — ONE KIND OF SERVER, BY RULING.** Owen: *"everything compute
-> intensive must go through crucible. if theres no crucible server, theres no
-> foundry. it's a necessary service. we could send requests through crucible to
-> ollama but i dont think thats necessary. we should adapt it to using the
-> models through crucible instead."* The Ollama transport this document once
-> described beside the vLLM one is **gone** — no `--server` flag, no `--ollama`
-> URL, no `num_ctx`, no `--keep-model`, no release at the end of a run. What
-> remains is the OpenAI-compatible chat door below, which is what the inference
-> service fronts on every machine (vLLM-shaped on CUDA, mlx-lm-shaped on a Mac,
-> the same door either way). Sections that describe the Ollama side are kept
-> only where they record a measurement; the current contract is §§1–5.
+> **2026-09-14 — TWO DOORS, AND THE LOCAL ONE IS BACK.** For one night this
+> document said there was a single OpenAI-compatible door and that Foundry could
+> not run without an inference service. Owen reversed the premise the same night
+> and **docs/SLOTS.md is the plan of record**: *"foundry should be prepared to
+> operate without crucible present. it should do translation through ollama,
+> simplify, analyze, VLM pdf conversion, all of it — but it should go through the
+> normal doors accessible on windows or mac. if we want the speed tricks, we can
+> connect to a crucible server."* So `--server openai|ollama` is back, declared
+> and never sniffed, and with it `num_ctx`, `/api/tags` and the release at the
+> end of a run. Two things did NOT come back: there is no `--keep-model` (the
+> Ollama unload is unconditional, Package A's headline ruling) and there are no
+> act-level model defaults (`--model` is REQUIRED on Ollama, refused by name when
+> it is absent). The `openai` KIND was spelled `vllm` before — renamed because
+> that door serves Crucible, a local llama-server, a vLLM and a cloud provider
+> alike; `src/translate/vllm.ts` keeps its filename so this document's
+> measurements keep their addresses. The current contract is §§1–5.
 
 Owen, 2026-09-08, the ruling that put the door in: *"lets build in vllm
 batching. ollama batching doesnt work. its an unfinished feature ollama tried to
@@ -18,65 +23,99 @@ implement but isnt accessible on the mac or pc. cuda graphs/vllm would probably
 be the best for all three features. go ahead."*
 
 The acts are **translate**, **simplify** (`translate --rewrite`), the
-**narration cleanup** (`clean-text`) and **analyze**. All four speak to one
-server, and nothing about a pass changes with the machine it runs on.
+**narration cleanup** (`clean-text`) and **analyze**. All four speak to whichever
+door `--server` names, and nothing a pass DECIDES changes with it.
 
 ---
 
 ## 1. Why, in one paragraph
 
 Every one of the acts is a POOL of requests over a book of thousands of blocks —
-twelve in flight by default. A pool only pays if the server runs the requests
-*together*, and that is what the door is for: continuous batching, one CUDA
-graph replayed across the batch, and throughput that climbs with the number of
-requests in flight. **The pool is the prerequisite and batching is the payoff**:
-the server's *single-stream* latency is no better than a serial runner's, so a
-serial caller hands it a batch of one and gains nothing.
+twelve in flight by default on the OpenAI door, four on Ollama. A pool only pays
+if the server runs the requests *together*, and that is what the OpenAI door is
+for: continuous batching, one CUDA graph replayed across the batch, and
+throughput that climbs with the number of requests in flight. **The pool is the
+prerequisite and batching is the payoff**: the server's *single-stream* latency
+is no better than a serial runner's, so a serial caller hands it a batch of one
+and gains nothing. Ollama is the door that is simply THERE on a person's own
+machine — it batches far less well, which is why its default is smaller and why
+the OpenAI door is the speed tier rather than the only one.
 
 ---
 
 ## 2. The flags, and what the engine decides for itself
 
 ```
-foundry translate  … [--endpoint <url>] [--model <name>] [--concurrency <n>]
-foundry clean-text … [--endpoint <url>] [--model <name>] [--concurrency <n>]
-foundry analyze    … [--endpoint <url>] [--model <name>] [--concurrency <n>]
+foundry translate  … [--server <openai|ollama>] [--endpoint <url>] [--model <name>] [--concurrency <n>]
+foundry clean-text … [--server <openai|ollama>] [--endpoint <url>] [--model <name>] [--concurrency <n>]
+foundry analyze    … [--server <openai|ollama>] [--endpoint <url>] [--model <name>] [--concurrency <n>]
 ```
 
-`--endpoint` is the server. Absent, the engine reads `backend.endpointUrl` from
-its settings — **the same setting the reading door reads**, because it is the
-same server: the page reader and the text models are made resident on it in
-turn. The app passes the flag on every line it composes, so a job never depends
-on the engine's fallback to say which machine it runs on.
+`--server` is **declared, never sniffed from the URL**, and an unknown value is
+refused by name (`--server takes openai or ollama, not "x"`). A sniff gets it
+right until it doesn't — a proxy in front of both, an Ollama on 8000 because
+somebody moved it — and what a wrong guess costs is not an error but a book
+translated by a model nobody chose.
 
-| | the door |
-|---|---|
-| Route | `POST /v1/chat/completions` |
-| Model proof | `GET /v1/models`, exact id match; the listing's `id` is what every record names |
-| `--model` absent | **the served model**, resolved before any cache key and recorded |
-| Thinking switch | `chat_template_kwargs: {enable_thinking: false}` for the qwen3 family — on its way to a server-side manifest default |
-| Context window | the server's, read back as `max_model_len`; a request is sized INTO it, and one that cannot fit is refused by name before it is sent |
-| `--concurrency` default | 12 (`DEFAULT_TEXT_CONCURRENCY`) |
-| Loading, unloading | **neither, ever** — the operator makes a model resident before a pass is spawned, and a pass ending is not a reason to take it off (§5) |
+`--endpoint` is the server. Absent on the `openai` door, the engine reads
+`backend.endpointUrl` from its settings — **the same setting the reading door
+reads**, because on that door it is the same server: the page reader and the text
+models are made resident on it in turn. Absent on `ollama` it is
+`http://localhost:11434`, and the SETTING IS NOT CONSULTED there: handing an
+OpenAI-compatible URL to a run that is about to speak `/api/tags` would point a
+person's Ollama job at their vLLM. The app passes the flag on every line it
+composes, so a job never depends on the engine's fallback.
 
-Unchanged from the day the door was built: the prompts byte for byte, the
-temperature, the retries, the validators, the records/bank cache, the stamp,
-`NORMALIZER_VERSION`, `PUNCTUATION_SPEC_VERSION`.
+| | `openai` (default) | `ollama` |
+|---|---|---|
+| Who is on the other end | Crucible, a local llama-server, a vLLM, a cloud provider | the friend's own Ollama |
+| Route | `POST /v1/chat/completions` | `POST /api/chat` |
+| Model proof | `GET /v1/models`, exact id match; the listing's `id` is what every record names | `GET /api/tags`, exact tag or its `:latest`; the refusal lists what it HAS |
+| `--model` absent | **the served model**, resolved before any cache key and recorded | **refused by name** — an Ollama holds a library, and there is no act-level default to fall back on |
+| Thinking switch | `chat_template_kwargs: {enable_thinking: false}` for the qwen3 family — on its way to a server-side manifest default | `think: false`, same family rule, and never on a model without thinking support (qwen2.5 answers a 400 naming the field) |
+| Context window | the server's, read back as `max_model_len`; a request is sized INTO it, and one that cannot fit is refused by name before it is sent | `num_ctx` per request, PINNED once a book (`contextWindowFor`) or once a stage (`stageNumCtx`), because Ollama reloads the runner on any change |
+| `--concurrency` default | 12 (`DEFAULT_TEXT_CONCURRENCY`) | 4 (`DEFAULT_OLLAMA_CONCURRENCY`) |
+| Loading | **never** — the operator makes a model resident before a pass is spawned (§5) | **never** — foundry does not pull and does not warm |
+| End of the run | **nothing** — a pass ending is not a reason to take a model off a card somebody else owns | **unloaded, always** (`keep_alive: 0`), success or failure, and there is no flag to keep it |
 
-Files: `src/translate/transport.ts` (HTTP as a value, and the numbers every act
-shares), `src/translate/vllm.ts` (the dialect), `src/translate/model-server.ts`
-(the proof and the record), and four call sites — `src/translate/run.ts`,
-`src/clean/run.ts`, `src/clean/epub.ts`, `src/analyze/run.ts`.
+The unload is Owen's, 2026-09-13: *"ollama should always, always bring down the
+model as soon as the job is done. they arent chatting with it, theyre using it
+for a job and then closing the connection."* `--keep-model` existed for an Ollama
+shared with other work; it is gone, because that other work reloads in seconds
+where a card held by a finished job costs the next job everything.
+
+Unchanged whichever door answers: the prompts byte for byte, the temperature,
+the retries, the validators, the records/bank cache, the stamp,
+`NORMALIZER_VERSION`, `PUNCTUATION_SPEC_VERSION`. A book cleaned through one and
+the same book cleaned through the other are the same pass asked of different
+plumbing — the bank does not carry across, and §4 says why that is right.
+
+Files: `src/translate/transport.ts` (HTTP as a value, and the numbers and rules
+both doors share), `src/translate/vllm.ts` (the OpenAI dialect),
+`src/translate/ollama.ts` (the Ollama dialect),
+`src/translate/model-server.ts` (the choice, the proof and the record), and four
+call sites — `src/translate/run.ts`, `src/clean/run.ts`, `src/clean/epub.ts`,
+`src/analyze/run.ts`.
 
 ### analyze asks a different KIND of question
 
 The three text acts ask for prose. `analyze` asks a CLOSED question and
 constrains the decode to the legal answers — measured both more accurate and
 about five times cheaper than asking politely and parsing hopefully
-(`src/analyze/verify.ts`'s header). The spelling is
-`response_format: {type: "json_schema"}`, which the server implements with
-grammar-constrained decoding underneath; `askConstrained` sends the schema
-object, the prompt string, temperature 0 and a small token ceiling.
+(`src/analyze/verify.ts`'s header). The two doors spell that constraint
+differently and mean the same thing: `response_format: {type: "json_schema"}` on
+a chat turn here, `format: <the schema object>` on `/api/generate` there, both
+grammar-constrained decoding underneath. `askConstrained` sends the schema
+object, the prompt string, temperature 0 and a small token ceiling either way,
+and adds `num_ctx` on the Ollama side only.
+
+**Ollama's thinking trap is ported, and it is not optional.** Measured in
+briefcase with qwen3.8:27b: a JSON grammar sent to a THINKING model constrains
+the whole output stream from the first token, so the model never opens an answer
+channel and the object arrives in `thinking` with `response` EMPTY. So
+`readGenerateAnswer` reads `thinking` when a schema WAS sent and `response` came
+back empty, and never otherwise. Skip the port and the stage returns zero
+verdicts against a perfectly healthy server.
 
 Two details worth knowing. The call sends **one user message and no system
 message**, which is the shape the verdict prompts were measured under —
@@ -84,15 +123,20 @@ message**, which is the shape the verdict prompts were measured under —
 the model something it was never trained to read. And a degradation stays a
 degradation: one bad call must not end a stage making hundreds of tiny ones.
 
-**analyze's concurrency default is 12 like the others.** It was 1 under the
-serial server this engine no longer speaks to, and a pool never moved a verdict
-there either. The pool dispatches in the same strongest-first order Owen ruled,
+**analyze's concurrency default is 12 like the others on the OpenAI door, and 4
+on Ollama.** It was 1 on Ollama for its whole history, and four there mostly buys
+queueing rather than throughput — Ollama serialises per model unless its own
+parallelism was turned up — but a pool never moved a verdict on either door.
+The pool dispatches in the same strongest-first order Owen ruled,
 and the findings are composed by walking the jobs' own order afterwards, so
 what a pool changes is how long the stage takes and never what it wrote.
 
 ---
 
-## 3. The four things the door does that needed code, not just a URL
+## 3. The four things the OpenAI door does that needed code, not just a URL
+
+*(Each of these is the half of a disagreement with Ollama that §2's table names.
+Read them as "what is different over here", not as "how a text act works".)*
 
 1. **The context window is the server's.** It is fixed when the model is made
    resident and the KV cache is pre-allocated against it; there is no
@@ -119,12 +163,18 @@ what a pool changes is how long the stage takes and never what it wrote.
    on its side; until they land the switch is still sent, and nothing new is
    built on it.
 
-3. **The model may be unnamed.** The server holds ONE resident model, the one
-   the operator put there, and naming it on a command line is asking somebody
-   to retype a choice already made. So an absent `--model` means *whatever is
-   served*; the engine asks, uses it, logs it, and records it. A name that WAS
-   given is still proved, and a mismatch is refused with both names in the
-   sentence — and the engine never loads the one it wanted instead (§5).
+3. **The model may be unnamed HERE, and may not be on Ollama.** This server
+   holds ONE resident model, the one the operator put there, and naming it on a
+   command line is asking somebody to retype a choice already made. So an absent
+   `--model` means *whatever is served*; the engine asks, uses it, logs it, and
+   records it. A name that WAS given is still proved, and a mismatch is refused
+   with both names in the sentence — and the engine never loads the one it
+   wanted instead (§5). An Ollama holds a LIBRARY, so the same absence there is a
+   run with no way to choose between qwen3.8:27b and llama3.1:8b; it is refused
+   by name before any work, and there is no act-level default behind it. (There
+   used to be: `DEFAULT_TRANSLATE_MODEL` and `DEFAULT_NORMALIZER_MODEL`. The
+   first survives as an export the app's picker starts from — a picker's default,
+   not a run's — and the second is not an engine fallback any more.)
 
 4. **The served name is resolved before any cache key is computed.**
    `clean-text` hashes the model into every block's records key (`cleanKey`) and
@@ -195,9 +245,18 @@ holds it as its own open item.
 
 ---
 
-## 5. Who owns the server's life — RULED, and not Foundry
+## 5. Who owns the server's life — RULED, and it depends which door
 
-**The engine never loads a model and never unloads one.** Ruled 2026-09-13
+**On Ollama, foundry never loads and ALWAYS unloads.** It does not `ollama
+serve`, does not pull and does not warm anything up — a server that is not
+answering ends the run naming the URL that was silent, because the person
+reading that is about to type `ollama serve` and the only thing they need is
+which endpoint. But the end of a run is different from every other moment: the
+model comes down, success or failure, in a `finally`, best effort, because a job
+is not a chat and a finished job holds no card. There is no `--keep-model`.
+
+**On the OpenAI door the engine never loads a model and never unloads one.**
+Ruled 2026-09-13
 with the BookForge session, which owns the door shapes: the operator makes a
 model resident before a pass is spawned (the app does it on the operator's
 action, through the service's job API), a load EVICTS whatever else was on the
@@ -222,9 +281,11 @@ runs, applied to a server whose lifetime somebody else really does own.
 
 ## 6. The stamp records the model, and that is the whole record
 
-The narration stamp (`bookforge:narration-text`) carries `model`, and under vLLM
-that field holds the **served id**. No new field, no `stampVersion` bump, no
-change to the cross-repo contract BookForge reads.
+The narration stamp (`bookforge:narration-text`) carries `model`, and on the
+`openai` door that field holds the **served id** — on `ollama` it holds the tag
+that was named and proved. Either way it is the name that ANSWERED, read back
+from the proved server rather than from argv. No new field, no `stampVersion`
+bump, no change to the cross-repo contract BookForge reads.
 
 An earlier design (shelved 2026-09-08, before this was built) added an optional
 `precision` key. It is not built, and deliberately: foundry cannot *discover* a

@@ -58,7 +58,7 @@ work, exit 1 after):
 ```
 foundry analyze --book <key.book.jsonl> --out <report.jsonl>
                     [--categories <cats.json>]
-                    [--model <name>] [--endpoint <url>]
+                    [--model <name>] [--endpoint <url>] [--server <openai|ollama>]
                     [--nli-python <path>] [--fresh]
 ```
 
@@ -80,11 +80,14 @@ known (ARCHITECTURE.md §5) — the good value is "everything, once".
   `FOUNDRY_NLI_PYTHON`. **Not** `FOUNDRY_VLM_PYTHON` — that name means the
   PyMuPDF/MLX interpreter and overloading it would be wrong. No PATH search,
   same as `resolvePython`: a miss names every candidate tried.
-- `--model` absent means the model the server holds (it holds one; the
-  served id is used and written into the report header). `--endpoint` absent
-  means `backend.endpointUrl` from settings — the one inference server every
-  act speaks to since 2026-09-13. Owen's *"27b is the standard we'll use for
-  every task"* is what the app's settings start from, not a fallback here.
+- `--model` absent on `--server openai` means the model the server holds (it
+  holds one; the served id is used and written into the report header); absent
+  on `--server ollama` it is REFUSED by name, because an Ollama holds a
+  library. `--endpoint` absent means `backend.endpointUrl` from settings on the
+  OpenAI door and `http://localhost:11434` on the Ollama one — the setting is
+  not consulted there, since it names an OpenAI-compatible URL. Owen's *"27b is
+  the standard we'll use for every task"* is what the app's settings start
+  from, not a fallback here.
 - Progress on stderr, counting finished, monotonic:
   `analyze: rank <n>/<m> sentences`, `analyze: verify <n>/<m>
   (<category>)`. The result path is the last line on stdout.
@@ -199,24 +202,38 @@ server preflight it was pointed at a dead port for.
 
 ---
 
-## 2c. Which server answers the verdicts (Wave 58, 2026-09-08; one door since 2026-09-13)
+## 2c. Which server answers the verdicts (Wave 58, 2026-09-08; two doors again since 2026-09-14)
 
-The one OpenAI-compatible door every act speaks to — **docs/VLLM.md** owns the
-whole story. The second dialect this section once described beside it is gone.
+**`--server openai|ollama`, declared and never sniffed** — docs/SLOTS.md §2 is
+the ruling and **docs/VLLM.md** owns the whole story. Briefly: `openai` (the
+default) speaks `/v1/chat/completions` to anything OpenAI-compatible, `ollama`
+speaks `/api/generate` to the Ollama on this machine.
 
 The verdicts have not moved through any of it: same prompts, same schema, same
-temperature 0, same verdict-cache key. The constraint is
-`response_format: {type:"json_schema"}` on `/v1/chat/completions`, the same
-grammar-constrained decode the measurements below were taken under, and
-`--concurrency` defaults to **12**: the server batches the calls in flight
-together, and the sequential stage §5 describes was the serial server's shape,
-not a property of the question. The pool dispatches strongest-first as always,
-and the flagged categories are composed by walking the jobs' own order
+temperature 0, same verdict-cache key. **The constraint is the same decode under
+two spellings** — `response_format: {type:"json_schema"}` on the chat door,
+`format: <the schema object>` on Ollama's — which is why this is a transport
+branch rather than a second way of asking, and it is the spelling the
+measurements below were taken under.
+
+`--concurrency` defaults to **12 on the OpenAI door and 4 on Ollama**: the first
+batches the calls in flight together, and the sequential stage §5 describes was
+Ollama's shape (it serialises per model unless its own parallelism was turned
+up), not a property of the question. The pool dispatches strongest-first as
+always, and the flagged categories are composed by walking the jobs' own order
 afterwards, so a pool changes how long the stage takes and never what it wrote.
 
-Under vLLM `--model` may be omitted: the served id is used and written into the
-report header. **The NLI ranker is a resident Python worker and none of this
-reaches it** — the ranking half of a run costs exactly what it always cost.
+Two things are Ollama's alone. **`num_ctx` is pinned once for the whole stage**
+(`stageNumCtx`), sized from the longest prompt, because Ollama reloads the model
+on any change to it and these prompts differ only by passage length — the OpenAI
+door is told no window at all and the log line does not claim one. And **the
+model is unloaded when the run ends**, success or failure, in the same `finally`
+that stops the NLI worker.
+
+`--model` may be omitted on the OpenAI door — the served id is used and written
+into the report header — and is required on Ollama. **The NLI ranker is a
+resident Python worker and none of this reaches it**: the ranking half of a run
+costs exactly what it always cost.
 
 ## 3. Sentences — the first segmenter in the project
 

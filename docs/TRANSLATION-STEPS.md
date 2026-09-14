@@ -275,12 +275,18 @@ the *reading*, which is the newest snapshot of the one live overlay there is.
 
 ## 4b. Which server answers
 
-One kind, since 2026-09-13: the OpenAI-compatible door the inference service
-fronts, at `--endpoint`, with `--model` optional (the served id is used and
-recorded) and `--concurrency` defaulting to 12. The `--server ollama|vllm`
-switch this section once described is gone with the second dialect. Nothing
-about the prompt, the temperature, the verification or the records depends on
-the machine. One consequence still worth knowing: the model name is part of
+**Two kinds, on `--server openai|ollama`, declared and never sniffed** (Owen's
+reframe of 2026-09-14; docs/SLOTS.md §2 is the ruling).
+
+* `openai`, the default — the OpenAI-compatible door at `--endpoint`, with
+  `--model` optional (the served id is used and recorded), `--concurrency`
+  defaulting to 12, and nothing loaded or unloaded by the pass.
+* `ollama` — the Ollama on the machine, `http://localhost:11434` by default,
+  `--model` REQUIRED because an Ollama holds a library, `--concurrency`
+  defaulting to 4, and the model UNLOADED when the run ends, always.
+
+Nothing about the prompt, the temperature, the verification or the records
+depends on which. One consequence still worth knowing: the model name is part of
 the bank/records key, so answers do not carry across two served names — see
 **docs/VLLM.md**, which owns the whole story including who may stop the server
 (not foundry).

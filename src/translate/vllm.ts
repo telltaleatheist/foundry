@@ -1,5 +1,16 @@
 /**
- * translate/vllm — the same three questions, asked of a vLLM server.
+ * translate/vllm — the same questions, asked of an OpenAI-compatible server.
+ *
+ * ── THE FILENAME SAYS vLLM AND THE DOOR IS WIDER THAN THAT ──────────────────
+ *
+ * This is the `--server openai` dialect: `/v1/models`, `/v1/chat/completions`,
+ * `response_format`. What answers it may be a vLLM, a shared inference service,
+ * a local llama-server holding a GGUF, or a cloud provider reached through the
+ * header map — the wire is the same and this file cannot tell them apart, which
+ * is the point of an interoperable protocol. The KIND is therefore spelled
+ * `openai` rather than `vllm` (model-server.ts argues it), and the FILE keeps
+ * its name because every measurement in docs/VLLM.md was taken through it and a
+ * rename would cost each of them its address.
  *
  * ── WHY A SECOND TRANSPORT AND NOT A SECOND PROGRAM ─────────────────────────
  *
@@ -19,9 +30,9 @@
  * the bank, the records and the stamp are untouched. This file asks the two
  * questions a pass has for a server — is it there and which model does it hold,
  * and what does it say to this block — in the shape an OpenAI-compatible server
- * understands. Since Owen's ruling of 2026-09-13 it is the ONLY dialect: the
- * Ollama transport that stood beside it is gone (translate/transport.ts says
- * why), and `model-server.ts` proves the server through this file alone.
+ * understands. It is one of TWO dialects: `ollama.ts` is the local door beside
+ * it (docs/SLOTS.md §2), the choice is declared on `--server` and never sniffed,
+ * and `model-server.ts` is the one file that makes it.
  *
  * ── THE THINGS THIS DOOR DOES DIFFERENTLY, EACH PAID FOR ────────────────────
  *
@@ -31,8 +42,8 @@
  *    `max_model_len` so a request can be sized INTO what the server can hold —
  *    see `capFor` — and a request that cannot fit is refused by name before it
  *    is sent (clean/runner.ts), never sent to be truncated silently.
- *  - THE THINKING SWITCH IS A CHAT-TEMPLATE ARGUMENT. The qwen3 family's
- *    switch on an OpenAI-compatible server is
+ *  - THE THINKING SWITCH IS A CHAT-TEMPLATE ARGUMENT, where Ollama takes a
+ *    top-level `think` field. The qwen3 family's switch on this door is
  *    `chat_template_kwargs: {enable_thinking: false}`, which the server hands
  *    to the Jinja template. A template that does not take the argument ignores
  *    it, so this costs nothing where it does not apply — and it is still sent
@@ -45,11 +56,13 @@
  *    book — a translation with reasoning glued to its head, or an edit list the
  *    JSON reader cannot find. `withoutThinking` takes exactly that block off the
  *    front and nothing else.
- *  - NOTHING IS LOADED OR UNLOADED. The operator puts a model on the card
- *    before a pass is spawned and a load evicts what was there, so a pass that
- *    asked for one would be one job taking a narrator's voice off the card.
- *    A server that holds the wrong model is a refusal by name, and a pass
- *    ending is not a reason to take a model off.
+ *  - NOTHING IS LOADED OR UNLOADED, which is the sharpest difference from the
+ *    other door. The operator puts a model on the card before a pass is spawned
+ *    and a load evicts what was there, so a pass that asked for one would be one
+ *    job taking a narrator's voice off the card. A server that holds the wrong
+ *    model is a refusal by name, and a pass ending is not a reason to take a
+ *    model off — where on Ollama a pass ending is exactly that reason, always
+ *    (`releaseModel`, model-server.ts).
  */
 import { explainHttpRefusal } from '../backend/http-refusal.js';
 import { answerBudget, takesThinkField, type ChatTuning, type Transport } from './transport.js';

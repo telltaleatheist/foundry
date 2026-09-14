@@ -54,6 +54,7 @@
  */
 import type { ModelServer } from '../translate/model-server.js';
 import type { Transport } from '../translate/transport.js';
+import { readGenerateAnswer } from '../translate/ollama.js';
 import { constrainedChatBody, readChatAnswer } from '../translate/vllm.js';
 import type { FlagWindow, WindowCategory } from './rank.js';
 
@@ -83,6 +84,75 @@ export const VERDICT_SCHEMA: Record<string, unknown> = {
  * and counted, never guessed at.
  */
 const VERDICT_PREDICT_TOKENS = 128;
+
+/**
+ * The output budget num_ctx is SIZED from — a different number, on purpose.
+ *
+ * briefcase's `VERIFY_OUTPUT_BUDGET_TOKENS`. It is 2048 rather than 128 because
+ * its only job is to keep the bucketed num_ctx at its floor, so that every call
+ * in the stage lands on the same context size and Ollama never reloads the
+ * model mid-stage. Sizing from 128 would let a short passage bucket lower than
+ * a long one and buy exactly the reload this is arranged to avoid.
+ *
+ * OLLAMA ONLY. The other door's window was fixed when its model was made
+ * resident, so nothing about it is sized here — see `askConstrained`.
+ */
+const VERIFY_OUTPUT_BUDGET_TOKENS = 2048;
+
+/**
+ * The num_ctx ceiling for a model, from the parameter count sniffed out of its
+ * tag — ported from briefcase's `model-utils.ts`, which took it from BookForge.
+ *
+ * The ceiling keeps weights and KV cache on the GPU, because spilling a layer
+ * to CPU bottlenecks every token:
+ *   - 15B or under: 16384 tokens.
+ *   - larger (32B-class) or an unrecognised size: 12288, conservatively —
+ *     guessing low costs a rare clamp, guessing high cripples the whole stage.
+ *
+ * MoE tags (`mixtral:8x7b`) count experts times size, which is the memory the
+ * weights actually take.
+ */
+export function numCtxMaxForModel(model: string): number {
+  const moe = /(\d+)x(\d+(?:\.\d+)?)b/i.exec(model);
+  const dense = /(\d+(?:\.\d+)?)b/i.exec(model);
+  const sizeB = moe
+    ? parseInt(moe[1]!, 10) * parseFloat(moe[2]!)
+    : dense
+      ? parseFloat(dense[1]!)
+      : null;
+  if (sizeB !== null && sizeB <= 15) return 16384;
+  return 12288;
+}
+
+/**
+ * The num_ctx for a stage, sized from its LARGEST prompt — briefcase's
+ * `estimateNumCtx`, ported with its two constraints intact:
+ *
+ *  - **Bucket to 4096.** Ollama fully reloads the model on ANY num_ctx change,
+ *    so per-request estimates that each land on a slightly different value
+ *    cause relentless reload churn. Rounding up to coarse buckets makes
+ *    similar-sized prompts reuse the runner that is already loaded.
+ *  - **Cap at `numCtxMaxForModel`.** Keep the KV cache on the GPU.
+ *
+ * Three characters to the token is deliberately pessimistic; the 512 and the
+ * 1.2 are slack for a tokenizer that disagrees. It is called ONCE per stage,
+ * with the longest prompt of the whole run, and the answer is pinned for every
+ * call — which is what makes the stage pay one load instead of hundreds.
+ */
+export function estimateNumCtx(promptChars: number, model: string, outputBudgetTokens: number): number {
+  const CHARS_PER_TOKEN = 3;
+  const NUM_CTX_BUCKET = 4096;
+  const inputTokens = Math.ceil(promptChars / CHARS_PER_TOKEN);
+  const raw = Math.ceil((inputTokens + outputBudgetTokens + 512) * 1.2);
+  const bucketed = Math.max(NUM_CTX_BUCKET, Math.ceil(raw / NUM_CTX_BUCKET) * NUM_CTX_BUCKET);
+  return Math.min(numCtxMaxForModel(model), bucketed);
+}
+
+/** The num_ctx this whole stage pins, from the longest prompt it will send. */
+export function stageNumCtx(prompts: readonly string[], model: string): number {
+  const longest = prompts.reduce((max, prompt) => Math.max(max, prompt.length), 0);
+  return estimateNumCtx(longest, model, VERIFY_OUTPUT_BUDGET_TOKENS);
+}
 
 /**
  * Verify ONE (window, category) pair.
@@ -175,11 +245,32 @@ export interface ConstrainedAnswer {
  * depending on what was asked — and because the trap below must have exactly one
  * copy.
  *
+ * ── TWO DIALECTS, ONE QUESTION ──────────────────────────────────────────────
+ *
+ * The question is identical on both doors — same prompt string, same schema
+ * object, same temperature 0, same token ceiling — and so is the CONSTRAINT:
+ * Ollama's `format` on `/api/generate` and the OpenAI door's `response_format:
+ * {type:"json_schema"}` on a chat turn are the same grammar-constrained decode
+ * under two spellings, which is why this can be a transport branch rather than a
+ * second way of asking.
+ *
+ * WHAT DOES NOT CROSS IS `num_ctx`. It is a request option on Ollama, where
+ * `stageNumCtx`'s whole argument applies — one size per stage, because that
+ * server reloads the runner on a change. The OpenAI door's window was fixed when
+ * its model was made resident, so the number is simply not sent there and
+ * `capFor` clamps the ANSWER against what the server said it can hold, which is
+ * the part that still matters.
+ *
+ * AND THE DEGRADATION VOCABULARY IS SHARED. A transport failure, a non-200 and
+ * an answer that is not the door's documented shape all come back as
+ * degradations rather than throwing, on this function's own rule: ONE bad call
+ * must not end a stage that is making hundreds of tiny ones. The truncation is
+ * read from two different fields and reported as one sentence.
+ *
  * ── THE THINKING-MODEL TRAP, AND IT IS NOT OPTIONAL ─────────────────────────
  *
- * MEASURED IN BRIEFCASE (under Ollama, before this engine had one door) with
- * qwen3.8:27b: when a JSON grammar is sent
- * to a THINKING model, it constrains the whole output stream from the first
+ * MEASURED IN BRIEFCASE, on Ollama, with qwen3.8:27b: when a JSON grammar is
+ * sent to a THINKING model, it constrains the whole output stream from the first
  * token, so the model never opens an answer channel — the object it emits is
  * classified as reasoning and arrives in `thinking` with `response` EMPTY.
  *
@@ -192,38 +283,34 @@ export interface ConstrainedAnswer {
  * non-empty `response`, `thinking` is never read, because then it really is
  * reasoning prose. A JSON SCHEMA constrains harder than `'json'` does, so this
  * matters more here, not less. Skip the port and the stage returns zero
- * verdicts against a perfectly healthy server.
- *
- * A transport failure, a non-200 and an answer that is not the door's documented
- * shape all come back as degradations rather than throwing, because ONE bad
- * call must not end a stage that is making hundreds of tiny ones.
- *
- * THE CONSTRAINT IS `response_format: {type:"json_schema"}` — the same
- * grammar-constrained decode the measurement above was taken under, in the one
- * spelling this engine's door speaks (translate/vllm.ts). No window is sent:
- * the server's is fixed when the model is made resident, and `capFor` clamps
- * the ANSWER against what the server said it can hold, which is the part that
- * still matters.
+ * verdicts against a perfectly healthy server. The port lives beside the body
+ * that provokes it (`readGenerateAnswer`, translate/ollama.ts); the OpenAI door
+ * has its own answer to the same problem in `withoutThinking`.
  */
 export async function askConstrained(
   transport: Transport,
   server: ModelServer,
   prompt: string,
+  numCtx: number,
   schema: Record<string, unknown>,
   predictTokens: number,
 ): Promise<ConstrainedAnswer> {
-  const answer = await readChatAnswer(
-    transport,
-    server.endpoint,
-    constrainedChatBody(server.model, prompt, schema, predictTokens, server.maxModelLen),
-  );
-  if (answer.text === null) return { text: null, degraded: answer.degraded ?? 'no answer' };
+  const answer = server.kind === 'ollama'
+    ? await readGenerateAnswer(
+      transport, server.endpoint, server.model, prompt, numCtx, schema, predictTokens,
+    )
+    : await readChatAnswer(
+      transport,
+      server.endpoint,
+      constrainedChatBody(server.model, prompt, schema, predictTokens, server.maxModelLen),
+    );
   if (answer.truncated === true) {
     return {
       text: null,
       degraded: `the answer hit the ${predictTokens}-token ceiling, so it was cut off`,
     };
   }
+  if (answer.text === null) return { text: null, degraded: answer.degraded ?? 'no answer' };
   return { text: answer.text };
 }
 
@@ -240,8 +327,11 @@ export async function askVerdict(
   transport: Transport,
   server: ModelServer,
   prompt: string,
+  numCtx: number,
 ): Promise<VerdictOutcome> {
-  const answer = await askConstrained(transport, server, prompt, VERDICT_SCHEMA, VERDICT_PREDICT_TOKENS);
+  const answer = await askConstrained(
+    transport, server, prompt, numCtx, VERDICT_SCHEMA, VERDICT_PREDICT_TOKENS,
+  );
   if (answer.text === null) return { verdict: null, degraded: answer.degraded ?? 'no answer' };
   const verdict = parseVerdict(answer.text);
   if (verdict === null) {

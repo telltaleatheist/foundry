@@ -96,7 +96,9 @@ import { bookRowPlan, readBookFile } from '../translate/bookrows.js';
 import type { BookBlock } from '../translate/bookrows.js';
 import { TranslationRecords } from '../translate/records.js';
 import { spliceTableGrid, type TableGrid } from '../translate/tablecells.js';
-import { DEFAULT_TEXT_CONCURRENCY, openModelServer } from '../translate/model-server.js';
+import {
+  concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, type ServerKind,
+} from '../translate/model-server.js';
 import { fetchTransport, type Transport } from '../translate/transport.js';
 
 import { blockDigest, bookPositionTexts } from './digest.js';
@@ -194,19 +196,37 @@ export interface CleanTextOptions {
   bookPath: string;
   recordsPath: string;
   stampPath: string;
-  /** The server. Required: there is no default port for a server nobody registered. */
+  /** The server. Required: the caller resolves each door's default (commands.ts). */
   endpoint: string;
   /**
-   * The model that reads the residue. Absent means the one the server holds —
-   * it holds exactly one, made resident by the operator before this pass was
-   * spawned — and the served id is what the records are keyed by and the stamp
-   * names. A name that is given is proved against the server first.
+   * The model that reads the residue.
+   *
+   * On `--server openai`, absent means the one the server holds — it holds
+   * exactly one, made resident by the operator before this pass was spawned —
+   * and the served id is what the records are keyed by and the stamp names. On
+   * `--server ollama` absent is refused by name, because that server holds a
+   * library. A name that is given is proved against the server first either way.
    */
   model?: string;
   /**
+   * Which dialect is on the other end — `--server`. Default `openai`.
+   *
+   * DECLARED, NEVER SNIFFED (translate/model-server.ts). It changes the
+   * transport and the three things that hang off it — how many blocks are worth
+   * having in flight, whether the context window is pinned per book or is the
+   * server's own, and whether the weights are given back when the run ends — and
+   * nothing about what this pass decides: same prompt, same temperature 0, same
+   * validators, same `NORMALIZER_VERSION`. A book cleaned through Ollama and the
+   * same book cleaned through the other door are the same pass asked of
+   * different plumbing.
+   */
+  server?: ServerKind;
+  /**
    * How many blocks are asked about at once. Default `DEFAULT_TEXT_CONCURRENCY`
-   * (translate/model-server.ts says why twelve; the vendored driver's own
-   * `DEFAULT_CLEAN_CONCURRENCY` was the serial server's four and is not read).
+   * on the OpenAI door and `DEFAULT_OLLAMA_CONCURRENCY` on Ollama
+   * (`concurrencyFor`; the vendored driver's own `DEFAULT_CLEAN_CONCURRENCY` is
+   * the same four and is not read, because the interface is the vendored
+   * contract and the number is this engine's).
    *
    * It changes NOTHING about what this pass decides — not the transform, not
    * the prompt, not a version constant, not a record already written. The
@@ -378,6 +398,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   const started = Date.now();
   const at = new Date().toISOString();
   const endpoint = opts.endpoint;
+  const kind: ServerKind = opts.server ?? 'openai';
   const transport = opts.transport ?? fetchTransport();
   /*
    * ── THE MODEL'S NAME IS NEEDED BEFORE ANY QUESTION IS ASKED ────────────────
@@ -386,11 +407,12 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * name later would file this run's answers under a name that is not the one
    * that answered, and the next run would ask the whole book again.
    *
-   * An absent `--model` means "whatever this server is serving"
-   * (translate/vllm.ts argues why), and the only way to know that is to ask.
-   * THAT IS THE ONE CASE where a run with nothing left to ask still touches the
-   * server, and it is the honest one: a run that did not name its model cannot
-   * know what it already answered.
+   * On the OpenAI door an absent `--model` means "whatever this server is
+   * serving" (translate/vllm.ts argues why), and the only way to know that is to
+   * ask. THAT IS THE ONE CASE where a run with nothing left to ask still touches
+   * the server, and it is the honest one: a run that did not name its model
+   * cannot know what it already answered. On Ollama the ask is what REFUSES an
+   * absent name, which is the same call reaching a different answer.
    */
   /*
    * A CALLER-SUPPLIED RUNNER NAMES ITS OWN MODEL, and the server is not asked.
@@ -402,7 +424,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    */
   const model = opts.model
     ?? opts.runner?.model
-    ?? (await openModelServer({ transport, endpoint })).model;
+    ?? (await openModelServer({ kind, transport, endpoint })).model;
 
   const { text: bookText, where } = openBook(opts.bookPath);
   const book = readBookFile(bookText, where);
@@ -632,7 +654,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    */
   const runner = opts.runner ?? (asks.length === 0
     ? NOTHING_TO_ASK
-    : await openModelRunner({ model, endpoint, transport, log: opts.log }));
+    : await openModelRunner({ model, endpoint, server: kind, transport, log: opts.log }));
 
   const settled = await askAboutEach(
     asks,
@@ -655,7 +677,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     },
     'every-block',
     EVERY_CLASS,
-    opts.concurrency ?? DEFAULT_TEXT_CONCURRENCY,
+    opts.concurrency ?? concurrencyFor(kind, DEFAULT_TEXT_CONCURRENCY),
   );
 
   // ── The verdicts, applied ─────────────────────────────────────────────────

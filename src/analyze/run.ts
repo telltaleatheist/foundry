@@ -33,7 +33,8 @@ import * as fs from 'node:fs';
 
 import { stripBom } from '../bom.js';
 import {
-  DEFAULT_TEXT_CONCURRENCY, openModelServer, type ModelServer,
+  concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel,
+  type ModelServer, type ServerKind,
 } from '../translate/model-server.js';
 import { fetchTransport, type Transport } from '../translate/transport.js';
 import { parseBookFile } from '../vlm/book-file.js';
@@ -72,6 +73,7 @@ import {
 import {
   askVerdict,
   buildVerificationPrompt,
+  stageNumCtx,
   windowFinding,
   type WindowFinding,
 } from './verify.js';
@@ -114,12 +116,15 @@ const PROSE: ReadonlySet<string> = new Set([
 const SCORE_BATCH = 500;
 
 /**
- * How many verify calls are in flight at once when nobody said a number.
+ * How many verify calls are in flight at once on the OpenAI door when nobody
+ * said a number.
  *
- * The server batches the requests in flight TOGETHER (docs/VLLM.md), and this
+ * That server batches the requests in flight TOGETHER (docs/VLLM.md), and this
  * stage is hundreds of tiny closed questions over one loaded model — the shape
- * that gains most from it. It was 1 under the serial server this engine no
- * longer speaks to; `DEFAULT_TEXT_CONCURRENCY` says why twelve.
+ * that gains most from it. `DEFAULT_TEXT_CONCURRENCY` says why twelve. On Ollama
+ * `concurrencyFor` answers four, and even that is generous: Ollama serialises
+ * per model unless the server was configured otherwise, so a pool there buys
+ * queueing rather than throughput and the verdicts do not move either way.
  */
 const DEFAULT_ANALYZE_CONCURRENCY = DEFAULT_TEXT_CONCURRENCY;
 
@@ -133,16 +138,21 @@ export interface AnalyzeOptions {
   /**
    * The model that answers the verdicts.
    *
-   * May be absent, and absent MEANS something: the server holds one resident
-   * model, so the run asks the server what it is, uses it, and writes that name
-   * into the verdict cache key and the report header (src/translate/vllm.ts).
-   * A name that is given is proved against the server before any work starts.
+   * Under `--server openai` this may be absent, and absent MEANS something
+   * there: the server holds one resident model, so the run asks the server what
+   * it is, uses it, and writes that name into the verdict cache key and the
+   * report header (src/translate/vllm.ts). Under `--server ollama` it is
+   * required and an absent one is refused by name, because an Ollama holds a
+   * library. A name that is given is proved before any work starts, either way.
    */
   model?: string;
   /** The server. Never started, never stopped, never loaded by this program. */
   endpoint: string;
+  /** Which dialect answers — `--server`. Default `openai`. */
+  server?: ServerKind;
   /**
-   * Verify calls in flight at once. Default `DEFAULT_ANALYZE_CONCURRENCY`.
+   * Verify calls in flight at once. Default `DEFAULT_ANALYZE_CONCURRENCY` on the
+   * OpenAI door, `DEFAULT_OLLAMA_CONCURRENCY` on Ollama (`concurrencyFor`).
    *
    * It changes the SPEED and never a verdict: every call is an independent
    * closed question at temperature 0, the answers are put back into the jobs'
@@ -256,13 +266,16 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
   const report = opened.report;
 
   const transport = opts.transport ?? fetchTransport();
+  const kind: ServerKind = opts.server ?? 'openai';
   /*
-   * PROVED FIRST, and it also RESOLVES: an absent model means the served one,
-   * and the answer has to be in hand before the verdict keys are composed
-   * (`verdictKey` hashes the model's name), or this run would file its answers
-   * under a name that did not answer them.
+   * PROVED FIRST, and it also RESOLVES: on the OpenAI door an absent model means
+   * the served one, and the answer has to be in hand before the verdict keys are
+   * composed (`verdictKey` hashes the model's name), or this run would file its
+   * answers under a name that did not answer them. On Ollama the same call is
+   * what refuses an absent name.
    */
   const server = await openModelServer({
+    kind,
     transport,
     endpoint: opts.endpoint,
     ...(opts.model === undefined ? {} : { model: opts.model }),
@@ -346,14 +359,28 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
     const windows = await rankWindows(sentences, plan, scoreTexts, log);
     result = await verifyStage({
       windows, sentences, plan, report, transport, server,
-      concurrency: opts.concurrency ?? DEFAULT_ANALYZE_CONCURRENCY,
+      concurrency: opts.concurrency ?? concurrencyFor(kind, DEFAULT_ANALYZE_CONCURRENCY),
       hypotheses, bankSha, generation, log,
     });
   } finally {
-    // The NLI worker is this run's own process and goes with it. The model on
-    // the card is NOT this run's to give back: the operator made it resident,
-    // and a pass ending is not a reason to take it off (translate/model-server.ts).
+    // The NLI worker is this run's own process and goes with it.
     startedWorker()?.stop();
+    /*
+     * The card back, best-effort, exactly as translate ends. It runs in the
+     * `finally` so a FAILED run gives the memory back too, and it can never fail
+     * a run that produced its report — a server that has already gone away has,
+     * by definition, released what this was asking it to release. On the OpenAI
+     * door nothing was loaded by this pass and nothing is taken off; the line
+     * says so once, because silence would look like a release that happened.
+     */
+    const outcome = await releaseModel(transport, kind, server.endpoint, server.model);
+    log(outcome === 'not-ours'
+      ? 'analyze: nothing to unload — this run never loaded a model, and taking one off a card '
+        + 'somebody else put it on is not one job\'s decision to make (translate/model-server.ts).'
+      : outcome === 'released'
+        ? `analyze: asked ollama to unload "${server.model}" — the card is free for the next job.`
+        : `analyze: ollama did not acknowledge unloading "${server.model}". If it is still resident `
+          + 'it will fall out on its own idle timer.');
   }
   return result;
 }
@@ -370,12 +397,13 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
  * order and only land out of it, so what is finished first is still what was
  * worth finishing first.
  *
- * ── TWELVE IN FLIGHT BY DEFAULT, and it is not recklessness ────────────────
+ * ── TWELVE IN FLIGHT BY DEFAULT ON THE OpenAI DOOR, and it is not recklessness ─
  *
- * The server batches the requests in flight together, and this stage — hundreds
- * of tiny closed questions over one loaded model — is the shape that gains
- * most. It was sequential under the serial server this engine no longer speaks
- * to, and a pool never moved a verdict there either.
+ * That server batches the requests in flight together, and this stage —
+ * hundreds of tiny closed questions over one loaded model — is the shape that
+ * gains most. On Ollama the default is four and even that mostly buys queueing,
+ * because Ollama serialises per model unless its own parallelism was turned up.
+ * A pool never moved a verdict on either door, which is the next paragraph.
  *
  * ── WHAT THE POOL IS NOT ALLOWED TO MOVE ───────────────────────────────────
  *
@@ -427,12 +455,25 @@ async function verifyStage(args: {
     }
   }
 
+  /*
+   * ONE num_ctx FOR EVERY CALL IN THE STAGE, sized from the largest prompt.
+   * Ollama fully reloads the model on ANY num_ctx change, and these prompts
+   * differ only by the length of their passage — per-call sizing would buy
+   * reloads and nothing else. It is computed on both doors and SENT on one:
+   * `askConstrained` drops it for an OpenAI-compatible server, whose window was
+   * fixed when the model was made resident.
+   */
+  const numCtx = stageNumCtx(jobs.map((job) => job.prompt), args.server.model);
   const cached = jobs.filter((job) => report.verdict(job.key) !== undefined).length;
-  // No window is named here: the server's is fixed when the model was made
-  // resident, and a line claiming one would be this program reporting a
-  // setting it did not send.
+  /*
+   * THE OpenAI DOOR IS NOT TOLD A WINDOW, so the line must not claim one. Its
+   * context is fixed when the model is made resident and `num_ctx` has no
+   * counterpart on that route; saying "at num_ctx 8192" there would be this
+   * program reporting a setting it did not send.
+   */
   log(
     `analyze: ${windows.length} passage(s) and ${jobs.length} verify call(s) `
+    + (args.server.kind === 'ollama' ? `at num_ctx ${numCtx} ` : '')
     + `on ${args.server.model}`
     + (args.concurrency > 1 ? `, up to ${args.concurrency} in flight` : '')
     + `; ${cached} of them are already answered and cost nothing.`,
@@ -448,7 +489,7 @@ async function verifyStage(args: {
     let verdict = report.verdict(job.key);
     if (verdict === undefined) {
       asked += 1;
-      const outcome = await askVerdict(args.transport, args.server, job.prompt);
+      const outcome = await askVerdict(args.transport, args.server, job.prompt, numCtx);
       if (outcome.verdict === null) {
         /*
          * A DEGRADATION IS A SKIP AND A WARNING, NEVER A FLAG. There are three

@@ -139,8 +139,10 @@
  * sent at all. The bank staying authoritative is also what makes a resume
  * idempotent: however many times a run is killed, the same book comes out.
  *
- * `--concurrency` puts N chunks in flight at once, because Ollama batches
- * concurrent requests and a serial run leaves the GPU idle between them. What
+ * `--concurrency` puts N chunks in flight at once, because both doors run
+ * concurrent requests together and a serial run leaves the GPU idle between
+ * them — far more so on the OpenAI door, which is why its default is twelve and
+ * Ollama's is four (`concurrencyFor`, model-server.ts). What
  * that costs is the ORDER of the log, which is fine, and what it must not cost
  * is the honesty of the numbers in it, which is not. So `block N/M` counts
  * blocks FINISHED and `requests done` counts chunks FINISHED — both monotonic,
@@ -169,7 +171,10 @@ import {
   checkMarkers, maskBlock, MarkerError, restoreMarkers, stripMarkers,
   type MarkerCounter, type MaskedBlock,
 } from './markers.js';
-import { askModel, DEFAULT_TEXT_CONCURRENCY, openModelServer } from './model-server.js';
+import {
+  askModel, concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel,
+  type ServerKind,
+} from './model-server.js';
 import { fetchTransport, type Transport } from './transport.js';
 import {
   chapterPosition, openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
@@ -196,23 +201,27 @@ export class TranslateError extends Error {
  * covers the new family spelling (qwen3.8...) already, verified before the
  * switch. The mirror in app/shared/pipeline.ts moves in the same commit.
  *
- * THE ENGINE NO LONGER DEFAULTS TO IT (2026-09-13). An absent `--model` means
- * the model the server holds — the operator made one resident before this run
- * was spawned, and a run that named a different one would be refused by name.
- * The constant stays exported because the app's settings still START from it
- * as the name to make resident; it is a picker's default, not a run's.
+ * THE ENGINE NO LONGER DEFAULTS TO IT (2026-09-13), AND THAT SURVIVED THE
+ * RETURN OF THE SECOND DOOR. On `--server openai` an absent `--model` means the
+ * model the server holds; on `--server ollama` an absent `--model` is REFUSED by
+ * name, because an Ollama holds a library and quietly falling back to a constant
+ * is how a book gets translated by a model nobody chose. Neither reading is a
+ * default. The constant stays exported because the app's settings still START
+ * from it as the name to make resident or to pull; it is a picker's default, not
+ * a run's.
  */
 export const DEFAULT_TRANSLATE_MODEL = 'qwen3.8:27b';
 
 /**
- * How many requests are in flight at once, unless somebody says otherwise.
+ * How many requests are in flight at once on the OpenAI door, unless somebody
+ * says otherwise.
  *
- * It was four under the serial server this engine no longer speaks to — a
- * starting point, never a measurement. The one door that remains batches the
- * requests in flight together, and `DEFAULT_TEXT_CONCURRENCY` (model-server.ts)
- * says why twelve is the number for every text act. The right value is still a
- * property of somebody else's GPU and their model's size, which is why it is a
- * flag at all.
+ * That door batches the requests in flight together, and
+ * `DEFAULT_TEXT_CONCURRENCY` (model-server.ts) says why twelve is the number for
+ * every text act. On Ollama `concurrencyFor` answers four instead, which is the
+ * number this act ran at for its whole history and is still a starting point
+ * rather than a measurement. The right value is a property of somebody else's
+ * GPU and their model's size, which is why it is a flag at all.
  */
 export const DEFAULT_TRANSLATE_CONCURRENCY = DEFAULT_TEXT_CONCURRENCY;
 
@@ -434,13 +443,28 @@ export interface TranslateOptions {
   /** Source language tag. Absent means the model is told to detect it. */
   from?: string;
   /**
-   * The model. Absent means the one the server holds — it holds exactly one,
-   * made resident by the operator before this run was spawned — and the served
-   * id is what the bank is keyed by. A name that is given is proved first.
+   * The model.
+   *
+   * On `--server openai`, absent means the one the server holds — it holds
+   * exactly one, made resident by the operator before this run was spawned — and
+   * the served id is what the bank is keyed by. On `--server ollama` absent is
+   * REFUSED by name: an Ollama holds a library. A name that is given is proved
+   * against the server on both doors before any block travels.
    */
   model?: string;
-  /** The server. Required: there is no default port for a server nobody registered. */
+  /** The server. Required: the caller resolves each door's default (commands.ts). */
   endpoint: string;
+  /**
+   * Which dialect is on the other end — `--server`. Default `openai`.
+   *
+   * DECLARED, NEVER SNIFFED, and `model-server.ts` argues that at length. What
+   * it changes here is the transport and the two things that hang off it: how
+   * many requests are worth having in flight (`concurrencyFor`), and whether the
+   * run ends by giving the card back (`releaseModel` — on Ollama it always
+   * does). The prompts, the temperature, the verification and the bank key are
+   * the same on both.
+   */
+  server?: ServerKind;
   /** Free text appended to the system prompt, verbatim. */
   instructions?: string;
   /**
@@ -486,7 +510,7 @@ export interface TranslateReport {
   /**
    * Chapter titles asked of the model — the divisions whose names no heading of
    * the book answers for, on the book-file route in records mode (see the titles
-   * pass in `translateEpub`). NOT part of `blocks`, which counts the book's own
+   * pass in `runTranslation`). NOT part of `blocks`, which counts the book's own
    * paragraphs and headings and means exactly what it always did.
    *
    * Zero on every other route by construction: a run that writes an EPUB
@@ -532,7 +556,7 @@ export interface TranslateReport {
    * table was before the cell route existed.
    *
    * Zero on the cast route, where tables are still refused whole — see the
-   * records-mode table branch in `translateEpub` for what wiring it would need.
+   * records-mode table branch in `runTranslation` for what wiring it would need.
    */
   tables: number;
   tableCells: number;
@@ -1372,16 +1396,72 @@ function planChunks(
 }
 
 /**
- * Translate a book — or rewrite one, when `rewrite` is set.
+ * Translate a book — or rewrite one, when `rewrite` is set — and GIVE THE
+ * WEIGHTS BACK when it is over.
  *
- * NOTHING IS GIVEN BACK WHEN IT IS OVER. This used to sit inside a wrapper whose
- * one job was to unload the model in a `finally`, because a serial server kept
- * weights resident on an idle timer after the last request. The server this
- * engine speaks to now holds what the operator made resident and a pass ending
- * is not a reason to take it off the card — a load evicts, so an unload here
- * would be one job deciding for whatever runs next (translate/model-server.ts).
+ * ── Why this wrapper exists ────────────────────────────────────────────────
+ *
+ * Everything about translating is in `runTranslation` below. This is here for
+ * one sentence: when the run ends, for ANY reason, an Ollama stops holding the
+ * model. Owen's ruling, 2026-09-13: *"ollama should always, always bring down
+ * the model as soon as the job is done. they arent chatting with it, theyre
+ * using it for a job and then closing the connection."*
+ *
+ * Ollama keeps a model resident for five minutes after its last request, and
+ * every request resets that clock. For a chat window that is exactly right. For
+ * this program it means a book that finished at block 2,400 leaves twenty
+ * gigabytes pinned behind it, on the same card the reading server wants, and
+ * the next thing the user asks for either waits for a timer nobody can see or
+ * fails for want of memory. The user reported precisely this: *"the translation
+ * ai isnt being brought down when translation completes."*
+ *
+ * ── `finally`, and the three ways a run can end ────────────────────────────
+ *
+ * A finished run, a failed run, and a killed one all end with the model loaded,
+ * and the failed ones are the WORST case — a run that died at block 12 of 2,400
+ * has just claimed the card for five minutes on behalf of work that produced
+ * nothing. So the release is in a `finally` rather than after the return, and
+ * it is best-effort by construction (`unloadModel` cannot throw): a run that
+ * wrote everything it was asked for is not going to be reported as failed
+ * because the server would not take a courtesy call.
+ *
+ * ── AND THERE IS NO FLAG ───────────────────────────────────────────────────
+ *
+ * `--keep-model` existed for an Ollama somebody else is also using. It is gone:
+ * that other work reloads its model in seconds, where a card held by a finished
+ * job costs the next job everything. On `--server openai` the release asks
+ * nothing at all and says so once — nothing there was loaded by this pass, and a
+ * pass ending is not a reason to take a model off a card somebody else owns.
  */
 export async function translateEpub(opts: TranslateOptions): Promise<TranslateReport> {
+  const kind: ServerKind = opts.server ?? 'openai';
+  const act: TextAct = textActOf(opts.rewrite);
+  const transport = opts.transport ?? fetchTransport();
+  try {
+    return await runTranslation(opts);
+  } finally {
+    /*
+     * `opts.model` HERE IS THE ONE THAT WAS ASKED FOR, not the one that
+     * answered — this line runs on the failure path too, where the run may
+     * never have reached the server to resolve it. It is only ever used on the
+     * ollama branch, where the two are the same string by `requireModel`'s own
+     * exact-match rule and where a run with no model was refused before it got
+     * this far; on the openai door the release asks nothing and names nothing.
+     */
+    const outcome = await releaseModel(transport, kind, opts.endpoint, opts.model ?? '');
+    opts.log(
+      outcome === 'not-ours'
+        ? `${act}: nothing to unload — this run never loaded a model, and taking one off a server `
+          + 'somebody else put it on is not one job\'s decision to make (model-server.ts).'
+        : outcome === 'released'
+          ? `${act}: asked ollama to unload "${opts.model}" — the card is free for the next job.`
+          : `${act}: ollama did not acknowledge unloading "${opts.model}". If it is still resident `
+            + 'it will fall out on its own idle timer; nothing about the book depends on this.',
+    );
+  }
+}
+
+async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> {
   // The name every line of this run starts with. See act.ts for the ruling.
   const act: TextAct = textActOf(opts.rewrite);
   const started = Date.now();
@@ -1485,14 +1565,18 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
       + `least 1, not ${opts.concurrency}.`,
     );
   }
-  const concurrency = opts.concurrency ?? DEFAULT_TRANSLATE_CONCURRENCY;
+  const kind: ServerKind = opts.server ?? 'openai';
+  const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_TRANSLATE_CONCURRENCY);
 
   /*
-   * THE MODEL IS NOT RESOLVED YET. The server holds one resident model and
+   * THE MODEL IS NOT RESOLVED YET, and the two doors read its absence
+   * differently. On the OpenAI door the server holds one resident model and
    * naming it is retyping a choice the operator already made, so an absent
-   * `--model` means "whatever is being served" and the answer comes back from
-   * `openModelServer` below. Everything that records a model reads it from
-   * there, so the record can never name something that did not answer.
+   * `--model` means "whatever is being served"; on Ollama an absent one is
+   * refused by name, because that server holds a library. Either way the answer
+   * comes back from `openModelServer` below, and everything that records a model
+   * reads it from there, so the record can never name something that did not
+   * answer.
    */
   const wanted = opts.model;
   const endpoint = opts.endpoint;
@@ -1521,6 +1605,7 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    * the page first.
    */
   const server = await openModelServer({
+    kind,
     transport,
     endpoint,
     ...(wanted === undefined ? {} : { model: wanted }),
@@ -2164,7 +2249,7 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    * and the one language involved, which is the whole of the difference.
    */
   opts.log(
-    `${act}: ${model} at ${server.endpoint}, `
+    `${act}: ${model} at ${server.endpoint} (${server.kind}), `
     + (opts.rewrite === undefined
       ? `${from === null ? 'detected source' : from.name} → ${to.name}`
       : `rewriting in ${to.name} (${opts.rewrite})`)
@@ -2612,8 +2697,8 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
    * cells. The WORDS are judged afterwards, one part at a time, because a
    * length failure in item 4 is a fact about item 4: re-asking the whole chunk
    * for it would re-translate five items that were already right, which is the
-   * cost `ollama.ts`'s header measured and the reason a request used to be one
-   * block.
+   * cost `transport.ts`'s header measured and the reason a request used to be
+   * one block.
    *
    * Null means three answers in a row could not be read back. The caller then
    * asks for every part on its own — a worse translation, never a wrong one.

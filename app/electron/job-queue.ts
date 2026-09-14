@@ -2516,25 +2516,41 @@ function languageOf(request: TranslateRequest | SimplifyRequest): string {
 }
 
 /**
- * `--model`, and only when there is one.
+ * `--model` AND `--server`, composed together because they are one decision.
  *
  * ── Why the model can be missing ────────────────────────────────────────────
  *
- * A blank field is the ANSWER: the server holds exactly one resident model, and
- * an empty `--model` tells the engine to ask the server, use what it is serving
- * and record that name (src/translate/vllm.ts). Passing `--model ""` would be
- * this file inventing an empty name; leaving the flag off says what is meant.
+ * On the OpenAI door a blank field is the ANSWER: the server holds exactly one
+ * resident model, and an empty `--model` tells the engine to ask the server, use
+ * what it is serving and record that name (src/translate/vllm.ts). Passing
+ * `--model ""` would be this file inventing an empty name; leaving the flag off
+ * says what is meant. On the Ollama door it is never blank — the dialogs fall
+ * back to a declared default, because an Ollama holds a library and the engine
+ * refuses a run that does not say which model it means.
  *
- * ── No `--server` any more ──────────────────────────────────────────────────
+ * ── And `--server` only when it is not the engine's default ─────────────────
  *
- * The engine speaks one dialect since Owen's ruling of 2026-09-13 and the flag
- * is gone with the second one. The `server` field on a request is still read by
- * the settings screen to pick WHICH URL to hand over (`ipc.ts`), which is the
- * app's own half of the same retirement and lands with the picker rework.
+ * `openai` is the engine's default (docs/SLOTS.md §2), so writing the flag out
+ * for it would put a new word on thousands of command lines to say what they
+ * already said. `ollama` is spelled.
+ *
+ * THE TWO VOCABULARIES DO NOT AGREE YET, AND THIS IS WHERE THEY MEET. The app's
+ * setting is `'ollama' | 'vllm'` (`LlmServerKind`, app/shared/pipeline.ts) and
+ * the engine's kind is `openai | ollama` — the engine's door was renamed when it
+ * stopped being vLLM-only, and the app's rename is Package C along with the
+ * whole slot model. So `'vllm'` here MEANS the engine's `openai` door and is
+ * left unspelled; anything else, including today's `'ollama'`, is the local one.
+ * Reading it that way round rather than testing for `=== 'ollama'` is deliberate:
+ * the day the setting grows a third value it will be another OpenAI-compatible
+ * endpoint, and a default that guessed `openai` would send an Ollama job to a
+ * door that does not speak its dialect.
  */
 function modelArgs(request: { model: string; server?: LlmServerKind }): string[] {
   const model = request.model.trim();
-  return model.length > 0 ? ['--model', model] : [];
+  return [
+    ...(model.length > 0 ? ['--model', model] : []),
+    ...(request.server !== undefined && request.server !== 'vllm' ? ['--server', 'ollama'] : []),
+  ];
 }
 
 /**
