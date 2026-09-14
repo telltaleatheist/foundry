@@ -4692,7 +4692,12 @@ that machine connects by reading `<CRUCIBLE_HOME>/pairing` — nobody types.
 `ollama`/`anthropic` upstream serve text, AND `pages` and `clean` answer
 `enabled: true` from a `llama-windows` server on a clean Windows box with no
 WSL AND a real page comes back parsed and a real block comes back cleaned
-(PHASE15 §3.10, 56cfe37). Nothing on the no-Crucible fallback is
+(PHASE15 §3.10, 56cfe37). **The Mac half has the same exit** (PHASE15 §4.6,
+96c0e99): Crucible's `mlx-darwin` backend gains `pages` through mlx-vlm's own
+server, pinned to `mlx-community/dots.ocr-4bit` @ 4ab989e — Foundry's measured
+Mac route (0.80% CER, ~27 s/page), same wire, same dialect — so the engine's
+own MLX page reader goes with L once `pages` answers `enabled: true` from the
+Mac server and a page comes back parsed. Nothing on the no-Crucible fallback is
 deleted before that is watched, because deleting it on a promise strands the
 person Foundry exists for.
 
