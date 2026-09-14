@@ -7,7 +7,7 @@ import { api, hosted } from '../../core/foundry';
 import { EnvCardComponent } from './env-card.component';
 import { LibraryCardComponent } from './library-card.component';
 import { LlmCardComponent } from './llm-card.component';
-import { WslBackendComponent } from './wsl-backend.component';
+import { PageReaderCardComponent } from './page-reader-card.component';
 
 /**
  * Settings — what this machine can do, and which of it to use.
@@ -24,7 +24,7 @@ import { WslBackendComponent } from './wsl-backend.component';
  */
 @Component({
   selector: 'app-settings-page',
-  imports: [EnvCardComponent, FormsModule, LibraryCardComponent, LlmCardComponent, WslBackendComponent],
+  imports: [EnvCardComponent, FormsModule, LibraryCardComponent, LlmCardComponent, PageReaderCardComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="page">
@@ -148,21 +148,20 @@ import { WslBackendComponent } from './wsl-backend.component';
           -->
           <app-llm-card />
 
-          <!--
-            The prebuilt Pythons. Above the WSL card on purpose: downloading the
-            measured environment is now the ordinary way to get one, and building
-            one with pip is the fallback for a machine that wants something else.
-          -->
+          <!-- The prebuilt Pythons: the rasteriser every tier needs, and the
+               analysis worker. Neither of them reads a page. -->
           <app-env-card (changed)="probe()" />
 
           <!--
-            The one backend this app can BUILD, rather than only measure. Windows
-            only: on Apple silicon the answer is MLX, and a card explaining that
-            WSL is a Windows feature is noise on a machine that will never want it.
+            The one backend this app INSTALLS AND RUNS, rather than only
+            measures. Drawn on every platform, which the WSL card it replaced
+            could not be: llama.cpp has a build for Windows, for both Macs and
+            for Linux, and the card says which one this machine gets. A Mac has
+            MLX in process as well and does not need this — but it is offered
+            anyway, because a Mac with no MLX environment installed still has to
+            be able to read a page.
           -->
-          @if (isWindows) {
-            <app-wsl-backend [report]="report()" (changed)="probe()" />
-          }
+          <app-page-reader-card (changed)="probe()" />
         </div>
       </section>
     </div>
@@ -324,6 +323,10 @@ export class SettingsPageComponent {
   protected title(tier: TierReport): string {
     switch (tier.id) {
       case 'endpoint': return 'Endpoint (OpenAI-compatible server)';
+      // Still reported by the ENGINE's doctor, which knows how to find a vLLM
+      // in WSL that somebody else built. This app stopped building or starting
+      // one (docs/SLOTS.md §6), so the arm stays as a label for a measurement
+      // and is no longer the name of anything this screen can act on.
       case 'wsl-vllm': return 'vLLM in WSL';
       case 'mlx': return 'MLX (Apple silicon)';
       case 'native': return 'Native (local, non-MLX)';

@@ -38,11 +38,14 @@ import {
 
 export interface AppSettings {
   /**
-   * Minutes an app-started vLLM server stays up after the queue drains.
+   * Minutes the app-started PAGE READER stays up after the queue drains.
    *
    * 0 — the default — stops it as soon as the queue is empty. The ceiling
    * exists because "never indefinite" needs a number to be true: whatever is
-   * written here, an idle server always has a scheduled end.
+   * written here, an idle server always has a scheduled end. It is the local
+   * llama-server this setting is about (electron/page-reader.ts), never an
+   * endpoint somebody else runs — this app has no way to stop one of those and
+   * no business trying.
    */
   keepServerWarmMinutes: number;
   /**
