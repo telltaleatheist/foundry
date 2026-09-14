@@ -4205,3 +4205,51 @@ two registries live at once. Nothing above presumes it.
 
 Gates: 830 bun tests (none added, none invalidated), `bun run typecheck`, both
 app `tsc` configs, `ng build`.
+
+### Wave 60 — one inference door, and the act says its own name (Owen, 2026-09-13) — BUILT
+
+Owen: *"everything compute intensive must go through crucible. if theres no
+crucible server, theres no foundry. it's a necessary service… we should adapt
+it to using the models through crucible instead."* And, the same night:
+*"translate, simplify, and analysis are separate acts… they can't lie to the
+user and say a translate job is running when it's actually a simplify job."*
+
+**The Ollama transport is gone.** `src/translate/ollama.ts` became
+`transport.ts` — HTTP as a value, the headers, the shared numbers — and every
+Ollama-only thing went with the dialect rather than behind a flag: `--server`,
+`--ollama`, `--keep-model`, `num_ctx` and `contextWindowFor`, `releaseModel`,
+the `/api/generate` verdict branch, `numCtxMaxForModel`, the act-level model
+defaults (an absent `--model` is the served model, always). One door remains
+(`vllm.ts`), `model-server.ts` proves it, and `--endpoint` on every text act
+falls back to `backend.endpointUrl` — the reading door's own setting, because
+it is the same server. `DEFAULT_TEXT_CONCURRENCY` is 12 for every act.
+
+**The engine never loads and never unloads.** Ruled with BookForge: the
+operator makes a model resident before a pass is spawned, a load evicts, one
+model is resident at a time; a server holding the wrong model is a refusal by
+name and the run stops. The clean runner's `release` is a stated no-op.
+
+**The floor case is a refusal, not a counted failure.** `capFor` at its
+128-token floor sent an answer budget no edit list could fit, and the
+truncation was counted as a parse failure against the 10% share. `fitsWindow`
+(vllm.ts) asks the question as a yes/no, and `clean-text` measures its longest
+request against the window before request one and refuses by name.
+
+**The act names itself.** `src/translate/act.ts`: `textActOf(rewrite)` is
+`translate` or `simplify`, and every line the run prints — thirty-two in
+`run.ts`, one each in `planChunks` and `relabelNav`, five bank sentences —
+starts with it. The app's progress parser accepts either prefix.
+
+**App, the minimal half:** `job-queue.ts` no longer spells `--server`, and
+spells `--endpoint` where it spelled `--ollama`. Still to come, gated on the
+service's capability read and Owen's go for the registry: the server-kind
+setting and the Ollama install/pull wizard go; the pickers read
+`GET /v1/capability`; `load-model` is a job on the service's API before spawn;
+`ensureServer` becomes a residency check and `app/electron/vllm-server.ts` is
+deleted.
+
+**Not moved, deliberately:** `NORMALIZER_VERSION` (the prompt and the rules
+did not change), the vendored driver's own constants (`DEFAULT_NORMALIZER_MODEL`,
+`DEFAULT_CLEAN_CONCURRENCY`, the `pinContextTo`/`release` member names — the
+interface is the vendored contract), and the measurement history in
+docs/VLLM.md.

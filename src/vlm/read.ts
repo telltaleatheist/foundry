@@ -47,7 +47,7 @@ import {
 import { capFor, worthRetrying } from './band.js';
 import { looksLikeRunaway } from './runaway.js';
 import { resolveEndpointHeaders } from '../backend/endpoint-headers.js';
-import { fetchTransport } from '../translate/ollama.js';
+import { fetchTransport } from '../translate/transport.js';
 import { servedModels } from '../translate/vllm.js';
 import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint, VlmEndpointError } from './endpoint.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';

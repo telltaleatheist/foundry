@@ -34,7 +34,7 @@ Three stages, each doing the half the engine is actually good at:
 2. **WINDOW** — surviving sentences expand to the sentences around them and
    merge, category-blind, into paragraph-sized passages. Scoring stays per
    sentence; judging moves to the passage.
-3. **VERIFY** — one schema-constrained Ollama call per (window, category),
+3. **VERIFY** — one schema-constrained model call per (window, category),
    answering exactly one question: is the author asserting this claim as
    their own position, or reporting / quoting / questioning / arguing
    against it? This is the stage that keeps a history of propaganda from
@@ -58,7 +58,7 @@ work, exit 1 after):
 ```
 foundry analyze --book <key.book.jsonl> --out <report.jsonl>
                     [--categories <cats.json>]
-                    [--model <name>] [--ollama <url>]
+                    [--model <name>] [--endpoint <url>]
                     [--nli-python <path>] [--fresh]
 ```
 
@@ -80,14 +80,16 @@ known (ARCHITECTURE.md §5) — the good value is "everything, once".
   `FOUNDRY_NLI_PYTHON`. **Not** `FOUNDRY_VLM_PYTHON` — that name means the
   PyMuPDF/MLX interpreter and overloading it would be wrong. No PATH search,
   same as `resolvePython`: a miss names every candidate tried.
-- `--model` / `--ollama` default to the standing rulings:
-  `qwen3.8:27b` / `http://localhost:11434` (*"27b is the standard we'll use
-  for every task"*).
+- `--model` absent means the model the server holds (it holds one; the
+  served id is used and written into the report header). `--endpoint` absent
+  means `backend.endpointUrl` from settings — the one inference server every
+  act speaks to since 2026-09-13. Owen's *"27b is the standard we'll use for
+  every task"* is what the app's settings start from, not a fallback here.
 - Progress on stderr, counting finished, monotonic:
   `analyze: rank <n>/<m> sentences`, `analyze: verify <n>/<m>
   (<category>)`. The result path is the last line on stdout.
 
-**Runtime honesty:** ranking a book is minutes; verification is one Ollama
+**Runtime honesty:** ranking a book is minutes; verification is one model
 call per surviving (window, category) and can be an hour on a hot book. The
 report file is therefore written with `records.ts` discipline — appended and
 fsynced as each verdict lands, question-keyed so a re-run pays only for what
@@ -193,23 +195,23 @@ text-keyed so a re-transcribe re-pays only the changed cues, and `Text` is
 in its prose set. Proved end to end: a five-cue fixture minted, then
 `analyze --book` over it read 5 rows / 5 prose / **8 sentences** (the
 two-sentence cue cut inside its row, as promised) before failing at the
-Ollama preflight it was pointed at a dead port for.
+server preflight it was pointed at a dead port for.
 
 ---
 
-## 2c. Which server answers the verdicts (Wave 58, 2026-09-08)
+## 2c. Which server answers the verdicts (Wave 58, 2026-09-08; one door since 2026-09-13)
 
-Either an Ollama or a vLLM — `--server ollama|vllm`, default `ollama`, declared
-and never guessed from the URL. **docs/VLLM.md** owns the whole story.
+The one OpenAI-compatible door every act speaks to — **docs/VLLM.md** owns the
+whole story. The second dialect this section once described beside it is gone.
 
-The verdicts do not move: same prompts, same schema, same temperature 0, same
-verdict-cache key. What changes is the spelling of the constraint — Ollama's
-`format` on `/api/generate` against `response_format: {type:"json_schema"}` on
-`/v1/chat/completions`, the same grammar-constrained decode underneath — and how
-many calls may be in flight. `--concurrency` defaults to **1** under Ollama,
-which is exactly the sequential stage §5 describes, and **12** under vLLM, which
-batches the calls in flight together. The pool dispatches strongest-first as
-always, and the flagged categories are composed by walking the jobs' own order
+The verdicts have not moved through any of it: same prompts, same schema, same
+temperature 0, same verdict-cache key. The constraint is
+`response_format: {type:"json_schema"}` on `/v1/chat/completions`, the same
+grammar-constrained decode the measurements below were taken under, and
+`--concurrency` defaults to **12**: the server batches the calls in flight
+together, and the sequential stage §5 describes was the serial server's shape,
+not a property of the question. The pool dispatches strongest-first as always,
+and the flagged categories are composed by walking the jobs' own order
 afterwards, so a pool changes how long the stage takes and never what it wrote.
 
 Under vLLM `--model` may be omitted: the served id is used and written into the
@@ -338,18 +340,17 @@ lesson, not the corpse).
   back. The `VERIFICATION_EMPHASIS` ladder is NOT ported: it existed to
   lean one re-run's verdicts, and with verdicts stored once the calibrated
   prompt (briefcase's level 2, the deliberately empty emphasis) is the only
-  one asked. Temperature 0, one pinned `num_ctx` sized from the largest
-  prompt for the whole stage (Ollama reloads on any change), answer budget
-  a small constant — never translate's `answerBudget`, which would grant a
-  verdict thousands of tokens. Schema-constrained via Ollama's `format` field
-  (`{"verdict": "flag"|"skip"}`) — measured 9/10 recall at 2.9 s/call vs
-  6/10 at 20.3 s unconstrained — **including the thinking-model trap**: with
-  a grammar from token 0 the answer can arrive in `thinking` with
-  `response` empty, and the client reads `thinking` only when a format was
-  requested and `response` is empty. An unreadable answer is a skip and a
+  one asked. Temperature 0, answer budget a small constant — never
+  translate's `answerBudget`, which would grant a verdict thousands of tokens.
+  Schema-constrained (`{"verdict": "flag"|"skip"}`) — measured 9/10 recall at
+  2.9 s/call vs 6/10 at 20.3 s unconstrained, under the serial server this
+  engine no longer speaks to, where the thinking-model trap put the answer in
+  a `thinking` field. On the one door the trap's shape is a leading `<think>`
+  block, which `withoutThinking` strips. An unreadable answer is a skip and a
   warning, never a flag: an unreadable answer must not be able to accuse
-  anybody. `think:false` for qwen3-family, `requireModel` preflight,
-  `unloadModel` courtesy at the end — all `ollama.ts`'s existing rulings.
+  anybody. The thinking switch for the qwen3 family and the served-model
+  preflight are `transport.ts`'s and `vllm.ts`'s rulings; there is no unload
+  at the end, because the operator owns what is resident (docs/VLLM.md §5).
 
 ---
 
@@ -393,7 +394,7 @@ lesson, not the corpse).
 ## 7. The app: the step, the queue, the panel
 
 - `'analysis'` joins `STEP_ACTIONS` (one array, union derived — the capture
-  lesson), `JobKind`, and `JOB_RESOURCE` as **gpu** (Ollama holds the card,
+  lesson), `JobKind`, and `JOB_RESOURCE` as **gpu** (the model holds the card,
   translate's reason). Lane wording added to the shelf. Two new progress
   phases — `rank` and `verify` — in `JobProgress` and `parseProgressLine`,
   where pattern order is load-bearing (insert carefully) and the stage word

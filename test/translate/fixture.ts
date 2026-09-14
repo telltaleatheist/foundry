@@ -29,7 +29,7 @@
  * every marker exactly once — while staying readable in an assertion.
  */
 import { writeZip, zipText } from '../../src/export/zip.js';
-import type { HttpResponse, Transport } from '../../src/translate/ollama.js';
+import type { HttpResponse, Transport } from '../../src/translate/transport.js';
 
 export const CHAPTER_PATH = 'EPUB/text/c0001.xhtml';
 export const OPF_PATH = 'EPUB/package.opf';
@@ -570,13 +570,15 @@ export interface FakeServer extends Transport {
 }
 
 /**
- * An Ollama that is not one.
+ * An inference server that is not one.
  *
- * `answer` decides what comes back for each request; the default shouts. The
- * attempt number is passed so a test can fail a block once and let the retry
- * through.
+ * It speaks the one dialect the engine speaks — `/models` lists what it holds,
+ * `/chat/completions` answers — and nothing else. `answer` decides what comes
+ * back for each request; the default shouts. The attempt number is passed so a
+ * test can fail a block once and let the retry through. `models` is what the
+ * listing says is served: one by default, because that is what a server holds.
  */
-export function fakeOllama(
+export function fakeServer(
   answer: (user: string, attempt: number) => string = (user) => shout(user),
   models: string[] = ['qwen3.8:27b'],
 ): FakeServer {
@@ -585,16 +587,20 @@ export function fakeOllama(
   return {
     asked,
     async get(url: string): Promise<HttpResponse> {
-      if (!url.endsWith('/api/tags')) return { status: 404, body: '' };
-      return { status: 200, body: JSON.stringify({ models: models.map((name) => ({ name })) }) };
+      if (!url.endsWith('/models')) return { status: 404, body: '' };
+      return { status: 200, body: JSON.stringify({ data: models.map((id) => ({ id })) }) };
     },
-    async post(_url: string, body: string): Promise<HttpResponse> {
+    async post(url: string, body: string): Promise<HttpResponse> {
+      if (!url.endsWith('/chat/completions')) return { status: 404, body: '' };
       const parsed = JSON.parse(body) as { messages: { role: string; content: string }[] };
       const user = parsed.messages[parsed.messages.length - 1].content;
       asked.push(user);
       const attempt = (attempts.get(user) ?? 0) + 1;
       attempts.set(user, attempt);
-      return { status: 200, body: JSON.stringify({ message: { content: answer(user, attempt) } }) };
+      return {
+        status: 200,
+        body: JSON.stringify({ choices: [{ message: { content: answer(user, attempt) } }] }),
+      };
     },
   };
 }

@@ -31,7 +31,6 @@ remembers.
 foundry clean-text --book <book.jsonl> --records <out.records.jsonl>
                    --stamp <out.stamp.json> [--generation <id>]
                    [--endpoint <url>] [--model <name>] [--concurrency <n>]
-                   [--keep-model]
 ```
 
 `--generation` is `translate`'s field in `translate`'s words — the app's binding
@@ -54,7 +53,6 @@ exactly how a translation reaches a file.
 ```
 foundry clean-text --epub <in.epub> --out <out.epub>
                    [--endpoint <url>] [--model <name>] [--concurrency <n>]
-                   [--keep-model]
 ```
 
 > Owen, 2026-09-05: the bare-EPUB cleanup **STAYS as a FAILSAFE** — a user who
@@ -408,38 +406,45 @@ it, where a person reading "the replacement was not accepted" cannot.
   this pass cannot use, not a hard book.
 
 A run whose every block is already answered **never opens the server at all**,
-which is `askAboutEach`'s own rule one layer out: an Ollama that is down must
+which is `askAboutEach`'s own rule one layer out: a server that is down must
 not fail a pass that had nothing to ask it.
 
 ### The model
 
-`qwen3.5:9b-q8_0` by default (`DEFAULT_NORMALIZER_MODEL` — Owen, 2026-09-02:
-this pass carries its own default, and the 27b is chosen by typing it into
-Settings), **temperature 0**, `num_predict` 2048, one call
-per block, over `/api/chat` through the engine's own Ollama client
-(`src/translate/ollama.ts`). The context window is pinned ONCE for the whole
-book, because Ollama reloads the runner on any change to it. The weights are
-released when the run ends unless `--keep-model` says the machine is shared.
+**The one the server holds** — since 2026-09-13 the engine speaks to one
+inference door and the operator makes the model resident before the pass is
+spawned, so an absent `--model` means the served model (resolved before any
+records key is computed and written into the stamp), and a name that is given
+is proved against the server first. `DEFAULT_NORMALIZER_MODEL` in the vendored
+driver is the name the app's settings START from, not a default this pass
+falls back to. **Temperature 0**, 2048 tokens of answer, one call per block,
+over `/v1/chat/completions` (`src/translate/vllm.ts`). The context window is
+the server's own; the pass measures its longest request against it before the
+first one is sent and refuses by name if it cannot fit beside a full answer.
+Nothing is loaded and nothing is released: a pass ending is not a reason to
+take a model off the card (docs/VLLM.md §5).
 
 ### How many at once — `--concurrency <n>`
 
-**Default 4** (`DEFAULT_CLEAN_CONCURRENCY`, beside the model default in
-`src/clean/tts-number-normalizer.ts`), on both doors. It is `translate`'s number
-for `translate`'s reason: Ollama batches concurrent requests and a serial run
-leaves the GPU idle between blocks, and stage 3 asks one question per block of
-the whole book — 4,283 of them on the book this was measured against — so the
-serial loop **was** the cost of the pass.
+**Default 12** (`DEFAULT_TEXT_CONCURRENCY`, `src/translate/model-server.ts`),
+on both doors. It is `translate`'s number for `translate`'s reason: the server
+batches concurrent requests and a serial run leaves the GPU idle between
+blocks, and stage 3 asks one question per block of the whole book — 4,283 of
+them on the book this was measured against — so the serial loop **was** the
+cost of the pass. (It was 4 under the serial server this engine no longer
+speaks to; the vendored driver's `DEFAULT_CLEAN_CONCURRENCY` still says 4 and
+is not read here.)
 
 > Owen, 2026-09-08: he wants the cleanup batched, and had assumed the three text
 > acts already shared a pipeline. They did not: `translate` has run a worker pool
 > since it existed, and this pass asked one block at a time with nothing else in
 > flight.
 
-Like `translate`'s, the 4 is **a starting point and not a measurement** — unlike
-`--vlm-concurrency`, whose 12 is a measured knee — because the right number is a
-property of the GPU and of the model's size. A server pinned to one parallel slot
-(`OLLAMA_NUM_PARALLEL=1`) will queue the four and gain nothing; that is a setting
-on the server, not a reason to type a different number here.
+Like `translate`'s, the 12 is **a starting point and not a measurement for this
+act** — it is the knee `--vlm-concurrency` measured for the reading path against
+the same scheduler — because the right number is a property of the GPU and of
+the model's size. The server admits what fits its KV cache and queues the rest,
+so being high costs waiting in the server rather than a thrashed card.
 
 **IT CHANGES NOTHING ABOUT WHAT THE PASS DECIDES.** Not the transform, not the
 prompt, not `NORMALIZER_VERSION`, not `PUNCTUATION_SPEC_VERSION`, not the records
@@ -633,13 +638,14 @@ number edit and the replacement was refused for carrying a digit.
 
 ## Which server it runs against
 
-Either an Ollama or a vLLM, chosen by `--server ollama|vllm` (default `ollama`)
-and never guessed from the URL. Under vLLM the route is
+One kind, since 2026-09-13: the OpenAI-compatible door the inference service
+fronts (docs/VLLM.md owns the whole story). The route is
 `/v1/chat/completions`, `--model` may be left off and the served id is used and
-recorded in the stamp, `--concurrency` defaults to 12 instead of 4, and nothing
-is unloaded at the end because the weights ARE the server process. Nothing about
-what this pass DECIDES changes — same prompt, same temperature 0, same rules,
-same version constants, same stamp shape — so no book already on disk is
+recorded in the stamp, `--concurrency` defaults to 12, and nothing is loaded or
+unloaded by the pass because the operator owns what is resident. Nothing about
+what this pass DECIDES changes with the machine — same prompt, same temperature
+0, same rules, same version constants, same stamp shape — so no book already on
+disk is
 invalidated by the choice. **docs/VLLM.md** is the whole of it.
 
 The one thing to carry away here: the records cache keys every block on the
@@ -1530,7 +1536,7 @@ and the live run measured it making it correctly.
 | `src/clean/segments.ts` | the marker rule — what a segment IS on a book file row |
 | `src/clean/targets.ts` | the two shapes the pass is typed against |
 | `src/clean/punctuate.ts` | stage 1 as spans, and the splice that proves each one landed |
-| `src/clean/runner.ts` | the model, on the engine's own Ollama client |
+| `src/clean/runner.ts` | the model, on the engine's one door — and the window check before request one |
 | `src/clean/stamp.ts` | the stamp: the name, the shape, the versions, the reader |
 | `src/clean/run.ts` | **the pass** — the plan, the key, the rows, the receipt |
 | `src/commands.ts` | the `clean-text` command and `--narration-stamp` |

@@ -14,41 +14,45 @@
  * aggregate throughput that climbs with the number of requests in flight instead
  * of queueing them one behind another.
  *
- * SO WHAT CHANGES IS THE TRANSPORT AND NOTHING ELSE. The prompts are the same
+ * SO WHAT CHANGED WAS THE TRANSPORT AND NOTHING ELSE. The prompts are the same
  * bytes, the temperature is the same number, and the validators, the retries,
- * the bank, the records and the stamp are untouched. This file answers the same
- * three questions `ollama.ts` answers — is the server there and does it hold the
- * model, what does it say to this block, and give the card back — in the shape
- * an OpenAI-compatible server understands. `model-server.ts` is the one place
- * that chooses between them, and no caller above it knows which it got.
+ * the bank, the records and the stamp are untouched. This file asks the two
+ * questions a pass has for a server — is it there and which model does it hold,
+ * and what does it say to this block — in the shape an OpenAI-compatible server
+ * understands. Since Owen's ruling of 2026-09-13 it is the ONLY dialect: the
+ * Ollama transport that stood beside it is gone (translate/transport.ts says
+ * why), and `model-server.ts` proves the server through this file alone.
  *
- * ── THE FOUR REAL DIFFERENCES, EACH PAID FOR ────────────────────────────────
+ * ── THE THINGS THIS DOOR DOES DIFFERENTLY, EACH PAID FOR ────────────────────
  *
- *  - THE CONTEXT WINDOW IS THE SERVER'S, NOT THE REQUEST'S. Ollama takes
- *    `num_ctx` per call and reloads the runner when it changes; vLLM fixes it at
- *    launch (`--max-model-len`) and allocates the KV cache against it. So
- *    `ChatTuning.numCtx` is deliberately DROPPED here rather than translated
- *    into something, and `/v1/models` is read for `max_model_len` so a request
- *    can be clamped to what the server can actually hold — see `capFor`.
- *  - `think: false` IS NOT A FIELD. It is Ollama's own, and the qwen3 family's
- *    switch on an OpenAI-compatible server is a chat-template argument:
- *    `chat_template_kwargs: {enable_thinking: false}`, which vLLM hands to the
- *    Jinja template. A template that does not take the argument ignores it, so
- *    this costs nothing where it does not apply — and it is still sent only for
- *    the family that has it, on `takesThinkField`'s own prefix rule.
- *  - AND BECAUSE THAT SWITCH IS ADVISORY, THE ANSWER IS CHECKED. Ollama's field
- *    is enforced by the server: `think: false` means no thinking. A template
+ *  - THE CONTEXT WINDOW IS THE SERVER'S, NOT THE REQUEST'S. It is fixed when
+ *    the model is made resident and the KV cache is allocated against it, and
+ *    there is no per-request field for it. `/v1/models` is read for
+ *    `max_model_len` so a request can be sized INTO what the server can hold —
+ *    see `capFor` — and a request that cannot fit is refused by name before it
+ *    is sent (clean/runner.ts), never sent to be truncated silently.
+ *  - THE THINKING SWITCH IS A CHAT-TEMPLATE ARGUMENT. The qwen3 family's
+ *    switch on an OpenAI-compatible server is
+ *    `chat_template_kwargs: {enable_thinking: false}`, which the server hands
+ *    to the Jinja template. A template that does not take the argument ignores
+ *    it, so this costs nothing where it does not apply — and it is still sent
+ *    only for the family that has it, on `takesThinkField`'s own prefix rule.
+ *    The server is growing per-model defaults for this; until they land the
+ *    switch is sent, and nothing new is built on it.
+ *  - AND BECAUSE THAT SWITCH IS ADVISORY, THE ANSWER IS CHECKED. A template
  *    argument is a request to a Jinja file, and a model or a build that thinks
  *    anyway would put a `<think>…</think>` block in front of every answer in the
  *    book — a translation with reasoning glued to its head, or an edit list the
  *    JSON reader cannot find. `withoutThinking` takes exactly that block off the
  *    front and nothing else.
- *  - NOTHING IS UNLOADED. The release is a declared no-op, and the reason is
- *    `releaseModel`'s in model-server.ts: it is about who owns the server's life
- *    rather than about this file being unable to ask.
+ *  - NOTHING IS LOADED OR UNLOADED. The operator puts a model on the card
+ *    before a pass is spawned and a load evicts what was there, so a pass that
+ *    asked for one would be one job taking a narrator's voice off the card.
+ *    A server that holds the wrong model is a refusal by name, and a pass
+ *    ending is not a reason to take a model off.
  */
 import { explainHttpRefusal } from '../backend/http-refusal.js';
-import { answerBudget, takesThinkField, type ChatTuning, type Transport } from './ollama.js';
+import { answerBudget, takesThinkField, type ChatTuning, type Transport } from './transport.js';
 
 /** The server did not do its job. Always names the endpoint. */
 export class VllmError extends Error {
@@ -102,15 +106,15 @@ export async function servedModels(
     response = await transport.get(`${base}/models`);
   } catch (error) {
     throw new VllmError(
-      `no vLLM server answered at ${base} (${(error as Error).message}). foundry uses a vLLM `
-      + 'server and never starts one — launch it with `vllm serve <model>`, or name the machine '
-      + 'that has it. To go back to Ollama, pass --server ollama.',
+      `no server answered at ${base} (${(error as Error).message}). foundry uses an `
+      + 'OpenAI-compatible inference server and never starts one — start the service on the '
+      + 'machine that has it, or point --endpoint at the machine that does.',
     );
   }
   if (response.status !== 200) {
     throw new VllmError(
       `${base}/models answered ${response.status}. Something is listening there, but it is not an `
-      + 'OpenAI-compatible server. If that URL is an Ollama, pass --server ollama.',
+      + 'OpenAI-compatible server.',
     );
   }
   let rows: { id?: unknown; max_model_len?: unknown }[];
@@ -138,15 +142,13 @@ export async function servedModels(
  * `requireModel`'s rule and `requireModel`'s reason: a book's worth of planning
  * takes a second, and what is bought by asking early is the MESSAGE.
  *
- * ── AND WHY A NAME IS OPTIONAL HERE WHEN IT IS NOT UNDER OLLAMA ─────────────
+ * ── AND WHY A NAME IS OPTIONAL ──────────────────────────────────────────────
  *
- * An Ollama holds a library and a name picks one out of it, so a run has to say
- * which. A vLLM process serves the model it was launched with and no other, so
- * naming it on the command line is asking somebody to retype the server's own
- * launch argument — an HF path with a revision in it, spelled exactly right or
- * the run fails. Where nothing is named, the served model IS the answer, and it
- * is logged and recorded (the bank key, the stamp) so nothing about the run is
- * anonymous.
+ * The server holds ONE resident model, the one the operator made resident, so
+ * naming it on the command line is asking somebody to retype a choice already
+ * made — an id spelled exactly right or the run fails. Where nothing is named,
+ * the served model IS the answer, and it is logged and recorded (the bank key,
+ * the stamp) so nothing about the run is anonymous.
  *
  * A NAME THAT WAS GIVEN IS STILL PROVED, and a mismatch is refused with both
  * names in it. Two models are two different books, and "close enough" here would
@@ -161,8 +163,8 @@ export async function requireServedModel(
   const served = await servedModels(transport, endpoint);
   if (served.length === 0) {
     throw new VllmError(
-      `the vLLM server at ${base} is answering but serving no models at all. Launch it with the `
-      + 'model this run needs.',
+      `the server at ${base} is answering but holds no model at all. Make the model this run `
+      + 'needs resident before it starts.',
     );
   }
   const wanted = model === undefined ? '' : model.trim();
@@ -178,9 +180,10 @@ export async function requireServedModel(
   const found = served.find((one) => one.id === wanted);
   if (found === undefined) {
     throw new VllmError(
-      `the vLLM server at ${base} is not serving "${wanted}". It is serving: `
+      `the server at ${base} is not serving "${wanted}". It is serving: `
       + `${served.map((one) => one.id).join(', ')}. Name one of those with --model, or leave `
-      + '--model off and the served model is used.',
+      + '--model off and the served model is used. A pass never loads a model: make the one '
+      + 'this run needs resident first.',
     );
   }
   return found;
@@ -189,14 +192,19 @@ export async function requireServedModel(
 /**
  * How many tokens this request may generate, given what the server can hold.
  *
- * `answerBudget` is the same measured ceiling the Ollama path uses and the one
- * that matters — it is what stops a thirteen-character shelf mark costing
- * sixteen thousand characters of generation. What is added here is the SERVER's
- * limit: vLLM refuses a request whose prompt plus `max_tokens` exceeds
- * `--max-model-len` with a 400, where Ollama would simply have generated less.
- * A book is thousands of requests, and one long paragraph failing on a server
- * launched with a short window would be a block refused for a reason that has
- * nothing to do with the block.
+ * `answerBudget` is the measured ceiling and the one that matters — it is what
+ * stops a thirteen-character shelf mark costing sixteen thousand characters of
+ * generation. What is added here is the SERVER's limit: it refuses a request
+ * whose prompt plus `max_tokens` exceeds its window with a 400. A book is
+ * thousands of requests, and one long paragraph failing on a server with a
+ * short window would be a block refused for a reason that has nothing to do
+ * with the block.
+ *
+ * WHEN THE PROMPT ALONE NEARLY FILLS THE WINDOW this answers the floor, and the
+ * floor cannot hold an edit list or a paragraph's translation. That is not a
+ * silent outcome: `fitsWindow` below says whether a request fits, and the acts
+ * that know their longest request up front (clean/runner.ts) refuse before the
+ * first one is sent rather than counting a truncated answer as the model's.
  *
  * The prompt estimate is deliberately PESSIMISTIC (2.5 characters to a token,
  * plus a fixed slack): guessing high here only lowers a ceiling that was already
@@ -213,20 +221,41 @@ export function capFor(
   maxModelLen: number | null,
 ): number {
   if (maxModelLen === null) return wanted;
-  const prompt = Math.ceil((system.length + user.length) / CHARS_PER_TOKEN) + PROMPT_SLACK_TOKENS;
-  const room = maxModelLen - prompt;
+  const room = maxModelLen - promptTokens(system, user);
   if (room <= PREDICT_FLOOR) return PREDICT_FLOOR;
   return Math.min(wanted, room);
+}
+
+/** The pessimistic token estimate `capFor` sizes against, for a message to quote. */
+export function promptTokens(system: string, user: string): number {
+  return Math.ceil((system.length + user.length) / CHARS_PER_TOKEN) + PROMPT_SLACK_TOKENS;
+}
+
+/**
+ * Does a request wanting `wanted` tokens of answer fit the server's window?
+ *
+ * The question `capFor` answers by clamping, asked as a yes or no so a pass can
+ * refuse BEFORE sending. A server that reported no window fits everything, and
+ * finds out on the first request — which is the honest reading of "it did not
+ * say", not a guess about what it would have said.
+ */
+export function fitsWindow(
+  system: string,
+  user: string,
+  wanted: number,
+  maxModelLen: number | null,
+): boolean {
+  if (maxModelLen === null) return true;
+  return maxModelLen - promptTokens(system, user) >= wanted;
 }
 
 /**
  * The model's FAMILY, for a name that is a path.
  *
- * `takesThinkField` matches a family prefix — `qwen3:32b`, `qwen3.8:27b` — and
- * an Ollama tag is exactly that. A served id is usually an HF path,
- * `Qwen/Qwen3-32B-AWQ`, whose family is in the last segment. Taking the segment
- * asks the same question of the same string and keeps ONE rule about which
- * models think, which is the point.
+ * `takesThinkField` matches a family prefix — `qwen3:32b`, `qwen3.8:27b`. A
+ * served id may be an HF path, `Qwen/Qwen3-32B-AWQ`, whose family is in the
+ * last segment. Taking the segment asks the same question of the same string
+ * and keeps ONE rule about which models think, which is the point.
  */
 function familyOf(model: string): string {
   const trimmed = model.trim();
@@ -243,10 +272,10 @@ export function completionsBody(
   maxModelLen: number | null = null,
 ): string {
   /*
-   * `num_ctx` HAS NO COUNTERPART AND IS NOT INVENTED ONE. The window is fixed
-   * when the server is launched; a per-request field for it does not exist, and
-   * the nearest thing — sending a smaller `max_tokens` — is a different fact
-   * about a different thing. `capFor` is where the server's window is honoured.
+   * THERE IS NO WINDOW FIELD AND NONE IS INVENTED. The window is fixed when the
+   * model is made resident; a per-request field for it does not exist, and the
+   * nearest thing — sending a smaller `max_tokens` — is a different fact about
+   * a different thing. `capFor` is where the server's window is honoured.
    */
   const body: Record<string, unknown> = {
     model,
@@ -267,21 +296,18 @@ export function completionsBody(
 /**
  * ── THE CLOSED QUESTION, IN vLLM'S DIALECT ──────────────────────────────────
  *
- * `analyze` and `tag` do not ask for prose: they ask a question whose answers
- * are enumerated, and they constrain the DECODE to the legal ones rather than
- * asking politely and parsing hopefully (analyze/verify.ts's header carries the
+ * `analyze` does not ask for prose: it asks a question whose answers are
+ * enumerated, and it constrains the DECODE to the legal ones rather than asking
+ * politely and parsing hopefully (analyze/verify.ts's header carries the
  * measurement — constrained was both more accurate and about five times
- * cheaper). Ollama takes the schema as `format` on `/api/generate`; the
- * OpenAI-compatible spelling is `response_format: {type: "json_schema"}`, which
- * vLLM implements with the same grammar-constrained decoding underneath.
+ * cheaper). The spelling is `response_format: {type: "json_schema"}`, which the
+ * server implements with grammar-constrained decoding underneath.
  *
  * ── A USER TURN AND NO SYSTEM MESSAGE, WHICH IS NOT A SHORTCUT ──────────────
  *
- * Ollama's `/api/generate` applies the model's chat template to `prompt` — one
- * user turn, no system message — so the model sees a templated turn there and
- * must see the same shape here. `/v1/completions` would be the literal
- * counterpart of the ROUTE and the wrong counterpart of the REQUEST: it takes
- * the string raw, past the template, and would hand the model something it was
+ * The verdict prompts were measured as ONE templated user turn with no system
+ * message, and the model must see the same shape here. `/v1/completions` would
+ * take the string raw, past the template, and hand the model something it was
  * never trained to read. The prompts themselves are unchanged, byte for byte.
  *
  * ── `strict: true`, AND THE SCHEMA IS THE CALLER'S ──────────────────────────

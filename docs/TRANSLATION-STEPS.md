@@ -209,7 +209,7 @@ spawns serially under one job — one queue row, one progress bar, one settle;
 the rotation-and-restore brackets the pair. The vlm stage needs no backend
 (`replaysCompletedBank` is true by construction — the plan refuses if the
 ancestral read has no completion marker); the translate stage needs the
-Ollama endpoint exactly as a translate job does today, and a bank-covered
+inference endpoint exactly as a translate job does today, and a bank-covered
 replay makes it fast rather than free — the honest price of a text edit made
 since the translation is that block's re-ask.
 
@@ -275,13 +275,13 @@ the *reading*, which is the newest snapshot of the one live overlay there is.
 
 ## 4b. Which server answers
 
-`--server ollama|vllm`, default `ollama`, declared and never sniffed from the
-URL. It changes the transport (`/api/chat` against `/v1/chat/completions`), the
-endpoint default, whether `--model` may be omitted (under vLLM it may: the
-served id is used and recorded), and the concurrency default (12 against 4).
-It changes nothing about the prompt, the temperature, the verification or the
-records. One consequence worth knowing before switching: the model name is part
-of the bank/records key, so answers do not carry across the two servers — see
+One kind, since 2026-09-13: the OpenAI-compatible door the inference service
+fronts, at `--endpoint`, with `--model` optional (the served id is used and
+recorded) and `--concurrency` defaulting to 12. The `--server ollama|vllm`
+switch this section once described is gone with the second dialect. Nothing
+about the prompt, the temperature, the verification or the records depends on
+the machine. One consequence still worth knowing: the model name is part of
+the bank/records key, so answers do not carry across two served names — see
 **docs/VLLM.md**, which owns the whole story including who may stop the server
 (not foundry).
 

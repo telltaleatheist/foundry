@@ -1,121 +1,130 @@
-# vLLM for the three text acts — `--server vllm`
+# The one inference door for the text acts
 
-Owen, 2026-09-08: *"lets build in vllm batching. ollama batching doesnt work.
-its an unfinished feature ollama tried to implement but isnt accessible on the
-mac or pc. cuda graphs/vllm would probably be the best for all three features.
-go ahead."*
+> **2026-09-13 — ONE KIND OF SERVER, BY RULING.** Owen: *"everything compute
+> intensive must go through crucible. if theres no crucible server, theres no
+> foundry. it's a necessary service. we could send requests through crucible to
+> ollama but i dont think thats necessary. we should adapt it to using the
+> models through crucible instead."* The Ollama transport this document once
+> described beside the vLLM one is **gone** — no `--server` flag, no `--ollama`
+> URL, no `num_ctx`, no `--keep-model`, no release at the end of a run. What
+> remains is the OpenAI-compatible chat door below, which is what the inference
+> service fronts on every machine (vLLM-shaped on CUDA, mlx-lm-shaped on a Mac,
+> the same door either way). Sections that describe the Ollama side are kept
+> only where they record a measurement; the current contract is §§1–5.
 
-The three features are **translate**, **simplify** (`translate --rewrite`) and
-the **narration cleanup** (`clean-text`). **analyze** joined them an hour later —
-Owen: *"lets add analyze. why not."* All four now run against either an Ollama or
-a vLLM, chosen by a flag, with nothing else about the pass changed.
+Owen, 2026-09-08, the ruling that put the door in: *"lets build in vllm
+batching. ollama batching doesnt work. its an unfinished feature ollama tried to
+implement but isnt accessible on the mac or pc. cuda graphs/vllm would probably
+be the best for all three features. go ahead."*
+
+The acts are **translate**, **simplify** (`translate --rewrite`), the
+**narration cleanup** (`clean-text`) and **analyze**. All four speak to one
+server, and nothing about a pass changes with the machine it runs on.
 
 ---
 
 ## 1. Why, in one paragraph
 
-Every one of the three acts is a POOL of requests over a book of thousands of
-blocks — four in flight by default. A pool only pays if the server runs the
-requests *together*. That is what vLLM is for: continuous batching, one CUDA
+Every one of the acts is a POOL of requests over a book of thousands of blocks —
+twelve in flight by default. A pool only pays if the server runs the requests
+*together*, and that is what the door is for: continuous batching, one CUDA
 graph replayed across the batch, and throughput that climbs with the number of
-requests in flight. Ollama's own batching is not reachable on either of Owen's
-machines, so a pool against Ollama queues. **The pool is the prerequisite and
-vLLM is the payoff**: vLLM's *single-stream* latency is no better than
-llama.cpp's, so a serial caller hands it a batch of one and gains nothing.
+requests in flight. **The pool is the prerequisite and batching is the payoff**:
+the server's *single-stream* latency is no better than a serial runner's, so a
+serial caller hands it a batch of one and gains nothing.
 
 ---
 
-## 2. The flag, and everything it decides
+## 2. The flags, and what the engine decides for itself
 
 ```
-foundry translate  … [--server ollama|vllm] [--ollama <url>]   [--model <name>]
-foundry clean-text … [--server ollama|vllm] [--endpoint <url>] [--model <name>]
-foundry analyze    … [--server ollama|vllm] [--ollama <url>]   [--model <name>]
+foundry translate  … [--endpoint <url>] [--model <name>] [--concurrency <n>]
+foundry clean-text … [--endpoint <url>] [--model <name>] [--concurrency <n>]
+foundry analyze    … [--endpoint <url>] [--model <name>] [--concurrency <n>]
 ```
 
-`--server` is **declared, never sniffed from the URL**. A sniff is right until a
-proxy sits in front of both, or somebody moved an Ollama onto 8000; and what a
-wrong guess costs is not an error but a book run by a model nobody chose. A
-person who launched a vLLM knows they launched one.
+`--endpoint` is the server. Absent, the engine reads `backend.endpointUrl` from
+its settings — **the same setting the reading door reads**, because it is the
+same server: the page reader and the text models are made resident on it in
+turn. The app passes the flag on every line it composes, so a job never depends
+on the engine's fallback to say which machine it runs on.
 
-What the choice changes, and nothing else does:
+| | the door |
+|---|---|
+| Route | `POST /v1/chat/completions` |
+| Model proof | `GET /v1/models`, exact id match; the listing's `id` is what every record names |
+| `--model` absent | **the served model**, resolved before any cache key and recorded |
+| Thinking switch | `chat_template_kwargs: {enable_thinking: false}` for the qwen3 family — on its way to a server-side manifest default |
+| Context window | the server's, read back as `max_model_len`; a request is sized INTO it, and one that cannot fit is refused by name before it is sent |
+| `--concurrency` default | 12 (`DEFAULT_TEXT_CONCURRENCY`) |
+| Loading, unloading | **neither, ever** — the operator makes a model resident before a pass is spawned, and a pass ending is not a reason to take it off (§5) |
 
-| | `ollama` (default) | `vllm` |
-|---|---|---|
-| Endpoint default | `http://localhost:11434` | `http://localhost:8000/v1` |
-| Route | `POST /api/chat` | `POST /v1/chat/completions` |
-| Model proof | `GET /api/tags`, exact tag match | `GET /v1/models`, exact id match |
-| `--model` absent | the act's declared default | **the served model**, resolved and recorded |
-| No-think switch | `think: false` (a real field) | `chat_template_kwargs: {enable_thinking: false}` |
-| Context window | `num_ctx` per request, pinned once a book | the server's `--max-model-len`, fixed at launch |
-| `--concurrency` default | 4 (analyze: 1) | 12 |
-| `--keep-model` / release | `keep_alive: 0` on a bodyless call | **a declared no-op** (§5) |
+Unchanged from the day the door was built: the prompts byte for byte, the
+temperature, the retries, the validators, the records/bank cache, the stamp,
+`NORMALIZER_VERSION`, `PUNCTUATION_SPEC_VERSION`.
 
-Unchanged on both: the prompts byte for byte, the temperature, the retries, the
-validators, the records/bank cache, the stamp, `NORMALIZER_VERSION`,
-`PUNCTUATION_SPEC_VERSION`. **A book cleaned through Ollama and the same book
-cleaned through vLLM are the same pass asked of different plumbing.**
-
-Files: `src/translate/vllm.ts` (the transport), `src/translate/model-server.ts`
-(the one place that chooses), and four call sites — `src/translate/run.ts`,
+Files: `src/translate/transport.ts` (HTTP as a value, and the numbers every act
+shares), `src/translate/vllm.ts` (the dialect), `src/translate/model-server.ts`
+(the proof and the record), and four call sites — `src/translate/run.ts`,
 `src/clean/run.ts`, `src/clean/epub.ts`, `src/analyze/run.ts`.
 
-### analyze asks a different KIND of question, and that needed its own branch
+### analyze asks a different KIND of question
 
-The three text acts ask for prose on `/api/chat`. `analyze` asks a
-CLOSED question and constrain the decode to the legal answers — measured both
-more accurate and about five times cheaper than asking politely and parsing
-hopefully (`src/analyze/verify.ts`'s header). Ollama takes the schema as
-`format` on `/api/generate`; the OpenAI spelling is
-`response_format: {type: "json_schema"}`, which vLLM implements with the same
-grammar-constrained decoding underneath. So `askConstrained` dispatches on the
-server and both branches send the same schema object, the same prompt string,
-the same temperature 0 and the same token ceiling.
+The three text acts ask for prose. `analyze` asks a CLOSED question and
+constrains the decode to the legal answers — measured both more accurate and
+about five times cheaper than asking politely and parsing hopefully
+(`src/analyze/verify.ts`'s header). The spelling is
+`response_format: {type: "json_schema"}`, which the server implements with
+grammar-constrained decoding underneath; `askConstrained` sends the schema
+object, the prompt string, temperature 0 and a small token ceiling.
 
-Two details worth knowing. The vLLM call sends **one user message and no system
-message**, because Ollama's `/api/generate` applies the chat template to
-`prompt` — `/v1/completions` would be the literal counterpart of the route and
-the wrong counterpart of the request, handing the model an untemplated string.
-And a degradation stays a degradation on both routes: one bad call must not end a
-stage making hundreds of tiny ones.
+Two details worth knowing. The call sends **one user message and no system
+message**, which is the shape the verdict prompts were measured under —
+`/v1/completions` would take the string raw, past the chat template, and hand
+the model something it was never trained to read. And a degradation stays a
+degradation: one bad call must not end a stage making hundreds of tiny ones.
 
-**analyze's concurrency default is 1, not 4.** Its stage was deliberately
-sequential — Ollama serialises per model anyway, so a pool there buys queueing —
-and that is unchanged: an Ollama run is byte for byte the run it always was. Under
-vLLM it becomes 12, and the stage (hundreds of tiny closed questions over one
-loaded model) is the shape that gains most. The pool dispatches in the same
-strongest-first order Owen ruled, and the findings are composed by walking the
-jobs' own order afterwards, so what a pool changes is how long the stage takes
-and never what it wrote.
+**analyze's concurrency default is 12 like the others.** It was 1 under the
+serial server this engine no longer speaks to, and a pool never moved a verdict
+there either. The pool dispatches in the same strongest-first order Owen ruled,
+and the findings are composed by walking the jobs' own order afterwards, so
+what a pool changes is how long the stage takes and never what it wrote.
 
 ---
 
-## 3. The four differences that needed code, not just a URL
+## 3. The four things the door does that needed code, not just a URL
 
-1. **The context window is the server's.** vLLM fixes it at launch and
-   pre-allocates the KV cache against it; there is no per-request `num_ctx`. So
-   `ChatTuning.numCtx` is *dropped* on this route rather than translated into
-   something. `/v1/models` reports `max_model_len`, and `capFor` clamps
-   `max_tokens` against it (prompt estimated pessimistically at 2.5 chars/token
-   plus slack), because vLLM answers an over-long request with a **400** where
-   Ollama would simply have generated less. `clean-text`'s "context pinned"
-   log line says so instead of claiming a pin that did not happen.
+1. **The context window is the server's.** It is fixed when the model is made
+   resident and the KV cache is pre-allocated against it; there is no
+   per-request window field and none is invented. `/v1/models` reports
+   `max_model_len`, and `capFor` clamps `max_tokens` against it (prompt
+   estimated pessimistically at 2.5 chars/token plus slack), because the server
+   answers an over-long request with a **400**. **And a request that cannot
+   fit is refused before it is sent**: when the prompt alone leaves under 128
+   tokens, `capFor` would send a cap that cannot hold an edit list and the
+   truncated answer would be counted as a parse failure — the model blamed for
+   a request that could never have been answered. `clean-text` knows its longest
+   request before the first one goes out, measures it against the window
+   (`fitsWindow`), and stops by name — the block's length, the window, the
+   model — with nothing asked. A server that reported no window is not
+   second-guessed; it says so itself on the first request.
 
-2. **The thinking switch is advisory.** Ollama's `think: false` is enforced by
-   the server. vLLM's equivalent is an argument handed to the Jinja chat
-   template, and a template or build that ignores it would put a
+2. **The thinking switch is advisory.** It is an argument handed to the Jinja
+   chat template, and a template or build that ignores it would put a
    `<think>…</think>` block in front of every answer in the book. So
    `withoutThinking` strips exactly that — a block at the very front, with its
    closing tag present, and nothing else. A `<think>` mid-answer belongs to the
    text; an unterminated one is a truncation the validators must be allowed to
-   see.
+   see. The server is growing per-model sampling and thinking defaults applied
+   on its side; until they land the switch is still sent, and nothing new is
+   built on it.
 
-3. **The model may be unnamed.** An Ollama holds a library, so a run must say
-   which model it means. A vLLM process serves the model it was launched with
-   and no other, and naming it on a command line is asking somebody to retype an
-   HF path exactly right. So an absent `--model` means *whatever is served*; the
-   engine asks, uses it, logs it, and records it. A name that WAS given is still
-   proved, and a mismatch is refused with both names in the sentence.
+3. **The model may be unnamed.** The server holds ONE resident model, the one
+   the operator put there, and naming it on a command line is asking somebody
+   to retype a choice already made. So an absent `--model` means *whatever is
+   served*; the engine asks, uses it, logs it, and records it. A name that WAS
+   given is still proved, and a mismatch is refused with both names in the
+   sentence — and the engine never loads the one it wanted instead (§5).
 
 4. **The served name is resolved before any cache key is computed.**
    `clean-text` hashes the model into every block's records key (`cleanKey`) and
@@ -188,7 +197,16 @@ holds it as its own open item.
 
 ## 5. Who owns the server's life — RULED, and not Foundry
 
-`releaseModel` answers `not-ours` under vLLM and both callers say so out loud.
+**The engine never loads a model and never unloads one.** Ruled 2026-09-13
+with the BookForge session, which owns the door shapes: the operator makes a
+model resident before a pass is spawned (the app does it on the operator's
+action, through the service's job API), a load EVICTS whatever else was on the
+card, and only one model is resident at a time — so a pass that loaded its own
+model would be one job taking a narrator's voice off the card mid-sentence. A
+server answering but holding the wrong model is therefore a refusal **by
+name**, naming what is resident instead, and the run stops. There is no
+release: a pass ending is not a reason to take a model off. The paragraph
+below is the older half of the same rule, kept because it is still true.
 
 A vLLM process **is** its model: the weights load at launch, the KV cache is
 allocated against them, and there is no request that means "let go". The only
@@ -197,10 +215,8 @@ because the thing that decides when a 24 GB card changes hands has to watch
 *every* job, not one of them. BookForge's GPU arbiter owns starting and stopping
 it (their 2026-09-08 plan: the same arbiter that brackets a Higgs render). From
 foundry's side the endpoint is simply up when it is invoked. This is exactly
-what `src/translate/ollama.ts`'s header has always said about a server somebody
-else runs, applied to a server whose lifetime somebody else really does own.
-
-`--keep-model` is therefore moot under vLLM: nothing is unloaded either way.
+what `src/translate/transport.ts`'s header says about a server somebody else
+runs, applied to a server whose lifetime somebody else really does own.
 
 ---
 
@@ -251,9 +267,12 @@ vllm serve <model> \
 - `--max-model-len` is what `capFor` reads back through `/v1/models`. It caps
   how long ONE sequence may get and reserves nothing; 8192 matches what the
   Ollama path pinned for translate.
-- Then in the app: **Settings → Language model → Server → vLLM**, with the URL
-  and (optionally) the served model beside it. The four dialogs open against it
-  from that moment; the queue puts `--server vllm` on every line it composes.
+- Then in the app: **Settings → Language model**, with the URL and
+  (optionally) the served model beside it. The four dialogs open against it
+  from that moment; the queue puts `--endpoint <url>` on every line it
+  composes. (The server-kind switch this line once described is gone with the
+  second dialect; the picker rework that reads the service's capability
+  record replaces the model field.)
 
 ### What decides the batch depth on THESE models (measured 2026-09-08)
 

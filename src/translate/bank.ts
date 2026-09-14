@@ -95,6 +95,7 @@
  * hold a wrong answer to the question being asked — the worst it can do is not
  * hold one.
  */
+import type { TextAct } from './act.js';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -370,6 +371,8 @@ export interface BankOutcome {
 
 export interface BankRequest {
   bankPath: string;
+  /** The act whose sentences these are — a simplify's bank is not "translate:". */
+  act: TextAct;
   /**
    * `--fresh-bank`: ask for every block again, into a bank that replaces this one
    * only if the run finishes. It does not archive and it destroys nothing.
@@ -423,10 +426,10 @@ export function openTranslationBank(request: BankRequest): BankOutcome {
       bank: carried,
       pendingPath: pending,
       sentence: carried.size === 0
-        ? `translate: a fresh bank was asked for, so every block is asked of the model again — the `
+        ? `${request.act}: a fresh bank was asked for, so every block is asked of the model again — the `
           + `${banked} banked answer(s) in ${bankPath} are left exactly as they are and the new `
           + `answers go to ${pending}, which replaces them only when this run writes its book.`
-        : `translate: a fresh bank was asked for and one was already begun — ${carried.size} `
+        : `${request.act}: a fresh bank was asked for and one was already begun — ${carried.size} `
           + `answer(s) are in ${pending}, a block whose exact question is in there is not asked `
           + `again, and it replaces ${bankPath} only when this run writes its book.`,
     };
@@ -438,9 +441,9 @@ export function openTranslationBank(request: BankRequest): BankOutcome {
       bank: existing,
       pendingPath: null,
       sentence: request.freshRequested
-        ? `translate: a fresh bank was asked for and ${bankPath} banks nothing, so every block is `
+        ? `${request.act}: a fresh bank was asked for and ${bankPath} banks nothing, so every block is `
           + 'asked of the model and banked there as it lands.'
-        : `translate: nothing is banked in ${bankPath}, so every block is asked of the model `
+        : `${request.act}: nothing is banked in ${bankPath}, so every block is asked of the model `
           + 'and banked there as it lands.',
     };
   }
@@ -449,7 +452,7 @@ export function openTranslationBank(request: BankRequest): BankOutcome {
     action: 'resume',
     bank: existing,
     pendingPath: null,
-    sentence: `translate: ${banked} answer(s) are banked in ${bankPath} — a block whose exact `
+    sentence: `${request.act}: ${banked} answer(s) are banked in ${bankPath} — a block whose exact `
       + 'question is in there is not asked again, and every new answer is added to it.',
   };
 }

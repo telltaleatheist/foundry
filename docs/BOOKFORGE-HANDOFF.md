@@ -506,6 +506,59 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-09-13 (later) — ONE INFERENCE DOOR. The Ollama dialect is gone from
+the engine, the act names itself, and the engine never loads a model.**
+
+Owen's ruling, in his words: *"everything compute intensive must go through
+crucible. if theres no crucible server, theres no foundry. it's a necessary
+service… we should adapt it to using the models through crucible instead."*
+Your door shapes (prompts stay here, one chat door for text and pages, the
+operator loads, three 409s) are what this is built against.
+
+**What the re-vendor has to know:**
+
+- **Flags.** `--server` is gone from `translate`, `clean-text` and `analyze`.
+  `--ollama` is gone from `translate` and `analyze`; every text act takes
+  `--endpoint <url>`, and absent it reads `backend.endpointUrl` from the
+  engine's settings (the reading door's setting — same server). `--keep-model`
+  is gone. Your app's `job-queue.ts` line composer spells `--endpoint` where it
+  spelled `--ollama` and no longer spells `--server`; the request field is
+  still named `ollama` on the app side and is renamed with the picker rework.
+- **`--model` absent is the served model, always.** There is no act-level
+  default any more. The listing's `id` is what the bank key, the records key,
+  the stamp and the report header carry — your cache-key guarantee unchanged.
+- **The engine never loads and never unloads.** A server holding a different
+  model refuses by name, naming what is resident, and the run stops. Nothing
+  is released at the end of a run. `release()` on the clean runner is a stated
+  no-op; the member stays because `NumberNormalizerRunner` is the vendored
+  interface.
+- **The window is checked before request one.** `clean-text` measures its
+  longest request against `max_model_len` (`fitsWindow`, `src/translate/vllm.ts`)
+  and refuses by name — block length, window, model — rather than sending a
+  request `capFor` could only cap at 128 tokens and counting the truncation
+  as a parse failure.
+- **Log prefixes name the act.** A `--rewrite` run's lines start `simplify:`,
+  not `translate:` — every one of them, including `simplify: block n/m`, which
+  your progress parser must accept alongside `translate: block n/m`
+  (`app/electron/engine.ts` `parseProgressLine` does, in the vendored app).
+  Owen: *"they can't lie to the user and say a translate job is running when
+  it's actually a simplify job."*
+- **`--concurrency` defaults to 12 on every text act** (`DEFAULT_TEXT_CONCURRENCY`).
+  The vendored driver's `DEFAULT_CLEAN_CONCURRENCY` (4) is not read by the
+  engine and was not changed, to keep your keeper's pin still.
+- **Thinking switch.** `chat_template_kwargs: {enable_thinking: false}` is
+  still sent for the qwen3 family until your manifest defaults land; nothing
+  new is built on it.
+- **Files.** `src/translate/ollama.ts` → `src/translate/transport.ts`
+  (`OllamaError` → `TransportError`); `src/translate/act.ts` is new. No file
+  your keeper pins changed except `src/clean/runner.ts` (which it lists as
+  `replaced`) — `tts-number-normalizer.ts`, `tts-spoken-forms.ts`,
+  `tts-punctuation.ts` are byte-identical to 969dd96.
+
+**Not done, and waiting:** the registry and per-row picker (Owen's go), the
+picker reading `GET /v1/capability`, `load-model` before spawn, the Ollama
+install/pull wizard's removal, and `app/electron/vllm-server.ts`'s deletion.
+
 **2026-09-13 — THE ENGINE CAN NOW SEND HEADERS, AND THE CONTRACT IS ONE
 ENVIRONMENT VARIABLE. Nothing changes for a server that wants none.**
 

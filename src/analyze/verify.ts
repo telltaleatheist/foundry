@@ -53,17 +53,12 @@
  * schema is not optional and there is no opt-out.
  */
 import type { ModelServer } from '../translate/model-server.js';
-import {
-  normaliseEndpoint,
-  takesThinkField,
-  OllamaError,
-  type Transport,
-} from '../translate/ollama.js';
+import type { Transport } from '../translate/transport.js';
 import { constrainedChatBody, readChatAnswer } from '../translate/vllm.js';
 import type { FlagWindow, WindowCategory } from './rank.js';
 
 /**
- * The schema Ollama's `format` field carries. Two tokens, one of two values.
+ * The schema the constrained decode carries. Two tokens, one of two values.
  * See this file's header for the measurement that makes it mandatory.
  */
 export const VERDICT_SCHEMA: Record<string, unknown> = {
@@ -88,72 +83,6 @@ export const VERDICT_SCHEMA: Record<string, unknown> = {
  * and counted, never guessed at.
  */
 const VERDICT_PREDICT_TOKENS = 128;
-
-/**
- * The output budget num_ctx is SIZED from — a different number, on purpose.
- *
- * briefcase's `VERIFY_OUTPUT_BUDGET_TOKENS`. It is 2048 rather than 128 because
- * its only job is to keep the bucketed num_ctx at its floor, so that every call
- * in the stage lands on the same context size and Ollama never reloads the
- * model mid-stage. Sizing from 128 would let a short passage bucket lower than
- * a long one and buy exactly the reload this is arranged to avoid.
- */
-const VERIFY_OUTPUT_BUDGET_TOKENS = 2048;
-
-/**
- * The num_ctx ceiling for a model, from the parameter count sniffed out of its
- * tag — ported from briefcase's `model-utils.ts`, which took it from BookForge.
- *
- * The ceiling keeps weights and KV cache on the GPU, because spilling a layer
- * to CPU bottlenecks every token:
- *   - 15B or under: 16384 tokens.
- *   - larger (32B-class) or an unrecognised size: 12288, conservatively —
- *     guessing low costs a rare clamp, guessing high cripples the whole stage.
- *
- * MoE tags (`mixtral:8x7b`) count experts times size, which is the memory the
- * weights actually take.
- */
-export function numCtxMaxForModel(model: string): number {
-  const moe = /(\d+)x(\d+(?:\.\d+)?)b/i.exec(model);
-  const dense = /(\d+(?:\.\d+)?)b/i.exec(model);
-  const sizeB = moe
-    ? parseInt(moe[1]!, 10) * parseFloat(moe[2]!)
-    : dense
-      ? parseFloat(dense[1]!)
-      : null;
-  if (sizeB !== null && sizeB <= 15) return 16384;
-  return 12288;
-}
-
-/**
- * The num_ctx for a stage, sized from its LARGEST prompt — briefcase's
- * `estimateNumCtx`, ported with its two constraints intact:
- *
- *  - **Bucket to 4096.** Ollama fully reloads the model on ANY num_ctx change,
- *    so per-request estimates that each land on a slightly different value
- *    cause relentless reload churn. Rounding up to coarse buckets makes
- *    similar-sized prompts reuse the runner that is already loaded.
- *  - **Cap at `numCtxMaxForModel`.** Keep the KV cache on the GPU.
- *
- * Three characters to the token is deliberately pessimistic; the 512 and the
- * 1.2 are slack for a tokenizer that disagrees. It is called ONCE per stage,
- * with the longest prompt of the whole run, and the answer is pinned for every
- * call — which is what makes the stage pay one load instead of hundreds.
- */
-export function estimateNumCtx(promptChars: number, model: string, outputBudgetTokens: number): number {
-  const CHARS_PER_TOKEN = 3;
-  const NUM_CTX_BUCKET = 4096;
-  const inputTokens = Math.ceil(promptChars / CHARS_PER_TOKEN);
-  const raw = Math.ceil((inputTokens + outputBudgetTokens + 512) * 1.2);
-  const bucketed = Math.max(NUM_CTX_BUCKET, Math.ceil(raw / NUM_CTX_BUCKET) * NUM_CTX_BUCKET);
-  return Math.min(numCtxMaxForModel(model), bucketed);
-}
-
-/** The num_ctx this whole stage pins, from the longest prompt it will send. */
-export function stageNumCtx(prompts: readonly string[], model: string): number {
-  const longest = prompts.reduce((max, prompt) => Math.max(max, prompt.length), 0);
-  return estimateNumCtx(longest, model, VERIFY_OUTPUT_BUDGET_TOKENS);
-}
 
 /**
  * Verify ONE (window, category) pair.
@@ -194,48 +123,6 @@ Answer "flag" if the author asserts it, endorses it, or repeats it approvingly a
 Answer "skip" if the author is reporting that other people make that claim, quoting it neutrally, asking about it, arguing against it, or if the passage does not make that claim at all.
 
 Respond with JSON only: {"verdict":"flag"} or {"verdict":"skip"}`;
-}
-
-/**
- * The exact JSON body of ONE schema-constrained generate call. Separate so a
- * reader can see it, and generic in the schema so the second command that asks
- * a model a closed question does not have to write this object again.
- *
- * What it carries is everything the measurements in this file's header are
- * about: the schema rather than the string 'json', temperature 0, and the
- * `think` rule. A second closed question added later gets those for free.
- */
-export function constrainedBody(
-  model: string,
-  prompt: string,
-  numCtx: number,
-  schema: Record<string, unknown>,
-  predictTokens: number,
-): string {
-  const body: Record<string, unknown> = {
-    model,
-    prompt,
-    stream: false,
-    // The schema, not the string 'json': it constrains the decode to the legal
-    // answers rather than merely to well-formed JSON.
-    format: schema,
-    options: {
-      num_ctx: numCtx,
-      num_predict: predictTokens,
-      // Zero, because this is a classification with a right answer and any
-      // sampling above it is variance in an accusation.
-      temperature: 0,
-    },
-  };
-  // ollama.ts's ruling, unchanged: the qwen3 family takes `think`, and a model
-  // that does not answers a request carrying it with a 400 naming the field.
-  if (takesThinkField(model)) body['think'] = false;
-  return JSON.stringify(body);
-}
-
-/** The exact JSON body sent for one verdict. */
-export function verifyBody(model: string, prompt: string, numCtx: number): string {
-  return constrainedBody(model, prompt, numCtx, VERDICT_SCHEMA, VERDICT_PREDICT_TOKENS);
 }
 
 /**
@@ -290,7 +177,8 @@ export interface ConstrainedAnswer {
  *
  * ── THE THINKING-MODEL TRAP, AND IT IS NOT OPTIONAL ─────────────────────────
  *
- * MEASURED IN BRIEFCASE on Ollama with qwen3.8:27b: when a JSON grammar is sent
+ * MEASURED IN BRIEFCASE (under Ollama, before this engine had one door) with
+ * qwen3.8:27b: when a JSON grammar is sent
  * to a THINKING model, it constrains the whole output stream from the first
  * token, so the model never opens an answer channel — the object it emits is
  * classified as reasoning and arrives in `thinking` with `response` EMPTY.
@@ -306,92 +194,37 @@ export interface ConstrainedAnswer {
  * matters more here, not less. Skip the port and the stage returns zero
  * verdicts against a perfectly healthy server.
  *
- * A transport failure, a non-200 and an answer that is not Ollama's documented
+ * A transport failure, a non-200 and an answer that is not the door's documented
  * shape all come back as degradations rather than throwing, because ONE bad
  * call must not end a stage that is making hundreds of tiny ones.
+ *
+ * THE CONSTRAINT IS `response_format: {type:"json_schema"}` — the same
+ * grammar-constrained decode the measurement above was taken under, in the one
+ * spelling this engine's door speaks (translate/vllm.ts). No window is sent:
+ * the server's is fixed when the model is made resident, and `capFor` clamps
+ * the ANSWER against what the server said it can hold, which is the part that
+ * still matters.
  */
 export async function askConstrained(
   transport: Transport,
   server: ModelServer,
   prompt: string,
-  numCtx: number,
   schema: Record<string, unknown>,
   predictTokens: number,
 ): Promise<ConstrainedAnswer> {
-  /*
-   * ── TWO DIALECTS, ONE QUESTION ─────────────────────────────────────────────
-   *
-   * `--server vllm` (docs/VLLM.md) puts an OpenAI-compatible server on the other
-   * end. The question is identical — same prompt string, same schema object,
-   * same temperature 0, same token ceiling — and so is the CONSTRAINT: Ollama's
-   * `format` and vLLM's `response_format: {type:"json_schema"}` are the same
-   * grammar-constrained decode under two spellings, which is why this can be a
-   * transport branch rather than a second way of asking.
-   *
-   * WHAT DOES NOT CROSS IS `num_ctx`. A vLLM's window is fixed when the server
-   * is launched, so `stageNumCtx`'s whole argument — one size per stage because
-   * Ollama reloads the runner on a change — has no counterpart there and the
-   * number is simply not sent. `capFor` clamps the ANSWER against what the
-   * server said it can hold, which is the part that still matters.
-   *
-   * AND THE DEGRADATION VOCABULARY IS SHARED. Both branches answer with a
-   * sentence rather than throwing, for this function's own reason: one bad call
-   * must not end a stage making hundreds of tiny ones.
-   */
-  if (server.kind === 'vllm') {
-    const answer = await readChatAnswer(
-      transport,
-      server.endpoint,
-      constrainedChatBody(server.model, prompt, schema, predictTokens, server.maxModelLen),
-    );
-    if (answer.text === null) return { text: null, degraded: answer.degraded ?? 'no answer' };
-    if (answer.truncated === true) {
-      return {
-        text: null,
-        degraded: `the answer hit the ${predictTokens}-token ceiling, so it was cut off`,
-      };
-    }
-    return { text: answer.text };
-  }
-  const base = normaliseEndpoint(server.endpoint);
-  const model = server.model;
-  let response: { status: number; body: string };
-  try {
-    response = await transport.post(
-      `${base}/api/generate`,
-      constrainedBody(model, prompt, numCtx, schema, predictTokens),
-    );
-  } catch (error) {
-    return {
-      text: null,
-      degraded: error instanceof OllamaError ? error.message : (error as Error).message,
-    };
-  }
-  if (response.status !== 200) {
-    return {
-      text: null,
-      degraded: `ollama at ${base} answered ${response.status}: `
-        + `${response.body.trim().slice(0, 200) || '(no body)'}`,
-    };
-  }
-  let parsed: { response?: unknown; thinking?: unknown; done_reason?: unknown };
-  try {
-    parsed = JSON.parse(response.body) as typeof parsed;
-  } catch {
-    return { text: null, degraded: `ollama at ${base} answered 200 with something that is not JSON` };
-  }
-
-  let text = typeof parsed.response === 'string' ? parsed.response : '';
-  if (text.trim().length === 0 && typeof parsed.thinking === 'string' && parsed.thinking.trim().length > 0) {
-    text = parsed.thinking;
-  }
-  if (parsed.done_reason === 'length') {
+  const answer = await readChatAnswer(
+    transport,
+    server.endpoint,
+    constrainedChatBody(server.model, prompt, schema, predictTokens, server.maxModelLen),
+  );
+  if (answer.text === null) return { text: null, degraded: answer.degraded ?? 'no answer' };
+  if (answer.truncated === true) {
     return {
       text: null,
       degraded: `the answer hit the ${predictTokens}-token ceiling, so it was cut off`,
     };
   }
-  return { text };
+  return { text: answer.text };
 }
 
 /**
@@ -407,11 +240,8 @@ export async function askVerdict(
   transport: Transport,
   server: ModelServer,
   prompt: string,
-  numCtx: number,
 ): Promise<VerdictOutcome> {
-  const answer = await askConstrained(
-    transport, server, prompt, numCtx, VERDICT_SCHEMA, VERDICT_PREDICT_TOKENS,
-  );
+  const answer = await askConstrained(transport, server, prompt, VERDICT_SCHEMA, VERDICT_PREDICT_TOKENS);
   if (answer.text === null) return { verdict: null, degraded: answer.degraded ?? 'no answer' };
   const verdict = parseVerdict(answer.text);
   if (verdict === null) {

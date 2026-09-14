@@ -1,221 +1,138 @@
 /**
- * translate/model-server — which server the language passes speak to, decided once.
+ * translate/model-server — the server the language passes speak to, proved once.
  *
  * ── WHAT THIS IS AND WHY IT IS ONE FILE ─────────────────────────────────────
  *
- * Three passes ask a model for text: `translate`, its `--rewrite` siblings
- * (simplify, narration cleanup's prose rewrite) and `clean-text`. Every one of
- * them asks exactly three things of a server — prove you are there and hold the
- * model, answer this block, give the card back — and until 2026-09-08 all three
- * asked them of Ollama, because Ollama was the only thing on the other end.
+ * Four passes ask a model for text: `translate`, its `--rewrite` siblings
+ * (simplify), `clean-text` and `analyze`. Every one of them asks exactly two
+ * things of a server — prove you are there and say which model you hold, and
+ * answer this block — and this file is the ONLY place a pass learns which
+ * server and which model, so that "which model answered" can never be answered
+ * differently by two commands on the same run. Everything that records a model
+ * (the bank key, the stamp, the verdict key, the log line) reads it from the
+ * `ModelServer` this hands back.
  *
- * `vllm.ts` is now the other thing. This file is the ONLY place that chooses,
- * so that a pass reads the same however the machine is configured, and so that
- * "which server" can never be answered differently by two commands on the same
- * run. Nothing above this seam branches on the server, and nothing below it
- * knows there is a choice.
+ * ── ONE KIND OF SERVER, BY RULING ───────────────────────────────────────────
  *
- * ── THE CHOICE IS DECLARED, NEVER SNIFFED ───────────────────────────────────
+ * Until 2026-09-13 this file chose between two dialects on `--server
+ * ollama|vllm`. Owen ended the choice: every model call goes to one
+ * OpenAI-compatible chat door — the inference service the app registers, which
+ * is vLLM-shaped on a CUDA box and mlx-lm-shaped on a Mac and the same door
+ * either way — and if there is no such server there is no run. So there is no
+ * kind to declare, no default port for a second product, and nothing here
+ * branches. `vllm.ts` is the dialect; this file is the proof and the record.
  *
- * `--server ollama|vllm`, and no probing of the URL to work it out. A sniff gets
- * it right until it doesn't: a proxy in front of both, an Ollama on 8000 because
- * somebody moved it, a vLLM behind a path that also answers `/api/tags`. What a
- * wrong guess costs is not an error — it is a book translated by a model nobody
- * chose, or a run that fails at block one with a message about the wrong
- * protocol. A person who launched a vLLM knows they launched one, and saying so
- * costs them one flag.
+ * ── THE PASS NEVER LOADS AND NEVER UNLOADS ──────────────────────────────────
+ *
+ * The operator makes a model resident before a pass is spawned, and a load
+ * EVICTS whatever else was on the card — which is exactly why a pass must never
+ * be the thing that asks for one: a cleanup that loaded its model would be one
+ * job taking a narrator's voice off the card mid-sentence. So a server that is
+ * answering but does not hold the model this run wants is a refusal BY NAME,
+ * naming what is resident instead, and the run stops there. There is no
+ * release either: the card belongs to whoever put a model on it, and a pass
+ * ending is not a reason to take it off.
  *
  * ── WHY A POOL IS THE PREREQUISITE, WRITTEN HERE BECAUSE THIS IS WHERE ──────
- * ── SOMEBODY ARRIVES ASKING WHETHER vLLM IS WORTH IT ────────────────────────
+ * ── SOMEBODY ARRIVES ASKING WHY TWELVE REQUESTS ARE IN FLIGHT ───────────────
  *
- * vLLM's advantage is AGGREGATE throughput across requests in flight together:
- * continuous batching keeps the GPU's tensor cores fed by running many sequences
- * through one forward pass, and CUDA graphs replay that pass without re-issuing
- * the kernels each step. Its single-stream latency is no better than llama.cpp's
- * — on one request at a time there is nothing to batch, and a serial caller
- * hands it a batch of one. So the worker pools in `run.ts` and
- * `tts-number-normalizer.ts` are not an optimisation on top of this: they are
- * the thing that makes it pay at all, which is why `concurrencyFor` raises the
- * default here rather than leaving both servers on the same number.
+ * The server's advantage is AGGREGATE throughput across requests in flight
+ * together: continuous batching keeps the GPU's tensor cores fed by running
+ * many sequences through one forward pass, and CUDA graphs replay that pass
+ * without re-issuing the kernels each step. Its single-stream latency is no
+ * better than a serial runner's — on one request at a time there is nothing to
+ * batch. So the worker pools in `run.ts`, `tts-number-normalizer.ts` and
+ * `analyze/run.ts` are not an optimisation on top of this: they are the thing
+ * that makes the server pay at all.
  */
-import {
-  chat, normaliseEndpoint, requireModel, unloadModel, type ChatTuning, type Transport,
-} from './ollama.js';
 import { isPageReadingModel } from '../vlm/models.js';
+import type { ChatTuning, Transport } from './transport.js';
+import { TRANSLATE_TUNING } from './transport.js';
 import {
-  complete, DEFAULT_VLLM_ENDPOINT, normaliseVllmEndpoint, requireServedModel, VllmError,
-  type ServedModel,
+  complete, normaliseVllmEndpoint, requireServedModel, VllmError, type ServedModel,
 } from './vllm.js';
 
-/** Ollama's own default, which is where it is unless somebody moved it. */
-export const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
-
-/** The two things that can be on the other end. Declared, never sniffed. */
-export const SERVER_KINDS = ['ollama', 'vllm'] as const;
-export type ServerKind = (typeof SERVER_KINDS)[number];
-
-export function isServerKind(value: string): value is ServerKind {
-  return (SERVER_KINDS as readonly string[]).includes(value);
-}
-
-/** Where this kind of server lives when nobody said. */
-export function defaultEndpointFor(kind: ServerKind): string {
-  return kind === 'vllm' ? DEFAULT_VLLM_ENDPOINT : DEFAULT_OLLAMA_ENDPOINT;
-}
-
 /**
- * A proved server: what to speak to, in what dialect, about which model.
+ * A proved server: what to speak to, about which model.
  *
- * `model` is RESOLVED — under Ollama it is the tag that was asked for and
- * proved, under vLLM it is the id the server said it is serving, which may be a
- * name nobody typed (`requireServedModel`). Everything that records a model —
- * the bank key, the stamp, the log line — reads it from here, so a run can never
- * record a model different from the one that answered.
+ * `model` is RESOLVED — the id the server said it is serving, which may be a
+ * name nobody typed (`requireServedModel`). Everything that records a model
+ * reads it from here, so a run can never record a model different from the one
+ * that answered.
  */
 export interface ModelServer {
-  kind: ServerKind;
   /** The base URL as it is actually spoken to, after normalisation. */
   endpoint: string;
   model: string;
-  /** vLLM's `--max-model-len` when it reported one. Null under Ollama. */
+  /** The server's context window when it reported one. Null when it did not. */
   maxModelLen: number | null;
 }
 
 /**
  * How many requests to keep in flight when the caller named no number.
  *
- * FOUR IS OLLAMA'S, and it stays what it was: the acts declare it
- * (`DEFAULT_TRANSLATE_CONCURRENCY`, `DEFAULT_CLEAN_CONCURRENCY`) and each says
- * out loud that it is a starting point rather than a measurement. This function
- * takes that number and answers it back unchanged for Ollama, so nothing about
- * an existing machine moves.
- *
- * TWELVE IS vLLM'S, AND IS ALSO NOT A MEASUREMENT — but it is not arbitrary
- * either. It is the number `DEFAULT_VLM_CONCURRENCY` was measured at for the
- * reading path against a vLLM on this project's own hardware, where twelve in
- * flight kept the batch full without per-request latency climbing. The scheduler
- * being fed is the same scheduler. It is safe to be wrong high in a way it is
- * not under Ollama: vLLM admits what fits in its KV cache and QUEUES the rest,
- * so extra requests wait in the server instead of thrashing a card.
- *
- * `--concurrency` overrides both, and on a small card it is the flag to reach
- * for first.
+ * NOT A MEASUREMENT FOR THE TEXT ACTS, but not arbitrary either: it is the
+ * number `DEFAULT_VLM_CONCURRENCY` was measured at for the reading path against
+ * a vLLM on this project's own hardware, where twelve in flight kept the batch
+ * full without per-request latency climbing. The scheduler being fed is the
+ * same scheduler, and it is safe to be wrong high: the server admits what fits
+ * in its KV cache and QUEUES the rest, so extra requests wait in the server
+ * instead of thrashing a card. `--concurrency` overrides it, and on a small
+ * card it is the flag to reach for first.
  */
-export const DEFAULT_VLLM_CONCURRENCY = 12;
-
-export function concurrencyFor(kind: ServerKind, ollamaDefault: number): number {
-  return kind === 'vllm' ? DEFAULT_VLLM_CONCURRENCY : ollamaDefault;
-}
+export const DEFAULT_TEXT_CONCURRENCY = 12;
 
 /**
  * Prove the server, and hand back what the rest of the run needs to talk to it.
  *
- * The proof is FIRST, before a block is read, for `requireModel`'s reason: the
- * run would discover a dead server on request one anyway, and what asking early
- * buys is the MESSAGE — a sentence naming the URL that was silent, which is the
- * only thing the person about to start a server needs from this program.
+ * The proof is FIRST, before a block is read: the run would discover a dead
+ * server on request one anyway, and what asking early buys is the MESSAGE — a
+ * sentence naming the URL that was silent, which is the only thing the person
+ * about to check their server needs from this program.
  *
- * `model` is optional and the two servers read the absence differently, which is
- * `requireServedModel`'s argument: an Ollama holds a library and a run must say
- * which model it means, so its callers pass their declared default; a vLLM
- * serves one model and naming it is retyping the server's own launch argument.
+ * `model` is optional, and `requireServedModel` argues why: the server holds
+ * ONE resident model, so naming it is retyping what the operator already chose,
+ * and where nothing is named the served model IS the answer. A name that was
+ * given is still proved, and a mismatch is refused with both names in it.
  */
 export async function openModelServer(options: {
-  kind: ServerKind;
   transport: Transport;
   endpoint: string;
   model?: string;
 }): Promise<ModelServer> {
-  const { kind, transport } = options;
-  if (kind === 'vllm') {
-    const endpoint = normaliseVllmEndpoint(options.endpoint);
-    const served: ServedModel = await requireServedModel(transport, endpoint, options.model);
-    // The one thing a text act must not accept from discovery. See
-    // `isPageReadingModel` (vlm/models.ts) for the whole reason; the short of
-    // it is that both doors default to :8000, and a cleanup answered by a page
-    // reader is banked and stamped as if it were prose.
-    if (isPageReadingModel(served.id)) {
-      throw new VllmError(
-        `${endpoint} is serving "${served.id}", which is a model that READS PAGE IMAGES — a text `
-        + 'act cannot use it, and a book cleaned or translated through it would be nonsense '
-        + 'banked under its name. This is almost always one URL doing two jobs: the reading '
-        + 'server and the text server both default to port 8000. Point this act at the text '
-        + 'server, or name a text model with --model if this one really does serve both.',
-      );
-    }
-    return { kind, endpoint, model: served.id, maxModelLen: served.maxModelLen };
+  const endpoint = normaliseVllmEndpoint(options.endpoint);
+  const served: ServedModel = await requireServedModel(options.transport, endpoint, options.model);
+  // The one thing a text act must not accept from discovery. See
+  // `isPageReadingModel` (vlm/models.ts) for the whole reason; the short of
+  // it is that the reading model and the text model are served through the
+  // same door, and a cleanup answered by a page reader is banked and stamped
+  // as if it were prose.
+  if (isPageReadingModel(served.id)) {
+    throw new VllmError(
+      `${endpoint} is serving "${served.id}", which is a model that READS PAGE IMAGES — a text `
+      + 'act cannot use it, and a book cleaned or translated through it would be nonsense '
+      + 'banked under its name. The server holds one model at a time; make the text model '
+      + 'resident before this act runs, or name a text model with --model if this server '
+      + 'really does serve both.',
+    );
   }
-  const endpoint = normaliseEndpoint(options.endpoint);
-  const model = options.model ?? '';
-  await requireModel(transport, endpoint, model);
-  return { kind, endpoint, model, maxModelLen: null };
+  return { endpoint, model: served.id, maxModelLen: served.maxModelLen };
 }
 
-/** Ask the proved server for one block, in its own dialect. */
+/** Ask the proved server for one block. */
 export async function askModel(
   transport: Transport,
   server: ModelServer,
   system: string,
   user: string,
-  tuning?: ChatTuning,
+  tuning: ChatTuning = TRANSLATE_TUNING,
 ): Promise<string> {
-  if (server.kind === 'vllm') {
-    return complete(
-      transport,
-      server.endpoint,
-      { id: server.model, maxModelLen: server.maxModelLen },
-      system,
-      user,
-      tuning ?? VLLM_TRANSLATE_TUNING,
-    );
-  }
-  return chat(transport, server.endpoint, server.model, system, user, tuning);
-}
-
-/**
- * Translate's own sampling numbers, spelled out for the vLLM route.
- *
- * `chat()` defaults an absent tuning to `TRANSLATE_TUNING` inside `ollama.ts`,
- * which is private to that file and correctly so — it is the Ollama body
- * builder's default. The vLLM body builder needs the same two numbers and must
- * not invent its own, so the pair is written once here and the two routes are
- * given the SAME temperature. `numCtx` is carried for shape and dropped by the
- * vLLM body (see `completionsBody`), because a vLLM's window is fixed at launch.
- */
-const VLLM_TRANSLATE_TUNING: ChatTuning = { temperature: 0.2, numCtx: 8192 };
-
-/** What happened when the run tried to give the card back. */
-export type ReleaseOutcome = 'released' | 'refused' | 'not-ours';
-
-/**
- * Give the weights back when the run is over — or say why nothing was asked.
- *
- * ── OLLAMA: `unloadModel`'s courtesy, unchanged ─────────────────────────────
- *
- * A book is thousands of requests over hours, and when the last one lands twenty
- * gigabytes stay pinned on a five-minute idle timer with nothing to answer. On a
- * one-GPU machine that is the next job's memory. Best effort, never a failure.
- *
- * ── vLLM: A DECLARED NO-OP, AND THAT IS THE DESIGN RATHER THAN A GAP ────────
- *
- * A vLLM process IS its model: the weights are loaded at launch, the KV cache is
- * pre-allocated against them, and there is no request that says "let go". The
- * only way to free that card is to stop the process — and a pass must not stop
- * it, for the reason agreed with BookForge on 2026-09-08: the thing that decides
- * when the card changes hands has to watch EVERY job, and a cleanup that killed
- * the server would be one job deciding for all of them. BookForge's GPU arbiter
- * owns the server's life; foundry uses what it is pointed at, which is exactly
- * what `ollama.ts`'s header has always said about a server somebody else runs.
- *
- * So this answers `not-ours` and the caller says so out loud. Silence would look
- * like a release that happened.
- */
-export async function releaseModel(
-  transport: Transport,
-  kind: ServerKind,
-  endpoint: string,
-  model: string,
-): Promise<ReleaseOutcome> {
-  if (kind === 'vllm') return 'not-ours';
-  return (await unloadModel(transport, endpoint, model)) ? 'released' : 'refused';
+  return complete(
+    transport,
+    server.endpoint,
+    { id: server.model, maxModelLen: server.maxModelLen },
+    system,
+    user,
+    tuning,
+  );
 }

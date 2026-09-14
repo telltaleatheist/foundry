@@ -19,10 +19,13 @@ import {
 } from '../../src/translate/run.js';
 import { bankKey, TranslateBankError, TranslationBank } from '../../src/translate/bank.js';
 import { readLanguage } from '../../src/translate/languages.js';
-import type { HttpResponse, Transport } from '../../src/translate/ollama.js';
+import type { HttpResponse, Transport } from '../../src/translate/transport.js';
+
+/** Where the fakes live. Named on every run because the engine has no default server. */
+const ENDPOINT = 'http://fake:8000/v1';
 import {
   CHAPTER_PATH, NAV_PATH, OPF_PATH, PICTURE,
-  chapterWith, fakeOllama, foundryEpub, foundryEpubWith, plainEpub, shout, type FakeServer,
+  chapterWith, fakeServer, foundryEpub, foundryEpubWith, plainEpub, shout, type FakeServer,
 } from './fixture.js';
 
 function scratch(book: Uint8Array = foundryEpub()): { epub: string; out: string; clean: () => void } {
@@ -39,9 +42,9 @@ const quiet = (): void => {};
 test('a foundry book comes out translated, with its skips counted', async () => {
   const { epub, out, clean } = scratch();
   try {
-    const server = fakeOllama();
+    const server = fakeServer();
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', from: 'de', transport: server, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', from: 'de', transport: server, endpoint: ENDPOINT, log: quiet,
     });
 
     /*
@@ -101,7 +104,7 @@ test('a foundry book comes out translated, with its skips counted', async () => 
 test('the package keeps its title and changes its language', async () => {
   const { epub, out, clean } = scratch();
   try {
-    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), log: quiet });
+    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: fakeServer(), endpoint: ENDPOINT, log: quiet });
     const opf = readZipMap(new Uint8Array(fs.readFileSync(out))).get(OPF_PATH)!.text();
     assert.match(opf, /<dc:language>en<\/dc:language>/);
     assert.match(opf, /<dc:title>Der Staat<\/dc:title>/);
@@ -117,7 +120,7 @@ test('contents entries are relabelled only where they are provably copies', asyn
   const { epub, out, clean } = scratch();
   try {
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: fakeServer(), endpoint: ENDPOINT, log: quiet,
     });
     assert.equal(report.navRelabelled, 2);
     assert.equal(report.navUnmapped, 1);
@@ -136,7 +139,7 @@ test('contents entries are relabelled only where they are provably copies', asyn
 test('the pictures and the stylesheet come through untouched', async () => {
   const { epub, out, clean } = scratch();
   try {
-    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), log: quiet });
+    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: fakeServer(), endpoint: ENDPOINT, log: quiet });
     const written = readZipMap(new Uint8Array(fs.readFileSync(out)));
     assert.deepEqual([...written.get('EPUB/images/p0009-1.png')!.data], [...PICTURE]);
     assert.equal(written.get('EPUB/style.css')!.text(), 'body { margin: 0 5%; }\n');
@@ -152,7 +155,7 @@ test('the input EPUB is not written to', async () => {
   const { epub, out, clean } = scratch();
   try {
     const before = fs.readFileSync(epub);
-    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), log: quiet });
+    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: fakeServer(), endpoint: ENDPOINT, log: quiet });
     assert.deepEqual([...fs.readFileSync(epub)], [...before]);
   } finally {
     clean();
@@ -168,9 +171,9 @@ test('a rejected answer is asked again, and a good second answer is kept', async
     // empty answer fails a single block on its length and fails a group on its
     // structure — nothing can be read back out of nothing — so every chunk pays
     // exactly one retry, groups included.
-    const server = fakeOllama((user, attempt) => (attempt === 1 ? '' : shout(user)));
+    const server = fakeServer((user, attempt) => (attempt === 1 ? '' : shout(user)));
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: quiet,
     });
     assert.equal(report.retries, 16, 'one rejected answer per chunk, not per block');
     assert.equal(server.asked.length, 32);
@@ -194,9 +197,9 @@ test('three bad answers leave the block in the source language and finish the bo
   try {
     const logged: string[] = [];
     // Every answer drops the markers and is far too short.
-    const server = fakeOllama(() => 'nope');
+    const server = fakeServer(() => 'nope');
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: (m) => logged.push(m),
     });
 
     {
@@ -277,9 +280,9 @@ test('a book where nothing at all passed verification is refused outright', asyn
   )));
   try {
     // Junk short enough to fail the ratio test on every block, markers dropped.
-    const server = fakeOllama(() => 'x');
+    const server = fakeServer(() => 'x');
     await assert.rejects(
-      translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet }),
+      translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: quiet }),
       (error: Error) => {
         assert.ok(error instanceof TranslateError);
         assert.match(error.message, /not one of 3 blocks came back as a translation/);
@@ -313,9 +316,9 @@ test('a model that echoes everything is written out, and is the operator\'s prob
    */
   const { epub, out, clean } = scratch();
   try {
-    const server = fakeOllama((user) => user); // echoes everything, always
+    const server = fakeServer((user) => user); // echoes everything, always
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: quiet,
     });
 
     assert.equal(report.keptUntranslated.length, 0, 'an echo is an answer, not a failure');
@@ -339,22 +342,11 @@ test('a server that stops answering ends the run instead of retrying the book', 
    */
   const { epub, out, clean } = scratch();
   try {
-    const server = fakeOllama();
+    const server = fakeServer();
     let calls = 0;
-    /*
-     * THE UNLOAD IS NOT AN ATTEMPT, and is counted separately for that reason.
-     * Every run now ends by asking the server to drop the weights — see
-     * `translateEpub` — and on the failing path that request is the whole point:
-     * a run that died at block 12 must not leave the model pinned to the card
-     * for five minutes on behalf of work that produced nothing. It carries
-     * `keep_alive` and no messages, so it is told apart by its body rather than
-     * by its position in the sequence.
-     */
-    let unloaded = 0;
     const dying = {
       ...server,
       post: async (url: string, body: string) => {
-        if (body.includes('"keep_alive"')) { unloaded += 1; return { status: 200, body: '{}' }; }
         calls += 1;
         if (calls > 2) return { status: 500, body: 'model runner has crashed' };
         return server.post(url, body);
@@ -362,12 +354,11 @@ test('a server that stops answering ends the run instead of retrying the book', 
     };
     await assert.rejects(
       translateEpub({
-        epubPath: epub, outPath: out, to: 'en', transport: dying, concurrency: 1, log: quiet,
+        epubPath: epub, outPath: out, to: 'en', transport: dying, endpoint: ENDPOINT, concurrency: 1, log: quiet,
       }),
       /answered 500/,
     );
     assert.equal(calls, 3, 'it stops at the first server failure, it does not retry it');
-    assert.equal(unloaded, 1, 'a failed run still gives the card back');
   } finally {
     clean();
   }
@@ -376,11 +367,13 @@ test('a server that stops answering ends the run instead of retrying the book', 
 test('a missing model is refused before any block is sent, with the list of models', async () => {
   const { epub, out, clean } = scratch();
   try {
-    const server = fakeOllama(undefined, ['qwen2.5:14b', 'llama3.1:8b']);
+    const server = fakeServer(undefined, ['qwen2.5:14b', 'llama3.1:8b']);
     await assert.rejects(
-      translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet }),
+      translateEpub({
+        epubPath: epub, outPath: out, to: 'en', model: 'qwen3.8:27b', transport: server, endpoint: ENDPOINT, log: quiet,
+      }),
       (error: Error) => {
-        assert.match(error.message, /has no model named "qwen3.8:27b"/);
+        assert.match(error.message, /is not serving "qwen3.8:27b"/);
         assert.match(error.message, /qwen2\.5:14b, llama3\.1:8b/);
         return true;
       },
@@ -397,9 +390,9 @@ test('a book with no foundry stamps never reaches the model', async () => {
   const plain = path.join(dir, 'Publisher.epub');
   try {
     fs.writeFileSync(plain, plainEpub());
-    const server = fakeOllama();
+    const server = fakeServer();
     await assert.rejects(
-      translateEpub({ epubPath: plain, outPath: out, to: 'en', transport: server, log: quiet }),
+      translateEpub({ epubPath: plain, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: quiet }),
       /not a foundry-converted book/,
     );
     assert.equal(server.asked.length, 0);
@@ -426,8 +419,8 @@ test('a list that fits the budget is ONE request, spliced back per <li>', async 
    */
   const { epub, out, clean } = scratch();
   try {
-    const server = fakeOllama();
-    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet });
+    const server = fakeServer();
+    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: quiet });
 
     const payload = askedFor(server.asked, 'Aufhebung der Vertraege')!;
     assert.equal(
@@ -455,8 +448,8 @@ test('a list that fits the budget is ONE request, spliced back per <li>', async 
 test('a quotation goes as its paragraphs and comes back as its paragraphs', async () => {
   const { epub, out, clean } = scratch();
   try {
-    const server = fakeOllama();
-    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet });
+    const server = fakeServer();
+    await translateEpub({ epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: quiet });
 
     assert.equal(
       askedFor(server.asked, 'Der erste Absatz'),
@@ -484,9 +477,9 @@ test('inline markers inside list items are unique across the whole request', asy
    */
   const { epub, out, clean } = scratch();
   try {
-    const server = fakeOllama();
+    const server = fakeServer();
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: quiet,
     });
     const payload = askedFor(server.asked, 'Gleichschaltung')!;
     assert.match(payload, /⟦e1⟧Gleichschaltung⟦\/e1⟧/);
@@ -516,9 +509,9 @@ test('a list over the budget is cut into runs of consecutive items', async () =>
     + '\n</ul>';
   const { epub, out, clean } = scratch(foundryEpubWith(chapterWith(body)));
   try {
-    const server = fakeOllama();
+    const server = fakeServer();
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: quiet,
     });
 
     assert.equal(report.blocks, 60);
@@ -559,9 +552,9 @@ test('a table split by the budget carries its header row in the PROMPT, not the 
     + '<tr><th>Jahr</th><th>Bemerkung</th></tr>' + rows + '</table></div>';
   const { epub, out, clean } = scratch(foundryEpubWith(chapterWith(body)));
   try {
-    const server = fakeOllama();
+    const server = fakeServer();
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: quiet,
     });
 
     assert.equal(report.blocks, 82, '41 rows of two cells');
@@ -621,14 +614,14 @@ test('an answer with the wrong number of lines falls back to one request per blo
   const { epub, out, clean } = scratch();
   try {
     const logged: string[] = [];
-    const server = fakeOllama((user) => {
+    const server = fakeServer((user) => {
       const lines = user.split('\n');
       // Only the four-item list is sabotaged, and only by losing a line.
       if (lines.length !== 4 || !user.includes('Vertraege')) return shout(user);
       return shout(lines.slice(0, 3).join('\n'));
     });
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: (m) => logged.push(m),
     });
 
     assert.equal(report.retries, 3, 'the chunk was asked three times before it gave up on the shape');
@@ -657,9 +650,9 @@ test('a cell holding a "|" makes the whole table go one cell per request, by nam
   const { epub, out, clean } = scratch();
   try {
     const logged: string[] = [];
-    const server = fakeOllama();
+    const server = fakeServer();
     await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: (m) => logged.push(m),
     });
 
     assert.ok(logged.some((l) => /the table at EPUB\/text\/c0001\.xhtml block 26 is sent one block per request rather than whole — cell 1 contains a "\|"/.test(l)));
@@ -687,14 +680,14 @@ test('one bad part of a group stays in the source language and the rest do not',
   const { epub, out, clean } = scratch();
   try {
     const logged: string[] = [];
-    const server = fakeOllama((user) => {
+    const server = fakeServer((user) => {
       if (user === 'Drittens die Ordnung des Berufsstandes.') return 'no';
       const lines = user.split('\n');
       if (lines.length !== 4 || !user.includes('Vertraege')) return shout(user);
       return lines.map((line, i) => (i === 2 ? '3. no' : shout(line))).join('\n');
     });
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: (m) => logged.push(m),
     });
 
     assert.equal(report.keptUntranslated.length, 1);
@@ -735,9 +728,9 @@ test('a table whose cells hold markup with no rule is left in German AND NAMED',
   const { epub, out, clean } = scratch(foundryEpubWith(chapterWith(body)));
   try {
     const logged: string[] = [];
-    const server = fakeOllama();
+    const server = fakeServer();
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: (m) => logged.push(m),
     });
 
     assert.equal(report.blocks, 1, 'the table never became blocks at all');
@@ -779,9 +772,9 @@ test('a list this stage cannot take apart is sent one item at a time, by name', 
   const { epub, out, clean } = scratch(foundryEpubWith(chapterWith(body)));
   try {
     const logged: string[] = [];
-    const server = fakeOllama();
+    const server = fakeServer();
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, log: (m) => logged.push(m),
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, log: (m) => logged.push(m),
     });
 
     // The innermost stamp still wins, exactly as it did before grouping: the
@@ -1017,7 +1010,7 @@ test('a killed run leaves every answer it had accepted in the bank, and the next
   const { epub, out, clean } = scratch(paragraphs(P1, P2, P3, 'Der vierte lange Absatz steht hier.'));
   const { bankPath } = bankIn(out);
   try {
-    const server = fakeOllama();
+    const server = fakeServer();
     let calls = 0;
     const dying: Transport = {
       ...server,
@@ -1029,7 +1022,7 @@ test('a killed run leaves every answer it had accepted in the bank, and the next
     };
     await assert.rejects(
       translateEpub({
-        epubPath: epub, outPath: out, to: 'en', transport: dying, bankPath, concurrency: 1, log: quiet,
+        epubPath: epub, outPath: out, to: 'en', transport: dying, endpoint: ENDPOINT, bankPath, concurrency: 1, log: quiet,
       }),
       /answered 500/,
     );
@@ -1044,9 +1037,9 @@ test('a killed run leaves every answer it had accepted in the bank, and the next
     assert.equal(lines[1]!.source, P2);
 
     // The run that follows asks for the two that are missing and nothing else.
-    const second = fakeOllama();
+    const second = fakeServer();
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: second, bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: second, endpoint: ENDPOINT, bankPath, log: quiet,
     });
     assert.equal(second.asked.length, 2, 'the two blocks that never landed, and no others');
     assert.equal(report.fromBank, 2);
@@ -1071,9 +1064,18 @@ test('a second run over the same book with the same bank asks for NOTHING', asyn
   const { epub, out, clean } = scratch();
   const { bankPath } = bankIn(out);
   try {
-    const first = fakeOllama();
+    const first = fakeServer();
+    /*
+     * FOUR IN FLIGHT, SAID OUT LOUD, because the count below depends on it. The
+     * duplicate rule answers a repeated question out of the bank AS IT LANDS,
+     * so the second "Jahr" is answered from the bank only if the first one has
+     * landed before it is dispatched. Four is narrower than the gap between the
+     * two tables and was the default this number was measured under; the
+     * default is now twelve, which puts both in flight together and asks twice.
+     */
     const one = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: first, bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: first, endpoint: ENDPOINT, bankPath,
+      concurrency: 4, log: quiet,
     });
     assert.equal(first.asked.length, 16);
     /*
@@ -1088,10 +1090,10 @@ test('a second run over the same book with the same bank asks for NOTHING', asyn
     const before = fs.readFileSync(out);
 
     fs.rmSync(out);
-    const second = fakeOllama();
+    const second = fakeServer();
     const logged: string[] = [];
     const two = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: second, bankPath, log: (m) => logged.push(m),
+      epubPath: epub, outPath: out, to: 'en', transport: second, endpoint: ENDPOINT, bankPath, log: (m) => logged.push(m),
     });
 
     assert.equal(second.asked.length, 0, 'not one request');
@@ -1120,18 +1122,18 @@ test('editing one paragraph re-asks that paragraph and nothing else', async () =
   const { epub, out, clean } = scratch(paragraphs(P1, P2, P3));
   const { dir, bankPath } = bankIn(out);
   try {
-    const first = fakeOllama();
+    const first = fakeServer();
     await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: first, bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: first, endpoint: ENDPOINT, bankPath, log: quiet,
     });
     assert.equal(first.asked.length, 3);
 
     const edited = 'Der zweite Absatz, den jemand von Hand geaendert hat.';
     const epub2 = path.join(dir, 'Buch-bearbeitet.epub');
     fs.writeFileSync(epub2, paragraphs(P1, edited, P3));
-    const second = fakeOllama();
+    const second = fakeServer();
     const report = await translateEpub({
-      epubPath: epub2, outPath: out, to: 'en', transport: second, bankPath, log: quiet,
+      epubPath: epub2, outPath: out, to: 'en', transport: second, endpoint: ENDPOINT, bankPath, log: quiet,
     });
 
     assert.deepEqual(second.asked, [edited], 'exactly the paragraph that changed');
@@ -1157,25 +1159,26 @@ test('a different model or different instructions re-asks the whole book', async
   const { bankPath } = bankIn(out);
   const models = ['qwen3.8:27b', 'qwen2.5:14b'];
   try {
-    const first = fakeOllama(undefined, models);
+    const first = fakeServer(undefined, models);
     await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: first, bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', model: 'qwen3.8:27b', transport: first, endpoint: ENDPOINT, bankPath, log: quiet,
     });
 
-    const other = fakeOllama(undefined, models);
+    const other = fakeServer(undefined, models);
     const byModel = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', model: 'qwen2.5:14b', transport: other, bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', model: 'qwen2.5:14b', transport: other, endpoint: ENDPOINT, bankPath, log: quiet,
     });
     assert.equal(other.asked.length, 3, 'a different model is a different question');
     assert.equal(byModel.fromBank, 0);
 
-    const told = fakeOllama(undefined, models);
+    const told = fakeServer(undefined, models);
     const byInstructions = await translateEpub({
       epubPath: epub,
       outPath: out,
       to: 'en',
+      model: 'qwen3.8:27b',
       instructions: 'Leave "völkisch" untranslated.',
-      transport: told,
+      transport: told, endpoint: ENDPOINT,
       bankPath,
       log: quiet,
     });
@@ -1194,17 +1197,17 @@ test('--fresh-bank asks every block again into a pending bank and swaps it in wi
   const { dir, bankPath } = bankIn(out);
   try {
     await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: fakeServer(), endpoint: ENDPOINT, bankPath, log: quiet,
     });
     assert.equal(bankLines(bankPath).length, 3);
 
-    const server = fakeOllama();
+    const server = fakeServer();
     const logged: string[] = [];
     const report = await translateEpub({
       epubPath: epub,
       outPath: out,
       to: 'en',
-      transport: server,
+      transport: server, endpoint: ENDPOINT,
       bankPath,
       freshBank: true,
       log: (m) => logged.push(m),
@@ -1235,13 +1238,13 @@ test('a --fresh-bank run that dies leaves the old answers untouched, and the ret
   const { dir, bankPath } = bankIn(out);
   try {
     await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: fakeServer(), endpoint: ENDPOINT, bankPath, log: quiet,
     });
     const first = bankLines(bankPath);
     assert.equal(first.length, 3);
     fs.rmSync(out);
 
-    const server = fakeOllama();
+    const server = fakeServer();
     let calls = 0;
     const dying: Transport = {
       ...server,
@@ -1256,7 +1259,7 @@ test('a --fresh-bank run that dies leaves the old answers untouched, and the ret
         epubPath: epub,
         outPath: out,
         to: 'en',
-        transport: dying,
+        transport: dying, endpoint: ENDPOINT,
         bankPath,
         freshBank: true,
         concurrency: 1,
@@ -1273,9 +1276,9 @@ test('a --fresh-bank run that dies leaves the old answers untouched, and the ret
     assert.equal(bankLines(`${bankPath}.pending`).length, 2);
 
     // The retry pays for the one block that is missing, not for three.
-    const second = fakeOllama();
+    const second = fakeServer();
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: second, bankPath, freshBank: true, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: second, endpoint: ENDPOINT, bankPath, freshBank: true, log: quiet,
     });
     assert.equal(second.asked.length, 1);
     assert.equal(report.fromBank, 2);
@@ -1291,16 +1294,16 @@ test('a bank whose last line was cut off by a kill costs exactly that one block'
   const { bankPath } = bankIn(out);
   try {
     await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: fakeServer(), endpoint: ENDPOINT, bankPath, log: quiet,
     });
     // A process killed mid-append leaves half a line. It is DROPPED, because
     // that is the normal consequence of the kill this file exists for.
     const whole = fs.readFileSync(bankPath, 'utf8');
     fs.writeFileSync(bankPath, whole.slice(0, whole.length - 25));
 
-    const server = fakeOllama();
+    const server = fakeServer();
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, bankPath, log: quiet,
     });
     assert.deepEqual(server.asked, [P3]);
     assert.equal(report.fromBank, 2);
@@ -1343,7 +1346,7 @@ test('freshBank with no bank at all is refused rather than doing nothing', async
   try {
     await assert.rejects(
       translateEpub({
-        epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), freshBank: true, log: quiet,
+        epubPath: epub, outPath: out, to: 'en', transport: fakeServer(), endpoint: ENDPOINT, freshBank: true, log: quiet,
       }),
       /no bank for it to act on/,
     );
@@ -1392,14 +1395,17 @@ test('a chunk with some parts banked travels WHOLE, and a refused block is never
   const { epub, out, clean } = scratch();
   const { bankPath } = bankIn(out);
   try {
-    const first = fakeOllama((user) => {
+    const first = fakeServer((user) => {
       if (user === 'Drittens die Ordnung des Berufsstandes.') return 'no';
       const lines = user.split('\n');
       if (lines.length !== 4 || !user.includes('Vertraege')) return shout(user);
       return lines.map((line, i) => (i === 2 ? '3. no' : shout(line))).join('\n');
     });
+    // Four in flight for the reason the same-bank test gives: the duplicate
+    // "Jahr" is answered from the bank only if the first has landed first.
     const one = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: first, bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: first, endpoint: ENDPOINT, bankPath,
+      concurrency: 4, log: quiet,
     });
     assert.equal(one.keptUntranslated.length, 1);
     // Twenty-nine askable blocks, one refused and one answered out of the bank
@@ -1408,12 +1414,12 @@ test('a chunk with some parts banked travels WHOLE, and a refused block is never
     assert.equal(bankLines(bankPath).length, 27, 'and the refusal is not in the file');
 
     // The second run: everything is banked except the item that was refused.
-    const second = fakeOllama((user) => user.split('\n').map((line) => {
+    const second = fakeServer((user) => user.split('\n').map((line) => {
       const numbered = /^(\d+)\.\s*([\s\S]*)$/.exec(line);
       return numbered === null ? `${shout(line)} [2]` : `${numbered[1]}. ${shout(numbered[2]!)} [2]`;
     }).join('\n'));
     const two = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: second, bankPath, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: second, endpoint: ENDPOINT, bankPath, log: quiet,
     });
 
     assert.equal(second.asked.length, 1, 'one request: the chunk that still has a hole in it');
@@ -1444,9 +1450,9 @@ test('a paragraph that appears twice in a book is asked once', async () => {
   const { epub, out, clean } = scratch(paragraphs(P1, P2, P1));
   const { bankPath } = bankIn(out);
   try {
-    const server = fakeOllama();
+    const server = fakeServer();
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, bankPath, concurrency: 1, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, bankPath, concurrency: 1, log: quiet,
     });
     assert.deepEqual(server.asked, [P1, P2]);
     assert.equal(report.fromBank, 1);
@@ -1519,13 +1525,13 @@ test('answers arriving in a scrambled order produce the identical book', async (
   const serial = path.join(path.dirname(out), 'Serial.epub');
   try {
     await translateEpub({
-      epubPath: epub, outPath: serial, to: 'en', transport: fakeOllama(), concurrency: 1, log: quiet,
+      epubPath: epub, outPath: serial, to: 'en', transport: fakeServer(), endpoint: ENDPOINT, concurrency: 1, log: quiet,
     });
 
     // A delay with no relation to the order the chunks were sent in.
-    const scrambled = slowOllama(fakeOllama(), (_user, order) => ((order * 37) % 11) * 3);
+    const scrambled = slowOllama(fakeServer(), (_user, order) => ((order * 37) % 11) * 3);
     const report = await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: scrambled, concurrency: 6, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: scrambled, endpoint: ENDPOINT, concurrency: 6, log: quiet,
     });
 
     assert.equal(report.chunks, 16);
@@ -1546,15 +1552,15 @@ test('answers arriving in a scrambled order produce the identical book', async (
 test('concurrency actually overlaps, and one means one', async () => {
   const { epub, out, clean } = scratch();
   try {
-    const many = slowOllama(fakeOllama(), () => 5);
+    const many = slowOllama(fakeServer(), () => 5);
     await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: many, concurrency: 6, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: many, endpoint: ENDPOINT, concurrency: 6, log: quiet,
     });
     assert.equal(many.maxOpen(), 6, 'six requests were open at the same moment');
 
-    const one = slowOllama(fakeOllama(), () => 1);
+    const one = slowOllama(fakeServer(), () => 1);
     await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: one, concurrency: 1, log: quiet,
+      epubPath: epub, outPath: out, to: 'en', transport: one, endpoint: ENDPOINT, concurrency: 1, log: quiet,
     });
     assert.equal(one.maxOpen(), 1, 'and with one worker there is never a second request open');
   } finally {
@@ -1572,9 +1578,9 @@ test('the counts stay honest out of order: nothing they report ever goes backwar
   const { epub, out, clean } = scratch();
   try {
     const logged: string[] = [];
-    const server = slowOllama(fakeOllama(), (_user, order) => ((order * 17) % 7) * 4);
+    const server = slowOllama(fakeServer(), (_user, order) => ((order * 17) % 7) * 4);
     await translateEpub({
-      epubPath: epub, outPath: out, to: 'en', transport: server, concurrency: 5, log: (m) => logged.push(m),
+      epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, concurrency: 5, log: (m) => logged.push(m),
     });
 
     const rising = (lines: readonly string[], pattern: RegExp, last: number): void => {
@@ -1614,7 +1620,7 @@ test('a server error ends the run at once, and the error is the FIRST one', asyn
    */
   const { epub, out, clean } = scratch();
   try {
-    const base = fakeOllama();
+    const base = fakeServer();
     let open = 0;
     let slowFinished = false;
     const dying: Transport = {
@@ -1642,7 +1648,7 @@ test('a server error ends the run at once, and the error is the FIRST one', asyn
 
     await assert.rejects(
       translateEpub({
-        epubPath: epub, outPath: out, to: 'en', transport: dying, concurrency: 4, log: quiet,
+        epubPath: epub, outPath: out, to: 'en', transport: dying, endpoint: ENDPOINT, concurrency: 4, log: quiet,
       }),
       (error: Error) => {
         assert.match(error.message, /answered 503/);
@@ -1672,10 +1678,10 @@ test('the wholesale-failure guard still fires, and says truthfully what is left'
   const many = Array.from({ length: 30 }, (_, i) => `Ein hinreichend langer Absatz mit der Nummer ${i + 1}.`);
   const { epub, out, clean } = scratch(paragraphs(...many));
   try {
-    const server = fakeOllama(() => 'x');
+    const server = fakeServer(() => 'x');
     await assert.rejects(
       translateEpub({
-        epubPath: epub, outPath: out, to: 'en', transport: server, concurrency: 4, log: quiet,
+        epubPath: epub, outPath: out, to: 'en', transport: server, endpoint: ENDPOINT, concurrency: 4, log: quiet,
       }),
       (error: Error) => {
         assert.ok(error instanceof TranslateError);
@@ -1697,7 +1703,7 @@ test('a concurrency that is not a count of requests is refused before the book i
     for (const bad of [0, -1, 2.5]) {
       await assert.rejects(
         translateEpub({
-          epubPath: epub, outPath: out, to: 'en', transport: fakeOllama(), concurrency: bad, log: quiet,
+          epubPath: epub, outPath: out, to: 'en', transport: fakeServer(), endpoint: ENDPOINT, concurrency: bad, log: quiet,
         }),
         (error: Error) => error instanceof TranslateError && /at least 1/.test(error.message),
         `concurrency ${bad}`,

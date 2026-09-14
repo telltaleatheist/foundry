@@ -89,10 +89,8 @@ import { decodeEntityAt, parseXml, type XmlElement, type XmlNode } from '../epub
 import { BookError, readFoundryBook, type BookDocument } from '../translate/book.js';
 import { findBlocks, spliceAll, type BlockSite } from '../translate/blocks.js';
 import { TranslationBank } from '../translate/bank.js';
-import {
-  concurrencyFor, defaultEndpointFor, openModelServer, type ServerKind,
-} from '../translate/model-server.js';
-import { fetchTransport, type Transport } from '../translate/ollama.js';
+import { DEFAULT_TEXT_CONCURRENCY, openModelServer } from '../translate/model-server.js';
+import { fetchTransport, type Transport } from '../translate/transport.js';
 
 import { blockDigest } from './digest.js';
 import { narrationTextPrompt } from './prompt.js';
@@ -104,7 +102,7 @@ import {
 } from './stamp.js';
 import type { NarrationNumberTarget, NarrationTextRewrite } from './targets.js';
 import {
-  askAboutEach, DEFAULT_CLEAN_CONCURRENCY, DEFAULT_NORMALIZER_MODEL, EVERY_CLASS,
+  askAboutEach, EVERY_CLASS,
   NORMALIZER_VERSION,
 } from './tts-number-normalizer.js';
 import type {
@@ -188,29 +186,17 @@ interface EpubBlock {
 export interface CleanEpubOptions {
   epubPath: string;
   outPath: string;
-  /** Default `DEFAULT_OLLAMA_ENDPOINT`. */
-  endpoint?: string;
+  /** The server. Required: there is no default port for a server nobody registered. */
+  endpoint: string;
   /**
-   * Default `DEFAULT_NORMALIZER_MODEL` — Clean text carries its OWN declared
-   * default (Owen's 2026-09-02 ruling), not the translate default, which
-   * belongs to a different pass. The 27b is chosen by typing it into Settings.
+   * The model that reads the residue. Absent means the one the server holds
+   * (the book route's rule, `run.ts`); a name that is given is proved first.
    */
   model?: string;
   /**
-   * Which kind of server is on the other end — `--server`. Default `ollama`.
-   *
-   * DECLARED, NEVER SNIFFED (translate/model-server.ts). It changes the
-   * transport and the two things that hang off it — where the server is by
-   * default, and how many blocks are worth having in flight — and nothing about
-   * what this pass decides: same prompt, same temperature 0, same validators,
-   * same `NORMALIZER_VERSION`. A book cleaned through Ollama and the same book
-   * cleaned through vLLM are the same pass asked of different plumbing.
-   */
-  server?: ServerKind;
-  /**
-   * How many blocks are asked about at once. Default
-   * `DEFAULT_CLEAN_CONCURRENCY` under Ollama, `DEFAULT_VLLM_CONCURRENCY` under
-   * vLLM (`concurrencyFor`).
+   * How many blocks are asked about at once. Default `DEFAULT_TEXT_CONCURRENCY`
+   * (translate/model-server.ts says why twelve; the vendored driver's own
+   * `DEFAULT_CLEAN_CONCURRENCY` was the serial server's four and is not read).
    *
    * The book route's field, in the book route's words, because it is the same
    * pass over the same runner: it changes nothing about what is decided — not
@@ -220,8 +206,6 @@ export interface CleanEpubOptions {
    * (`askAboutEach`).
    */
   concurrency?: number;
-  /** Leave the weights loaded when the run ends. */
-  keepModel?: boolean;
   /** Injected so the tests drive the whole pass with no server and no GPU. */
   transport?: Transport;
   /** Injected so a test can settle every block without a transport at all. */
@@ -371,19 +355,26 @@ function isRefusal(status: string): boolean {
 export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOutcome> {
   const started = Date.now();
   const at = new Date().toISOString();
-  const kind = opts.server ?? 'ollama';
-  const endpoint = opts.endpoint ?? defaultEndpointFor(kind);
+  const endpoint = opts.endpoint;
   const transport = opts.transport ?? fetchTransport();
   /*
    * Resolved HERE and not at the runner, the book route's rule for the book
    * route's reason one step over: this route writes no records, but it does
    * write a STAMP, and a stamp naming a model that did not answer is a claim
-   * about the file that is not true. Under vLLM an absent `--model` means
-   * "whatever is served", and the only way to know that is to ask.
+   * about the file that is not true. An absent `--model` means "whatever is
+   * served", and the only way to know that is to ask.
    */
-  const model = opts.model ?? (kind === 'vllm'
-    ? (await openModelServer({ kind, transport, endpoint })).model
-    : DEFAULT_NORMALIZER_MODEL);
+  /*
+   * A CALLER-SUPPLIED RUNNER NAMES ITS OWN MODEL, and the server is not asked.
+   * The runner carries `model` for exactly this — a test that hands one in is
+   * asserting that no server is reached, and a round trip to learn a name the
+   * runner already knows would make "the model was never called" unprovable
+   * (and, against a URL nobody is listening on, would hang the test for the
+   * transport's whole deadline).
+   */
+  const model = opts.model
+    ?? opts.runner?.model
+    ?? (await openModelServer({ transport, endpoint })).model;
   const epubPath = path.resolve(opts.epubPath);
   const outPath = path.resolve(opts.outPath);
 
@@ -561,14 +552,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
 
   const runner = opts.runner ?? (asks.length === 0
     ? NOTHING_TO_ASK
-    : await openModelRunner({
-      model,
-      endpoint,
-      server: kind,
-      transport,
-      ...(opts.keepModel === undefined ? {} : { keepModel: opts.keepModel }),
-      log: opts.log,
-    }));
+    : await openModelRunner({ model, endpoint, transport, log: opts.log }));
 
   const settled = await askAboutEach(
     asks,
@@ -581,7 +565,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
     },
     'every-block',
     EVERY_CLASS,
-    opts.concurrency ?? concurrencyFor(kind, DEFAULT_CLEAN_CONCURRENCY),
+    opts.concurrency ?? DEFAULT_TEXT_CONCURRENCY,
   );
 
   // ── The verdicts, applied, and the answers banked as they land ────────────

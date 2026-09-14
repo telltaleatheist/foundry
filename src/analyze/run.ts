@@ -12,7 +12,7 @@
  *   2. WINDOW — surviving sentences expand to their neighbours and merge,
  *      category-blind, into paragraph-sized passages. Scoring stays per
  *      sentence; judging moves to the passage.
- *   3. VERIFY — one schema-constrained Ollama call per (window, category),
+ *   3. VERIFY — one schema-constrained model call per (window, category),
  *      answering one question: is the author asserting this, or reporting,
  *      quoting, questioning or arguing against it?
  *
@@ -33,13 +33,9 @@ import * as fs from 'node:fs';
 
 import { stripBom } from '../bom.js';
 import {
-  concurrencyFor, openModelServer, releaseModel, type ModelServer, type ServerKind,
+  DEFAULT_TEXT_CONCURRENCY, openModelServer, type ModelServer,
 } from '../translate/model-server.js';
-import {
-  fetchTransport,
-  normaliseEndpoint,
-  type Transport,
-} from '../translate/ollama.js';
+import { fetchTransport, type Transport } from '../translate/transport.js';
 import { parseBookFile } from '../vlm/book-file.js';
 import { NliWorker, NLI_MODEL_ID, type NliWorkerOptions } from './nli-bridge.js';
 import {
@@ -76,7 +72,6 @@ import {
 import {
   askVerdict,
   buildVerificationPrompt,
-  stageNumCtx,
   windowFinding,
   type WindowFinding,
 } from './verify.js';
@@ -121,19 +116,12 @@ const SCORE_BATCH = 500;
 /**
  * How many verify calls are in flight at once when nobody said a number.
  *
- * ── ONE UNDER OLLAMA, AND THAT IS THE OLD BEHAVIOUR EXACTLY ─────────────────
- *
- * `verifyStage`'s header has always said why: Ollama serialises requests per
- * model anyway, so a pool there buys queueing rather than throughput. Nothing
- * about an Ollama run moves — same order, same progress line, same report.
- *
- * ── AND vLLM IS THE REASON THAT SENTENCE NEEDED A DEFAULT AT ALL ────────────
- *
- * `concurrencyFor` answers 12 under vLLM, which batches the requests in flight
- * TOGETHER (docs/VLLM.md). The stage is hundreds of tiny closed questions over
- * one loaded model — the shape that gains most from it.
+ * The server batches the requests in flight TOGETHER (docs/VLLM.md), and this
+ * stage is hundreds of tiny closed questions over one loaded model — the shape
+ * that gains most from it. It was 1 under the serial server this engine no
+ * longer speaks to; `DEFAULT_TEXT_CONCURRENCY` says why twelve.
  */
-const DEFAULT_ANALYZE_CONCURRENCY = 1;
+const DEFAULT_ANALYZE_CONCURRENCY = DEFAULT_TEXT_CONCURRENCY;
 
 export interface AnalyzeOptions {
   /** The book file. Read, never written. */
@@ -145,20 +133,16 @@ export interface AnalyzeOptions {
   /**
    * The model that answers the verdicts.
    *
-   * Under `--server vllm` this may be absent, and absent MEANS something there:
-   * a vLLM serves exactly one model, so the run asks the server what it is,
-   * uses it, and writes that name into the verdict cache key and the report
-   * header (src/translate/vllm.ts). Under Ollama it is required by the caller's
-   * own default, because an Ollama holds a library.
+   * May be absent, and absent MEANS something: the server holds one resident
+   * model, so the run asks the server what it is, uses it, and writes that name
+   * into the verdict cache key and the report header (src/translate/vllm.ts).
+   * A name that is given is proved against the server before any work starts.
    */
   model?: string;
-  /** The server. Never started, never stopped by this program. */
+  /** The server. Never started, never stopped, never loaded by this program. */
   endpoint: string;
-  /** Which kind of server answers — `--server`. Default `ollama`. */
-  server?: ServerKind;
   /**
-   * Verify calls in flight at once. Default `DEFAULT_ANALYZE_CONCURRENCY` under
-   * Ollama, `DEFAULT_VLLM_CONCURRENCY` under vLLM.
+   * Verify calls in flight at once. Default `DEFAULT_ANALYZE_CONCURRENCY`.
    *
    * It changes the SPEED and never a verdict: every call is an independent
    * closed question at temperature 0, the answers are put back into the jobs'
@@ -250,7 +234,7 @@ function readPlan(categoriesPath: string | null | undefined, log: (line: string)
  *
  * ── THE ORDER OF THE FIRST ACTS IS THE CHEAP-CHECK-FIRST RULE ───────────────
  *
- * The Ollama preflight is one HTTP GET and names a missing model in a sentence
+ * The server preflight is one HTTP GET and names a missing model in a sentence
  * somebody can act on, so it happens BEFORE a Python interpreter spends ninety
  * seconds loading a gigabyte of weights for a run that was always going to fail
  * at its first verdict.
@@ -272,18 +256,15 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
   const report = opened.report;
 
   const transport = opts.transport ?? fetchTransport();
-  const kind = opts.server ?? 'ollama';
-  const endpoint = normaliseEndpoint(opts.endpoint);
   /*
-   * PROVED FIRST, and now it also RESOLVES: under vLLM an absent model means
-   * the served one, and the answer has to be in hand before the verdict keys
-   * are composed (`verdictKey` hashes the model's name), or this run would file
-   * its answers under a name that did not answer them.
+   * PROVED FIRST, and it also RESOLVES: an absent model means the served one,
+   * and the answer has to be in hand before the verdict keys are composed
+   * (`verdictKey` hashes the model's name), or this run would file its answers
+   * under a name that did not answer them.
    */
   const server = await openModelServer({
-    kind,
     transport,
-    endpoint,
+    endpoint: opts.endpoint,
     ...(opts.model === undefined ? {} : { model: opts.model }),
   });
 
@@ -365,25 +346,14 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
     const windows = await rankWindows(sentences, plan, scoreTexts, log);
     result = await verifyStage({
       windows, sentences, plan, report, transport, server,
-      concurrency: opts.concurrency ?? concurrencyFor(kind, DEFAULT_ANALYZE_CONCURRENCY),
+      concurrency: opts.concurrency ?? DEFAULT_ANALYZE_CONCURRENCY,
       hypotheses, bankSha, generation, log,
     });
   } finally {
+    // The NLI worker is this run's own process and goes with it. The model on
+    // the card is NOT this run's to give back: the operator made it resident,
+    // and a pass ending is not a reason to take it off (translate/model-server.ts).
     startedWorker()?.stop();
-    /*
-     * The card back, best-effort, exactly as translate ends. It runs in the
-     * `finally` so a FAILED run gives the memory back too, and it can never
-     * fail a run that produced its report — a server that has already gone away
-     * has, by definition, released what this was asking it to release.
-     */
-    const outcome = await releaseModel(transport, kind, server.endpoint, server.model);
-    log(outcome === 'not-ours'
-      ? 'analyze: nothing to unload — a vLLM process IS its weights, and only stopping the server '
-        + 'frees the card, which is not one job\'s decision to make (translate/model-server.ts).'
-      : outcome === 'released'
-        ? `analyze: asked ollama to unload "${server.model}" — the card is free for the next job.`
-        : `analyze: ollama did not acknowledge unloading "${server.model}". If it is still resident `
-          + 'it will fall out on its own idle timer.');
   }
   return result;
 }
@@ -400,13 +370,12 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
  * order and only land out of it, so what is finished first is still what was
  * worth finishing first.
  *
- * ── SEQUENTIAL IS STILL THE DEFAULT UNDER OLLAMA, and it is still not timidity ─
+ * ── TWELVE IN FLIGHT BY DEFAULT, and it is not recklessness ────────────────
  *
- * Ollama serialises requests per model anyway, so a pool there buys queueing
- * rather than throughput. `DEFAULT_ANALYZE_CONCURRENCY` is 1 and an Ollama run
- * is byte for byte the run it always was. vLLM is what changed the sentence:
- * it batches the requests in flight together, and this stage — hundreds of tiny
- * closed questions over one loaded model — is the shape that gains most.
+ * The server batches the requests in flight together, and this stage — hundreds
+ * of tiny closed questions over one loaded model — is the shape that gains
+ * most. It was sequential under the serial server this engine no longer speaks
+ * to, and a pool never moved a verdict there either.
  *
  * ── WHAT THE POOL IS NOT ALLOWED TO MOVE ───────────────────────────────────
  *
@@ -458,23 +427,12 @@ async function verifyStage(args: {
     }
   }
 
-  /*
-   * ONE num_ctx FOR EVERY CALL IN THE STAGE, sized from the largest prompt.
-   * Ollama fully reloads the model on ANY num_ctx change, and these prompts
-   * differ only by the length of their passage — per-call sizing would buy
-   * reloads and nothing else.
-   */
-  const numCtx = stageNumCtx(jobs.map((job) => job.prompt), args.server.model);
   const cached = jobs.filter((job) => report.verdict(job.key) !== undefined).length;
-  /*
-   * A vLLM IS NOT TOLD A WINDOW, so the line must not claim one. Its context is
-   * fixed when the server is launched and `num_ctx` has no counterpart on that
-   * route (`askConstrained`); saying "at num_ctx 8192" there would be this
-   * program reporting a setting it did not send.
-   */
+  // No window is named here: the server's is fixed when the model was made
+  // resident, and a line claiming one would be this program reporting a
+  // setting it did not send.
   log(
     `analyze: ${windows.length} passage(s) and ${jobs.length} verify call(s) `
-    + (args.server.kind === 'vllm' ? '' : `at num_ctx ${numCtx} `)
     + `on ${args.server.model}`
     + (args.concurrency > 1 ? `, up to ${args.concurrency} in flight` : '')
     + `; ${cached} of them are already answered and cost nothing.`,
@@ -490,7 +448,7 @@ async function verifyStage(args: {
     let verdict = report.verdict(job.key);
     if (verdict === undefined) {
       asked += 1;
-      const outcome = await askVerdict(args.transport, args.server, job.prompt, numCtx);
+      const outcome = await askVerdict(args.transport, args.server, job.prompt);
       if (outcome.verdict === null) {
         /*
          * A DEGRADATION IS A SKIP AND A WARNING, NEVER A FLAG. There are three

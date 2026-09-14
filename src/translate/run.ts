@@ -162,16 +162,15 @@ import { bankKey, openTranslationBank, swapPendingBankIntoPlace } from './bank.j
 import { findBlocks, retagLanguage, spliceAll, type BlockSite, type GroupKind } from './blocks.js';
 import { languageRange, navLabels, readFoundryBook, resolveHref, type FoundryBook } from './book.js';
 import { bookRowPlan, bookTitlePlan, readBookFile } from './bookrows.js';
+import { textActOf, type TextAct } from './act.js';
 import { flowTextOf } from './flowtext.js';
 import { readLanguage, type NamedLanguage } from './languages.js';
 import {
   checkMarkers, maskBlock, MarkerError, restoreMarkers, stripMarkers,
   type MarkerCounter, type MaskedBlock,
 } from './markers.js';
-import {
-  askModel, concurrencyFor, defaultEndpointFor, openModelServer, releaseModel, type ServerKind,
-} from './model-server.js';
-import { fetchTransport, type Transport } from './ollama.js';
+import { askModel, DEFAULT_TEXT_CONCURRENCY, openModelServer } from './model-server.js';
+import { fetchTransport, type Transport } from './transport.js';
 import {
   chapterPosition, openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
 } from './records.js';
@@ -196,35 +195,26 @@ export class TranslateError extends Error {
  * why the qwen3 family and not qwen2.5. takesThinkField's prefix match
  * covers the new family spelling (qwen3.8...) already, verified before the
  * switch. The mirror in app/shared/pipeline.ts moves in the same commit.
+ *
+ * THE ENGINE NO LONGER DEFAULTS TO IT (2026-09-13). An absent `--model` means
+ * the model the server holds — the operator made one resident before this run
+ * was spawned, and a run that named a different one would be refused by name.
+ * The constant stays exported because the app's settings still START from it
+ * as the name to make resident; it is a picker's default, not a run's.
  */
 export const DEFAULT_TRANSLATE_MODEL = 'qwen3.8:27b';
 
 /**
- * Ollama's own default, which is where it is unless somebody moved it.
- *
- * DECLARED IN `model-server.ts` and re-exported here. The value belongs beside
- * vLLM's default and beside the rule that picks between them — one file
- * answering "where is that kind of server" — and every caller in this repo has
- * always imported it from this module, so moving the declaration without leaving
- * the name here would be a rename dressed up as a refactor.
- */
-export { DEFAULT_OLLAMA_ENDPOINT } from './model-server.js';
-
-/**
  * How many requests are in flight at once, unless somebody says otherwise.
  *
- * FOUR IS A STARTING POINT AND NOT A MEASUREMENT, and that is said out loud
- * here and in the help because foundry's other concurrency default is not like
- * this one: `DEFAULT_VLM_CONCURRENCY` is twelve because twelve is where the
- * measured knee was on the machine it was built against. Nobody has run that
- * experiment for Ollama on a translation, so this number is chosen to be
- * obviously better than one — a serial run leaves the GPU idle between blocks,
- * and Ollama batches concurrent requests — while being small enough that it
- * cannot be the reason somebody's server started swapping. The right value is a
+ * It was four under the serial server this engine no longer speaks to — a
+ * starting point, never a measurement. The one door that remains batches the
+ * requests in flight together, and `DEFAULT_TEXT_CONCURRENCY` (model-server.ts)
+ * says why twelve is the number for every text act. The right value is still a
  * property of somebody else's GPU and their model's size, which is why it is a
  * flag at all.
  */
-export const DEFAULT_TRANSLATE_CONCURRENCY = 4;
+export const DEFAULT_TRANSLATE_CONCURRENCY = DEFAULT_TEXT_CONCURRENCY;
 
 /** Attempts per block: the first, then two retries. */
 const ATTEMPTS = 3;
@@ -443,18 +433,14 @@ export interface TranslateOptions {
   to: string;
   /** Source language tag. Absent means the model is told to detect it. */
   from?: string;
-  model?: string;
-  endpoint?: string;
   /**
-   * Which kind of server is on the other end — `--server`. Default `ollama`.
-   *
-   * DECLARED, NEVER SNIFFED, and `model-server.ts` argues that at length. What
-   * it changes here is the transport and the two things that hang off it: the
-   * endpoint default (`defaultEndpointFor`) and how many requests are worth
-   * having in flight (`concurrencyFor`). The prompts, the temperature, the
-   * verification and the bank are the same on both.
+   * The model. Absent means the one the server holds — it holds exactly one,
+   * made resident by the operator before this run was spawned — and the served
+   * id is what the bank is keyed by. A name that is given is proved first.
    */
-  server?: ServerKind;
+  model?: string;
+  /** The server. Required: there is no default port for a server nobody registered. */
+  endpoint: string;
   /** Free text appended to the system prompt, verbatim. */
   instructions?: string;
   /**
@@ -487,19 +473,6 @@ export interface TranslateOptions {
   concurrency?: number;
   /** The HTTP boundary. Injected by tests; the real one is `fetchTransport()`. */
   transport?: Transport;
-  /**
-   * Leave the model resident when the run ends.
-   *
-   * The default is to unload it (see `translateEpub`): one book is thousands of
-   * requests, and when the last one lands the weights are twenty gigabytes held
-   * against nothing, on the card the reading server needs next.
-   *
-   * This is the escape hatch for the case where that is wrong — an Ollama this
-   * machine does not own, serving somebody else at the same time, where one
-   * book finishing is not a reason to empty the GPU under them. Ownership is
-   * not something this module can work out for itself, so it is asked for.
-   */
-  keepModel?: boolean;
   log: (message: string) => void;
 }
 
@@ -513,7 +486,7 @@ export interface TranslateReport {
   /**
    * Chapter titles asked of the model — the divisions whose names no heading of
    * the book answers for, on the book-file route in records mode (see the titles
-   * pass in `runTranslation`). NOT part of `blocks`, which counts the book's own
+   * pass in `translateEpub`). NOT part of `blocks`, which counts the book's own
    * paragraphs and headings and means exactly what it always did.
    *
    * Zero on every other route by construction: a run that writes an EPUB
@@ -559,7 +532,7 @@ export interface TranslateReport {
    * table was before the cell route existed.
    *
    * Zero on the cast route, where tables are still refused whole — see the
-   * records-mode table branch in `runTranslation` for what wiring it would need.
+   * records-mode table branch in `translateEpub` for what wiring it would need.
    */
   tables: number;
   tableCells: number;
@@ -1335,6 +1308,7 @@ function planChunks(
   groupKind: GroupKind | 'titles',
   rowSizes: number[],
   parts: PendingBlock[],
+  act: TextAct,
   log: (message: string) => void,
 ): Chunk[] {
   const documentPath = parts[0]!.documentPath;
@@ -1347,7 +1321,7 @@ function planChunks(
   const trouble = chunkAmbiguity(kind, parts.map((p) => p.masked.text), rowSizes);
   if (trouble !== null) {
     log(
-      `translate: the ${groupKind} at ${documentPath} block ${parts[0]!.ordinal} is sent one block `
+      `${act}: the ${groupKind} at ${documentPath} block ${parts[0]!.ordinal} is sent one block `
       + `per request rather than whole — ${trouble}`,
     );
     return parts.map(alone);
@@ -1398,70 +1372,18 @@ function planChunks(
 }
 
 /**
- * Translate a book, and GIVE THE WEIGHTS BACK when it is over.
+ * Translate a book — or rewrite one, when `rewrite` is set.
  *
- * ── Why this wrapper exists ────────────────────────────────────────────────
- *
- * Everything about translating is in `runTranslation` below. This is here for
- * one sentence: when the run ends, for ANY reason, the model stops occupying
- * the GPU.
- *
- * Ollama keeps a model resident for five minutes after its last request, and
- * every request resets that clock. For a chat window that is exactly right. For
- * this program it means a book that finished at block 2,400 leaves twenty
- * gigabytes pinned behind it, on the same card the reading server wants, and
- * the next thing the user asks for either waits for a timer nobody can see or
- * fails for want of memory. The user reported precisely this: *"the translation
- * ai isnt being brought down when translation completes."*
- *
- * ── `finally`, and the three ways a run can end ────────────────────────────
- *
- * A finished run, a failed run, and a killed one all end with the model loaded,
- * and the failed ones are the WORST case — a run that died at block 12 of 2,400
- * has just claimed the card for five minutes on behalf of work that produced
- * nothing. So the release is in a `finally` rather than after the return, and
- * it is best-effort by construction (`unloadModel` cannot throw): a run that
- * wrote everything it was asked for is not going to be reported as failed
- * because the server would not take a courtesy call.
- *
- * ── Only a server we asked to load it ──────────────────────────────────────
- *
- * Skipped when the run never got as far as proving the model, because there is
- * then nothing of ours resident to unload — and skipped when the caller says
- * the endpoint is not this machine's to manage (`--keep-model`), since a shared
- * Ollama serving three people is not something one book's end should empty.
+ * NOTHING IS GIVEN BACK WHEN IT IS OVER. This used to sit inside a wrapper whose
+ * one job was to unload the model in a `finally`, because a serial server kept
+ * weights resident on an idle timer after the last request. The server this
+ * engine speaks to now holds what the operator made resident and a pass ending
+ * is not a reason to take it off the card — a load evicts, so an unload here
+ * would be one job deciding for whatever runs next (translate/model-server.ts).
  */
 export async function translateEpub(opts: TranslateOptions): Promise<TranslateReport> {
-  const kind = opts.server ?? 'ollama';
-  const model = opts.model ?? DEFAULT_TRANSLATE_MODEL;
-  const endpoint = opts.endpoint ?? defaultEndpointFor(kind);
-  const transport = opts.transport ?? fetchTransport();
-  try {
-    return await runTranslation(opts);
-  } finally {
-    if (opts.keepModel !== true) {
-      /*
-       * `model` HERE IS THE ONE THAT WAS ASKED FOR, not the one that answered —
-       * this line runs on the failure path too, where the run may never have
-       * reached the server to resolve it. It is only ever used in the ollama
-       * branch, where the two are the same string by `requireModel`'s own
-       * exact-match rule; under vLLM the release asks nothing and names nothing.
-       */
-      const outcome = await releaseModel(transport, kind, endpoint, model);
-      opts.log(
-        outcome === 'not-ours'
-          ? 'translate: nothing to unload — a vLLM process IS its weights, and only stopping the '
-            + 'server frees the card, which is not one job\'s decision to make (model-server.ts).'
-          : outcome === 'released'
-            ? `translate: asked ollama to unload "${model}" — the card is free for the next job.`
-            : `translate: ollama did not acknowledge unloading "${model}". If it is still resident it `
-              + 'will fall out on its own idle timer; nothing about the book depends on this.',
-      );
-    }
-  }
-}
-
-async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> {
+  // The name every line of this run starts with. See act.ts for the ruling.
+  const act: TextAct = textActOf(opts.rewrite);
   const started = Date.now();
 
   /*
@@ -1563,19 +1485,17 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       + `least 1, not ${opts.concurrency}.`,
     );
   }
-  const kind = opts.server ?? 'ollama';
-  const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_TRANSLATE_CONCURRENCY);
+  const concurrency = opts.concurrency ?? DEFAULT_TRANSLATE_CONCURRENCY;
 
   /*
-   * THE MODEL IS NOT RESOLVED YET, and that is the change vLLM brought. Under
-   * Ollama a run must name a model because the server holds a library; under
-   * vLLM the server serves one and naming it is retyping its launch argument, so
-   * an absent `--model` means "whatever is being served" and the answer comes
-   * back from `openModelServer` below. Everything that records a model reads it
-   * from there, so the record can never name something that did not answer.
+   * THE MODEL IS NOT RESOLVED YET. The server holds one resident model and
+   * naming it is retyping a choice the operator already made, so an absent
+   * `--model` means "whatever is being served" and the answer comes back from
+   * `openModelServer` below. Everything that records a model reads it from
+   * there, so the record can never name something that did not answer.
    */
-  const wanted = opts.model ?? (kind === 'vllm' ? undefined : DEFAULT_TRANSLATE_MODEL);
-  const endpoint = opts.endpoint ?? defaultEndpointFor(kind);
+  const wanted = opts.model;
+  const endpoint = opts.endpoint;
   const transport = opts.transport ?? fetchTransport();
   const to = readLanguage(opts.to, '--to');
   const from = opts.from === undefined ? null : readLanguage(opts.from, '--from');
@@ -1596,12 +1516,11 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   /*
    * The server is proved BEFORE the blocks are masked, and the model with it.
    * Masking two thousand paragraphs is a second of work, so this is not about
-   * speed — it is that "no Ollama server answered at http://localhost:11434" is
-   * the whole of what a person needs, and burying it under a page of parse
-   * progress makes them read the page first.
+   * speed — it is that "no server answered at <url>" is the whole of what a
+   * person needs, and burying it under a page of parse progress makes them read
+   * the page first.
    */
   const server = await openModelServer({
-    kind,
     transport,
     endpoint,
     ...(wanted === undefined ? {} : { model: wanted }),
@@ -1615,10 +1534,10 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    * saying whether this run is going to translate the book or resume one is a
    * log somebody can read four hours later.
    *
-   * AFTER `requireModel`, and that order no longer decides anything about
+   * AFTER the server is proved, and that order no longer decides anything about
    * somebody's answers — it used to. `--fresh-bank` ARCHIVED, so opening the
    * bank before the server was proved could rotate a bank aside and then fail
-   * with "no Ollama server answered at http://localhost:11434", accomplishing
+   * with "no server answered at <url>", accomplishing
    * nothing at all. It now opens a pending file instead and the old bank is
    * untouched until the book lands, which makes that failure cost an empty file.
    * The order stays because the server error is still the first thing a person
@@ -1629,6 +1548,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     : openTranslationBank({
       bankPath: opts.bankPath,
       freshRequested: opts.freshBank === true,
+      act,
     });
   if (bank !== null) opts.log(bank.sentence);
 
@@ -1674,7 +1594,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     : TranslationRecords.open(opts.sourceRecordsPath);
   if (sourceRecords !== null) {
     opts.log(
-      `translate: this is a chain — ${sourceRecords.positions} position(s) of `
+      `${act}: this is a chain — ${sourceRecords.positions} position(s) of `
       + `${opts.sourceRecordsPath!} are the SOURCE, and a block that file does not answer for is `
       + 'translated from the book\'s own words instead.',
     );
@@ -1776,11 +1696,11 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
      */
     for (const one of plan.kept) {
       kept.push(one);
-      opts.log(`translate: LEFT IN THE SOURCE LANGUAGE — ${one}`);
+      opts.log(`${act}: LEFT IN THE SOURCE LANGUAGE — ${one}`);
     }
     // Decisions that left nothing untranslated — a grid of nothing but folios.
     // Said before the work, because they change what the run is about to do.
-    for (const one of plan.notes) opts.log(`translate: ${one}`);
+    for (const one of plan.notes) opts.log(`${act}: ${one}`);
     tableCarried += plan.tableCarried;
 
     for (const group of plan.groups) {
@@ -1812,7 +1732,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
           : `${where} ${group.parts.map((part) => part.id).join(', ')} (${category})`;
         kept.push(`${name} — ${error.message}`);
         opts.log(
-          `translate: ${name} LEFT IN THE SOURCE LANGUAGE — its words carry the characters this `
+          `${act}: ${name} LEFT IN THE SOURCE LANGUAGE — its words carry the characters this `
           + `stage sends markers in, so they never travelled: ${error.message}`,
         );
         continue;
@@ -1895,7 +1815,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
         pending.push(block);
         return block;
       });
-      chunks.push(...planChunks(group.kind, group.rowSizes, parts, opts.log));
+      chunks.push(...planChunks(group.kind, group.rowSizes, parts, act, opts.log));
     }
 
     /*
@@ -1948,7 +1868,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     const spine = bookTitlePlan(bookFile);
     if (opts.rewrite !== undefined && spine.length > 0) {
       opts.log(
-        `translate: ${spine.length} chapter title(s) LEFT AS PRINTED — this run is a `
+        `${act}: ${spine.length} chapter title(s) LEFT AS PRINTED — this run is a `
         + `${opts.rewrite} rewrite rather than a translation, and a division's name is the book's `
         + 'own label for that division rather than prose. Only a real translation asks about the '
         + 'spine, so the green dotted lines carry the names exactly as the book prints them.',
@@ -1975,7 +1895,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
         const name = `${where} the division above ${one.id}`;
         kept.push(`${name} — ${error.message}`);
         opts.log(
-          `translate: ${name} LEFT IN THE SOURCE LANGUAGE — its name carries the characters this `
+          `${act}: ${name} LEFT IN THE SOURCE LANGUAGE — its name carries the characters this `
           + `stage sends markers in, so it never travelled: ${error.message}`,
         );
         continue;
@@ -2000,7 +1920,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       titleParts.push(block);
     }
     titleCount = titleParts.length;
-    if (titleParts.length > 0) chunks.push(...planChunks('titles', [], titleParts, opts.log));
+    if (titleParts.length > 0) chunks.push(...planChunks('titles', [], titleParts, act, opts.log));
   }
 
   for (const document of book?.documents ?? []) {
@@ -2016,7 +1936,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     }
     // Containers `blocks.ts` could not take apart. Said here, before the work,
     // because it changes what the run is about to do and not what it did.
-    for (const note of found.notes) opts.log(`translate: ${note}`);
+    for (const note of found.notes) opts.log(`${act}: ${note}`);
 
     for (const group of found.groups) {
       /*
@@ -2066,7 +1986,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
         const why = 'a table\'s text is the vision model\'s own HTML and its cells are not banked '
           + 'blocks, so there is no position a record about one could be written against';
         kept.push(`${name} — ${why}`);
-        opts.log(`translate: ${name} LEFT IN THE SOURCE LANGUAGE — ${why}`);
+        opts.log(`${act}: ${name} LEFT IN THE SOURCE LANGUAGE — ${why}`);
         continue;
       }
 
@@ -2150,7 +2070,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
           const name = `${document.path} table${where} (${group.parts.length} cells)`;
           kept.push(`${name} — ${error.message}`);
           opts.log(
-            `translate: ${name} LEFT IN THE SOURCE LANGUAGE — its cells hold markup this stage has `
+            `${act}: ${name} LEFT IN THE SOURCE LANGUAGE — its cells hold markup this stage has `
             + `no rule for, so its words never travelled: ${error.message}`,
           );
           continue;
@@ -2177,7 +2097,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
         const name = `${document.path} ${category}${where} (${group.parts.length} block(s))`;
         kept.push(`${name} — ${error.message}`);
         opts.log(
-          `translate: ${name} LEFT IN THE SOURCE LANGUAGE — its words are markup this stage has no `
+          `${act}: ${name} LEFT IN THE SOURCE LANGUAGE — its words are markup this stage has no `
           + `text-level rule for, so they never travelled: ${error.message}`,
         );
         continue;
@@ -2197,7 +2117,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
         pending.push(block);
         return block;
       });
-      chunks.push(...planChunks(group.kind, group.rowSizes, parts, opts.log));
+      chunks.push(...planChunks(group.kind, group.rowSizes, parts, act, opts.log));
     }
   }
 
@@ -2226,7 +2146,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   // documents would be cut if anything were writing documents. Nothing is.
   const documents = bookFile === null ? perDocument.size : 1;
   opts.log(
-    `translate: ${pending.length - titleCount} blocks`
+    `${act}: ${pending.length - titleCount} blocks`
     // Said apart from the block count, because a chapter title is not a block of
     // the book and a person reading this line is being told what it will cost.
     + (titleCount === 0
@@ -2244,7 +2164,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    * and the one language involved, which is the whole of the difference.
    */
   opts.log(
-    `translate: ${model} at ${server.endpoint} (${server.kind}), `
+    `${act}: ${model} at ${server.endpoint}, `
     + (opts.rewrite === undefined
       ? `${from === null ? 'detected source' : from.name} → ${to.name}`
       : `rewriting in ${to.name} (${opts.rewrite})`)
@@ -2260,7 +2180,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    */
   if (sourceRecords !== null) {
     opts.log(
-      `translate: ${chained} of ${pending.length} block(s) are translated from the parent's answer `
+      `${act}: ${chained} of ${pending.length} block(s) are translated from the parent's answer `
       + `and ${pending.length - chained} from the book's own words`
       + (chained === 0
         ? ' — NOTHING IN THIS BOOK IS ANSWERED BY THAT FILE, so this run is not a chain: check that '
@@ -2373,7 +2293,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     const dropped = checkMarkers(block.masked, answer);
     if (dropped !== null) {
       markerNotes += 1;
-      opts.log(`translate: block ${block.ordinal} — ${dropped}; the answer was kept anyway`);
+      opts.log(`${act}: block ${block.ordinal} — ${dropped}; the answer was kept anyway`);
     }
     if (source === 'model') {
       /*
@@ -2396,7 +2316,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     } else {
       recordRow(block, answer);
     }
-    opts.log(`translate: block ${settled}/${pending.length} (${block.documentPath})`);
+    opts.log(`${act}: block ${settled}/${pending.length} (${block.documentPath})`);
   };
 
   /**
@@ -2465,7 +2385,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     }
     if (newest?.author === 'user') {
       opts.log(
-        `translate: ${parts} was corrected by hand and its source text has since changed, so this `
+        `${act}: ${parts} was corrected by hand and its source text has since changed, so this `
         + 'run\'s answer takes over — the correction is still in the file, above it.',
       );
     }
@@ -2510,7 +2430,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     const grid = spliceTableGrid(table.grid, table.words);
     if ('complaint' in grid) {
       kept.push(`${table.where} — ${grid.complaint}`);
-      opts.log(`translate: ${table.where} LEFT IN THE SOURCE LANGUAGE — ${grid.complaint}`);
+      opts.log(`${act}: ${table.where} LEFT IN THE SOURCE LANGUAGE — ${grid.complaint}`);
       return;
     }
     if (done === 0) {
@@ -2518,7 +2438,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       // grid itself, and a record holding the source text is a longer way of
       // saying nothing — the wordless rule, said about a whole table.
       opts.log(
-        `translate: ${table.where} — not one of its ${table.asked} cell(s) came back, so the grid is `
+        `${act}: ${table.where} — not one of its ${table.asked} cell(s) came back, so the grid is `
         + 'in the book exactly as it was read',
       );
       return;
@@ -2527,7 +2447,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     // question's key and the next run asks again. See `PendingTable`.
     appendRecord(table.parts, done === table.asked ? table.key : '', grid.text);
     opts.log(
-      `translate: ${table.where} — ${done} of ${table.asked} cell(s) with words came back`
+      `${act}: ${table.where} — ${done} of ${table.asked} cell(s) with words came back`
       + (done === table.asked
         ? ', and the grid is written whole'
         : `; the other ${table.asked - done} are in the grid exactly as the book printed them, and `
@@ -2583,7 +2503,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
      */
     if (block.cell !== undefined) settleTableCell(block.cell, null);
     opts.log(
-      `translate: block ${block.ordinal} LEFT IN THE SOURCE LANGUAGE after ${ATTEMPTS} attempts `
+      `${act}: block ${block.ordinal} LEFT IN THE SOURCE LANGUAGE after ${ATTEMPTS} attempts `
       + `— ${describe(block, block.masked.text)} — ${complaint}`,
     );
     /*
@@ -2675,7 +2595,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       lastComplaint = complaint;
       retries += 1;
       opts.log(
-        `translate: block ${block.ordinal} attempt ${attempt}/${ATTEMPTS} rejected — ${complaint}`,
+        `${act}: block ${block.ordinal} attempt ${attempt}/${ATTEMPTS} rejected — ${complaint}`,
       );
     }
 
@@ -2714,12 +2634,12 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       lastComplaint = parsed.complaint;
       retries += 1;
       opts.log(
-        `translate: chunk ${chunk.ordinal} attempt ${attempt}/${ATTEMPTS} rejected — ${parsed.complaint}`,
+        `${act}: chunk ${chunk.ordinal} attempt ${attempt}/${ATTEMPTS} rejected — ${parsed.complaint}`,
       );
     }
 
     opts.log(
-      `translate: chunk ${chunk.ordinal} (${chunk.of}, ${chunk.parts.length} parts) FELL BACK to one `
+      `${act}: chunk ${chunk.ordinal} (${chunk.of}, ${chunk.parts.length} parts) FELL BACK to one `
       + `request per block after ${ATTEMPTS} attempts — ${lastComplaint}`,
     );
     return null;
@@ -2812,7 +2732,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       const complaint = checkAnswer(part.masked.text, answer);
       if (complaint === null) { accept(part, answer, 'model'); continue; }
       opts.log(
-        `translate: block ${part.ordinal} came back inside chunk ${chunk.ordinal} — ${complaint}; `
+        `${act}: block ${part.ordinal} came back inside chunk ${chunk.ordinal} — ${complaint}; `
         + 'asking for it on its own',
       );
       await askOne(part);
@@ -2855,7 +2775,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
       }
       done += 1;
       opts.log(
-        `translate: ${done}/${chunks.length} requests done — chunk ${chunk.ordinal} `
+        `${act}: ${done}/${chunks.length} requests done — chunk ${chunk.ordinal} `
         + `(${chunk.of}, ${chunk.parts.length} part${chunk.parts.length === 1 ? '' : 's'})`,
       );
     }
@@ -2870,13 +2790,13 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    */
   if (bank !== null) {
     opts.log(
-      `translate: ${fromBank} of ${pending.length} block(s) came out of the bank and ${answered} `
+      `${act}: ${fromBank} of ${pending.length} block(s) came out of the bank and ${answered} `
       + `were asked of ${model}; every answer this run accepted is in ${bank.bank.filePath}.`,
     );
   }
   if (records !== null) {
     opts.log(
-      `translate: ${fromBank} of ${pending.length} block(s) were already answered in the records and `
+      `${act}: ${fromBank} of ${pending.length} block(s) were already answered in the records and `
       + `${answered} were asked of ${model}; ${recordsWritten} row(s) were written to `
       + `${records.records.filePath}`
       + (recordsHumanKept === 0
@@ -2893,7 +2813,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    */
   if (titleCount > 0) {
     opts.log(
-      `translate: ${titleCount} chapter title(s) travelled with the blocks — the divisions of this `
+      `${act}: ${titleCount} chapter title(s) travelled with the blocks — the divisions of this `
       + 'book that no heading answers for, which is a name somebody typed or a part divider the page '
       + 'classifier composed. Every other title in the spine is read off its own translated heading '
       + 'when the book is made, and costs nothing.',
@@ -2927,10 +2847,10 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
 
   if (kept.length > 0) {
     opts.log(
-      `translate: ${kept.length} of ${pending.length} blocks stayed in the source language — `
+      `${act}: ${kept.length} of ${pending.length} blocks stayed in the source language — `
       + 'they are in the book exactly as it wrote them:',
     );
-    for (const one of kept) opts.log(`translate:   - ${one}`);
+    for (const one of kept) opts.log(`${act}:   - ${one}`);
   }
 
   // ── the records ───────────────────────────────────────────────────────────
@@ -2950,7 +2870,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     swapPendingRecordsIntoPlace(opts.recordsPath!, records.pendingPath);
     if (records.pendingPath !== null) {
       opts.log(
-        `translate: these records were asked into ${records.pendingPath}, so they have taken the `
+        `${act}: these records were asked into ${records.pendingPath}, so they have taken the `
         + `place of ${opts.recordsPath} — one rename, after every block had a verdict.`,
       );
     }
@@ -3064,7 +2984,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   const range = languageRange(book.opfSource);
   rewritten.set(book.opfPath, spliceAll(book.opfSource, [{ ...range, text: to.tag }]));
 
-  const nav = relabelNav(book, headingsBefore, headings, opts.log);
+  const nav = relabelNav(book, headingsBefore, headings, act, opts.log);
   if (nav !== null) rewritten.set(book.navPath!, nav.source);
 
   const entries: ZipEntry[] = book.members.map((member): ZipEntry => {
@@ -3095,7 +3015,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   if (opts.bankPath !== undefined && bank !== null && bank.pendingPath !== null) {
     swapPendingBankIntoPlace(opts.bankPath, bank.pendingPath);
     opts.log(
-      `translate: this book was made from the answers in ${bank.pendingPath}, so they have taken `
+      `${act}: this book was made from the answers in ${bank.pendingPath}, so they have taken `
       + `the place of ${opts.bankPath} — one rename, after the book landed.`,
     );
   }
@@ -3153,6 +3073,7 @@ function relabelNav(
   book: FoundryBook,
   before: ReadonlyMap<string, DocumentHeadings>,
   after: ReadonlyMap<string, DocumentHeadings>,
+  act: TextAct,
   log: (message: string) => void,
 ): { source: string; relabelled: number; unmapped: number } | null {
   if (book.navPath === null || book.navSource === null) return null;
@@ -3176,7 +3097,7 @@ function relabelNav(
 
   if (unmapped > 0) {
     log(
-      `translate: ${unmapped} contents ${unmapped === 1 ? 'entry' : 'entries'} left in the source `
+      `${act}: ${unmapped} contents ${unmapped === 1 ? 'entry' : 'entries'} left in the source `
       + `language — ${unmapped === 1 ? 'its label is not a copy' : 'their labels are not copies'} of a `
       + 'heading this run translated, and inventing one would put a different title in the contents '
       + 'than on the chapter',

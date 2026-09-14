@@ -103,7 +103,7 @@ describe('clean-text --epub, the failsafe', () => {
     fs.writeFileSync(inPath, book());
 
     const outcome = await cleanTextEpub({
-      epubPath: inPath, outPath, runner: SILENT, log: () => {},
+      epubPath: inPath, outPath, endpoint: 'http://fake:8000/v1', runner: SILENT, log: () => {},
     });
     expect(outcome.blocks).toBe(3);
 
@@ -167,7 +167,7 @@ describe('clean-text --epub, the failsafe', () => {
     const inPath = path.join(dir, 'in.epub');
     fs.writeFileSync(inPath, book());
     await expect(cleanTextEpub({
-      epubPath: inPath, outPath: inPath, runner: SILENT, log: () => {},
+      epubPath: inPath, outPath: inPath, endpoint: 'http://fake:8000/v1', runner: SILENT, log: () => {},
     })).rejects.toThrow(/is --epub itself/);
     fs.rmSync(dir, { recursive: true, force: true });
   });
