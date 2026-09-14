@@ -4683,7 +4683,7 @@ that machine connects by reading `<CRUCIBLE_HOME>/pairing` — nobody types.
 | # | Package | Depends on | Status |
 |---|---|---|---|
 | H | Coordinate-on-connect: catalog read first, module posted only when something is missing, followed/waited/refused by name; the row says what is happening in BookForge's words | SDK 0.6.0 (vendored) | **LANDED** (below) |
-| I | The settings WINDOW: Settings › AI routes card + the wizard's AI step draw `GET /v1/settings` for the chosen server and write through `PUT`; per-class route rows, three upstream cards, Test before Save; nothing stored in app-settings.json | PHASE15 §3.1–3.2, §5.2 | building |
+| I | The settings WINDOW: Settings › AI routes card + the wizard's AI step draw `GET /v1/settings` for the chosen server and write through `PUT`; per-class route rows, three upstream cards, Test before Save; nothing stored in app-settings.json | PHASE15 §3.1–3.2, §5.2 | **LANDED** (below) |
 | J | Connect three ways, in order, automatic: the pairing file → `local`; a pasted connect code (SDK `parsePairing`); "get one on this machine" through `@crucible/bootstrap install()` when it ships (the door keeps refusing by name until then) | PHASE15 §3.6, §5.1 | **LANDED** (below) |
 | K | Dispatch + gates on the route: `--model capability.selected`; no lease and no card lane when the route is upstream (a per-server `[cloud]` lane, width 2, as BookForge); tiles lit iff an enabled server's capability row says `enabled`, dark with the row's own `reason` | H, I | next |
 | L | DELETIONS (PHASE15 §5.3, plus Owen's "no ollama fallbacks"): `cloud-providers.ts`, the cloud card, `ComputeSlotKind 'cloud'`, `placeOnCloud`, `FOUNDRY_ENDPOINT_HEADERS` from an app-held key, `model-lineup-local.json` (the floor is `CatalogRow.floors` alone), the engine's `--server anthropic` and `--server ollama` doors, the wizard's Ollama step and pull, `llm:defaults`/`openingModelFor` (the engine's route decides the model; the dialogs lose the model field), the local slot, **`page-reader.ts` and its two cards** (ruled below), act-gates' own "can this machine do it" reasoning and the CPU rule | I, J, K **and the gate below** | gated |
@@ -4796,3 +4796,48 @@ install.sh), which leaves a connect code this app then finds. Door 2 stays:
 merge with H, measured. Nothing is verified against a real pairing file — no
 host writes one on this PC yet — but the read path was exercised by hand with a
 fake `CRUCIBLE_HOME` for all three outcomes, and no token reached a log line.
+
+#### Package I — the settings window — LANDED 2026-09-14
+
+**The settings are the engine's, and Foundry draws a window.** Owen's ruling —
+Crucible is the SINGLE SOURCE OF TRUTH for AI settings — is now the shape of the
+code: `app/shared/engine-settings.ts` holds the wire types, `electron/crucible-
+settings.ts` holds the three requests (hand-rolled through `crucibleRequest`
+until the SDK carries them), and NOTHING of any of it is stored in
+`app-settings.json`. Every control is one `PUT /v1/settings` and the surface
+redraws from the PUT's own answer (§3.2), so there is no Save button that writes
+an app file and syncs later (§5.2).
+
+**Four doors** — `crucible:engine-settings`, `-settings-put`, `-upstream-test`,
+`-capability` — by server NAME, so the address and the token stay in main. The
+key goes one way: renderer → main → server, never in an answer, a log line or
+argv; the document's `key_hint` is all that comes back. A PUT that touched a
+ROUTE runs `afterRegistryChanged()` (capability is recomputed on such a write,
+§2, and the tiles read it); a key-only save does not. 142 handlers after the
+merge with H and J, measured.
+
+**Settings › "Where the text work runs"**, under the Servers card: one row per
+llm class (local — <model>, each configured upstream's routed model, or a free-
+text `<upstream>/<model>`), a server selector only when more than one is
+registered, hidden only when the registry is empty — NOT hosted-gated, because
+§5.3 says the hosted card draws the host's registry onto the same engine.
+
+**The wizard gained a `routes` step after `crucible`**, shown only when a server
+exists (a hidden step is not drawn, not counted in the rail, and never recorded
+as "skipped"). It prints the engine's own `reason` for each class it cannot
+serve and offers one press that configures the upstream AND sets every one of
+those routes — ONE PUT, because §3.2 applies upstreams then routes then
+validates, and a refusal applies nothing. The three upstream cards are one
+shared child (`components/engine-upstreams/`), mounted by both, the way
+`app-crucible-doors` is. `CapabilityRow`/`CapabilityRecord` moved to shared/
+unchanged so the renderer can read them; `crucible-dispatch.ts` re-exports them.
+
+**Untested by hand, and it cannot be yet:** no build of Crucible answers
+`/v1/settings` anywhere. Every shape is transcribed from PHASE15-HOST.md and
+typechecked, not watched. Two guesses were written down in the code where they
+live and Crucible then PINNED them (c5482ff): `details.field` (a dotted path)
+on every PUT refusal, `details.classes` on `upstream_in_use`, `key_hint`
+rendered verbatim; and the SDK's `testUpstream()` now answers one shape
+(`{ok, models} | {ok:false, code, message}`) and never throws a refusal — the
+hand-rolled reader discriminates on the code across three error classes until
+the tarball carries that method.

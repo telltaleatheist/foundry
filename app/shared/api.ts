@@ -12,6 +12,14 @@ import type { BookOutcome } from './book';
 import type { CrucibleCoordinationMap, CrucibleCoordinationState } from './coordinate-wire';
 import type { HostMintMeta, HostNodeAction, HostOffers, HostStatus } from './host-ops';
 import type { ReadAsk } from './ledger';
+import type {
+  CapabilityRecord,
+  SettingsDocument,
+  SettingsPatch,
+  UpstreamName,
+  UpstreamProbe,
+  UpstreamTestResult,
+} from './engine-settings';
 import type { BookOp, PendingOutcome, PendingStack } from './ops';
 import type { ReReadPrompt } from './reread';
 import type {
@@ -1552,6 +1560,68 @@ export interface FoundryApi {
      * One server's state per call; the map above is what a screen loads with.
      */
     onCoordination(listener: (state: CrucibleCoordinationState) => void): () => void;
+
+    /**
+     * ── THE ENGINE'S OWN SETTINGS — a window, never a copy ──────────────────
+     *
+     * Wave 62 package I, to crucible `docs/PHASE15-HOST.md` §3.1, §3.2, §3.3
+     * and §5.2. Owen's ruling: the GPU engine is the SINGLE SOURCE OF TRUTH for
+     * AI settings — *"If the user enters an anthropic api key, it should pass
+     * through to crucible"* — so these four read and write a store that lives
+     * on the SERVER, and this app keeps no copy of any of it. §5.2: *"every
+     * control in these sections is a request to the engine, and its result is
+     * the engine's answer re-read. There is no Save button that writes an app
+     * file and syncs later."*
+     *
+     * BY SERVER NAME, like `open` and for the same reason: the address and the
+     * token are looked up in main, so no credential is ever in the renderer.
+     * Rejects by name when the registry no longer has that server.
+     *
+     * NO ANSWER HERE CARRIES A KEY. `SettingsDocument` has `keyHint` — the last
+     * four characters (§3.1: *"a key is write-only"*) — where the engine has a
+     * key, which is `CrucibleServerView.tokenSet`'s rule one wire along.
+     */
+    engineSettings(serverName: string): Promise<SettingsDocument>;
+    /**
+     * WRITE THROUGH — any subset of the document, answered with the WHOLE
+     * document after the write (§3.2), which is what every surface redraws
+     * from. A window that redrew from what it sent would be showing a route the
+     * engine may have refused.
+     *
+     * ONE REQUEST CARRIES BOTH HALVES when both are needed: §3.2 applies
+     * upstreams, then routes, then validates, and *"a refusal applies
+     * nothing"* — which is what lets the wizard configure a key AND set the
+     * routes that name it in a single press.
+     *
+     * REJECTS WITH A SENTENCE THAT NAMES THE FIELD for the four named refusals
+     * (`route_not_routable`, `route_bad_model`, `route_upstream_unconfigured`,
+     * `upstream_in_use`); the card draws it beside the control.
+     */
+    engineSettingsPut(serverName: string, patch: SettingsPatch): Promise<SettingsDocument>;
+    /**
+     * WHAT MODEL IDS A CREDENTIAL CAN USE — the engine asks the upstream's own
+     * listing, unbilled, and THAT is the list a person picks from. There is
+     * deliberately no compiled catalog of cloud model names anywhere in this
+     * app (§2: *"the server does not ship a cloud model list"*; the Cloud card
+     * made the same argument for itself).
+     *
+     * `probe` is an UNSAVED key or url, or absent for the configured one. The
+     * key crosses one way, is used for one request and is dropped. A failure is
+     * a RESULT so the card can print it beside the box.
+     */
+    engineUpstreamTest(
+      serverName: string,
+      upstream: UpstreamName,
+      probe?: UpstreamProbe,
+    ): Promise<UpstreamTestResult>;
+    /**
+     * THE CAPABILITY RECORD, BY SERVER NAME — the wizard's routes step.
+     *
+     * §5.2: the step *"reads capability; for each llm class that is `enabled:
+     * false` locally it says the class's reason"*. That sentence is the
+     * server's own and nothing in the settings document carries it.
+     */
+    engineCapability(serverName: string): Promise<CapabilityRecord>;
   };
 
   /**

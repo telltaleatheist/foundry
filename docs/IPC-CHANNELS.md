@@ -92,6 +92,46 @@ card. The vendored module (`app/shared/foundry.module.json`) is read in main and
 posted from main; the renderer is never told what is in it, and does not need to
 be — the words are composed from the MISSING list in
 `app/src/app/core/crucible-words.ts`.
+**FOUR DOORS ON 2026-09-14 — WAVE 62 PACKAGE I, THE SETTINGS WINDOW. COUNTED BY
+SCRIPT OVER `app/electron/ipc.ts` AFTER THE MERGE WITH PACKAGES H AND J: 142
+`ipcMain.handle` call sites, 142 distinct channel names, zero `ipcMain.on`.**
+Nothing was removed, nothing was renamed, and no existing shape narrowed.
+
+**AND THE FIGURE BELOW WAS STALE AGAIN BY TWO.** The head of this file said
+**130** and the source measured **132** before this change — two doors added
+under a stale figure, which is the failure the paragraph under this one and the
+2026-08-22 / 2026-08-23 paragraphs below already record three times. A FIGURE
+QUOTED AS A GATE IS A MEASUREMENT OR IT IS DECORATION. The per-family tables
+remain the authority for the NAMES; where a total contradicts them, the tables
+win.
+
+- **ADDED: `crucible:engine-settings`, `crucible:engine-settings-put`,
+  `crucible:engine-upstream-test`, `crucible:engine-capability`** — the window
+  onto ONE registered server's own settings (crucible `docs/PHASE15-HOST.md`
+  §3.1, §3.2, §3.3, §5.2). Owen's ruling: the GPU engine is the SINGLE SOURCE OF
+  TRUTH for AI settings, so these four read and write a store that lives on the
+  SERVER and touch `app-settings.json` not at all — *"every control in these
+  sections is a request to the engine, and its result is the engine's answer
+  re-read. There is no Save button that writes an app file and syncs later."*
+  Each row is described in the `crucible:` table below.
+
+  **`engine-` rather than four more bare `crucible:` members**, because that
+  family already means "this app's registry of servers" and these are not about
+  the registry: they are about what ONE of those servers has been configured to
+  do. **They take a server NAME**, like `crucible:open` and for the same reason —
+  the address and the token are looked up in main, so nothing a renderer holds
+  could send a key to an engine this app has not been told about. **And no answer
+  on any of the four carries a credential**: `SettingsDocument` has `keyHint`,
+  the last four characters, where the engine has a key, which is
+  `CrucibleServerView.tokenSet`'s rule one wire along. The wire types live in
+  `app/shared/engine-settings.ts`; `CapabilityRow`/`CapabilityRecord` MOVED there
+  from `electron/crucible-dispatch.ts` unchanged, and that file re-exports them,
+  so every existing importer is untouched and there is still one declaration.
+
+  **No push was added.** A settings write moves the dock's tiles when it touched
+  a route, and the existing `acts:gates-changed` (through `afterRegistryChanged`)
+  is what says so — a second push for the same news would be two writers of one
+  fact.
 
 **THREE DOORS AND A NEW FAMILY ON 2026-09-14 — WAVE 61 PACKAGE F (APP HALF).
 COUNTED BY SCRIPT OVER `app/electron/ipc.ts`: 130 `ipcMain.handle` call sites,
@@ -860,6 +900,10 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `crucible:install` | The driven install. REJECTS on every machine today with the same sentence the disabled button wears — `@crucible/bootstrap` ships with Crucible's next release. The door refuses as well as the button, because a disabled control over an open door is a decoration. |
 | `crucible:coordination` | Where coordination stands with every server it has anything to say about, keyed by registry name. A server absent from the map has not been asked yet. A read — it starts nothing. |
 | `crucible:coordinate` | Coordinate with one named server NOW: read `/v1/info` and `/v1/catalog`, compare the vendored module, and post a `module` task ONLY when something is missing. Idempotent — a second call while one is in flight joins the first. It never rejects; every ending is a state. There is no button behind it, because coordination is automatic on every enabled server (§4a). |
+| `crucible:engine-settings` | (serverName) → `SettingsDocument` — one server's OWN settings (`GET /v1/settings`, crucible docs/PHASE15-HOST.md §3.1): the route and model of each of the four llm classes, which of the three upstreams are configured, the desktop allowance and the backend kind. A REMOTE store — nothing in it is kept in `app-settings.json`. **No key comes back**: the document carries `keyHint`, the last four characters, where the engine carries a key. |
+| `crucible:engine-settings-put` | (serverName, patch) → `SettingsDocument` — write through (`PUT /v1/settings`, §3.2). Any subset; `upstreams.<name>: null` REMOVES one. Answered with the whole document AFTER the write, so no window ever guesses what took. Rejects with a sentence naming the field for `route_not_routable` / `route_bad_model` / `route_upstream_unconfigured` / `upstream_in_use`. Runs the registry's own pass (`afterRegistryChanged`) when the patch touched a ROUTE — §2 recomputes capability on such a write and the dock's tiles are drawn from it — and not when it only saved a key, which moves no capability row. **The key crosses one way**, into main, out of a box somebody is typing in. |
+| `crucible:engine-upstream-test` | (serverName, upstream, probe?) → `UpstreamTestResult` — `POST /v1/settings/upstreams/{name}/test`, the upstream's own model listing, unbilled. `probe` is an UNSAVED `{key}` or `{url}`; absent tests the configured one. This is the ONLY list of cloud model ids anywhere in this app — §2: *"the server does not ship a cloud model list"*, and a catalog compiled into a build is wrong by the next release. A failure is a RESULT carrying the engine's own sentence and its code (`upstream_unreachable` / `upstream_rejected` / `upstream_unconfigured`), not a rejection, so a card can print it beside the box. |
+| `crucible:engine-capability` | (serverName) → `CapabilityRecord` — `GET /v1/capability` for one REGISTERED server, by name. The setup wizard's routes step reads it for the one thing `/v1/settings` does not carry: the server's own sentence about why a class will not run on its card (§5.2). It is `readCapability`, the dispatcher's own reader, exported rather than written twice. |
 | `reading:confirm-re-read` | Compose the "read this book again?" card, which spends GPU on a yes. |
 | `recents:clear` | Forget every recent. |
 | `recents:forget` | Forget one. |
