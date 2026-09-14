@@ -3728,6 +3728,37 @@ BookForge's own doctrine moved here with an engine section on the front.
   its Ollama-gated `--scripture` probe was deliberately not ported, because that
   repo's own ruling keeps it out of the keeper sweep.
 
+
+#### After the packages — three defects the seams exposed (2026-09-14)
+
+**Hosted Crucible placement could not work, and nothing said so.**
+`computeSlots()` took the host's list through `FoundryHost.slots?()` while the
+placement resolved that slot's address and token through this app's own
+registry, which is always empty hosted. A row pinned to a host-offered server
+parked for ever. The host now hands over the REGISTRY (`servers?()`) and the
+slots are derived from it by the same code standalone uses; `slots?()` and
+`hostSlots()` are deleted rather than kept as a fallback, because a path that
+draws slots it cannot resolve credentials for is the bug behind a branch.
+
+**A host's row choice did not cross `runJob`.** The row was stamped with this
+app's default, so a machine chosen on BookForge's screen was answered by a
+setting on ours. `RunOptions.waitFor` carries it; a kind that places nothing,
+or a reading while `CRUCIBLE_READS` is false, drops it WITH a line.
+
+**An empty list was answering two different questions.** "No servers were
+added" and "there was nobody to ask" drew the same blank board. `slots:list`
+now answers `SlotAvailability` — the slots plus a refusal with a code and a
+sentence — and the board draws the sentence where the cards would be. Two
+codes, because a missing seam and a seam that threw are different facts; the
+second exists because BookForge throws before its first snapshot and catching
+that into `[]` would have told somebody their servers were gone.
+
+Also struck this week: `CapabilityClass` was a second spelling of `ModelClass`
+and is now an alias; `DEFAULT_VLLM_ENDPOINT` was dead and named a product the
+engine no longer knows; the translate floor moved to a 27B on Owen's ruling
+(*"either they use the 27b or they use an api key"*), which `model-lineup-local.json`
+had been quietly lowering to the 9B.
+
 #### The app half — three ledger actions, the hosted tile, the stamp on the file
 
 BookForge needs the book's text prepared before it is read aloud. Owen ruled
@@ -4447,7 +4478,8 @@ Crucible servers in priority order (`AppSettings.crucibleServers`, array
 position IS the rank, token never leaving main), `computeSlots()` deriving the
 slot list — the local GPU unless a loopback Crucible replaces it, one slot per
 enabled server, a declared-and-unbuilt `cloud` seam, and hosted the host's own
-list through `FoundryHost.slots?()` — a per-row `waitFor` resolved at the press
+list through `FoundryHost.slots?()` (replaced the same week by `servers?()` —
+see the 2026-09-14 entry below) — a per-row `waitFor` resolved at the press
 so re-ranking servers moves no queued row, and a dispatch that reads
 `GET /v1/capability`, makes the model resident, LEASES it (ruled the same night),
 spawns with `FOUNDRY_ENDPOINT_HEADERS` composed per spawn, and releases the lease

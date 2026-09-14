@@ -540,14 +540,18 @@ should a bench — prices change weekly and differ per key and tier.
 
 **HOSTED WINDOWS TAKE SLOTS FROM THE HOST, SO A HOST THAT OFFERS NO CLOUD SLOT
 SEES NONE.** This is the part that matters to you and it is a no-op by
-construction: `computeSlots()` returns `hostSlots()` unchanged when a host is
-mounted, and a standalone Foundry's own `cloudProviders` are NOT merged into it
-— the work in your window runs on your compute and the bill would be yours, so
-the choice has to be yours to offer. `FoundryHost.slots` already accepts
-`kind: 'cloud'` (it has since package C) and `hostSlots()` already admits it; if
-you ever want to offer one, emit a slot of that kind and Foundry will draw it in
-the picker's "Cloud — costs credits" group and refuse a page reading pinned to it
-by name. Both cloud-provider settings doors (`cloud:save`) refuse outright while
+construction: hosted, the slots are derived from YOUR registry and a standalone
+Foundry's own `cloudProviders` are NOT merged in — the work in your window runs
+on your compute and the bill would be yours, so the choice has to be yours to
+offer.
+
+> **A DOOR THAT CLOSED, and it is ours to reopen if you want it.** While
+> `slots?()` existed you could have emitted a `kind: 'cloud'` slot and Foundry
+> would have drawn it. `servers?()` replaced that seam on 2026-09-14 (above)
+> and it carries Crucible servers only, so a host can no longer offer a cloud
+> provider at all. Nothing of yours used it and your ruling was that the bill
+> is the host's, so this is written down rather than rushed: say the word and
+> the entry grows an optional kind, or a second method appears beside it. Both cloud-provider settings doors (`cloud:save`) refuse outright while
 hosted, exactly as `crucible:save` does.
 
 **Engine flags, if you spawn it yourself.** `--server anthropic` is the third
@@ -711,12 +715,25 @@ length of every Crucible-placed run, with `act` = the `X-Crucible-Act` word, so
   `ranOn` (where it started). Copy them across like `mints` and `after` if you
   want the picker to mean anything in a hosted window; absent is fine and is
   what a host that offers no slots produces.
-- **`FoundryHost.slots?(): readonly ComputeSlot[]`** is the new optional
-  provider, and hosted it is the WHOLE list — no local slot is ever drawn there,
-  and one you offer is dropped, on the ruling that BookForge has no Ollama
-  fallback and that one machine's GPU needs one owner. Register nothing and
-  every job takes exactly the path it takes today: no picker, no placement, no
-  capability read, no lease.
+- **`FoundryHost.servers?(): readonly {name, url, token, enabled}[]`** is the
+  provider, in priority order (array position IS the rank), disabled rows
+  included with `enabled` stated, `url` the bare base with no `/v1` and no
+  `/openai`. Hosted it is the WHOLE registry and the slots are derived from it
+  here; no local slot and no cloud slot is ever drawn in a hosted window, on
+  the ruling that BookForge has no Ollama fallback and that one machine's GPU
+  needs one owner. **`slots?()` is DELETED** (2026-09-14): it handed over the
+  list and kept the credentials, so a placement's lookup fell through to this
+  app's own registry — always empty hosted — and a pinned row parked for ever
+  on "X is no longer registered". A row missing a name, an address or `enabled`
+  is dropped with a line naming the field; `enabled` is required rather than
+  defaulted, because a default would be this app deciding a fact you own.
+  Offer no provider, or throw, and every job takes exactly the path it takes
+  today — no picker, no placement, no capability read, no lease — with the
+  board drawing WHY rather than pretending the list is empty.
+- **`runJob(request, opts)` takes `opts.waitFor`** — the slot name your row
+  chose, or `any`. Without it the row is stamped with THIS app's default and
+  the person's choice on your screen is answered by a setting on ours. Absent
+  is fine and means "no opinion".
 - **The header map is composed PER SPAWN now** — `runEngine(args, onLine, env)`
   — so two rows on two servers carry two tokens. `FOUNDRY_ENDPOINT_HEADERS`
   carries `Authorization`, `X-Crucible-Api: 1` and `X-Crucible-Act`, which is

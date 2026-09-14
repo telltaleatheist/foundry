@@ -183,10 +183,21 @@ enabled entry is loopback, then one per enabled server (`kind: 'crucible'`).
 ~~`kind: 'cloud'` is declared and never constructed — Package F's seam, excluded
 from the `any` walk by name.~~ **Struck — Package F (app), below: one cloud slot
 per enabled provider, after every Crucible, stepped past by the `any` walk with
-a sentence rather than skipped in silence.** Hosted, the whole list comes from
-`FoundryHost.slots?()`; a host that registers none gets an empty list, which
-every job reads as "the path this took before slots existed", and a `local` slot
-offered by a host is dropped.
+a sentence rather than skipped in silence.** ~~Hosted, the whole list comes from `FoundryHost.slots?()`.~~ **Struck
+2026-09-14 — the host hands over the REGISTRY, not the slot list.** `slots?()`
+gave away the list and kept the credentials, and hosted that split did not
+work: a placement resolves a slot's name back to an entry for its address and
+token, and hosted that lookup read this app's own registry, which is always
+empty there. A row pinned to a host-offered server parked for ever on *"X is no
+longer registered"* — two lists, one of them guaranteed empty, and the break
+only showed on a press nobody had made. `FoundryHost.servers?()` now answers
+`{name, url, token, enabled}[]` in priority order and the slots are DERIVED
+from it by the same code standalone uses (`readRegistry` and `slotsFrom`,
+electron/crucible-registry.ts), so the two cannot compute different slots from
+the same servers and a credential lookup cannot miss a slot that exists. No
+local slot and no cloud slot is ever drawn hosted. A host that offers no
+registry gets no slots and a SENTENCE the board draws, not an empty list that
+reads as "you have added none".
 
 **The rows** carry `waitFor` (a slot name or `any`, resolved at the PRESS from
 `AppSettings.newJobsWaitFor`, so re-ranking servers moves no queued row) and
