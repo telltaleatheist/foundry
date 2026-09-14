@@ -416,6 +416,24 @@ different things about one registry.
    copyable, the two elevated ones listed apart, and the README link. The button
    that will drive it is **present and disabled**, wearing main's own sentence.
 
+> **SUPERSEDED, AND WAITING ON A PUBLISHED PACKAGE (2026-09-14).** Crucible
+> ships its own operator page and its own installer, so door 3 collapses to a
+> single *Open engine console* button wherever a server already exists — the
+> numbered list goes — and the connect door gains one field that takes a
+> *connect code* (`parsePairing`). Neither is built: both need
+> `@crucible/client` 0.6.0, which is not published. `parsePairing` will not be
+> reimplemented here, because its percent-encoding and refusals are exactly the
+> kind of fact that drifts when it is written twice.
+>
+> **AND THE "SET UP FOR FOUNDRY" BUTTON IS NOT BEING BUILT AT ALL.** Owen,
+> 2026-09-14: *"lets make it as simple as possible."* An app that finds a
+> server coordinates with it automatically — reads `GET /v1/catalog` and posts
+> its module as a task ONLY when something is missing — on every ENABLED
+> server, local or remote, with no consent step. The person sees the progress
+> sentence and nothing else. Disabling a server in Settings is the one way to
+> say "not that one", which makes the enable switch load-bearing in a way it
+> was not before.
+
 **The Ollama step is untouched and remains the beginner's path.** The whole
 Crucible step is skippable like every other, and its blurb says most people
 should skip it.

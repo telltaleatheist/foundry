@@ -269,7 +269,11 @@ the LIST (editing, ranking, switching off); the doors add something new.
    default distro"* is whatever `wsl --set-default` last said, and a token read
    out of the wrong guest is a wrong token.
 
-3. **Install Crucible here** — today a DOCUMENT and a disabled button.
+3. **Install Crucible here** — today a DOCUMENT and a disabled button, and
+   **superseded** once `@crucible/client` 0.6.0 is published: Crucible ships
+   its own installer and its own operator page, so this becomes one *Open
+   engine console* button wherever a server exists (docs/SLOTS.md §7). What is
+   below describes what ships today.
 
 ### The hand sequence, and the two commands Foundry may not run
 
