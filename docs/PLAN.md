@@ -4880,3 +4880,32 @@ reads locally; a remote reader is reached once a loopback Crucible has hidden
 the local slot. **Unwatched:** no PHASE15 server exists; every path was
 exercised against fake servers only — an upstream placement was seen to cost
 exactly one HTTP hit and claim the cloud lane.
+
+#### After the gate — the two Foundry-era leftovers on Owen's PC (Owen, 2026-09-14) — DEFERRED ON PURPOSE
+
+Owen: *"lets plan to delete the two foundry environments once we guarantee
+everything is working. they seem like the kind of thing we'd want to create a
+tarball of and upload to gh releases for crucible to use later."*
+
+The two things, measured:
+
+| what | where | size | what it is |
+|---|---|---|---|
+| conda env `dots` | WSL Ubuntu, `/home/telltale/anaconda3/envs/dots` | 9.8 GB | the Foundry-era vLLM environment the retired launcher ran dots.ocr in (vllm 0.11.0, torch 2.8.0, transformers 4.57.1) |
+| `foundry-blocks-v1-4b.gguf` | `%LOCALAPPDATA%\foundry\models\` | 7.5 GB | a MODEL, not an environment — referenced by nothing in this repo or BookForge's; a leftover of the retired blocks-model add-on |
+
+**What is worth keeping from each, and it is not a tarball of either.** A conda
+env is not relocatable (PHASE14 §7.2a found the same thing for pip's shebangs),
+and Crucible already builds its `pages` env from a recipe as a relocatable pack
+on the GitHub release — so the artefact of value in the env is its RECIPE: the
+exact pins that were known to serve dots under vLLM on the 4090. That freeze
+(147 lines) is captured at `C:\tmp\foundry-page-reader-spec\dots-env-freeze.txt`
+for Crucible's server agent to check its own recipe against. The GGUF is a
+model: if it is Owen's own fine-tune its home is a model repo or a release
+asset named by a catalog row (models are never packaged into an app or an env
+pack — Owen's ruling), and if it is nobody's, it is deleted.
+
+**When:** after Wave 62's gate is watched (a Windows engine reads a page and
+cleans a block on a clean box; the WSL engine reads a page from the app on
+this PC). Not before — the env is the one thing that could still serve dots
+here if the new path stumbles on first contact.
