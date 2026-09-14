@@ -86,7 +86,67 @@ export const CRUCIBLE_CLIENT_NAME = 'foundry';
 
 /** Every registered server, in priority order. The stored shape, token and all. */
 export function crucibleServers(): CrucibleServerEntry[] {
+  /*
+   * HOSTED, THE REGISTRY IS THE HOST'S — and it is read HERE, at the one
+   * function every other reader goes through, rather than at each of them.
+   * `computeSlots`, `crucibleServerNamed` and the dispatcher all ask this, so
+   * putting the choice anywhere else would be putting it in some of them.
+   *
+   * IT NEVER FALLS BACK TO THE SETTINGS FILE HOSTED. That file holds an empty
+   * list nobody can write to, and reading it would mean a slot drawn from one
+   * list and a credential looked up in another — the break `host.ts` describes
+   * on `servers?()`. A host with no registry has no servers here, full stop.
+   */
+  if (hosted()) return hostServers();
   return readAppSettings().crucibleServers;
+}
+
+/**
+ * The host's registry, cleaned. Empty is a real answer; so is "there is none".
+ *
+ * A MISSING SEAM IS SAID OUT LOUD AND IS NOT AN ERROR THROWN THROUGH A DRAW.
+ * `computeSlots` is called while the queue page is being painted, so a throw
+ * here would take a window down over a server list — the wrong end of the
+ * rule. The refusal is a named console line and an empty registry: no slots,
+ * no picker, every job on the path it took before slots existed, and a
+ * sentence in the log that names the seam a host has not implemented.
+ *
+ * Defensive about the rows for the reason a host's mistake must not strand a
+ * job: an entry with no name or no address is dropped at the DRAW, because it
+ * is one every placement would fail on at the press, and failing early is
+ * quieter. A token is not required here — a server on a trusted network may
+ * have none, and the request will say so itself if it does.
+ */
+function hostServers(): CrucibleServerEntry[] {
+  const provider = foundryHost()?.servers;
+  if (provider === undefined) {
+    console.error(
+      '[slots] host_provides_no_registry — this window is hosted and its host offers no '
+      + 'FoundryHost.servers(), so there are no Crucible servers and no slots to place work on.',
+    );
+    return [];
+  }
+  let offered: readonly CrucibleServerEntry[];
+  try {
+    offered = provider.call(foundryHost()) ?? [];
+  } catch (err) {
+    console.error(
+      `[slots] the host's registry provider threw: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: CrucibleServerEntry[] = [];
+  for (const entry of offered) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    const url = typeof entry.url === 'string' ? entry.url.trim() : '';
+    const token = typeof entry.token === 'string' ? entry.token : '';
+    if (name.length === 0 || url.length === 0 || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push({ name, url, token, enabled: entry.enabled !== false });
+  }
+  return out;
 }
 
 /** One entry by name, or null. Case-insensitive, because the picker is. */
@@ -285,15 +345,31 @@ function refuseHostedRegistryChange(): void {
  * work in a hosted window runs on the host's compute and its bill is the host's.
  */
 export function computeSlots(): ComputeSlot[] {
-  if (hosted()) return hostSlots();
+  /*
+   * ── ONE LIST, ONE DERIVATION, BOTH WAYS ───────────────────────────────────
+   *
+   * Hosted, `crucibleServers()` is already the HOST's registry (see there), so
+   * the slots below are derived from it by this same code rather than handed
+   * over as a second list. That is what stops a host and this app computing
+   * different slots from the same servers, and it is what makes a credential
+   * lookup impossible to miss: every slot named here came from an entry that
+   * `crucibleServerNamed` will find.
+   *
+   * TWO SUPPRESSIONS HOSTED. No local slot — BookForge requires Crucible and
+   * has no ollama fallback (SLOTS.md §1), so offering this window the host's
+   * own card would be offering a GPU the host's queue is already rationing.
+   * And no cloud slots: this app's providers are its own, and the bill for
+   * work in a hosted window is the host's.
+   */
   const servers = crucibleServers().filter((entry) => entry.enabled);
-  const local: ComputeSlot[] = servers.some((entry) => isLoopbackUrl(entry.url))
+  const local: ComputeSlot[] = hosted() || servers.some((entry) => isLoopbackUrl(entry.url))
     ? []
     : [{ name: LOCAL_SLOT_NAME, kind: 'local' }];
   const out: ComputeSlot[] = [
     ...local,
     ...servers.map((entry): ComputeSlot => ({ name: entry.name, kind: 'crucible', url: entry.url })),
   ];
+  if (hosted()) return out;
   const taken = new Set(out.map((slot) => slot.name.toLowerCase()));
   for (const provider of enabledCloudProviders()) {
     if (taken.has(provider.name.toLowerCase())) continue;
@@ -310,42 +386,6 @@ export function computeSlots(): ComputeSlot[] {
   return out;
 }
 
-/**
- * The host's slot list, cleaned.
- *
- * A HOST'S MISTAKE MUST NOT STRAND A JOB, so this reads defensively where the
- * rest of the module reads the settings file it wrote itself: a throw is caught
- * and logged as an empty list (every job takes the local path, which is what a
- * host with no provider gets), and a row that is not a slot is dropped. What it
- * refuses outright is a `local` slot from a host — SLOTS.md §3 says the vendored
- * app *"shows no local slot"*, and a host that sent one would be offering this
- * window a GPU the host's own queue is already rationing.
- */
-function hostSlots(): ComputeSlot[] {
-  const provider = foundryHost()?.slots;
-  if (provider === undefined) return [];
-  let offered: readonly ComputeSlot[];
-  try {
-    offered = provider.call(foundryHost()) ?? [];
-  } catch (err) {
-    console.error(
-      `[slots] the host's slot provider threw: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return [];
-  }
-  const seen = new Set<string>();
-  const out: ComputeSlot[] = [];
-  for (const slot of offered) {
-    if (typeof slot !== 'object' || slot === null) continue;
-    const name = typeof slot.name === 'string' ? slot.name.trim() : '';
-    if (name.length === 0 || seen.has(name.toLowerCase())) continue;
-    if (slot.kind !== 'crucible' && slot.kind !== 'cloud') continue;
-    const url = typeof slot.url === 'string' ? slot.url : undefined;
-    seen.add(name.toLowerCase());
-    out.push(url === undefined ? { name, kind: slot.kind } : { name, kind: slot.kind, url });
-  }
-  return out;
-}
 
 /**
  * WHAT A NEW ROW SHOULD WAIT FOR — resolved at the press, never at the spawn.

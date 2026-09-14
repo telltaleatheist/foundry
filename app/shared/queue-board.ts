@@ -234,7 +234,7 @@ export interface ComputeLane {
  *
  * ── AN EMPTY LIST IS ONE LANE, AND THAT IS THE HOSTED PROMISE ──────────────
  *
- * A host that registers no slot provider gets an empty list (`hostSlots`,
+ * A host that offers no registry gets an empty list (`hostServers`,
  * electron/crucible-registry.ts), and every job in that window takes the path it
  * took before slots existed. So an empty list answers with exactly one lane —
  * today's single GPU lane, unchanged, byte for byte in behaviour — rather than
