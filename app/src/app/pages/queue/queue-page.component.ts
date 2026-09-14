@@ -1,12 +1,12 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { ANY_SLOT, type ComputeSlot } from '@shared/slots';
+import { ANY_SLOT } from '@shared/slots';
 import type { Job } from '@shared/types';
 
 import { QueueService } from '../../core/queue.service';
-import { QueueViewService } from '../../core/queue-view.service';
-import { api, hosted } from '../../core/foundry';
+import { QueueViewService, type SlotView } from '../../core/queue-view.service';
+import { hosted } from '../../core/foundry';
 
 /**
  * THE QUEUE PAGE — the whole board, with room to breathe.
@@ -23,11 +23,12 @@ import { api, hosted } from '../../core/foundry';
  *   Needs you    — failures, with the engine's own sentence. Not drawn when
  *                  there are none, which is almost always, and therefore worth
  *                  reading when it is.
- *   On the bench — the three slots, always all three, occupied or free. This is
- *                  the page's centre of gravity, and the reason the page exists
- *                  at all: rationing one GPU slot and two CPU slots is the whole
- *                  job of the scheduler, and the dropdown has room to group rows
- *                  by lane but not to draw the slots themselves.
+ *   On the bench — the slots, always all of them, occupied or free: a card per
+ *                  MACHINE (one per compute slot, Package G) and then the two
+ *                  CPU slots. This is the page's centre of gravity, and the
+ *                  reason the page exists at all: rationing those slots is the
+ *                  whole job of the scheduler, and the dropdown has room to
+ *                  group rows by lane but not to draw the slots themselves.
  *   Up next      — everything waiting, GROUPED BY BOOK, each row saying why it
  *                  is still.
  *   Finished     — today's work as history, in a table, rather than as more rows
@@ -138,31 +139,44 @@ import { api, hosted } from '../../core/foundry';
         </header>
 
         <!--
-          ONE CARD PER SLOT, ALWAYS ALL THREE. The GPU card is the widest because
-          the card is the resource a person schedules their day around — and
-          because the GPU lane is the one that costs hours, which is the same
-          fact the chip's progress hairline follows.
+          ONE CARD PER SLOT, ALWAYS ALL OF THEM — a machine per GPU card since
+          Package G, and the two CPU slots after them. The GPU cards are the
+          widest because the card is the resource a person schedules their day
+          around, and because that is the lane that costs hours, which is the
+          same fact the chip's progress hairline follows.
 
           A slot is drawn free when it is free, in words. That is the fact a
           board exists to show at a glance: "the card is idle while these two
-          compile" is exactly as interesting as knowing what is running.
+          compile" is exactly as interesting as knowing what is running — and
+          with two machines it is the fact that makes the second one worth
+          having, because an idle Mac beside a busy desk is a job that could be
+          moving.
         -->
-        <div class="slots">
+        <div class="slots" [class.wide]="view.slots().length > 3">
           @for (slot of view.slots(); track slot.key) {
             <article class="slot-card"
                      [class.gpu]="slot.lane === 'gpu'"
+                     [class.leaving]="slot.leaving"
                      [class.idle]="slot.occupant === null">
               <div class="slot-strip" [title]="slot.hint">
-                <span>{{ slot.lane === 'gpu' ? 'GPU' : 'CPU' }} · slot {{ slot.index }} of {{ slot.of }}</span>
+                <span class="slot-name">{{ slot.title }}</span>
                 <!--
-                  WHICH MACHINE, when there is more than one it could be. The
-                  lane above says how many things may run at once on THIS
-                  computer; this says whose GPU the run is actually on, which is
-                  a different question and only has an interesting answer once
-                  somebody has registered a Crucible (docs/SLOTS.md §3).
+                  WHOSE MACHINE THIS IS, beside its name. The name is whatever
+                  somebody typed into the Servers card; this says what it is,
+                  which is the difference between "the GPU in this box" and "a
+                  Crucible in another room" (docs/SLOTS.md §3).
+
+                  THE "on <slot>" TAG IS STILL HERE and has moved to the one
+                  card that still needs it. A GPU card IS a machine now, so a tag
+                  under its own name saying the run is on it would be the card
+                  repeating itself; a CPU card is this computer's disk, and where
+                  its run went is the question the tag was always answering. It
+                  is gated on there being more than one machine, exactly as it
+                  was: with one slot there is no other answer it could give.
                 -->
-                @if (slot.occupant?.ranOn; as where) {
-                  @if (slots().length > 1) { <span class="on">on {{ where }}</span> }
+                @if (whose(slot); as kind) { <span class="on">{{ kind }}</span> }
+                @if (slot.lane === 'cpu' && view.computeSlots().length > 1) {
+                  @if (slot.occupant?.ranOn; as where) { <span class="on">on {{ where }}</span> }
                 }
                 @if (slot.occupant; as busy) {
                   <button class="btn stop" (click)="queue.cancel(busy.id)"
@@ -263,6 +277,23 @@ import { api, hosted } from '../../core/foundry';
                   <div class="free-head">Free</div>
                   <div class="free-sub">Nothing running in this slot</div>
                 </div>
+              }
+
+              <!--
+                WHAT IS WAITING FOR THIS MACHINE, in dispatch's own sentence —
+                "busy: bookforge, tts qwen3.5-9b 62% done", "someone is
+                narrating on X", "X is unreachable". It is drawn under an
+                occupied card as well as a free one, because the two say
+                different things and both are worth knowing: over a free card it
+                is why nothing has started, and over a busy one it is what is
+                next in line for it.
+
+                It is never this app's paraphrase. The sentence is the one main
+                already put on the row (electron/crucible-dispatch.ts renders
+                every refusal by name), and the row itself is down in Up next.
+              -->
+              @if (slot.waiting) {
+                <p class="waiting" [title]="slot.waiting">{{ slot.waiting }}</p>
               }
             </article>
           }
@@ -594,9 +625,17 @@ import { api, hosted } from '../../core/foundry';
       rather than about the layout: it is the lane that runs for hours and the
       one everything else waits behind. One column on a narrow window, because
       three cards at 300 pixels each is three cards nobody can read.
+
+      PAST THREE CARDS THE WEIGHTING GOES, and that is the same statement made
+      about a different board. Three columns with the first one wide is a shape
+      for one card and two compiles; a person with two Crucibles has three
+      MACHINES and two CPU slots, and no one of them is the one the day is
+      planned around any more. So the grid becomes even columns that wrap, and
+      the cards keep their own emphasis through the accent on the top edge.
     */
     .slots { display: grid; grid-template-columns: 1.7fr 1fr 1fr; gap: 12px; }
-    @media (max-width: 1000px) { .slots { grid-template-columns: minmax(0, 1fr); } }
+    .slots.wide { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    @media (max-width: 1000px) { .slots, .slots.wide { grid-template-columns: minmax(0, 1fr); } }
 
     .slot-card {
       background: var(--bg-elevated);
@@ -607,6 +646,29 @@ import { api, hosted } from '../../core/foundry';
       min-width: 0;
     }
     .slot-card.gpu { border-top-color: var(--accent); }
+    /*
+      A MACHINE ON ITS WAY OUT is drawn in the error colour and is not an error:
+      the run is fine and will finish. The colour is the one this app already
+      spends on "this needs your attention eventually", and the hover says why.
+    */
+    .slot-card.leaving { border-top-color: var(--error); }
+    /* The machine's name is the card's own heading and outranks the strip's
+       small-caps label — it is a proper noun somebody typed, so it keeps its
+       own letters. */
+    .slot-name {
+      font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+      text-transform: none; color: var(--text-secondary);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* Dispatch's own sentence about what this machine is holding up. Quiet, and
+       never truncated to a width — a wait that cannot be read is a wait a person
+       has to guess at. */
+    .waiting {
+      margin: 9px 0 0;
+      font-size: 11.5px; line-height: 1.45;
+      color: var(--text-tertiary);
+      word-break: break-word;
+    }
     /* A free slot is drawn as an outline rather than as a filled card: it is a
        space, and it should look like one without having to be read first. */
     .slot-card.idle { border-style: dashed; border-top-style: solid; background: transparent; }
@@ -864,21 +926,38 @@ export class QueuePageComponent {
    * ── THE SLOT PICKER — WHERE, not when ─────────────────────────────────────
    *
    * docs/SLOTS.md §3. A slot is a place a job's compute can go: this computer's
-   * own GPU, or a registered Crucible server. The list is read ONCE, when the
-   * page is built, because it is a settings fact rather than a live one — it
-   * changes when somebody edits the Servers card, which is a different screen,
-   * and a page that re-read it on a timer would repaint the board for nothing.
+   * own GPU, or a registered Crucible server.
    *
-   * EMPTY OR ONE ENTRY IS THE COMMON CASE AND DRAWS NOTHING. Owen: *"a friend
+   * THE LIST IS THE SERVICE'S NOW, and it is the same move this whole page is:
+   * the bench draws a card per slot, the picker draws a name per slot, and two
+   * reads of `slots:list` would be two answers that can differ for a frame — in
+   * one window, side by side. It is still read ONCE, for the reason it always
+   * was (a settings fact, changed on another screen); the argument now lives on
+   * `QueueViewService.computeSlots` with the rest of the board's vocabulary.
+   *
+   * EMPTY OR ONE ENTRY IS THE COMMON CASE AND DRAWS NO PICKER. Owen: *"a friend
    * with no Crucible sees ONE slot, their local GPU, and never meets the
    * picker."* Every `@if (picking(job))` in the template above is that sentence.
    */
-  protected readonly slots = signal<ComputeSlot[]>([]);
+  protected readonly slots = this.view.computeSlots;
   protected readonly anySlot = ANY_SLOT;
 
-  constructor() {
-    if (api === null) return;
-    void api.slots.list().then((slots) => this.slots.set(slots));
+  /**
+   * WHOSE MACHINE A BENCH CARD IS, in two words under the name — or the empty
+   * string, which is every CPU card and every machine that has left the list.
+   *
+   * The kinds are the board's (`ComputeSlotKind`), said in a person's words: a
+   * `crucible` slot is a server somebody registered and a `cloud` slot is a
+   * provider with a bill attached. THE LOCAL SLOT SAYS NOTHING, because it has
+   * already said it: its name is "This computer" (`LOCAL_SLOT_NAME`,
+   * shared/slots.ts), and a kind line repeating that under it would be furniture.
+   * A card that is `leaving` says nothing either — its hover says the whole
+   * story, and a kind beside a name that is no longer offered would read as a
+   * claim the list no longer makes.
+   */
+  protected whose(slot: SlotView): string {
+    if (slot.leaving || slot.kind === null || slot.kind === 'local') return '';
+    return slot.kind === 'cloud' ? 'cloud' : 'crucible';
   }
 
   /**

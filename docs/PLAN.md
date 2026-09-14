@@ -4477,3 +4477,35 @@ dialogs' refusals still gate on the book alone (the footer's buttons dim rather
 than disable, by design); the gate does not probe a configured non-Ollama server
 for reachability. **Untested by hand:** nobody has watched a tile go dark on a
 CPU-only machine, because this one has a GPU.
+
+#### Package G — LANDED 2026-09-14
+
+**The GPU lane is one lane per machine.** Package C left the scheduler counting
+one GPU slot (`SLOTS = {gpu: 1, cpu: 2}`), so two Crucible servers could not run
+two text jobs at once however correct the per-row dispatch was. Owen's product is
+the opposite (docs/SLOTS.md §1): *"if there are more than one servers connected,
+there will be more than one GPU slot listed in the queue that can be filled... an
+emergent property of having multiple servers configured is the distributed
+load."*
+
+The capacity is now DERIVED from the slot list, in the one shared place both
+programs read the board from — `computeLanes(slots)` in `app/shared/queue-board.ts`
+answers one lane per compute slot at one run each (`SLOT_CAPACITY` by kind, with
+a `cloud` row so package F needs no edit here), and the CPU lane stays the
+constant two. An empty slot list answers with exactly one lane, which is today's
+behaviour byte for byte and is what keeps this invisible to a host that registers
+no slots. The scheduler keys occupancy by slot NAME (`Slot.on`), reserved at the
+pick for a pinned row and for a row that is never placed at all (which holds the
+LOCAL lane — a page reading loads dots on this machine's card whatever the
+registry says), and claimed by the `any` walk inside `placeJob` through a
+`LaneClaim` the queue hands down. `canStart` takes the row now and asks whether
+there is a lane it could take, so a busy local card no longer holds a row that was
+only ever going to run on the Mac.
+
+The bench draws one card per compute slot — its name, whose it is, what is running
+there (`Job.ranOn` through `laneOfRun`, not a guess) and the parked row's own
+sentence about what it is waiting for — then the two CPU cards, which are still
+dealt in queue order because main still does not say which of the two a run took.
+Nothing crosses the wire that did not before: no channel added, removed or
+renamed. The full account, including what was deliberately left out, is
+docs/SLOTS.md §7 "Package G — landed" and docs/QUEUE-BOARD.md §2b.

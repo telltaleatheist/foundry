@@ -133,6 +133,7 @@ store is a different file. So the rule is ownership, not sharing:
 | D | Catalog: generated lineup JSON, tile gating, CPU rule | BookForge's `[local]` block | **LANDED** (below) |
 | E | Setup/settings: Crucible install offer + connect-to-existing; Ollama wizard stays; dots download; page-reader row | B, C | after C |
 | F | Cloud slots: OpenAI (the `openai` door + key), Anthropic (third dialect); per-job opt-in; 429 as the wait; cost shown | C | **ENGINE HALF LANDED** 2026-09-14; app half after C |
+| G | App: lane capacity derived from the slot list — one lane per compute slot, the bench one card per slot | C | **LANDED** (§7) |
 | — | Lease client | **RULED 2026-09-14** — built in Package C, app-side | **LANDED** (§7) |
 
 ## 7. Package C — landed
@@ -213,12 +214,82 @@ nothing — vLLM is Crucible-only by ruling), `LlmServers`, the request field
 is decided by the placement rather than stored.
 
 **Deliberately not done.** Reads stay on their local path behind
-`CRUCIBLE_READS = false` (Package B owns that reader). The GPU lane is still one
-(`SLOTS`, shared/queue-board.ts), so two Crucible servers do not yet run two text
-jobs at once — dispatch is per-row correct, concurrency is not yet per-slot, and
-making it so means a lane capacity both programs derive from the slot list. The
-bench cards are still GPU/CPU lanes with an "on <slot>" line, not one card per
-slot.
+`CRUCIBLE_READS = false` (Package B owns that reader). ~~The GPU lane is still
+one (`SLOTS`, shared/queue-board.ts), so two Crucible servers do not yet run two
+text jobs at once — dispatch is per-row correct, concurrency is not yet
+per-slot, and making it so means a lane capacity both programs derive from the
+slot list. The bench cards are still GPU/CPU lanes with an "on <slot>" line, not
+one card per slot.~~ **Both struck — Package G, below.**
+
+### Package G — landed 2026-09-14
+
+**The GPU lane is one lane per machine, and the bench draws the machines.**
+
+Owen's sentence is the whole of it (§1): *"if there are more than one servers
+connected, there will be more than one GPU slot listed in the queue that can be
+filled… an emergent property of having multiple servers configured is the
+distributed load."*
+
+**The capacity is derived, in `app/shared/queue-board.ts`**, which is the one
+place both programs already read the board from. `computeLanes(slots)` answers
+one lane per compute slot, each with the capacity its KIND carries
+(`SLOT_CAPACITY` — `local`, `crucible` and `cloud` are all 1 today; the cloud
+row exists so package F needs no edit here, and raising it is a deliberate
+change to that line with the rate limit argued beside it). The CPU lane stays
+the constant `CPU_LANE_SLOTS = 2`: a compile is this machine's disk however many
+rooms away the models are. **An empty slot list answers with exactly one lane**,
+named for the local slot — today's single GPU lane, unchanged — which is what
+makes this invisible to a host that registers no slot provider.
+
+**The scheduler** (`electron/job-queue.ts`) keys occupancy by slot NAME:
+`Slot.on` is the machine a run holds. It is reserved when the pump PICKS the row
+wherever the answer is already knowable — a row pinned to a slot holds that one,
+and a row that is never placed at all (`placesOnASlot`, the one copy of
+`placeJob`'s early returns) holds the LOCAL lane, because a page reading loads
+dots on this machine's card whatever the registry says. `canStart` takes the ROW
+now and asks *is there a lane this row could take*, so a busy local card no
+longer stops a row that was only ever going to run on the Mac. An `any` row's
+lane is claimed by the walk, inside `placeJob`, through a `LaneClaim` the queue
+hands down: the placement decision stays where it was, the claim is synchronous
+against main's own map so two walks cannot take one machine, and a slot this app
+is already running on is stepped past with a sentence like any other busy one. A
+run nobody here scheduled (a host's, the Export dialog's) claims nothing, for
+`detachedRuns`' standing reason.
+
+**One card, one lane, even with two names.** An enabled loopback Crucible hides
+the local slot, and what still runs locally holds THAT lane — `localLane()`,
+read by both programs, so the bench draws the run on the card the scheduler is
+holding rather than inventing a second one over the same GPU.
+
+**The bench** (`core/queue-view.service.ts`, `pages/queue`) is one card per
+compute slot — its name, whose it is, what is running there, and the parked row's
+own sentence about what it is waiting for — then the two CPU cards. A card's
+occupant comes from `Job.ranOn` through `laneOfRun`, so the GPU half is no longer
+dealt in queue order. The `on <slot>` tag stays on the CPU cards, where it still
+says something the card does not. A run on a machine that has left the list keeps
+its card, marked, until it ends: **re-ranking or disabling a server moves
+nothing** — not a running job (atomic per slot) and not a queued row's `waitFor`
+(package C's rule), and a row naming a slot that is gone is still picked so that
+it gets dispatch's sentence rather than waiting in silence.
+
+**The slot list is read once, by the service**, and both the bench and the row
+picker read it from there: two reads of `slots:list` in one window are two
+answers that can differ for a frame.
+
+**Nothing changed on the wire.** No IPC channel was added, removed or renamed;
+`slots:list` answers exactly what it did, and `Job.waitFor` / `Job.ranOn` carry
+what they carried. A host that offers no slots gets the behaviour it has now,
+verified by reading the hosted paths: `hostSlots()` → empty → one lane, and every
+row a host schedules arrives through `runJob`, which is detached and claims no
+lane at all.
+
+**Deliberately not done.** A second run in one slot: every capacity is 1, so the
+bench's dealing loop is written for more but nothing produces it. Live slot
+updates: the list is still read once per window, so enabling a server while the
+queue page is open does not redraw the bench until it is rebuilt — the same rule
+the picker has had since package C, and a push channel is more than this change
+should decide. And the `any` walk still does not prefer a machine nobody is
+queued for: FIFO order decides, which is what the board has always promised.
 
 ### Package D — landed 2026-09-14
 

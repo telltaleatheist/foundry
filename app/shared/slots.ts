@@ -10,14 +10,16 @@
  * ── WHY THIS IS `ComputeSlot` AND NOT `Slot` ────────────────────────────────
  *
  * Because `Slot` is taken, twice, by a different idea that is already right.
- * `shared/queue-board.ts` counts LANES — one GPU lane, two CPU lanes — and
- * `electron/job-queue.ts` calls one lane's claim a `Slot`. That board answers
- * *how many things may run at once on this machine*; this file answers *whose
- * machine*. They are orthogonal: a translate row takes the GPU lane whether it
- * runs against the Ollama on this desk or against a Crucible in another room.
- * One word for two questions is how a scheduler starts believing a remote job
- * is holding the local card, so the longer name is deliberate and the UI still
- * says "slot", because that is the word Owen used for the thing a person sees.
+ * `shared/queue-board.ts` counts LANES — two CPU lanes, and one GPU lane per
+ * compute slot — and `electron/job-queue.ts` calls one lane's claim a `Slot`.
+ * That board answers *how many things may run at once*; this file answers
+ * *whose machine*. They were orthogonal and are now merely different: since
+ * Package G the board DERIVES its GPU lanes from the list this file describes
+ * (`computeLanes`), so a slot is what a lane is made of rather than an unrelated
+ * axis — while a CPU lane is still a lane and no slot's. One word for the two
+ * would still be how a scheduler starts believing a remote job is holding the
+ * local card, so the longer name stays deliberate, and the UI still says "slot"
+ * because that is the word Owen used for the thing a person sees.
  *
  * ── WHAT IS DELIBERATELY NOT HERE ───────────────────────────────────────────
  *

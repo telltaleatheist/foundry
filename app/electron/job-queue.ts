@@ -24,6 +24,20 @@
  * reorders, and a lane that is full is a lane whose rows wait exactly as the
  * whole queue used to.
  *
+ * ONE GPU PER MACHINE, AND THERE CAN BE MORE THAN ONE MACHINE (Wave 61,
+ * Package G). "One card, one owner" was written when this app knew of one card;
+ * a registered Crucible is a second, and Owen ruled what follows from that
+ * (docs/SLOTS.md §1): *"if there are more than one servers connected, there will
+ * be more than one GPU slot listed in the queue that can be filled… an emergent
+ * property of having multiple servers configured is the distributed load."* So
+ * the GPU side of the board is one lane PER COMPUTE SLOT, derived from the slot
+ * list in the one place both programs read it from (`computeLanes`,
+ * shared/queue-board.ts). The card's rule is unchanged and is simply said once
+ * per card: a translation on the Mac and a cleanup on this desk are two runs on
+ * two machines, and nothing about them was ever a reason to make the second wait
+ * three hours for the first. The CPU lane is untouched — a compile is this
+ * machine's disk however many rooms away the models are.
+ *
  * A job that reads through the LOCAL page reader waits for that server first
  * (electron/page-reader.ts). The wait is part of the job, not a thing that
  * happens beside it: the shelf says "Starting the reading server…", and a
@@ -198,7 +212,9 @@ import { ancestry, REWRITE_LABELS } from '../shared/ledger';
 import { inheritMintMeta, type MintMeta } from '../shared/mint-meta';
 import { fold } from '../shared/original';
 import { rowMinting } from '../shared/pending';
-import { JOB_RESOURCE, SLOTS, type JobResource } from '../shared/queue-board';
+import {
+  CPU_LANE_SLOTS, JOB_RESOURCE, computeLanes, localLane, type ComputeLane, type JobResource,
+} from '../shared/queue-board';
 import type {
   AnalyzeRequest, ConversionKind, DeferredPlan, EnvInstallRequest, ExportLanding, ExportMintMetadata,
   FoundryJobRow, Job, JobKind, JobRequest, SimplifyRequest, TextPassRequest, TranslateRequest,
@@ -211,9 +227,10 @@ import type {
  */
 import { computeSlots, waitForOfNewJob } from './crucible-registry';
 import {
-  capabilityClassOf, placeJob, CRUCIBLE_READS, UNPLACED, type Lease, type Placement,
+  capabilityClassOf, placeJob, placesOnASlot, CRUCIBLE_READS, UNPLACED,
+  type LaneClaim, type Lease, type Placement,
 } from './crucible-dispatch';
-import { ANY_SLOT } from '../shared/slots';
+import { ANY_SLOT, LOCAL_SLOT_NAME } from '../shared/slots';
 
 /**
  * The three things that become an engine child.
@@ -730,6 +747,35 @@ interface Slot {
    * cast asserting to the compiler something only a comment can promise.
    */
   readonly resource: JobResource;
+  /**
+   * WHICH COMPUTE LANE THIS RUN HOLDS — a slot's name, or null for a run that
+   * holds none.
+   *
+   * ── The field Package G added, and the three states it has ────────────────
+   *
+   * The GPU side of the board is one lane per compute slot now
+   * (`computeLanes`, shared/queue-board.ts), so "how many GPU runs are going" is
+   * no longer the question the scheduler asks — it asks WHICH MACHINE each one is
+   * on, and this is the answer.
+   *
+   *   * A NAME, set the moment the row is picked (`laneAtPick`) when the answer
+   *     is already knowable: a run that is never placed holds the local lane, and
+   *     a row pinned to a slot holds the one it named. Reserving before the first
+   *     await is what stops two rows in ONE synchronous pump pass from both
+   *     seeing the same lane free — the same argument the slot map itself makes.
+   *   * A NAME, set later by the walk, when the row said `any` and the walk chose
+   *     (`LaneClaim`, electron/crucible-dispatch.ts). It moves as the walk steps
+   *     past a busy machine, because a run holds exactly one lane and claiming
+   *     the next candidate gives the last one back.
+   *   * NULL, for a run that holds no compute lane at all: every CPU row, and an
+   *     install, which holds the whole board by a different rule.
+   *
+   * A NAME THAT IS IN NO LANE LIST IS LEGITIMATE and is the point of keeping a
+   * string rather than a reference: a row pinned to a server that was switched
+   * off holds a lane nothing else can want, gets picked, and gets dispatch's
+   * sentence about what it is waiting for — which is how a person finds out.
+   */
+  on: string | null;
   cancel: (() => void) | null;
 }
 
@@ -772,6 +818,14 @@ const slots = new Map<string, Slot>();
  * scheduler cannot see them, so a host run counted into a lane would be this
  * app rationing slots against a decision it was told about rather than asked
  * for. What a detached run DOES hold is the drain, for the reason at `pump`.
+ *
+ * A LANE PER MACHINE DID NOT CHANGE IT EITHER (Package G), and the temptation
+ * there is larger: a host that offers a slot list is naming machines this app can
+ * now count, so filing the host's runs against them looks like bookkeeping. It
+ * would be the same mistake wearing better clothes — the host's queue decides
+ * what runs on its own machines, and a claim of ours against one of them would
+ * refuse a row somebody's host had already committed to. So a detached run claims
+ * no lane at all: `placeRun` hands the walk a claim that says yes to everything.
  *
  * What they are for is the same two things the slot is for: a ✕, and a quit. So
  * `cancelHere` looks here when the slot is not this row, and `shutdown` stops
@@ -3274,21 +3328,75 @@ function endpointFor(): string | null {
  */
 
 /**
- * IS THERE ROOM FOR THIS RESOURCE RIGHT NOW — the whole of the rationing.
+ * WHICH LANE THIS ROW WILL HOLD, when that is knowable before the walk — or null
+ * for a row the walk decides for, and for every row that holds no compute lane.
  *
- * ── The three answers, and why an install is not simply a third lane ────────
+ * ── Two of the three answers are knowable, and reserving them is the point ──
  *
- * A LANE has room when fewer than its slot count are held (`SLOTS`,
- * shared/queue-board.ts) and no install is running. An INSTALL needs the whole
- * board, because a conversion that starts against a Python being replaced is
- * the one failure the shared queue was built to prevent — see the header. And
- * `unscheduled` cannot get here from a queued row at all (a mint is born
- * `running`); it answers true so that a row which somehow arrived in that state
- * fails loudly through the missing-request branch, exactly as it did when the
- * pump took any queued row it found, rather than sitting in the list forever
- * and holding the drain open with it.
+ * `pump` picks rows in a SYNCHRONOUS loop, so two rows can be chosen before
+ * either of them has reached its first await. If the lane were only ever claimed
+ * inside the walk, two readings would both be picked against one free local lane
+ * and the second would discover the collision minutes later, park, and wear a
+ * sentence about a machine it was never going to get. So the answers that do not
+ * need a server are settled here, before the pick:
+ *
+ *   * A ROW THAT IS NEVER PLACED holds the LOCAL lane — `placesOnASlot` is that
+ *     test and lives beside the switch that decides half of it. A page reading
+ *     loads dots on this machine's card whatever the registry says, and if it
+ *     held no lane the board would start a translation on the same card.
+ *   * A ROW PINNED TO A SLOT holds the lane it named, whether or not that name is
+ *     still in the list (see `Slot.on`).
+ *   * `any` — and a row with no `waitFor` on a board with something to choose
+ *     between — answers null: the walk picks, and the walk claims as it picks.
  */
-function canStart(resource: JobResource): boolean {
+function laneAtPick(job: Job, lanes: readonly ComputeLane[]): string | null {
+  if (JOB_RESOURCE[job.kind] !== 'gpu') return null;
+  if (!placesOnASlot(job.kind)) return localLane(lanes)?.name ?? LOCAL_SLOT_NAME;
+  const waitFor = job.waitFor;
+  if (waitFor !== undefined && waitFor !== ANY_SLOT) return waitFor;
+  return null;
+}
+
+/** Is any run holding that lane right now? The occupancy, asked by name. */
+function laneTaken(lane: string): boolean {
+  for (const slot of slots.values()) if (slot.on === lane) return true;
+  return false;
+}
+
+/**
+ * IS THERE ROOM FOR THIS ROW RIGHT NOW — the whole of the rationing.
+ *
+ * ── The four answers, and why an install is not simply another lane ─────────
+ *
+ * The CPU LANE has room when fewer than `CPU_LANE_SLOTS` are held. The GPU side
+ * is not a lane but a LANE PER COMPUTE SLOT (`computeLanes`,
+ * shared/queue-board.ts): a row may start when there is a lane it could take,
+ * which is why this takes the row and not just its resource — a row pinned to the
+ * Mac and a row pinned to this desk are asking two different questions, and the
+ * answer to one of them is not the answer to the other. That is the whole of
+ * Package G in the scheduler: before it, a busy local card stopped a queued row
+ * that was only ever going to run in another room.
+ *
+ * AN INSTALL needs the whole board, because a conversion that starts against a
+ * Python being replaced is the one failure the shared queue was built to prevent
+ * — see the header. And `unscheduled` cannot get here from a queued row at all (a
+ * mint is born `running`); it answers true so that a row which somehow arrived in
+ * that state fails loudly through the missing-request branch, exactly as it did
+ * when the pump took any queued row it found, rather than sitting in the list
+ * forever and holding the drain open with it.
+ *
+ * ── THE COUNT AND THE NAME ARE BOTH ASKED, and neither alone is enough ──────
+ *
+ * A row whose lane is knowable is refused when that lane is taken. A row the walk
+ * decides for is refused when every lane is spoken for — counted rather than
+ * named, because a walking row's lane is not settled yet. The count is sound
+ * without being exact: at worst one more row is admitted than there is room for,
+ * it finds every candidate claimed, and it parks with the backoff every other
+ * wait uses. What cannot happen is two runs on one machine, and that is the
+ * claim's job rather than this one's (`LaneClaim`).
+ */
+function canStart(job: Job, lanes: readonly ComputeLane[]): boolean {
+  const resource = JOB_RESOURCE[job.kind];
   if (resource === 'unscheduled') return true;
   for (const slot of slots.values()) {
     // An install holds every lane while it runs, so nothing joins it.
@@ -3297,7 +3405,10 @@ function canStart(resource: JobResource): boolean {
   if (resource === 'exclusive') return slots.size === 0;
   let held = 0;
   for (const slot of slots.values()) if (slot.resource === resource) held += 1;
-  return held < SLOTS[resource];
+  if (resource === 'cpu') return held < CPU_LANE_SLOTS;
+  if (held >= lanes.length) return false;
+  const wants = laneAtPick(job, lanes);
+  return wants === null || !laneTaken(wants);
 }
 
 /**
@@ -3321,8 +3432,16 @@ function canStart(resource: JobResource): boolean {
  * replace. One serial queue gave "a conversion that needs the environment waits
  * BEHIND it" for free (header, 16e); on a board it has to be said, and this
  * line is where it is said.
+ *
+ * ── THE LANES ARE THE CALLER'S, READ ONCE PER PASS ──────────────────────────
+ *
+ * `computeSlots()` reads the settings file (and, hosted, calls into the host), so
+ * asking it per row would be a file read per queued row per pump. `pump` reads it
+ * once and hands it down, which is also the more correct shape: every row in one
+ * pass is rationed against one picture of the board, where a list that changed
+ * halfway down would mean two rows of the same queue answered by two boards.
  */
-function nextStartable(): Job | null {
+function nextStartable(lanes: readonly ComputeLane[]): Job | null {
   for (const job of jobs) {
     if (job.state !== 'queued') continue;
     /*
@@ -3336,8 +3455,10 @@ function nextStartable(): Job | null {
      * `running`, so the synchronous `for (;;)` in `pump` — inside which no
      * microtask ever runs — saw the same queued row, the same one free lane, and
      * picked it again, forever, one `runInSlot` promise per turn until the heap
-     * hit 8 GB. The GPU lane escaped only because its one slot made `canStart`
-     * false after the first pick.
+     * hit 8 GB. The GPU side escaped only because it had ONE lane at the time,
+     * which made `canStart` false after the first pick — it has one per machine
+     * now (Package G), so it would spin exactly the same way and this line is the
+     * only thing that stops either of them.
      */
     if (slots.has(job.id)) continue;
     /*
@@ -3376,9 +3497,8 @@ function nextStartable(): Job | null {
      * unresolved here is one this pass could not decide and the next pass will.
      */
     if (chainVerdict(job) !== 'go') continue;
-    const resource = JOB_RESOURCE[job.kind];
-    if (resource === 'exclusive') return canStart(resource) ? job : null;
-    if (canStart(resource)) return job;
+    if (JOB_RESOURCE[job.kind] === 'exclusive') return canStart(job, lanes) ? job : null;
+    if (canStart(job, lanes)) return job;
   }
   return null;
 }
@@ -3581,10 +3701,27 @@ async function pump(): Promise<void> {
    * thing that happens to call `pump`.
    */
   await reconcileChains();
+  /*
+   * THE BOARD, AS THE WHOLE OF THIS PASS SEES IT. Read after the await and
+   * before the first pick, once — see `nextStartable`, which argues why the
+   * list is a parameter rather than something each row asks for itself.
+   */
+  const lanes = computeLanes(computeSlots());
   for (;;) {
-    const next = nextStartable();
+    const next = nextStartable(lanes);
     if (next === null) break;
-    const slot: Slot = { id: next.id, resource: JOB_RESOURCE[next.kind], cancel: null };
+    /*
+     * THE LANE IS RESERVED IN THE SAME BREATH AS THE SLOT, and for the same
+     * reason: both are claims, and both have to be visible to the next turn of
+     * this synchronous loop. `laneAtPick` answers null for a row whose lane the
+     * walk decides — see `Slot.on`, which argues the three states.
+     */
+    const slot: Slot = {
+      id: next.id,
+      resource: JOB_RESOURCE[next.kind],
+      on: laneAtPick(next, lanes),
+      cancel: null,
+    };
     slots.set(next.id, slot);
     void runInSlot(next, slot);
   }
@@ -3755,9 +3892,13 @@ async function runInSlot(job: Job, slot: Slot): Promise<void> {
  * A row whose slot is busy goes BACK TO `queued` wearing the reason, and that is
  * the whole shape of waiting for a server in this app. The alternative — holding
  * the lane while the Mac finishes a narration — would mean one unreachable
- * server stopping every other job on the board, because the GPU lane is one
- * (`SLOTS`, shared/queue-board.ts) and a row sitting in it is a row nothing can
- * run beside.
+ * server stopping every other job on the board: a lane is one machine
+ * (`computeLanes`, shared/queue-board.ts), a row sitting in it is a row nothing
+ * can run beside, and a row waiting for a machine it has not got is a row holding
+ * a lane it is not using. Package G made that worse rather than better, which is
+ * worth saying: a row parked on the Mac's lane would now be blocking the Mac
+ * specifically, so a person watching the bench would see an idle card with a job
+ * apparently in it.
  *
  * WHICH MAKES A TIMESTAMP NECESSARY. `pump` re-picks any `queued` row it can,
  * synchronously, in a loop — so a row parked and immediately re-picked would be
@@ -3829,12 +3970,37 @@ function forgetPark(id: string): void {
  * same backoff and the same sentence on the row. `slots.has` is what tells them
  * apart, and it is the truth rather than a proxy for it: the lane IS the pump's
  * claim on this row.
+ *
+ * ── AND IT IS WHAT DECIDES WHETHER THE WALK MAY CLAIM A LANE ───────────────
+ *
+ * The same one fact, read a second time. A run this scheduler picked has a slot
+ * record, and the walk's claim writes the machine it settled on into it
+ * ({@link LaneClaim}); a run nobody here scheduled has none, and its claim says
+ * yes to everything — a host's queue rations its own machine and a queue that
+ * second-guessed it would be holding the host's row against a board the host
+ * cannot see (see `detachedRuns`, which argues the whole posture).
  */
 async function placeRun(
   next: Job,
   request: EngineRequest,
   wires: RunWires,
 ): Promise<Placement | null> {
+  const held = slots.get(next.id) ?? null;
+  /*
+   * ONE LANE PER RUN, so taking the next candidate gives the last one back: the
+   * field is a single name and the claim overwrites it. A lane this run already
+   * holds — the pump reserved it, or the walk claimed it on an earlier pass of
+   * the backoff — is granted again rather than refused by its own reservation.
+   */
+  const claim: LaneClaim = (lane) => {
+    if (held === null) return true;
+    if (held.on === lane) return true;
+    for (const other of slots.values()) {
+      if (other.id !== held.id && other.on === lane) return false;
+    }
+    held.on = lane;
+    return true;
+  };
   const say = (line: string): void => {
     next.message = line;
     changed();
@@ -3848,7 +4014,7 @@ async function placeRun(
     }
   };
   for (;;) {
-    const outcome = await placeJob(request.kind, next.waitFor, say);
+    const outcome = await placeJob(request.kind, next.waitFor, say, claim);
     if (outcome.verdict === 'go') {
       forgetPark(next.id);
       /*
@@ -3879,7 +4045,7 @@ async function placeRun(
       return null;
     }
     const delay = parkDelay(next.id);
-    if (slots.has(next.id)) {
+    if (held !== null) {
       next.state = 'queued';
       next.message = outcome.reason;
       next.note = null;

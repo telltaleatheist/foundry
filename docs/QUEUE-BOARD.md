@@ -92,6 +92,60 @@ is already serialised per target path (`oneWriterOf`), and the
 two-live-rows-one-output refusal (`enqueueHere`'s dedupe) stays exactly
 where it is and keeps being the guard that matters.
 
+### 2b. The GPU side is one lane PER MACHINE — Wave 61, package G (2026-09-14)
+
+`gpu: 1` was true of a machine and was never true of a BOARD. Owen
+(docs/SLOTS.md §1): *"if there are more than one servers connected, there
+will be more than one GPU slot listed in the queue that can be filled…
+an emergent property of having multiple servers configured is the
+distributed load."* So the number is **derived from the slot list**, in
+the one shared place both programs read: `computeLanes(slots)`
+(`app/shared/queue-board.ts`) answers one lane per compute slot, each
+with a capacity of **one** (`SLOT_CAPACITY`, by slot kind — `cloud` has a
+row so that package F needs no edit here). The CPU side is still the
+constant `CPU_LANE_SLOTS = 2`, and must stay one: a compile is this
+machine's disk however many rooms away the models are.
+
+- **The list is the same one the picker draws** — `computeSlots()` in
+  main, `slots:list` in the renderer. An **empty list is ONE lane**,
+  named for the local slot, which is today's single GPU lane exactly:
+  that is what makes this a no-op for a host that registers no slot
+  provider, BookForge's vendored copy included.
+- **A running row holds the lane of the machine it is on.** `Slot.on`
+  (electron/job-queue.ts) is the slot's name — reserved at the moment the
+  pump PICKS the row when the answer is already knowable (a row pinned to
+  a slot; a row that is never placed at all, which holds the LOCAL lane
+  because a page reading loads dots on this machine's card whatever the
+  registry says), and claimed by the `any` walk otherwise.
+- **`canStart` asks "is there a lane this row could take"**, which is why
+  it takes the row and not just its resource: a busy local card no longer
+  stops a queued row that was only ever going to run on the Mac.
+- **The `any` walk claims as it walks** (`LaneClaim`,
+  electron/crucible-dispatch.ts). The placement decision stays in
+  `placeJob`; the claim is synchronous against main's occupancy map, so
+  two walks cannot take one machine, and a slot this app is already
+  running on is stepped past with a sentence like any other busy one.
+- **The local card is one lane even when it has two names.** An enabled
+  loopback Crucible hides the local slot, and the things that still run
+  locally (a reading) hold that Crucible's lane — `localLane()`, which
+  both programs read, so the bench draws the run on the same card the
+  scheduler is holding.
+- **Re-ranking or disabling a server moves nothing.** A running job is
+  atomic on its slot and keeps running there; the bench keeps its card,
+  marked, until it ends. A queued row's `waitFor` is untouched, and a row
+  naming a slot that is no longer in the list is still picked, so it gets
+  dispatch's own sentence (*"waiting for X, which is switched off or no
+  longer registered"*) rather than waiting silently.
+
+**Measured, 2026-09-14** (a throwaway probe against the real queue with
+the registry and the page reader mocked at the module boundary; run and
+deleted, no test added): two `any` cleanups with two slots ran together,
+one on each; two cleanups pinned to one slot did not; two readings did
+not, with two slots or with a loopback Crucible and a remote one; a
+reading here and a cleanup on the Mac DID; a reading here and a cleanup
+pinned here did not; with one slot, and with no slot list at all, two
+rows ran one at a time exactly as before.
+
 ## 3. The scheduler
 
 `pump()` stays the ONE scheduler (Wave 16f's split survives: `pump`
@@ -155,6 +209,18 @@ decides, `executeJob` works). What changes inside it:
 > rows are dealt into that lane's slots in queue order, and the fact
 > drawn is the one main really guarantees, that at most `SLOTS[lane]`
 > run at once. Nothing in §1–§3 changed to allow it.
+>
+> **Wave 61 (§2b) made the GPU cards MACHINES.** The bench draws one card
+> per compute slot, headed with the slot's own name and saying whose it
+> is, plus the two CPU cards after them; a card carries what is running
+> there (from `Job.ranOn`, mapped onto the board by `laneOfRun`) and, when
+> a row is parked for it, dispatch's own sentence about what it is waiting
+> on. The GPU half is therefore no longer a guess — `ranOn` says where the
+> run went — while the CPU half still is, and is still drawn as one. The
+> `on <slot>` tag stays on the CPU cards, where it still answers something
+> the card does not; on a GPU card the card IS the answer. A run on a
+> machine that has left the list keeps its card, marked, until it ends,
+> because a job never moves once it has started.
 
 - Rows grouped by lane: a GPU section and a CPU section, each headed by
   its slot count and its occupancy (`1 of 1 running`, `2 slots free`);
@@ -316,7 +382,9 @@ Ollama on this desk or against a Crucible in another room.
   one, so a row waiting an hour for the Mac would stop every other job on the
   board. `nextStartable` skips a parked row until its time, and one `setTimeout`
   per park wakes the pump — nothing here polls.
-- **Nothing about the lanes changed.** `SLOTS` is still `{gpu: 1, cpu: 2}`, so
-  two Crucible servers do not yet run two text jobs at once. Dispatch is per-row
-  correct and concurrency is not yet per-slot; making it so means a lane capacity
-  both programs derive from the slot list, which is named as owed in SLOTS.md §7.
+- **Nothing about the lanes changed — for one day.** The picker landed with
+  `SLOTS` still `{gpu: 1, cpu: 2}`, so two Crucible servers could not run two
+  text jobs at once: dispatch was per-row correct and concurrency was not
+  per-slot. **§2b is the other half**, landed 2026-09-14: the GPU side is one
+  lane per compute slot, derived from the same list this picker draws, and a row
+  pinned to one machine now waits for that machine rather than for the board.

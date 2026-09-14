@@ -111,6 +111,33 @@ export function capabilityClassOf(kind: JobKind): CapabilityClass | null {
 export const CRUCIBLE_READS = false;
 
 /**
+ * DOES THIS KIND OF JOB GET PLACED AT ALL — the two early returns of
+ * {@link placeJob}, asked before the walk instead of discovered inside it.
+ *
+ * ── Why it is exported, and what was wrong with it being implied ────────────
+ *
+ * Three callers need the same answer and each of them used to spell it out:
+ * `placeJob` (which returns {@link UNPLACED} and never looks at a slot),
+ * `placedBy` (which puts no `waitFor` on the row, so no picker is drawn), and —
+ * since Package G — the PUMP, which has to know which lane a row will hold
+ * before it picks it. A run that is never placed still runs on this machine's
+ * card: a page reading loads dots on the local GPU whatever the registry says.
+ * Three copies of one predicate is how a reading ends up holding no lane at all
+ * and two of them start on one card, so there is one copy and it is here, beside
+ * the switch (`CRUCIBLE_READS`) that decides half of it.
+ *
+ * FALSE IS NOT "CHEAP" AND IS NOT "NO GPU". An export is false because it never
+ * meets a model; a reading is false because its model is on a path this module
+ * does not route yet. What they share is only that the answer to *whose machine*
+ * is already decided — it is this one.
+ */
+export function placesOnASlot(kind: JobKind): boolean {
+  if (capabilityClassOf(kind) === null) return false;
+  if (kind === 'read' && !CRUCIBLE_READS) return false;
+  return true;
+}
+
+/**
  * WHERE THIS JOB'S ENGINE WILL POINT — everything the spawn needs, and nothing
  * about the queue.
  *
@@ -184,6 +211,29 @@ export type PlacementOutcome =
 export type PlacementProgress = (line: string) => void;
 
 /**
+ * MAY THIS RUN HAVE THAT SLOT — the scheduler's lane, asked from INSIDE the walk.
+ *
+ * ── Why the walk claims rather than the pump reserving ─────────────────────
+ *
+ * Package G gives every compute slot its own lane, so two `any` rows may now be
+ * walking at the same moment — and a walk takes minutes when it has to load a
+ * model. If the pump handed each of them a lane up front it would be making the
+ * placement decision (which this module owns, and which depends on facts only a
+ * server can answer); if it handed them nothing, both would find the same slot
+ * idle and start two runs on one card. So the walk asks, at the one instant it
+ * commits to a slot, and the answer is authoritative because the scheduler's
+ * occupancy map is main-process state that changes under no await.
+ *
+ * TRUE MEANS THE LANE IS NOW THIS RUN'S. There is no matching release: a run
+ * holds exactly one lane, so claiming the next candidate gives the last one back,
+ * and the whole claim goes when the row settles. A caller with no lanes to ration
+ * — a host's scheduler through `runJob`, the Export dialog through `runNow` —
+ * passes a claim that always says yes, because the deciding already happened
+ * somewhere this queue cannot see (electron/job-queue.ts, `detachedRuns`).
+ */
+export type LaneClaim = (slot: string) => boolean;
+
+/**
  * PLACE THIS JOB.
  *
  * `waitFor` is the row's own — a slot name, {@link ANY_SLOT}, or undefined for a
@@ -204,11 +254,23 @@ export type PlacementProgress = (line: string) => void;
  * ever constructed today; the filter is here so that the day one is, it is a
  * deliberate per-job choice and not something a walk wandered into and billed
  * somebody for.
+ *
+ * ── AND THE WALK NOW TAKES THE LANE AS IT GOES (Package G) ─────────────────
+ *
+ * `claim` is the scheduler's occupancy, asked per candidate — see
+ * {@link LaneClaim}. A slot this app is ALREADY running something on is stepped
+ * past exactly like a busy one, with a sentence saying so, because that is what
+ * it is: the difference between somebody else's job holding the card and our own
+ * matters to the wording and to nothing else. The PINNED path does not claim,
+ * and that is not an omission: the pump reserves a named lane at the moment it
+ * picks the row, before any await, so a pinned row that got here already holds
+ * the lane it named (job-queue.ts, `laneAtPick`).
  */
 export async function placeJob(
   kind: JobKind,
   waitFor: string | undefined,
   say: PlacementProgress,
+  claim: LaneClaim,
 ): Promise<PlacementOutcome> {
   const slots = computeSlots();
   const capability = capabilityClassOf(kind);
@@ -217,9 +279,19 @@ export async function placeJob(
    * capability class (an export, a mint, an install — no model anywhere near
    * it); no slot list (hosted with no provider); or one slot, which is the
    * friend with a GPU and no Crucible, who never meets a picker.
+   *
+   * NEITHER ARM CLAIMS A LANE, and the pump is why: a run that is never placed
+   * is a run on THIS machine, and `laneAtPick` gives it the local lane before it
+   * is ever picked (`placesOnASlot` is the shared half of this test). Claiming
+   * here as well would be a second owner of one reservation.
+   *
+   * `capability === null` IS `placesOnASlot`'s FIRST CLAUSE, repeated for the
+   * compiler rather than for the reader: the walk below needs the class narrowed
+   * to a non-null one, and a predicate in another function cannot narrow a local.
    */
-  if (capability === null || slots.length === 0) return { verdict: 'go', placement: UNPLACED };
-  if (capability === 'pages' && !CRUCIBLE_READS) return { verdict: 'go', placement: UNPLACED };
+  if (capability === null || !placesOnASlot(kind) || slots.length === 0) {
+    return { verdict: 'go', placement: UNPLACED };
+  }
 
   const pinned = waitFor !== undefined && waitFor !== ANY_SLOT ? waitFor : null;
   if (pinned !== null) {
@@ -245,6 +317,18 @@ export async function placeJob(
   const reasons: string[] = [];
   for (const slot of slots) {
     if (slot.kind === 'cloud') continue;
+    /*
+     * OUR OWN RUN IS AS GOOD A REASON TO STEP PAST AS SOMEBODY ELSE'S, and it is
+     * the one this app is authoritative about: a Crucible serving a passthrough
+     * chat does not report itself busy, so the lane is the only thing standing
+     * between two of our books and one card. The sentence names the app rather
+     * than the job, because a person reading a parked row is looking at the
+     * bench, where the job that is in the way already names itself.
+     */
+    if (!claim(slot.name)) {
+      reasons.push(`"${slot.name}" is already running a job of yours`);
+      continue;
+    }
     const outcome = await placeOn(slot, capability, say);
     if (outcome.verdict === 'go') return outcome;
     if (outcome.verdict === 'refuse') return outcome;
