@@ -1,8 +1,60 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
-**FOUR DOORS AND ONE PUSH ON 2026-09-14 — WAVE 61 PACKAGE E, SO THE COUNT IS
-119.** Nothing was removed and no existing shape narrowed; three payloads
-widened.
+**THREE DOORS AND A NEW FAMILY ON 2026-09-14 — WAVE 61 PACKAGE F (APP HALF).
+COUNTED BY SCRIPT OVER `app/electron/ipc.ts`: 130 `ipcMain.handle` call sites,
+130 distinct channel names, zero `ipcMain.on`.** Nothing was removed, nothing was
+renamed, and no existing shape narrowed. One payload widened
+(`queue:list`/`queue:changed` carry `Job.usage`).
+
+**AND THE STANDING FAILURE HAPPENED AGAIN, SO IT IS SAID HERE RATHER THAN LEFT
+TO BE DISCOVERED.** The head of this file said **119** and the source measured
+**127** before this change — eight doors added under a stale figure, which is the
+exact failure the 2026-08-22 and 2026-08-23 paragraphs below already record twice.
+A FIGURE QUOTED AS A GATE IS A MEASUREMENT OR IT IS DECORATION. The per-family
+tables remain the authority for the NAMES; where a total contradicts them, the
+tables win.
+
+- **`cloud:settings` → `CloudSettingsView`** — every configured provider, the
+  slot list as it now stands, and whether this window is hosted. One read,
+  because the three are one picture: a card assembled from separate round trips
+  draws a list that disagrees with its own slot preview for a frame.
+- **`cloud:save` (providers) → `CloudSettingsView`** — REPLACE the whole list.
+  `apiKey: null` on an entry keeps what is stored, matched by name. Rejects with
+  a sentence naming the entry it cannot store — a missing model, a name a
+  Crucible already has. Answered with the whole view, because enabling a
+  provider changes the SLOTS. Refused outright while hosted. It fires
+  `acts:gates-changed` and NOT the Crucible registry's own pass: connecting a
+  provider moves the tiles and nothing else, and §5b's page-reader deletion can
+  never follow from one, because a provider does not serve `pages` at all.
+- **`cloud:test` (a whole `CloudProviderEdit`) → `CloudProbe`** — list the
+  provider's models and say whether the chosen id is among them. A plain `GET`
+  with the right header per kind (`Authorization: Bearer`, or `x-api-key` plus
+  `anthropic-version`), so it costs no usage credits. It takes the UNSAVED edit,
+  on `crucible:test-at`'s argument: saving a credential in order to find out
+  whether it works would be this app writing into somebody's settings to answer a
+  question. **The key crosses ONE WAY ONLY**, into main, out of a box somebody is
+  typing in; `apiKey: null` means "the one already stored under this name", and
+  no answer carries either back — `CloudProviderView` has `keySet: boolean` where
+  the stored entry has a credential.
+
+`cloud:` is a NEW FAMILY rather than three more members of `crucible:`, and that
+is this file's own advice taken twice. On the merits: a cloud provider is not a
+Crucible — no capability record, nothing resident, no lease, no busy state — and
+a card reading `crucible:save` to store an OpenAI key would teach that they are
+one kind of thing. On the audit: seven family collisions with BookForge are still
+open, `crucible:` is a family BookForge does not have, and `cloud:` is one
+neither side has, which is the cheapest possible answer.
+
+**ONE PAYLOAD WIDENED INSIDE CHANNELS THAT DID NOT MOVE.** `Job` grew
+`usage?: {requests, tokensIn, tokensOut}` — what a run spent, parsed off the
+engine's own last line and ABSENT whenever no server counted (Ollama counts
+nothing, so the engine prints nothing rather than a line of zeroes). It rides on
+`queue:list` and the `queue:changed` push. A host mirroring rows need not carry
+it; a row without it simply draws no cost line.
+
+**FOUR DOORS AND ONE PUSH ON 2026-09-14 — WAVE 61 PACKAGE E, SO THE COUNT WAS
+SAID TO BE 119.** Nothing was removed and no existing shape narrowed; three
+payloads widened.
 
 - **`crucible:test-at` (url, token) → `CrucibleProbe`** — test an address and a
   token that are NOT SAVED YET. The setup wizard's Connect door has three boxes
@@ -295,13 +347,16 @@ channel work was the one rename the note above describes (`navigate` →
 table is the list the wrapper is applied to. Until then, treat every name here
 as the name.
 
-The families are, RE-MEASURED BY SCRIPT on 2026-09-13 and extended by two on
-2026-09-14, over every `ipcMain.handle`, `broadcast` and `webContents.send` in
-`app/electron`: `acts`, `analysis`, `app`, `book`, `capture`, `dialog`, `doctor`,
+The families are, RE-MEASURED BY SCRIPT on 2026-09-13, extended by two on
+2026-09-14 (package D) and by `cloud` and `crucible` since, over every
+`ipcMain.handle`, `broadcast` and `webContents.send` in `app/electron`: `acts`,
+`analysis`, `app`, `book`, `capture`, `cloud`, `crucible`, `dialog`, `doctor`,
 `document`, `documents`, `engine`, `env`, `export`, `host-ops`, `ledger`,
 `library`, `llm`, `menu`, `meta`, `models`, `ollama`, `page-reader`, `project`,
 `projects`, `queue`, `reading`, `recents`, `settings`, `setup`, `shell`,
-`system`, `window`, `workspace` — **thirty-two**.
+`slots`, `system`, `window`, `workspace` — **thirty-five**. (The thirty-two that
+stood here omitted `crucible` and `slots`, which package C registered, which is
+the same staleness this file's head records about the door count.)
 
 `acts:` and `models:` are NEW FAMILIES rather than members of `llm:`, and that is
 this file's own advice taken: seven family collisions with BookForge are still
@@ -586,7 +641,7 @@ installed — that happens minutes later in a window this app does not own, so
 
 ## Doors the renderer knocks on
 
-All 114 are `ipcMain.handle` — there is not one `ipcMain.on` in the app, on
+All 130 are `ipcMain.handle` — there is not one `ipcMain.on` in the app, on
 purpose: a renderer that cannot tell whether main heard it is a renderer that
 cannot report a failure. They are registered in one function, `registerIpc`
 (`app/electron/ipc.ts`), which `mountFoundry` calls.
@@ -616,6 +671,9 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `capture:pdf-stage-begin` | Open a staging directory for one dropped PDF, sweeping every leftover this run is not holding open. Answers the id the other two are addressed by. |
 | `capture:pdf-stage-page` | One rasterized PDF page's PNG, renderer to main, staged under a checked basename; answers the path `capture:intake` will copy from. |
 | `capture:pdf-stage-release` | The staged pages are in a project, or abandoned: delete the directory. Releasing twice is releasing once. |
+| `cloud:settings` | Every configured cloud provider, the slots as they now stand, and whether this window is hosted — the Cloud providers card's one read. No key crosses: the renderer is told `keySet`. |
+| `cloud:save` | Replace the whole provider list. `apiKey: null` keeps the stored key. Answered with the whole view, because enabling a provider changes the slots. Refused while hosted. |
+| `cloud:test` | List that provider's models and say whether the chosen id is among them — a plain GET with the right header per kind, so it costs no usage credits. Takes the UNSAVED edit; the key goes one way, into main, and no answer carries it back. |
 | `capture:recipe-load` | The recipe plus a fresh door token — how a reopened project gets its light table back. |
 | `capture:recipe-save` | The whole recipe document, validated before it touches disk. |
 | `capture:remove` | Remove photographs from a capture project's bank — the one door that deletes something irreplaceable, and the surface has already asked by name and count. |
@@ -689,7 +747,7 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `queue:run` | Run an export NOW and resolve with the settled row — the Export dialog's door. Never routed to a host queue; the row leaves the list at the settle, so nothing lingers in the shelf. Refuses a `read` by name. |
 | `queue:set-wait-for` | Send a held or queued row to a different SLOT — a slot name, or `any` (docs/SLOTS.md §3). Answers nothing; the row arrives on `queue:changed` like every other change. Refused silently on a row that has started, because a job is atomic on one slot. NOT forwarded to a host queue: a host's placement is the host's. |
 | `queue:start` | Release everything held at this moment. Forwarded to the host's queue where one is registered. |
-| `slots:list` | Every slot, in priority order — where compute-heavy work may go. Hosted, this is the host's own list (`FoundryHost.slots`). One entry or none is the ordinary answer and draws no picker anywhere. |
+| `slots:list` | Every slot, in priority order — where compute-heavy work may go: this machine, one per enabled Crucible, then one per enabled cloud provider (`kind: 'cloud'`, and carrying no `url`, deliberately — see docs/SLOTS.md §7, Package F). Hosted, this is the host's own list (`FoundryHost.slots`). One entry or none is the ordinary answer and draws no picker anywhere. |
 | `slots:rows-waiting-for` | The waiting rows of OURS that name one slot — what the Servers card shows before it offers to move any of them. Running rows are deliberately not included. |
 | `crucible:settings` | Everything the Servers card draws in one read: the registry (with `tokenSet`, never a token), the derived slots, the new-jobs default, the WSL distro, and whether this window is hosted. |
 | `crucible:save` | REPLACE the whole registry, in order — the array position IS the rank, so a drag is a save. `token: null` on an entry keeps what is stored. Rejects with a sentence naming the entry it cannot store. Refused outright while hosted. |

@@ -101,10 +101,22 @@ an emergent property of having multiple servers configured is the
 distributed load."* So the number is **derived from the slot list**, in
 the one shared place both programs read: `computeLanes(slots)`
 (`app/shared/queue-board.ts`) answers one lane per compute slot, each
-with a capacity of **one** (`SLOT_CAPACITY`, by slot kind — `cloud` has a
-row so that package F needs no edit here). The CPU side is still the
-constant `CPU_LANE_SLOTS = 2`, and must stay one: a compile is this
-machine's disk however many rooms away the models are.
+with a capacity of **one** (`SLOT_CAPACITY`, by slot kind). The CPU side
+is still the constant `CPU_LANE_SLOTS = 2`, and must stay one: a compile
+is this machine's disk however many rooms away the models are.
+
+**`cloud` IS ONE TOO, AND SINCE PACKAGE F THE ROW ARGUES ITSELF.** It was
+a placeholder so that package F would need no edit here; it stays at one
+for a reason that is a fact about providers rather than about cards. A
+Crucible's lane is one because the GPU is one. A provider has no card to
+contend for — it has a RATE LIMIT, per key, already honoured one layer
+down: a single run keeps `DEFAULT_CLOUD_CONCURRENCY` requests in flight
+(four) and the engine WAITS OUT a 429 rather than failing (docs/VLLM.md
+§2a). Two runs on one key would share one limit, trip it more often, and
+spend the difference asleep while still paying for every retry that
+landed. Somebody who wants two cloud jobs at once configures a second
+provider entry — a second key, a second limit, a second slot, said out
+loud.
 
 - **The list is the same one the picker draws** — `computeSlots()` in
   main, `slots:list` in the renderer. An **empty list is ONE lane**,
@@ -374,6 +386,22 @@ Ollama on this desk or against a Crucible in another room.
   that is no longer a slot stays in the option list, labelled "(not available)",
   because the row really is waiting for it and a select whose value is missing
   from its options silently shows a different answer instead.
+- **AND IT HAS TWO GROUPS SINCE PACKAGE F (2026-09-14).** The machines — `any`,
+  this computer, every Crucible, and the stale name if there is one — are
+  ungrouped and first; every cloud provider is in an `<optgroup>` of its own
+  headed **"Cloud — costs credits"**. Every mechanism that keeps `any` out of a
+  provider is in main and is invisible on screen (the walk steps past them with
+  a sentence, `New jobs wait for: top` resolves to the top non-cloud slot), so
+  the group heading is the one place on the page where the difference between a
+  machine and a bill is SAID. A stale name goes with the MACHINES, because a
+  slot that is gone has no kind any more and guessing one would be the picker
+  inventing a charge. `label: null` is the ungrouped block and is not an empty
+  label: an `<optgroup label="">` draws an indented headed section with nothing
+  written over it, which is worse than no grouping at all.
+- **A row's cost, once it has one.** A finished row and a bench card draw
+  `Job.usage` as `1,203,441 in / 388,120 out`, parsed off the engine's own last
+  line. Absent means no server counted — Ollama counts nothing — and never zero,
+  and there is deliberately no price on it (docs/VLLM.md §2a).
 - **A row whose slot is busy goes BACK TO `queued`**, wearing the sentence about
   what it is waiting for (the holder's name, "someone is narrating on X", "X is
   unreachable", "X cannot translate: …"), and is retried on a 3 s → 30 s backoff

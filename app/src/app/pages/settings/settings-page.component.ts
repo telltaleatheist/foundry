@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import type { BackendMode, DoctorReport, EngineInfo, TierReport } from '@shared/types';
 
 import { api, hosted } from '../../core/foundry';
+import { CloudCardComponent } from './cloud-card.component';
 import { EnvCardComponent } from './env-card.component';
 import { LibraryCardComponent } from './library-card.component';
 import { MachineModelsCardComponent } from './machine-models-card.component';
@@ -27,7 +28,7 @@ import { ServersCardComponent } from './servers-card.component';
 @Component({
   selector: 'app-settings-page',
   imports: [
-    EnvCardComponent, FormsModule, LibraryCardComponent, LlmCardComponent,
+    CloudCardComponent, EnvCardComponent, FormsModule, LibraryCardComponent, LlmCardComponent,
     MachineModelsCardComponent, PageReaderCardComponent, ServersCardComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -163,6 +164,20 @@ import { ServersCardComponent } from './servers-card.component';
             leave the queue's picker naming machines nothing explains.
           -->
           <app-servers-card />
+
+          <!--
+            AND THE THIRD ANSWER TO THE SAME QUESTION — somebody else's computer,
+            rented by the token (docs/SLOTS.md §3, Package F). Directly under the
+            Servers card because the three cards read downwards as the three
+            places a text act can go: this machine's Ollama, a Crucible somebody
+            runs, a provider somebody pays. It is LAST of the three because it is
+            the one with a bill on it, and because Owen asked for it as the
+            answer for a machine that cannot do the other two — *"for weaker
+            systems"*. Drawn hosted as well, read-only, for the Servers card's
+            reason: a hosted window still has slots, and a card that vanished
+            would leave the queue's picker naming providers nothing explains.
+          -->
+          <app-cloud-card />
 
           <!-- The prebuilt Pythons: the rasteriser every tier needs, and the
                analysis worker. Neither of them reads a page. -->

@@ -27,6 +27,7 @@ import type {
   DoctorResult,
   EngineInfo,
   JobProgress,
+  JobUsage,
   MetadataOutcome,
   MintMeta,
 } from '../shared/types';
@@ -375,6 +376,59 @@ export function parseProgressLine(line: string): JobProgress | null {
   }
 
   return null;
+}
+
+/**
+ * One stderr line -> what the run SPENT, or null.
+ *
+ * ── The contract, and it IS a contract ─────────────────────────────────────
+ *
+ * `usageLine` (src/translate/transport.ts) prints exactly one of these at the
+ * end of every text act that talked to a server which counted:
+ *
+ *   translate: 412 requests, 1,203,441 tokens in, 388,120 out
+ *
+ * The act prefix is the act's own (`translate`, `simplify`, `clean-text`,
+ * `analyze`), the numbers are `toLocaleString('en-US')` — so they carry commas —
+ * and the three nouns are the interface. The prose around them is free to
+ * change; those words are not.
+ *
+ * ── Why it is not a fourth pattern inside `parseProgressLine` ──────────────
+ *
+ * Because it is not progress, and that function's whole discipline is that
+ * everything it returns is a count of work done out of work to do. A usage line
+ * would be a fraction-shaped thing (`412 requests`) arriving on a function whose
+ * callers set a progress bar from it. Two readers, two questions, and the one
+ * caller asks both of the same line.
+ *
+ * ── Null for every other line, INCLUDING a run that spent nothing ──────────
+ *
+ * A door that reported no usage prints no line at all (Ollama is that door), so
+ * absence here is "nothing counted" and never "zero tokens". The app does not
+ * invent the second from the first — see {@link JobUsage} on the row.
+ *
+ * THE COMMAS ARE STRIPPED AND NOT PARSED AROUND. `Number('1,203,441')` is `NaN`,
+ * and a locale that grouped with thin spaces would break this — the engine pins
+ * `en-US` for exactly that reason, so the separator is a comma and only a comma.
+ */
+export function parseUsageLine(line: string): JobUsage | null {
+  const spent = /^[a-z-]+:\s+([\d,]+) requests, ([\d,]+) tokens in, ([\d,]+) out$/
+    .exec(line.trim());
+  if (spent === null) return null;
+  const count = (raw: string | undefined): number => Number((raw ?? '').replace(/,/g, ''));
+  const requests = count(spent[1]);
+  const tokensIn = count(spent[2]);
+  const tokensOut = count(spent[3]);
+  /*
+   * A number this reader could not make sense of is NO usage rather than a row
+   * saying NaN. There is no way for the engine to produce one — the groups are
+   * digits and commas — and a guard whose cost is one comparison is cheaper than
+   * the screenshot of "NaN in / NaN out" it prevents.
+   */
+  if (!Number.isFinite(requests) || !Number.isFinite(tokensIn) || !Number.isFinite(tokensOut)) {
+    return null;
+  }
+  return { requests, tokensIn, tokensOut };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

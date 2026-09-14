@@ -57,8 +57,17 @@
  *    else's. And Owen named translation — a book-length run that has to finish —
  *    not a punctuation pass over blocks that is resumable per block.
  * 4. **READING THROUGH A REMOTE ENDPOINT.** See `readGate`.
+ * 5. **A MACHINE WITH A CLOUD PROVIDER CONNECTED.** Owen's weaker-system case
+ *    (docs/SLOTS.md §1): *"give them the option of connecting an api key for
+ *    openai or claude instead of using the 27b or the 9b… for weaker systems."*
+ *    An enabled provider lights translate, simplify, analysis and clean AFTER
+ *    the machine has said no, keeping the machine's own sentence and adding the
+ *    provider's — see `textGate`, which argues why it is last and not first. It
+ *    lights READING for nobody: page reading is a VLM pass and stays local or on
+ *    a Crucible.
  */
 import { readAppSettings } from './app-settings';
+import { enabledCloudProviders } from './cloud-providers';
 import {
   localCrucibleServes,
   localCrucibleTakeover,
@@ -85,6 +94,19 @@ interface Machine {
   profile: SystemProfile;
   ollama: OllamaFacts;
   held: Set<string>;
+  /**
+   * THE FIRST ENABLED CLOUD PROVIDER'S NAME, or null when none is connected.
+   *
+   * The NAME and not the entry, because that is all four gates want and because
+   * an entry carries an API key: a shape holding a credential passed into five
+   * sentence-composing functions is a credential one `${}` away from a tooltip.
+   *
+   * THE FIRST AND NOT A CHOICE. This lights a tile; it does not place a job. Two
+   * providers connected means the tile is lit either way and the PICKER on the
+   * row is where the one that runs is chosen, so naming the first is a sentence
+   * that is true rather than a decision made in the wrong place.
+   */
+  cloud: string | null;
 }
 
 /** One gigabyte figure, said the way the rest of the app says it. */
@@ -102,7 +124,46 @@ function pool(profile: SystemProfile): string {
 }
 
 /**
- * A text act's gate — translate, simplify, analysis, clean.
+ * A text act's gate — translate, simplify, analysis, clean — with the cloud
+ * fallback on the end of it.
+ *
+ * ── THE CLOUD PROVIDER IS A LAST RESORT AND NOT A FIRST ANSWER ─────────────
+ *
+ * Owen asked for it in exactly those terms (docs/SLOTS.md §1): *"give them the
+ * option of connecting an api key for openai or claude instead of using the 27b
+ * or the 9b… **for weaker systems**."* So it is consulted only where the machine
+ * itself has said no. A provider that lit these tiles unconditionally would
+ * quietly move the default answer for a person with a 24 GB card off their own
+ * GPU and onto a bill — and the tile is not where that choice is made anyway:
+ * the PICKER is (docs/SLOTS.md §3, *"a deliberate per-job choice, never
+ * something `any` falls through to"*). What the tile does here is stop being
+ * gray, so the dialog can be opened at all and the row inside it aimed at the
+ * provider.
+ *
+ * THE LOCAL SENTENCE IS KEPT AND THE CLOUD ONE IS ADDED TO IT, rather than
+ * replacing it. "There is no GPU a model can use" is still the fact about this
+ * machine, and a person who reads only "via OpenAI (cloud)" would not know why
+ * their own card is not being offered.
+ *
+ * READING IS NEVER LIT BY ONE — see `readGate`, which does not consult this at
+ * all: page reading is a VLM pass and stays local or on a Crucible
+ * (docs/SLOTS.md §3).
+ */
+function textGate(cls: ModelClass, machine: Machine): ActGate {
+  const local = localTextGate(cls, machine);
+  if (local.lit) return local;
+  const provider = machine.cloud;
+  if (provider === null) return local;
+  return {
+    lit: true,
+    why: `${local.why} A cloud provider is connected, so this can run via ${provider} (cloud) — `
+      + 'choose it on the job\'s own row in the queue. It spends usage credits, and the text is '
+      + 'sent to that provider.',
+  };
+}
+
+/**
+ * The same gate asked only of THIS MACHINE — everything above the cloud.
  *
  * THE ORDER OF THE BRANCHES IS THE ORDER OF THE ANSWERS. A Crucible serving the
  * class answers first because it makes every question under it irrelevant; a
@@ -110,7 +171,7 @@ function pool(profile: SystemProfile): string {
  * catalog, then the store. Each refusal names the NEXT thing that would change
  * it, which is what makes a gray tile actionable rather than final.
  */
-function textGate(cls: ModelClass, machine: Machine): ActGate {
+function localTextGate(cls: ModelClass, machine: Machine): ActGate {
   /*
    * A LOCAL CRUCIBLE SERVING THE CLASS LIGHTS IT OUTRIGHT. `unknown` — no local
    * entry, nothing probed yet, or a local server that did not answer — falls
@@ -321,6 +382,15 @@ export async function actGates(): Promise<ActGates> {
     profile,
     ollama,
     held: heldSet(ollama.models),
+    /*
+     * READ SYNCHRONOUSLY AND OUT OF THE SETTINGS FILE, with nothing probed. A
+     * provider has no state this app can ask about cheaply — no capability
+     * record, no residency, nothing that is "busy" — and the one thing that
+     * could be wrong (the key, the model id) is `Test`'s question on the
+     * settings card, asked once by a person, not on every gate read behind a
+     * tooltip. `enabled` is the whole of what this gate needs to know.
+     */
+    cloud: enabledCloudProviders()[0]?.name ?? null,
   };
 
   return {

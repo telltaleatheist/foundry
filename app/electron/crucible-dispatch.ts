@@ -48,6 +48,7 @@ import {
   isServerSpecificRefusal,
 } from '@crucible/client';
 
+import { cloudEndpointOf, cloudHeaderMapFor, cloudProviderNamed } from './cloud-providers';
 import { clientFor, computeSlots, crucibleServerNamed } from './crucible-registry';
 import type { CrucibleServerEntry } from './app-settings';
 import { ANY_SLOT, LOCAL_SLOT_NAME, slotNamed, type ComputeSlot } from '../shared/slots';
@@ -148,7 +149,12 @@ export function placesOnASlot(kind: JobKind): boolean {
  */
 export interface Placement {
   slot: ComputeSlot;
-  /** Which engine dialect. `openai` is the engine's default and goes unspelled. */
+  /**
+   * Which engine dialect. `openai` is the engine's default and goes unspelled on
+   * the command line; `ollama` and `anthropic` are both written out (`doorArgs`,
+   * electron/job-queue.ts), because the engine refuses an unknown value by name
+   * and a door left unsaid would be the default answering for it.
+   */
   door: LlmServerKind;
   /** `--endpoint`, or null to use the request's own. */
   endpoint: string | null;
@@ -250,10 +256,13 @@ export type LaneClaim = (slot: string) => boolean;
  * them, because a person looking at a held row needs to know it is not one
  * server that is in the way.
  *
- * A CLOUD SLOT IS NEVER WHAT `any` FALLS THROUGH TO (docs/SLOTS.md §3). None is
- * ever constructed today; the filter is here so that the day one is, it is a
- * deliberate per-job choice and not something a walk wandered into and billed
- * somebody for.
+ * A CLOUD SLOT IS NEVER WHAT `any` FALLS THROUGH TO (docs/SLOTS.md §3). It is
+ * STEPPED PAST WITH A SENTENCE rather than skipped in silence, which is the one
+ * change Package F made to this walk: a machine whose only slot is a provider
+ * would otherwise park every `any` row reading "no slot is available", and the
+ * true statement is that there IS one and this walk will not spend somebody's
+ * money to reach it. The sentence says so, and the picker on the row is where
+ * the choice is made.
  *
  * ── AND THE WALK NOW TAKES THE LANE AS IT GOES (Package G) ─────────────────
  *
@@ -316,7 +325,10 @@ export async function placeJob(
 
   const reasons: string[] = [];
   for (const slot of slots) {
-    if (slot.kind === 'cloud') continue;
+    if (slot.kind === 'cloud') {
+      reasons.push(`"${slot.name}" is a cloud provider, and cloud slots are chosen on purpose`);
+      continue;
+    }
     /*
      * OUR OWN RUN IS AS GOOD A REASON TO STEP PAST AS SOMEBODY ELSE'S, and it is
      * the one this app is authoritative about: a Crucible serving a passthrough
@@ -349,17 +361,7 @@ async function placeOn(
   say: PlacementProgress,
 ): Promise<PlacementOutcome> {
   if (slot.kind === 'local') return { verdict: 'go', placement: localPlacement(slot) };
-  if (slot.kind === 'cloud') {
-    /*
-     * THE SEAM, AND IT REFUSES. Package F (docs/SLOTS.md §6) is cloud slots: the
-     * `openai` door plus a credential in the header map, per-job opt-in, 429 as
-     * the wait, cost shown. None of that is built, and a slot of this kind
-     * cannot be constructed by anything in this app today — so this arm exists
-     * to make the compiler name it the day somebody adds one, rather than to
-     * handle a case that occurs.
-     */
-    return { verdict: 'refuse', reason: `"${slot.name}" is a cloud slot, and cloud slots are not built yet` };
-  }
+  if (slot.kind === 'cloud') return placeOnCloud(slot, capability);
   const entry = crucibleServerNamed(slot.name);
   if (entry === null) {
     return { verdict: 'wait', reason: `"${slot.name}" is no longer registered` };
@@ -369,6 +371,74 @@ async function placeOn(
   } catch (err) {
     return interpretFailure(err, slot.name, capability);
   }
+}
+
+/**
+ * A CLOUD PROVIDER — and it is the shortest placement in this module, because
+ * almost everything the Crucible path does has no counterpart here.
+ *
+ * ── What is deliberately absent, each for its own reason ───────────────────
+ *
+ *   * NO CAPABILITY READ. A provider has no card to measure and no class rows;
+ *     which models a key may use is `Test`'s question, asked once on a settings
+ *     card rather than before every run.
+ *   * NO RESIDENCY AND NO LEASE. Nothing is loaded and nothing can be evicted,
+ *     so there is nothing to claim — `lease: null`, and the settle has nothing
+ *     to release.
+ *   * NO BUSY, AND THEREFORE NO `wait` ARM AT ALL. A provider's queue is
+ *     somebody else's and its way of saying "later" is a 429, which the ENGINE
+ *     waits out (docs/VLLM.md §2a: `retry-after` honoured, else 2 s doubling to
+ *     30 s, six attempts, each wait logged). Parking the row here for a fact
+ *     this app cannot observe would be a second waiter over one queue.
+ *   * NO NETWORK CALL OF ANY KIND. This function does not check that the
+ *     provider is reachable, on `interpretFailure`'s posture one door along: a
+ *     reachability probe before every spawn would put a round trip in front of
+ *     every row and still tell the run nothing it will not learn in its first
+ *     request, with a better sentence.
+ *
+ * ── And the one refusal it does make ───────────────────────────────────────
+ *
+ * TEXT ACTS ONLY (docs/SLOTS.md §3). A `pages` job pinned to a provider is
+ * refused BY NAME and not waited on, because it will be refused identically
+ * every time: page reading is a VLM pass over rendered images through this app's
+ * own reader or a Crucible, and no cloud text door in this build serves it.
+ */
+function placeOnCloud(slot: ComputeSlot, capability: CapabilityClass): PlacementOutcome {
+  const entry = cloudProviderNamed(slot.name);
+  if (entry === null) {
+    return { verdict: 'wait', reason: `"${slot.name}" is no longer configured` };
+  }
+  if (capability === 'pages') {
+    return {
+      verdict: 'refuse',
+      reason: `${entry.name} cannot read pages; page reading stays on this machine or a Crucible.`,
+    };
+  }
+  return {
+    verdict: 'go',
+    placement: {
+      slot,
+      /*
+       * OpenAI'S OWN API IS AN OpenAI-COMPATIBLE SERVER, so a provider of that
+       * kind takes the door that already existed and Anthropic takes the dialect
+       * of its own. The engine refuses an unknown `--server` value by name, so
+       * this mapping is total by construction rather than by a default.
+       */
+      door: entry.kind === 'anthropic' ? 'anthropic' : 'openai',
+      endpoint: cloudEndpointOf(entry),
+      /*
+       * `--model` IS REQUIRED ON BOTH CLOUD DOORS and there is no default to
+       * fall back on — a provider holds a catalog. The id is the one the person
+       * typed on the card and `Test` proved against the provider's own listing;
+       * nothing here second-guesses it, on `clampCloudModel`'s argument that a
+       * table of hosted model names compiled into a build is wrong by the next
+       * release.
+       */
+      model: entry.model,
+      env: { FOUNDRY_ENDPOINT_HEADERS: cloudHeaderMapFor(entry) },
+      lease: null,
+    },
+  };
 }
 
 async function placeOnCrucible(

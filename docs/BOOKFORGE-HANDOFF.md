@@ -506,6 +506,59 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-09-14 (later still) — PACKAGE F's APP HALF IS IN: CLOUD SLOTS.** Appended
+to the note below rather than replacing it; nothing in it is superseded.
+
+Owen: *"give them the option of connecting an api key for openai or claude
+instead of using the 27b or the 9b… for weaker systems."* Plan of record:
+docs/SLOTS.md §3 and §7 ("Package F (app) — landed").
+
+**Channels added — three, in a NEW family `cloud:`.** `cloud:settings`,
+`cloud:save`, `cloud:test`. Nothing removed, nothing renamed, no shape narrowed.
+A new family rather than three more `crucible:` members for two reasons, and one
+of them is yours: seven of our families still collide with your registry, and a
+brand-new family cannot collide with anything either side owns. The other is on
+the merits — a provider has no capability record, nothing resident, no lease and
+no busy state, so it is not a Crucible with a different URL.
+
+**Settings key added.** `AppSettings.cloudProviders` — `{kind: 'openai' |
+'anthropic', name, apiKey, model, endpoint, enabled}[]`. The API key is stored in
+main and never crosses a wire in either direction; the renderer's shape is
+`CloudProviderView`, which carries `keySet: boolean`. Same discipline as
+`crucibleServers.token`. **If you vendor our `app-settings.json` reader, note
+that this file now holds a second secret** — treat it the way you treat the
+Crucible token.
+
+**Payload widened inside channels that did not move.** `Job` gained
+`usage?: {requests, tokensIn, tokensOut}` — what a run spent, parsed off the
+engine's own last line (`translate: 412 requests, 1,203,441 tokens in, 388,120
+out`). It rides on `queue:list` and the `queue:changed` push. **Optional and
+absent whenever no server counted** (Ollama counts nothing, so the engine prints
+no line rather than a line of zeroes), so a host mirroring rows need not carry
+it; a row without it simply draws no cost line. We do not price it and neither
+should a bench — prices change weekly and differ per key and tier.
+
+**HOSTED WINDOWS TAKE SLOTS FROM THE HOST, SO A HOST THAT OFFERS NO CLOUD SLOT
+SEES NONE.** This is the part that matters to you and it is a no-op by
+construction: `computeSlots()` returns `hostSlots()` unchanged when a host is
+mounted, and a standalone Foundry's own `cloudProviders` are NOT merged into it
+— the work in your window runs on your compute and the bill would be yours, so
+the choice has to be yours to offer. `FoundryHost.slots` already accepts
+`kind: 'cloud'` (it has since package C) and `hostSlots()` already admits it; if
+you ever want to offer one, emit a slot of that kind and Foundry will draw it in
+the picker's "Cloud — costs credits" group and refuse a page reading pinned to it
+by name. Both cloud-provider settings doors (`cloud:save`) refuse outright while
+hosted, exactly as `crucible:save` does.
+
+**Engine flags, if you spawn it yourself.** `--server anthropic` is the third
+door and `--model` is REQUIRED on both cloud doors. The credential goes in
+`FOUNDRY_ENDPOINT_HEADERS` — `{"Authorization":"Bearer …"}` on the OpenAI door,
+`{"x-api-key":"…"}` on Anthropic — and **nothing else**: no `X-Crucible-*` (a
+provider has never heard of them) and no `anthropic-version`, which the engine
+adds itself. The printed command line stays credential-free.
+
+---
+
 **2026-09-14 (later) — PACKAGES C, D AND E ARE ALL IN. This is the whole re-vendor
 delta for the three, in one place: channels added and removed, settings keys
 retired, and where the model catalog now comes from.**

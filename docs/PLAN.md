@@ -4363,6 +4363,31 @@ card; `textEndpoint`'s settings fallback does not apply to the Anthropic door,
 for the reason it does not apply to Ollama's. The app is untouched: its
 `LlmServerKind` is its own type and Package C owns its rename.
 
+#### Package F (app half) — LANDED 2026-09-14
+
+**A key is a slot.** `AppSettings.cloudProviders` is `{kind: 'openai' |
+'anthropic', name, apiKey, model, endpoint, enabled}[]`; the key is stored in
+main and never crosses (`CloudProviderView.keySet`), never logged and never in
+argv. `computeSlots()` appends one `kind: 'cloud'` slot per ENABLED provider,
+after every Crucible; the `any` walk STEPS PAST them with a sentence rather than
+refusing, `New jobs wait for: top` resolves to the top non-cloud slot, and the
+row picker draws them in a group headed **"Cloud — costs credits"**. A `read`
+pinned to one is refused by name. The spawn is `--model <the id> --endpoint <the
+provider's>` plus `--server anthropic` on that door only, with the key in
+`FOUNDRY_ENDPOINT_HEADERS` and nowhere else — no `X-Crucible-*`, no
+`anthropic-version` (the engine adds that itself). Settings → **Cloud
+providers** adds, enables, removes and Tests (a `GET` of the provider's
+`/v1/models`, which proves the key and the model id in one unbilled request);
+under the key box is the sentence Owen's rule requires, declared once in
+`shared/slots.ts`. **There is deliberately no catalog of cloud model names** —
+they change monthly and a compiled list would be confidently wrong. The engine's
+usage line is parsed onto `Job.usage` and drawn on the finished row and the bench
+card as `1,203,441 in / 388,120 out`; **foundry still does not price it.** An
+enabled provider lights translate/simplify/analysis/clean in the dock AFTER this
+machine has said no — Owen's weaker-system case — and lights reading for nobody.
+Channels added: `cloud:settings`, `cloud:save`, `cloud:test`. Full account in
+docs/SLOTS.md §7, "Package F (app) — landed".
+
 #### Package B — LANDED 2026-09-13
 
 **The app's vLLM-in-WSL launcher is gone, and the LOCAL page reader is now a

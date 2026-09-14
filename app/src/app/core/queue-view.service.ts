@@ -696,6 +696,47 @@ export class QueueViewService {
     return 'done';
   }
 
+  /**
+   * WHAT THE RUN SPENT, in tokens — or the empty string, which is nearly always.
+   *
+   * ── The two numbers, and the one that is deliberately missing ─────────────
+   *
+   * `1,203,441 in / 388,120 out`. There is no price on it and there will not be
+   * one: docs/VLLM.md §2a rules that *"foundry does not price it"* — prices
+   * change weekly and differ per key and per tier, so a figure invented in this
+   * app would be wrong in a way that looks authoritative. The counts are what the
+   * provider itself reported, and a person who wants dollars has them on a page
+   * the provider keeps.
+   *
+   * ── Empty is the ordinary case and means "nothing counted" ────────────────
+   *
+   * `Job.usage` is set only when the engine printed its usage line, which it does
+   * only when the server counted. Ollama does not, so a run on this machine's own
+   * GPU has no usage at all — and an empty string is what every surface here
+   * already draws for a fact a row does not have. The request count rides in the
+   * tooltip rather than the line: three numbers in a row on a card is a table,
+   * and the two that answer "what did this cost" are the tokens.
+   *
+   * ONE COMPOSER, TWO SURFACES — the bench card and the finished table, which is
+   * why it is here and not on the page. The dropdown panel does not draw it: it
+   * has room for one line about a running row and that line is progress.
+   */
+  spent(job: Job): string {
+    const usage = job.usage;
+    if (usage === undefined) return '';
+    const n = (value: number): string => value.toLocaleString();
+    return `${n(usage.tokensIn)} in / ${n(usage.tokensOut)} out`;
+  }
+
+  /** The same fact said longer, for a hover — the request count belongs here. */
+  spentDetail(job: Job): string {
+    const usage = job.usage;
+    if (usage === undefined) return '';
+    const n = (value: number): string => value.toLocaleString();
+    return `${n(usage.requests)} requests, ${n(usage.tokensIn)} tokens in, `
+      + `${n(usage.tokensOut)} out. Foundry does not price this — the provider does.`;
+  }
+
   /** Whether what this job wrote was filed as one of its project's exports. */
   filed(job: Job): boolean {
     const project = this.projects.projectFor(job.outputPath);

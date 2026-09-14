@@ -53,11 +53,13 @@ import {
   CRUCIBLE_SERVER_MAX,
   type CrucibleServerEntry,
 } from './app-settings';
+import { cloudProviderViews, enabledCloudProviders } from './cloud-providers';
 import { foundryHost, hosted } from './host';
 import {
   ANY_SLOT,
   LOCAL_SLOT_NAME,
   isLoopbackUrl,
+  type CloudSettingsView,
   type ComputeSlot,
   type CrucibleProbe,
   type CrucibleServerEdit,
@@ -134,11 +136,27 @@ function viewOf(entry: CrucibleServerEntry): CrucibleServerView {
 export function writeCrucibleServers(edits: readonly CrucibleServerEdit[]): CrucibleServerView[] {
   refuseHostedRegistryChange();
   const stored = new Map(crucibleServers().map((entry) => [entry.name.toLowerCase(), entry]));
+  /*
+   * THE OTHER REGISTRY'S NAMES, read here for the reason `writeCloudProviders`
+   * reads this one: two arrays with two clamps cannot see each other, and a slot
+   * list with two rows called one thing is a row nobody can choose between. The
+   * refusal is by name rather than a silent drop, because somebody who typed a
+   * name meant something by it and deserves to be told what already has it.
+   */
+  const cloud = new Set(
+    readAppSettings().cloudProviders.map((entry) => entry.name.toLowerCase()),
+  );
   const next: CrucibleServerEntry[] = [];
   for (const edit of edits.slice(0, CRUCIBLE_SERVER_MAX)) {
     const name = typeof edit.name === 'string' ? edit.name.replace(/\s+/g, ' ').trim() : '';
     const url = clampCrucibleUrl(edit.url);
     if (name.length === 0) throw new Error('A server needs a name — it is what a queue row waits for.');
+    if (cloud.has(name.toLowerCase())) {
+      throw new Error(
+        `"${name}" is already the name of a cloud provider. Two slots with one name is a row `
+        + 'nobody can choose between — give this one a different name.',
+      );
+    }
     if (url === null) {
       throw new Error(
         `"${name}" needs an address like http://192.168.1.20:7100 — the server's base URL, `
@@ -240,13 +258,31 @@ function refuseHostedRegistryChange(): void {
  * the reader where it is; nothing about that is hidden from the person, because
  * the reader has a settings row of its own.
  *
+ * ── THE CLOUD SLOTS COME LAST, AND THE ORDER IS THE WHOLE STATEMENT ────────
+ *
+ * One per ENABLED cloud provider (docs/SLOTS.md §3, Package F), after every
+ * Crucible. The position matters because this list is what `any` walks in rank
+ * order — and `any` STEPS PAST a cloud slot by kind rather than taking it
+ * (`placeJob`, crucible-dispatch.ts), so putting them last means the walk has
+ * already tried every machine that costs nothing before it reaches the ones that
+ * cost money and declines them. A person who wants one says so on the row.
+ *
+ * A DUPLICATE NAME IS DROPPED HERE AS THE LAST WORD. Both writers refuse a name
+ * the other list already has, so this cannot happen through the cards; a
+ * hand-edited settings file can still produce it, and a picker with two rows
+ * called one thing is a row nobody can choose between. The CRUCIBLE keeps the
+ * name, because it was in the list first when this feature landed and because a
+ * dropped cloud slot costs nothing but a slot nobody picked.
+ *
  * ── Hosted, this list is the host's whole answer ───────────────────────────
  *
  * Including the emptiness of it. A host that registers no `slots` provider gets
  * an empty list, and an empty list is not a broken app: the dispatcher reads it
  * as "no placement to decide" and every job takes the path it took before this
  * feature existed. That is what makes this additive for BookForge until they
- * choose to supply one.
+ * choose to supply one. A host that offers no cloud slot therefore has none —
+ * this app's own `cloudProviders` are not merged into a host's list, because the
+ * work in a hosted window runs on the host's compute and its bill is the host's.
  */
 export function computeSlots(): ComputeSlot[] {
   if (hosted()) return hostSlots();
@@ -254,10 +290,24 @@ export function computeSlots(): ComputeSlot[] {
   const local: ComputeSlot[] = servers.some((entry) => isLoopbackUrl(entry.url))
     ? []
     : [{ name: LOCAL_SLOT_NAME, kind: 'local' }];
-  return [
+  const out: ComputeSlot[] = [
     ...local,
     ...servers.map((entry): ComputeSlot => ({ name: entry.name, kind: 'crucible', url: entry.url })),
   ];
+  const taken = new Set(out.map((slot) => slot.name.toLowerCase()));
+  for (const provider of enabledCloudProviders()) {
+    if (taken.has(provider.name.toLowerCase())) continue;
+    taken.add(provider.name.toLowerCase());
+    /*
+     * NO `url` ON A CLOUD SLOT, deliberately, and `ComputeSlot.url` carries the
+     * whole argument: `localLane` reads that field to decide which lane is this
+     * machine's own card, and an OpenAI-compatible endpoint at localhost would
+     * be adopted as the local lane. The address is on the provider entry, which
+     * is what the placement composes `--endpoint` from.
+     */
+    out.push({ name: provider.name, kind: 'cloud' });
+  }
+  return out;
 }
 
 /**
@@ -309,12 +359,20 @@ function hostSlots(): ComputeSlot[] {
  * provider), or exactly one. A row with no `waitFor` is every row this queue has
  * ever held, and it takes the local path; writing a name onto it would put a
  * fact on the wire that the picker is not even drawn to show.
+ *
+ * AND `top` IS THE TOP NON-CLOUD SLOT (docs/SLOTS.md §3: a cloud provider is *"a
+ * deliberate per-job choice, never something `any` falls through to"*). The
+ * ordering in `computeSlots` already puts every cloud slot last, so the filter
+ * changes nothing today — it is here so that a later reordering cannot make a
+ * standing preference start billing somebody by default. The same sentence in
+ * two places is the point: `any` steps past them in the walk, and `top` cannot
+ * name one here.
  */
 export function waitForOfNewJob(): string | undefined {
   const slots = computeSlots();
   if (slots.length < 2) return undefined;
   if (readAppSettings().newJobsWaitFor === ANY_SLOT) return ANY_SLOT;
-  return slots[0]?.name;
+  return slots.find((slot) => slot.kind !== 'cloud')?.name;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -775,6 +833,27 @@ export function crucibleSettingsView(): CrucibleSettingsView {
     slots: computeSlots(),
     newJobsWaitFor: settings.newJobsWaitFor,
     wslDistro: settings.wslDistro,
+    hosted: hosted(),
+  };
+}
+
+/**
+ * And the Cloud providers card's one read — see `CloudSettingsView`.
+ *
+ * ── Why it is composed HERE and not in `cloud-providers.ts` ────────────────
+ *
+ * Because it carries the SLOT LIST, and `computeSlots` lives in this module.
+ * Putting this function beside the providers would mean that module importing
+ * this one while this one already imports it for the cloud slots — a cycle,
+ * around a function whose whole job is to answer one question consistently. The
+ * division stays what the two headers say: that module reads and writes the
+ * providers, this one derives the slots, and the card's read is a slot question
+ * with a list attached.
+ */
+export function cloudSettingsView(): CloudSettingsView {
+  return {
+    providers: cloudProviderViews(),
+    slots: computeSlots(),
     hosted: hosted(),
   };
 }

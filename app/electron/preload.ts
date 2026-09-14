@@ -254,6 +254,12 @@ const api: FoundryApi = {
     install: () => ipcRenderer.invoke('crucible:install'),
   },
 
+  cloud: {
+    settings: () => ipcRenderer.invoke('cloud:settings'),
+    save: (providers) => ipcRenderer.invoke('cloud:save', providers),
+    test: (provider) => ipcRenderer.invoke('cloud:test', provider),
+  },
+
   /*
    * The host-operations socket. Nothing here knows what a narration is: it
    * carries ids one way and rows the other, and both ends of the family are

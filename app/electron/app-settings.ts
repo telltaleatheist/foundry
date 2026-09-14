@@ -26,7 +26,12 @@ import {
   DEFAULT_OLLAMA_ENDPOINT,
   DEFAULT_TRANSLATE_MODEL,
 } from '../shared/pipeline';
-import { ANY_SLOT, LOCAL_SLOT_NAME, type NewJobsWaitFor } from '../shared/slots';
+import {
+  ANY_SLOT,
+  LOCAL_SLOT_NAME,
+  type CloudProviderKind,
+  type NewJobsWaitFor,
+} from '../shared/slots';
 import {
   ANALYSIS_CATEGORY_IDS,
   CUSTOM_CATEGORY_DESCRIPTION_MAX,
@@ -59,6 +64,52 @@ export interface CrucibleServerEntry {
 
 /** How many a person may register. A ceiling so "a list" cannot become a corpus. */
 export const CRUCIBLE_SERVER_MAX = 8;
+
+/**
+ * ONE CONFIGURED CLOUD PROVIDER, AS IT IS STORED — the second shape in this app
+ * that holds a secret, and it is here for the first one's reason exactly.
+ *
+ * `shared/` is compiled into the browser bundle, so a type carrying an `apiKey`
+ * declared there is a type somebody can reach for on the far side of the
+ * preload without noticing. The renderer's shape is `CloudProviderView`
+ * (shared/slots.ts), which has a boolean where this has a credential.
+ *
+ * ── WHY THE MODEL IS ON THE ENTRY WHERE A CRUCIBLE HAS NONE ────────────────
+ *
+ * A Crucible ANSWERS which model it will serve a class with — `GET
+ * /v1/capability` probes the card and selects, so a model field on a registry
+ * entry would be a second opinion about a decision that has an owner. A provider
+ * holds a catalog and has no opinion at all: the engine REFUSES a cloud run with
+ * no `--model` (`MODEL_REQUIRED_ON_ANTHROPIC`, and the same argument on the
+ * OpenAI door against a listing of dozens), so the id has to come from somewhere
+ * and the only thing that knows it is the person paying for it.
+ */
+export interface CloudProviderEntry {
+  /** What the picker calls it, and what a row's `waitFor` names. Unique. */
+  name: string;
+  /** Which engine door — and therefore which credential header. */
+  kind: CloudProviderKind;
+  /** The key. Never logged, never in argv, never across an IPC payload. */
+  apiKey: string;
+  /** The provider's own model id. Not validated against a list — see below. */
+  model: string;
+  /**
+   * An OpenAI-compatible host, or EMPTY for the provider's own address
+   * (`CLOUD_PROVIDER_ENDPOINT`). Empty is a real value and is not filled in at
+   * rest: resolving it at the placement means a provider that moves its API is
+   * one line of this build rather than a migration of everybody's settings file.
+   */
+  endpoint: string;
+  /** Off is not a slot at all: no picker entry, nothing lit in the dock. */
+  enabled: boolean;
+}
+
+/**
+ * And its ceiling, {@link CRUCIBLE_SERVER_MAX}'s reason. Four is smaller than
+ * eight because two providers exist and a person with more than a couple of keys
+ * for them is doing something this card was not built for.
+ */
+export const CLOUD_PROVIDER_MAX = 4;
 
 export interface AppSettings {
   /**
@@ -202,6 +253,27 @@ export interface AppSettings {
    * older build a checkout rather than a restore.
    */
   crucibleServers: CrucibleServerEntry[];
+  /**
+   * ── THE CLOUD PROVIDERS — one entry per key somebody has connected ─────────
+   *
+   * docs/SLOTS.md §3 (Package F). Owen: *"give them the option of connecting an
+   * api key for openai or claude instead of using the 27b or the 9b… for weaker
+   * systems."* Each ENABLED entry becomes one SLOT, after every Crucible slot,
+   * and it is never what `any` falls through to — a cloud run costs money, so
+   * choosing one is a gesture with a person behind it.
+   *
+   * THE ORDER IS NOT A RANK here, unlike `crucibleServers`, and the difference is
+   * worth naming rather than leaving to be discovered: the rank exists because
+   * `any` walks the list, and `any` never reaches these. The array order is
+   * simply the order the card draws them in.
+   *
+   * THE KEY IS STORED HERE AND NOWHERE ELSE, and it never leaves the main
+   * process — `crucibleServers`' rule, one array along, with the same three
+   * consequences: the card is told only whether one is set, the engine is handed
+   * it in a per-spawn environment variable (`FOUNDRY_ENDPOINT_HEADERS`), and no
+   * log line, no command line and no IPC payload carries it.
+   */
+  cloudProviders: CloudProviderEntry[];
   /**
    * WHAT A NEW ROW'S `waitFor` STARTS AS — Owen's *"New jobs wait for: (•)
    * top-ranked slot ( ) any"*.
@@ -508,6 +580,106 @@ export function clampCrucibleServers(value: unknown): CrucibleServerEntry[] {
 }
 
 /**
+ * THE CLOUD PROVIDERS, CLEANED RATHER THAN REFUSED — `clampCrucibleServers`'
+ * philosophy, applied to the other list that can strand a job.
+ *
+ * A row is DROPPED when it could not be used, and every drop is a row that would
+ * otherwise be pickable in a `waitFor` and then fail at the spawn:
+ *
+ *   * No name, no key, or no model. A provider has no anonymous mode and holds a
+ *     catalog rather than one resident model, so an entry missing either is not
+ *     something the engine could ever be spawned against — `--model` is REQUIRED
+ *     on both cloud doors and the run would die at the argument parser.
+ *   * A `kind` this build does not know. The kind decides the credential header
+ *     and the `--server` word; a value read leniently would put an
+ *     `Authorization` on a wire that wants `x-api-key`.
+ *   * An `endpoint` that is not http(s). Empty is kept as empty, which MEANS the
+ *     provider's own address and is the ordinary case.
+ *   * A name that collides with {@link LOCAL_SLOT_NAME} or {@link ANY_SLOT},
+ *     with an earlier cloud entry, or with a registered Crucible — the picker
+ *     keys off the name and a slot list with two rows called one thing is a row
+ *     the person cannot choose between. THE CRUCIBLE HALF OF THAT TEST IS NOT
+ *     HERE: this function is handed one array and `clampCrucibleServers` is
+ *     handed the other, so neither can see the other's names at the clamp. The
+ *     refusal is at the two WRITERS (electron/cloud-providers.ts and
+ *     electron/crucible-registry.ts), which read both lists, and `computeSlots`
+ *     drops a duplicate as its last word.
+ */
+export function clampCloudProviders(value: unknown): CloudProviderEntry[] {
+  if (!Array.isArray(value)) return [];
+  const reserved = new Set([LOCAL_SLOT_NAME.toLowerCase(), ANY_SLOT.toLowerCase()]);
+  const seen = new Set<string>();
+  const out: CloudProviderEntry[] = [];
+  for (const raw of value) {
+    if (out.length >= CLOUD_PROVIDER_MAX) break;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
+    const entry = raw as Record<string, unknown>;
+    const name = typeof entry['name'] === 'string'
+      ? entry['name'].replace(/\s+/g, ' ').trim().slice(0, 60)
+      : '';
+    const kind = entry['kind'] === 'openai' || entry['kind'] === 'anthropic'
+      ? entry['kind']
+      : null;
+    const apiKey = typeof entry['apiKey'] === 'string' ? entry['apiKey'].trim() : '';
+    const model = clampCloudModel(entry['model']);
+    const endpoint = clampCloudEndpoint(entry['endpoint']);
+    if (name.length === 0 || kind === null || apiKey.length === 0 || model.length === 0) continue;
+    if (endpoint === null) continue;
+    const key = name.toLowerCase();
+    if (reserved.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name, kind, apiKey, model, endpoint, enabled: entry['enabled'] !== false });
+  }
+  return out;
+}
+
+/**
+ * A provider model id, or empty when there is not one.
+ *
+ * NOT VALIDATED AGAINST A LIST, `clampModelTag`'s rule and then some: hosted
+ * line-ups change monthly, so a table compiled into this build would refuse the
+ * model somebody is paying for. The shape check is all there is — a non-empty
+ * single token — and the PROOF is the Test button, which lists the provider's
+ * own `/v1/models` and says whether this id is among them.
+ *
+ * EMPTY RATHER THAN A FALLBACK, unlike `clampModelTag`: there is no sensible
+ * default model for somebody else's account, and an entry with no model is one
+ * `clampCloudProviders` drops rather than one that spawns a run the engine
+ * refuses by name.
+ */
+export function clampCloudModel(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || /\s/.test(trimmed)) return '';
+  return trimmed.slice(0, 120);
+}
+
+/**
+ * A provider endpoint: empty (meaning the provider's own), or an http(s) base.
+ *
+ * NULL IS "NOT AN ADDRESS AT ALL" and drops the row — `clampCrucibleUrl`'s
+ * posture, for its reason: there is no default address for somebody else's
+ * gateway, and inventing one would point a key at a server nobody named. Unlike
+ * that function, `/v1` is NOT stripped: the OpenAI door wants it and adds it
+ * back when it is missing, so a person who pasted the URL their provider prints
+ * gets exactly what they pasted.
+ */
+export function clampCloudEndpoint(value: unknown): string | null {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().replace(/\/+$/, '');
+  if (trimmed.length === 0) return '';
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (parsed.hostname.length === 0) return null;
+    return trimmed;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * A Crucible base URL, or null when it is not one.
  *
  * NULL RATHER THAN A FALLBACK, which is the one place this file departs from its
@@ -573,6 +745,7 @@ export function readAppSettings(): AppSettings {
     cleanTextModel: clampModelTag(raw?.['cleanTextModel'], DEFAULT_CLEAN_TEXT_MODEL),
     ollamaUrl: clampOllamaUrl(raw?.['ollamaUrl']),
     crucibleServers: clampCrucibleServers(raw?.['crucibleServers']),
+    cloudProviders: clampCloudProviders(raw?.['cloudProviders']),
     newJobsWaitFor: clampNewJobsWaitFor(raw?.['newJobsWaitFor']),
     wslDistro: clampWslDistro(raw?.['wslDistro']),
     setupCompleted: raw?.['setupCompleted'] === true,
@@ -625,6 +798,9 @@ export function writeAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.crucibleServers !== undefined) {
     root['crucibleServers'] = clampCrucibleServers(patch.crucibleServers);
+  }
+  if (patch.cloudProviders !== undefined) {
+    root['cloudProviders'] = clampCloudProviders(patch.cloudProviders);
   }
   if (patch.newJobsWaitFor !== undefined) {
     root['newJobsWaitFor'] = clampNewJobsWaitFor(patch.newJobsWaitFor);

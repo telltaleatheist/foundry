@@ -146,7 +146,7 @@ work. While that is so the card shows the sentence and no button. See "Package E
 | C | App: server registry (name, url, headers), drag order, enable; slots; per-row `waitFor`; dispatch: header map per spawn, capability read for the model, `load-model` before spawn, the three 409s rendered by name | Crucible SDK shapes | **LANDED** (§7) |
 | D | Catalog: generated lineup JSON, tile gating, CPU rule | BookForge's `[local]` block | **LANDED** (below) |
 | E | Setup/settings: Crucible install offer + connect-to-existing; Ollama wizard stays; dots download; page-reader row | B, C | **LANDED** (below) |
-| F | Cloud slots: OpenAI (the `openai` door + key), Anthropic (third dialect); per-job opt-in; 429 as the wait; cost shown | C | **ENGINE HALF LANDED** 2026-09-14; app half after C |
+| F | Cloud slots: OpenAI (the `openai` door + key), Anthropic (third dialect); per-job opt-in; 429 as the wait; cost shown | C | **LANDED** — engine 2026-09-14, app half the same day (§7) |
 | G | App: lane capacity derived from the slot list — one lane per compute slot, the bench one card per slot | C | **LANDED** (§7) |
 | — | Lease client | **RULED 2026-09-14** — built in Package C, app-side | **LANDED** (§7) |
 
@@ -175,8 +175,10 @@ that has one.
 
 **The slots** are `computeSlots()`: the local slot (`kind: 'local'`) unless an
 enabled entry is loopback, then one per enabled server (`kind: 'crucible'`).
-`kind: 'cloud'` is declared and never constructed — Package F's seam, excluded
-from the `any` walk by name. Hosted, the whole list comes from
+~~`kind: 'cloud'` is declared and never constructed — Package F's seam, excluded
+from the `any` walk by name.~~ **Struck — Package F (app), below: one cloud slot
+per enabled provider, after every Crucible, stepped past by the `any` walk with
+a sentence rather than skipped in silence.** Hosted, the whole list comes from
 `FoundryHost.slots?()`; a host that registers none gets an empty list, which
 every job reads as "the path this took before slots existed", and a `local` slot
 offered by a host is dropped.
@@ -491,3 +493,158 @@ where a Crucible serves the class, which is why §5b's removal is about DISK and
 not about routing — the local reader is removed because the Crucible on this
 machine will be asked for pages once that constant flips, and until then the
 machine reads through whatever `backend.endpointUrl` names.
+
+### Package F (app) — landed 2026-09-14
+
+**A key is a slot. It is never busy, nothing is resident on it, it does text and
+never pages, and no walk ever falls into it.**
+
+Owen's sentence is the whole brief (§1): *"give them the option of connecting an
+api key for openai or claude instead of using the 27b or the 9b. if the user
+wants to they can use usage credits from a cloud model… for weaker systems."*
+The engine half landed the same day (§2, docs/VLLM.md §2a): `--server
+openai|anthropic`, `--model` required on both, a 429 waited out, one usage line
+per run. This is the app half.
+
+**THE ENTRIES.** `AppSettings.cloudProviders` — `{kind: 'openai' | 'anthropic',
+name, apiKey, model, endpoint, enabled}[]`. The KEY is stored there and nowhere
+else and never leaves main: the renderer's shape is `CloudProviderView`
+(shared/slots.ts), which carries `keySet: boolean` where the entry carries a
+credential; it is never logged, never in argv, and never in an answer. The array
+order is NOT a rank, unlike `crucibleServers`, and the difference is stated
+rather than left to be found: a rank exists because `any` walks the list, and
+`any` never reaches these.
+
+`model` is the provider's own id, free text, **and there is deliberately no
+catalog of cloud models in this build** — hosted line-ups change monthly, so a
+compiled list would be wrong by the next release, offering retired models and
+hiding the one somebody is paying for. The box carries a placeholder per
+provider (`gpt-4o-mini`, `claude-sonnet-4-5`) and the PROOF is Test, which lists
+the provider's own `/v1/models` from main with the right header per kind
+(`Authorization: Bearer` / `x-api-key` plus `anthropic-version`) and says
+whether the id in the box is among them. A working key with an unlisted model is
+drawn as a WARNING beside a successful listing, not as a failure, and saving is
+still allowed: a provider may serve a model it does not list, and refusing the id
+somebody typed would make this app the authority on somebody else's catalog.
+
+`endpoint` is empty for the provider's own address and resolves at the PLACEMENT
+(`CLOUD_PROVIDER_ENDPOINT`), so a provider moving its API is one line of this
+build rather than a migration of everybody's settings file. The two defaults are
+spelled the way each engine door wants them — `https://api.openai.com/v1` (that
+door appends `/v1` when it is missing) and `https://api.anthropic.com` (that
+door strips a trailing version and composes `/v1/messages` itself).
+
+**THE CARD** is Settings → **Cloud providers**, directly under Servers: the three
+cards read downwards as the three places a text act can go — this machine's
+Ollama, a Crucible somebody runs, a provider somebody pays — and the paid one is
+last. Add, remove, enable, Test, and **the sentence Owen's rule requires under
+the key field**, declared once in `shared/slots.ts` so no surface can word it
+differently: *"Text you translate, simplify, clean or analyse is sent to that
+provider."* Hosted it is read-only and the write refuses at the door, on the
+Servers card's argument.
+
+**THE SLOTS.** `computeSlots()` appends one `kind: 'cloud'` slot per ENABLED
+provider, **after every Crucible slot**, and the position is the statement: the
+`any` walk has already tried everything that costs nothing before it reaches
+them. It carries **no `url`**, and that is not an oversight — `localLane`
+(shared/queue-board.ts) decides which lane is this machine's card by asking
+whether a lane's url is loopback, and an OpenAI-compatible endpoint at
+`http://localhost:8000/v1` is an ordinary thing to configure; a cloud slot
+carrying it would be adopted as the local lane, and a page reading would then
+hold the provider's lane while the GPU went unguarded. A duplicate name is
+dropped there as the last word, and refused by name at BOTH writers, which read
+each other's list.
+
+**`any` STEPS PAST THEM WITH A SENTENCE**, which is the one change to the walk:
+*"X" is a cloud provider, and cloud slots are chosen on purpose*. Skipping in
+silence would park every row on a cloud-only machine reading "no slot is
+available", when the true statement is that there is one and this walk will not
+spend somebody's money to reach it. `waitForOfNewJob` resolves `top` to the top
+**non-cloud** slot for the same reason, in the same words.
+
+**THE PLACEMENT** (`placeOnCloud`, crucible-dispatch.ts) is the shortest in that
+module and the absences are the design: no capability read (a provider has no
+card to measure), no residency, no lease, no `wait` arm at all (a provider's way
+of saying "later" is a 429 and the ENGINE waits it out — parking the row here
+would be a second waiter over one queue), and **no network call of any kind**. A
+`read` pinned to one is refused BY NAME, once, everywhere: *"<provider> cannot
+read pages; page reading stays on this machine or a Crucible."*
+
+The command line a cloud placement produces, credential-free as every line this
+queue prints is:
+
+```
+foundry translate --book <book> --records <records> --to <lang> \
+  --model gpt-4o-mini --endpoint https://api.openai.com/v1
+
+foundry clean-text --book <book> --records <r> --stamp <s> \
+  --model claude-sonnet-4-5 --server anthropic --endpoint https://api.anthropic.com
+```
+
+`--server` is written out for `anthropic` and left off for `openai`, which is the
+engine's default (`serverArgs`, job-queue.ts — a switch over the whole union, so
+a fourth door cannot silently spawn against the default). The key travels in the
+child's ENVIRONMENT and only there:
+`FOUNDRY_ENDPOINT_HEADERS={"Authorization":"Bearer ‹key›"}` on the OpenAI door,
+`FOUNDRY_ENDPOINT_HEADERS={"x-api-key":"‹key›"}` on Anthropic. **Nothing else is
+in that map** — no `X-Crucible-*` (those are what a Crucible's own log is keyed
+by, and sending them to OpenAI would be this app naming somebody else's product
+on a wire that has never heard of it) and no `anthropic-version`, which the
+engine adds itself because it is a property of the dialect.
+
+**THE LANE STAYS ONE**, and the comment now argues it rather than deferring it
+(`SLOT_CAPACITY`, shared/queue-board.ts): a Crucible's lane is one because the
+GPU is one, and a provider has no card — it has a rate limit, per key, already
+honoured one layer down by `DEFAULT_CLOUD_CONCURRENCY` (four in flight) and by
+the engine's 429 wait. Two runs on one key would share one limit, trip it more
+often and spend the difference asleep while still paying for every retry that
+landed. A person who wants two at once configures a second provider entry, which
+is a second key and a second limit, said out loud.
+
+**COST SHOWN, NEVER PRICED.** The engine's one usage line —
+`translate: 412 requests, 1,203,441 tokens in, 388,120 out` — is read off the
+same stderr the progress counts come off (`parseUsageLine`, electron/engine.ts,
+which is its OWN reader and not a fourth pattern in `parseProgressLine`: that
+function's whole discipline is that everything it returns is work done out of
+work to do). It lands on `Job.usage` and is drawn on the finished row and on the
+bench card as `1,203,441 in / 388,120 out`, with the request count in the hover.
+**Absent means "nothing counted" and never zero**: Ollama reports no usage, so
+the engine prints no line rather than a line of noughts. Foundry does not price
+it, on docs/VLLM.md §2a's ruling — prices change weekly and differ per key and
+tier, and a number invented here would be wrong in a way that looks
+authoritative.
+
+**THE TILES** (act-gates.ts): an enabled provider lights translate, simplify,
+analysis and clean **after the machine itself has said no**, keeping the
+machine's own sentence and adding *"this can run via <provider> (cloud)"*. Last
+and not first, because Owen asked for it as the answer for a weaker system — a
+provider that lit these tiles unconditionally would quietly move the default
+answer for a 24 GB card off its own GPU and onto a bill, and the tile is not
+where that choice is made anyway; the picker is. **Reading is lit by nobody**:
+`readGate` does not consult a provider at all.
+
+**THE PICKER** draws them in an `<optgroup>` of their own headed **"Cloud —
+costs credits"**, below the machines. Every mechanism that keeps `any` out of
+them is in main and invisible on screen; the group heading is where the
+difference is SAID.
+
+**Channels added:** `cloud:settings`, `cloud:save`, `cloud:test` — a family of
+their own, because a provider is not a Crucible (no capability record, no
+residency, no lease, no busy state) and because a brand-new family is the
+cheapest possible answer to the collision audit that is still open. Nothing was
+removed and no existing shape narrowed. `LlmServerKind` gained `'anthropic'`;
+`Job` gained the optional `usage`.
+
+**Not done, deliberately.** No price, above. No model catalog, above. No
+per-provider concurrency knob: the engine's `--concurrency` exists and this app
+does not spell it for a cloud run, so that door's own measured default (four)
+stands — a second place to configure a number is a second place for it to be
+wrong. No reachability probe at the placement, on `interpretFailure`'s posture: a
+round trip in front of every row would tell the run nothing it will not learn in
+its first request, with a better sentence. No cloud slot for reading, which is
+§3's rule rather than an omission. No wizard step: the setup wizard offers Ollama
+and Crucible, and a third door asking a first-time user for a credit-card-backed
+key belongs behind a deliberate visit to Settings. And the `cloudProviders` of a
+standalone Foundry are NOT merged into a hosted window's slot list — hosted, the
+work runs on the host's compute and the bill is the host's, so a host that offers
+no cloud slot sees none.

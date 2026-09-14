@@ -9,6 +9,21 @@ import { QueueViewService, type SlotView } from '../../core/queue-view.service';
 import { hosted } from '../../core/foundry';
 
 /**
+ * ONE BLOCK OF THE SLOT PICKER'S OPTION LIST — see `pickerGroups`.
+ *
+ * `label: null` is the ungrouped block and is not the same as an empty label: an
+ * `<optgroup label="">` draws an indented, headed section with nothing written
+ * over it, which is worse than no grouping at all. The `key` exists only so
+ * `@for`'s `track` has something stable to hold; the label is what a person
+ * reads and one of them is deliberately absent.
+ */
+interface PickerGroup {
+  key: string;
+  label: string | null;
+  options: string[];
+}
+
+/**
  * THE QUEUE PAGE — the whole board, with room to breathe.
  *
  * Owen asked for it in the same breath as the bar (his ruling is quoted in full
@@ -272,6 +287,19 @@ import { hosted } from '../../core/foundry';
                 @if (view.stepDetail(busy, 400); as detail) {
                   <p class="note-line" [title]="busy.note ?? busy.message ?? ''">{{ detail }}</p>
                 }
+                <!--
+                  WHAT THIS RUN HAS SPENT, on a card whose slot is a cloud
+                  provider — and on any other card whose server happened to
+                  count, because the fact is the fact. It appears at the END of
+                  the run rather than climbing, since the engine prints its one
+                  usage line last (usageLine, src/translate/transport.ts); a
+                  card that showed a token counter ticking would be inventing a
+                  measurement the engine does not publish. No price: Foundry
+                  does not price it (docs/VLLM.md §2a).
+                -->
+                @if (view.spent(busy); as spent) {
+                  <p class="spent" [title]="view.spentDetail(busy)">{{ spent }}</p>
+                }
               } @else {
                 <div class="free">
                   <div class="free-head">Free</div>
@@ -330,8 +358,18 @@ import { hosted } from '../../core/foundry';
                               [name]="'slot' + job.id"
                               [title]="'Which machine this runs on. A job never moves once it has started.'"
                               (ngModelChange)="sendTo(job, $event)">
-                        @for (option of optionsFor(job); track option) {
-                          <option [value]="option">{{ optionLabel(option) }}</option>
+                        @for (group of pickerGroups(job); track group.key) {
+                          @if (group.label === null) {
+                            @for (option of group.options; track option) {
+                              <option [value]="option">{{ optionLabel(option) }}</option>
+                            }
+                          } @else {
+                            <optgroup [label]="group.label">
+                              @for (option of group.options; track option) {
+                                <option [value]="option">{{ optionLabel(option) }}</option>
+                              }
+                            </optgroup>
+                          }
                         }
                       </select>
                     }
@@ -412,8 +450,18 @@ import { hosted } from '../../core/foundry';
                                 [name]="'cslot' + job.id"
                                 [title]="'Which machine this runs on. A job never moves once it has started.'"
                                 (ngModelChange)="sendTo(job, $event)">
-                          @for (option of optionsFor(job); track option) {
-                            <option [value]="option">{{ optionLabel(option) }}</option>
+                          @for (group of pickerGroups(job); track group.key) {
+                            @if (group.label === null) {
+                              @for (option of group.options; track option) {
+                                <option [value]="option">{{ optionLabel(option) }}</option>
+                              }
+                            } @else {
+                              <optgroup [label]="group.label">
+                                @for (option of group.options; track option) {
+                                  <option [value]="option">{{ optionLabel(option) }}</option>
+                                }
+                              </optgroup>
+                            }
                           }
                         </select>
                       }
@@ -476,7 +524,21 @@ import { hosted } from '../../core/foundry';
                 <tr>
                   <td class="b" [title]="view.paths(job)">{{ view.label(job) }}</td>
                   <td>{{ kindLine(job) }}</td>
-                  <td class="outcome">{{ outcome(job) }}</td>
+                  <!--
+                    THE OUTCOME, AND UNDER IT WHAT THE RUN SPENT where a server
+                    counted — which is a cloud provider and nothing else today
+                    (Ollama reports no usage, so the engine prints none and the
+                    row has none). In the same cell rather than a sixth column,
+                    because a column that is empty on every local run would be
+                    four fifths of a table of blanks. No price on it: Foundry
+                    does not price it (docs/VLLM.md §2a).
+                  -->
+                  <td class="outcome">
+                    {{ outcome(job) }}
+                    @if (view.spent(job); as spent) {
+                      <span class="spent" [title]="view.spentDetail(job)">{{ spent }}</span>
+                    }
+                  </td>
                   <td>
                     <span class="pill"
                           [class.ok]="job.state === 'done'"
@@ -767,6 +829,17 @@ import { hosted } from '../../core/foundry';
       word-break: break-word;
     }
 
+    /* What the run spent. Monospaced because it is two large numbers a person
+       compares against another row's, and grey because it is an accounting
+       detail beside a progress bar rather than a thing to act on. */
+    .spent {
+      display: block;
+      margin: 5px 0 0;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--text-muted);
+    }
+
     .free { padding: 12px 0 6px; text-align: center; }
     .free-head { font-size: 12px; color: var(--text-tertiary); }
     .free-sub { font-size: 10px; color: var(--text-muted); margin-top: 3px; }
@@ -974,22 +1047,44 @@ export class QueuePageComponent {
   }
 
   /**
-   * The names this row may be sent to, in rank order, with `any` first.
+   * The names this row may be sent to, in rank order, with `any` first — IN TWO
+   * GROUPS, because one of them costs money.
    *
-   * A STORED NAME THAT IS NO LONGER A SLOT IS KEPT IN THE LIST, at the end, and
-   * that is deliberate: the row IS waiting for it, a select whose value is not
-   * among its options would silently show the first option instead, and the
-   * person would read the picker as saying something about their job that is not
-   * true. The Servers card is where that row gets rescued in a batch; this keeps
-   * the one-row story honest in the meantime.
+   * ── Why the cloud slots are drawn apart and not merely listed ─────────────
+   *
+   * docs/SLOTS.md §3: a cloud provider is *"a deliberate per-job choice, never
+   * something `any` falls through to"*. Every mechanism that enforces that is in
+   * main — the `any` walk steps past them, `New jobs wait for: top` cannot name
+   * one — and all of it is invisible here. What is visible is this dropdown, and
+   * a provider sitting in the same flat list as "This computer" would read as
+   * one more machine. The `<optgroup>` is where the difference is SAID: "Cloud —
+   * costs credits", once, above the names it applies to.
+   *
+   * A STORED NAME THAT IS NO LONGER A SLOT IS KEPT IN THE LIST, at the end of
+   * the machines, and that is deliberate: the row IS waiting for it, a select
+   * whose value is not among its options would silently show the first option
+   * instead, and the person would read the picker as saying something about
+   * their job that is not true. It goes with the machines rather than with the
+   * cloud because a slot that is gone has no kind any more, and guessing one
+   * would be the picker inventing a bill. The Servers card is where such a row
+   * gets rescued in a batch; this keeps the one-row story honest meanwhile.
    */
-  protected optionsFor(job: Job): string[] {
-    const names = this.slots().map((slot) => slot.name);
+  protected pickerGroups(job: Job): PickerGroup[] {
+    const slots = this.slots();
+    const names = slots.map((slot) => slot.name);
     const stored = job.waitFor;
     const stale = stored !== undefined && stored !== ANY_SLOT && !names.includes(stored)
       ? [stored]
       : [];
-    return [ANY_SLOT, ...names, ...stale];
+    const machines = slots.filter((slot) => slot.kind !== 'cloud').map((slot) => slot.name);
+    const cloud = slots.filter((slot) => slot.kind === 'cloud').map((slot) => slot.name);
+    const groups: PickerGroup[] = [
+      { key: 'machines', label: null, options: [ANY_SLOT, ...machines, ...stale] },
+    ];
+    if (cloud.length > 0) {
+      groups.push({ key: 'cloud', label: 'Cloud — costs credits', options: cloud });
+    }
+    return groups;
   }
 
   protected optionLabel(option: string): string {
