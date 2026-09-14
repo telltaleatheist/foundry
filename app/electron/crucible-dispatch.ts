@@ -51,6 +51,7 @@ import {
 import { cloudEndpointOf, cloudHeaderMapFor, cloudProviderNamed } from './cloud-providers';
 import { clientFor, computeSlots, crucibleServerNamed } from './crucible-registry';
 import type { CrucibleServerEntry } from './app-settings';
+import type { CapabilityRecord, CapabilityRow } from '../shared/engine-settings';
 import { ANY_SLOT, LOCAL_SLOT_NAME, slotNamed, type ComputeSlot } from '../shared/slots';
 import type { LlmServerKind } from '../shared/pipeline';
 import type { JobKind, ModelClass } from '../shared/types';
@@ -835,27 +836,19 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
 // GET /v1/capability — one fetch, because the SDK has no method for it yet
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One class's row of a capability record, as this app reads it. */
-export interface CapabilityRow {
-  capability: string;
-  enabled: boolean;
-  /**
-   * THE MODEL ID — the same id the model listing carries, and what `--model`
-   * gets. `""` (not absent) when nothing fit, which is why the check at the call
-   * site is on the length and not on the presence.
-   */
-  selected: string;
-  /** The server's own words for why, present whether enabled or not. */
-  reason: string;
-  /** How much bigger the card would have to be. 0 on an enabled class. */
-  shortfallBytes: number;
-}
-
-export interface CapabilityRecord {
-  backendKind: string;
-  totalBytes: number;
-  classes: CapabilityRow[];
-}
+/**
+ * THE CAPABILITY RECORD'S SHAPE MOVED TO shared/, AND IS RE-EXPORTED HERE.
+ *
+ * Wave 62 package I: the setup wizard's routes step draws a capability row's
+ * `reason` (crucible docs/PHASE15-HOST.md §5.2 — *"for each llm class that is
+ * `enabled: false` locally it says the class's reason"*), and a RENDERER cannot
+ * import from `electron/`. The two interfaces are unchanged in every field;
+ * they live in shared/engine-settings.ts now, and these re-exports mean every
+ * importer that reaches for `CapabilityRow` here still finds it. ONE
+ * declaration, two doors onto it — the alternative was a second spelling of the
+ * same record in shared/, which is the exact defect this repo keeps meeting.
+ */
+export type { CapabilityRecord, CapabilityRow } from '../shared/engine-settings';
 
 /** 503 `capability_undecided` — its own type, because it is its own news. */
 export class CapabilityUndecided extends Error {}
@@ -872,6 +865,13 @@ export class CapabilityUndecided extends Error {}
  * **Switch these four to the SDK's own `capability()` / `lease()` /
  * `heartbeat()` / `release()` the moment the tarball carries them.**
  *
+ * EXPORTED IN WAVE 62 PACKAGE I for the same reason `readCapability` is: the
+ * three settings routes (PHASE15-HOST.md §3.1/§3.2) are not on the vendored SDK
+ * either, and electron/crucible-settings.ts calls them. It takes the EXPORT
+ * rather than a second fetch of its own because what this function is for is
+ * the ERROR MAPPING — a `route_upstream_unconfigured` arriving as a bare
+ * `Error` instead of a `CrucibleRefused` would lose the code the card prints.
+ *
  * WHAT THIS FUNCTION IS FOR IS THE ERROR MAPPING, not the fetch. Everything else
  * on this path throws the SDK's error types, and `interpretFailure` switches on
  * them — so a route called by hand that threw a bare `Error` would be a 409
@@ -879,7 +879,7 @@ export class CapabilityUndecided extends Error {}
  * that decides whether the row waits or fails. The two headers are exactly the
  * ones the SDK sends on every authenticated route.
  */
-async function crucibleRequest(
+export async function crucibleRequest(
   entry: CrucibleServerEntry,
   route: string,
   options: { method: string; body?: unknown; timeoutMs?: number } = { method: 'GET' },

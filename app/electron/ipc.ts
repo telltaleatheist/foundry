@@ -23,7 +23,7 @@ import * as path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { actGates } from './act-gates';
-import { readAppSettings, writeAppSettings } from './app-settings';
+import { readAppSettings, writeAppSettings, type CrucibleServerEntry } from './app-settings';
 import { probeCloud, writeCloudProviders } from './cloud-providers';
 import { openCrucibleUi } from './crucible-ui';
 import { heldSet, openingModelFor } from './llm-catalog';
@@ -31,6 +31,7 @@ import {
   addCrucibleServer,
   addLocalCrucible,
   cloudSettingsView,
+  crucibleServerNamed,
   crucibleSettingsView,
   computeSlots,
   probeCrucible,
@@ -38,6 +39,14 @@ import {
   probeCrucibleAt,
   writeCrucibleServers,
 } from './crucible-registry';
+import { readCapability } from './crucible-dispatch';
+import { readEngineSettings, testUpstream, writeEngineSettings } from './crucible-settings';
+import type {
+  SettingsDocument,
+  SettingsPatch,
+  UpstreamName,
+  UpstreamProbe,
+} from '../shared/engine-settings';
 import { crucibleInstallPlan, driveCrucibleInstall } from './crucible-install';
 import { forgetCrucibleFacts, refreshCrucibleFacts } from './crucible-provider';
 import {
@@ -564,6 +573,24 @@ function gatesChanged(): void {
  * and one push doing both would be a card re-reading an inventory because a
  * tooltip changed.
  */
+/**
+ * THE REGISTERED SERVER OF THAT NAME, or a rejection that says the name.
+ *
+ * The four `crucible:engine-*` doors take a NAME, and the address and the token
+ * behind it are looked up here — `crucible:open`'s rule, so nothing a renderer
+ * holds could send a key to an engine this app has not been told about.
+ *
+ * IT THROWS RATHER THAN ANSWERING NULL. A card drew that row a moment ago, so a
+ * missing name means the registry moved underneath it (another window saved, or
+ * the host's list changed hosted); "there is no server called X" is the honest
+ * sentence and the card's next read redraws the list.
+ */
+function namedServerOr(serverName: string): CrucibleServerEntry {
+  const entry = crucibleServerNamed(serverName);
+  if (entry === null) throw new Error(`there is no registered server called ${serverName}`);
+  return entry;
+}
+
 async function afterRegistryChanged(): Promise<void> {
   forgetCrucibleFacts();
   await refreshCrucibleFacts();
@@ -3351,6 +3378,109 @@ export function registerIpc(): void {
     if (answer.outcome === 'added') await afterRegistryChanged();
     return answer;
   });
+
+  /*
+   * ── THE ENGINE'S OWN SETTINGS — four doors onto somebody else's store ─────
+   *
+   * Wave 62 package I, to crucible `docs/PHASE15-HOST.md` §3.1, §3.2, §3.3 and
+   * §5.2. Owen's ruling: the GPU engine is the SINGLE SOURCE OF TRUTH for AI
+   * settings — *"If the user enters an anthropic api key, it should pass through
+   * to crucible"* — so these four doors READ AND WRITE A REMOTE STORE and touch
+   * `app-settings.json` not at all. §5.2: *"every control in these sections is a
+   * request to the engine, and its result is the engine's answer re-read. There
+   * is no Save button that writes an app file and syncs later."*
+   *
+   * THEY TAKE A SERVER NAME, not a url and not a token. That is the registry's
+   * rule (`crucible:open`'s argument, one family up): the address and the
+   * credential are looked up in main, so nothing the renderer holds could reach
+   * an engine this app has not been told about.
+   *
+   * AND THE KEY CROSSES ONE WAY. `crucible:engine-settings-put` carries an
+   * unsaved key inward and `crucible:engine-upstream-test` carries one inward to
+   * be used once and dropped; no answer on any of the four carries a credential
+   * back, because the document has `key_hint` — the last four characters — where
+   * the engine has a key. Same rule, same sentence, as `CrucibleServerView`'s
+   * `tokenSet` and `CloudProviderView`'s `keySet`.
+   *
+   * `engine-` RATHER THAN MORE BARE `crucible:` MEMBERS, because the family
+   * already means "this app's registry of servers" and these are not about the
+   * registry at all: they are about what ONE of those servers has been
+   * configured to do. A reader of the channel list can tell the two apart.
+   */
+  ipcMain.handle('crucible:engine-settings', (_event, serverName: string) =>
+    readEngineSettings(namedServerOr(serverName)));
+  /**
+   * WRITE THROUGH, AND REDRAW FROM THE ANSWER.
+   *
+   * The PUT answers the whole document after the write (§3.2), so this hands
+   * that straight back and the card never guesses what took. A refusal arrives
+   * as a REJECTION wearing a sentence that names the field
+   * (electron/crucible-settings.ts composes it) — unlike Test there is nothing
+   * to draw instead, because the write did not happen and what is on screen is
+   * still true.
+   *
+   * ── AND A ROUTE WRITE MOVES THE TILES, SO THE REGISTRY PASS RUNS ──────────
+   *
+   * §2: capability *"is RECOMPUTED in-process on every settings write that
+   * touches a route"*, and §3.3 says every capability row carries its route. So
+   * the answer to "can this machine translate" has just changed on a server this
+   * app has cached (`crucible-provider.ts` holds it for fifteen seconds) and the
+   * dock's tiles are drawn from that. `afterRegistryChanged` is exactly the pass
+   * that forgets, re-measures and re-composes — it is named for the registry
+   * because that is what used to be the only thing that moved this answer, and a
+   * route write moves it identically.
+   *
+   * ONLY WHEN A ROUTE WAS TOUCHED. Saving a key alone configures an upstream
+   * nothing routes to yet: no capability row changes, and running the pass would
+   * spend a probe per server to learn that.
+   */
+  ipcMain.handle('crucible:engine-settings-put', async (
+    _event,
+    serverName: string,
+    patch: SettingsPatch,
+  ): Promise<SettingsDocument> => {
+    const document = await writeEngineSettings(namedServerOr(serverName), patch);
+    if (patch.routes !== undefined) await afterRegistryChanged();
+    return document;
+  });
+  /**
+   * WHAT MODEL IDS THIS CREDENTIAL CAN USE — and it is the only list there is.
+   *
+   * §2: *"the server does not ship a cloud model list"*, and neither does this
+   * app: the Cloud card already argued that a catalog compiled into a build is
+   * wrong by the next release and confidently so. The engine asks the upstream's
+   * own listing, unbilled, and the card shows THAT.
+   *
+   * `probe` IS THE UNSAVED CREDENTIAL, or absent for whatever is configured —
+   * `crucible:test-at`'s argument one wire along: saving a key in order to find
+   * out whether it works would be this app writing into somebody's engine to
+   * answer a question. A failure is a RESULT, not a rejection, so the card can
+   * print it beside the box.
+   */
+  ipcMain.handle('crucible:engine-upstream-test', (
+    _event,
+    serverName: string,
+    upstream: UpstreamName,
+    probe?: UpstreamProbe,
+  ) => testUpstream(namedServerOr(serverName), upstream, probe));
+  /**
+   * THE CAPABILITY RECORD, BY SERVER NAME — the wizard's routes step, and the
+   * one question it asks that the settings document cannot answer.
+   *
+   * §5.2: *"the wizard's AI step reads capability; for each llm class that is
+   * `enabled: false` locally it says the class's reason and offers 'run it
+   * through Anthropic / OpenAI / an Ollama server instead'."* The REASON is the
+   * server's own sentence about why a class will not run on its card, and
+   * nothing in `/v1/settings` carries it.
+   *
+   * IT IS `readCapability`, THE DISPATCHER'S OWN READER, and not a second one:
+   * the shape of a capability record and the mapping of its refusals onto the
+   * SDK's error types is exactly the kind of thing that is written twice and
+   * then only fixed once (crucible-dispatch.ts says so where it exports it).
+   */
+  ipcMain.handle('crucible:engine-capability', (_event, serverName: string) =>
+    readCapability(namedServerOr(serverName)));
+
   /**
    * THE HAND SEQUENCE FOR "INSTALL CRUCIBLE HERE", composed for this machine.
    *

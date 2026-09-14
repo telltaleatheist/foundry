@@ -253,6 +253,19 @@ const api: FoundryApi = {
     setNewJobsWaitFor: (choice) => ipcRenderer.invoke('crucible:set-new-jobs-wait-for', choice),
     installPlan: () => ipcRenderer.invoke('crucible:install-plan'),
     install: () => ipcRenderer.invoke('crucible:install'),
+    /*
+     * The engine's own settings — a window onto ONE server's store, never a
+     * copy (crucible docs/PHASE15-HOST.md §5.2). By name, so the address and
+     * the token stay in main; the key goes one way, and `SettingsDocument`
+     * carries a four-character hint where the engine carries a key.
+     */
+    engineSettings: (serverName) => ipcRenderer.invoke('crucible:engine-settings', serverName),
+    engineSettingsPut: (serverName, patch) =>
+      ipcRenderer.invoke('crucible:engine-settings-put', serverName, patch),
+    engineUpstreamTest: (serverName, upstream, probe) =>
+      ipcRenderer.invoke('crucible:engine-upstream-test', serverName, upstream, probe),
+    engineCapability: (serverName) =>
+      ipcRenderer.invoke('crucible:engine-capability', serverName),
   },
 
   cloud: {

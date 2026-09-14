@@ -5,6 +5,7 @@ import type { BackendMode, DoctorReport, EngineInfo, TierReport } from '@shared/
 
 import { api, hosted } from '../../core/foundry';
 import { CloudCardComponent } from './cloud-card.component';
+import { EngineSettingsCardComponent } from './engine-settings-card.component';
 import { EnvCardComponent } from './env-card.component';
 import { LibraryCardComponent } from './library-card.component';
 import { MachineModelsCardComponent } from './machine-models-card.component';
@@ -28,7 +29,8 @@ import { ServersCardComponent } from './servers-card.component';
 @Component({
   selector: 'app-settings-page',
   imports: [
-    CloudCardComponent, EnvCardComponent, FormsModule, LibraryCardComponent, LlmCardComponent,
+    CloudCardComponent, EngineSettingsCardComponent, EnvCardComponent, FormsModule,
+    LibraryCardComponent, LlmCardComponent,
     MachineModelsCardComponent, PageReaderCardComponent, ServersCardComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -177,6 +179,22 @@ import { ServersCardComponent } from './servers-card.component';
             leave the queue's picker naming machines nothing explains.
           -->
           <app-servers-card />
+
+          <!--
+            AND WHAT THE ENGINE HAS BEEN TOLD TO DO WITH THE WORK — a window onto
+            ONE of those servers' own settings (crucible docs/PHASE15-HOST.md
+            §3.7, §5.2; Wave 62 package I). Directly under the Servers card
+            because the two are the same question one layer apart: that one is
+            WHICH engines this app knows, this one is where each class of text
+            work runs once it gets to one.
+            Nothing on it is stored here — Owen's ruling is that the engine is
+            the single source of truth for these settings, so every control is a
+            request to it and its answer is what redraws. It hides itself when
+            no server is registered, because a window needs something to look
+            onto; it is NOT hidden hosted, because §5.3 says the hosted card
+            draws the HOST's registry and shows the same engine.
+          -->
+          <app-engine-settings-card />
 
           <!--
             AND THE THIRD ANSWER TO THE SAME QUESTION — somebody else's computer,
