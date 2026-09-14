@@ -140,6 +140,15 @@ interface EditableServer extends CrucibleServerView {
                       (click)="test(row.name)">
                 {{ testing() === row.name ? 'Testing…' : 'Test connection' }}
               </button>
+              <!--
+                THE SERVER'S OWN CONSOLE. Administering a Crucible belongs to
+                the Crucible (Owen, 2026-09-14), so this is where a person goes
+                to install a job type, pull weights or read what is resident.
+                Disabled until a token is stored, because the page is opened
+                with one; a saved row is the only kind that has one.
+              -->
+              <button class="ghost" [disabled]="!row.tokenSet || row.token !== null"
+                      (click)="openUi(row.name)">Open</button>
             </div>
             @if (probes()[row.name]; as probe) {
               @if (probe.outcome === 'ok') {
@@ -385,6 +394,23 @@ export class ServersCardComponent {
       this.problem.set(err instanceof Error ? err.message : String(err));
     } finally {
       this.saving.set(false);
+    }
+  }
+
+  /**
+   * Open a server's own operator page.
+   *
+   * BY NAME, and only for a row whose token is STORED rather than typed: main
+   * reads the credential from the registry, so a row still being edited has
+   * nothing there to read. The failure is drawn beside the row exactly as a
+   * failed test is — it is the same kind of news, about the same server.
+   */
+  protected async openUi(name: string): Promise<void> {
+    if (api === null) return;
+    try {
+      await api.crucible.open(name);
+    } catch (err) {
+      this.problem.set(err instanceof Error ? err.message : String(err));
     }
   }
 

@@ -1392,6 +1392,14 @@ export interface FoundryApi {
     /** Test connection. A failure is a RESULT with the SDK's own sentence on it. */
     test(name: string): Promise<CrucibleProbe>;
     /**
+     * Open that server's OWN operator page, in a window that cannot reach this
+     * app — no preload, sandboxed, its own session, locked to the server's
+     * origin (electron/crucible-ui.ts). BY NAME: the address and the token are
+     * read from the registry in main, so no credential is ever in the renderer.
+     * Rejects by name if the server has gone since the row was drawn.
+     */
+    open(name: string): Promise<void>;
+    /**
      * Test an address and a token that are NOT SAVED YET — the setup wizard's
      * Connect door, which has three boxes and no registry entry behind them.
      *

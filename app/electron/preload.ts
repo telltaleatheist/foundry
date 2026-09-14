@@ -249,6 +249,7 @@ const api: FoundryApi = {
     add: (name, url, token) => ipcRenderer.invoke('crucible:add', name, url, token),
     addLocal: (name) => ipcRenderer.invoke('crucible:add-local', name),
     setWslDistro: (distro) => ipcRenderer.invoke('crucible:set-wsl-distro', distro),
+    open: (name) => ipcRenderer.invoke('crucible:open', name),
     setNewJobsWaitFor: (choice) => ipcRenderer.invoke('crucible:set-new-jobs-wait-for', choice),
     installPlan: () => ipcRenderer.invoke('crucible:install-plan'),
     install: () => ipcRenderer.invoke('crucible:install'),

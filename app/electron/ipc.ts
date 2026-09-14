@@ -25,6 +25,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { actGates } from './act-gates';
 import { readAppSettings, writeAppSettings } from './app-settings';
 import { probeCloud, writeCloudProviders } from './cloud-providers';
+import { openCrucibleUi } from './crucible-ui';
 import {
   addCrucibleServer,
   addLocalCrucible,
@@ -3284,6 +3285,14 @@ export function registerIpc(): void {
    * no answer carries it back (`CrucibleProbe` has no token field). That is the
    * same rule the registry keeps — see crucible-registry.ts's header.
    */
+  /*
+   * A SERVER'S OWN OPERATOR PAGE, opened by NAME so no credential crosses to
+   * the renderer. The window it opens has no preload and cannot reach this
+   * app (electron/crucible-ui.ts says why, at length). Named `crucible:open`
+   * rather than BookForge's `crucible:open-ui`, so the two apps' channels stay
+   * distinct in a vendored build.
+   */
+  ipcMain.handle('crucible:open', (_event, name: string) => { openCrucibleUi(name); });
   ipcMain.handle('crucible:test-at', (_event, url: string, token: string) =>
     probeCrucibleAt(url, token));
   /**
