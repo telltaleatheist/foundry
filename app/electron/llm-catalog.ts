@@ -84,19 +84,28 @@
  * opens with. That is a hole rather than a decision, and the vendored file
  * closes it: Crucible's `qwen3.8-27b-4bit` row names exactly that tag.
  *
- * ── AND ONE FLOOR THAT MOVED WHEN THE FILE BECAME CRUCIBLE'S ─────────────────
+ * ── AND THE FLOOR, WHICH OWEN SETTLED ON 2026-09-14 ─────────────────────────
  *
- * Crucible's row declares `minimumFor: [translate, simplify, analysis]` — *"the
- * smallest model those three may run on"*. Package D's hand-written table put
- * the floor on the 9B and left ANALYSIS with no floor at all, on Owen's
- * *"analysis is a sentence at a time and a small model does it, a translation is
- * a book"*. `model-lineup-local.json` keeps the 9B floor for translate and
- * simplify, because those are the two acts Owen named; **analysis now floors at
- * the 4-bit 27B, because that is what the catalog of record says and this file
- * does not overrule it.** The consequence is visible and deliberate: a 12 GB
- * card that used to light Analysis no longer does, and the tile says which model
- * would change it. If that is wrong it is a fact in Crucible's manifests, and it
- * is fixed there and re-vendored — not patched here.
+ * *"i think either they use the 27b or they use an api key for Claude or OpenAI.
+ * thats probably the best solution."* So `minimumFor: [translate, simplify]`
+ * sits on a 27B in BOTH files, and a machine that cannot hold one is offered
+ * those two acts by a Crucible, by a cloud provider, or not at all.
+ *
+ * It took three passes to get there, and the wrong two are worth keeping because
+ * each was a faithful reading of what was said at the time. Package D's
+ * hand-written table put the floor on the 9B, from *"smaller than 9b"*.
+ * Crucible's generated file first floored ANALYSIS there too, which darked a
+ * tile on a 12 GB card; Owen named translate and simplify, so analysis lost its
+ * floor at the source (Crucible e73467b) and now carries none in either file.
+ * Then the 9B floor itself went, because *"at least the 9B"* turned out to mean
+ * the 27B when he said which model he meant.
+ *
+ * `model-lineup-local.json` declares the floor on `qwen3.5:27b` rather than
+ * leaving it to the vendored file's `qwen3.8:27b`, and the reason is arithmetic
+ * rather than preference: the two are 0.7 GB apart, the smallest declared floor
+ * wins, and a floor at the larger one would dark Translate on a card holding a
+ * genuine 27B. If that is wrong it is a fact in Crucible's manifests and is
+ * fixed there and re-vendored — the vendored file is never patched here.
  */
 import type { LlmModelOption, ModelClass, SystemProfile } from '../shared/types';
 
@@ -310,19 +319,22 @@ export function fitsOn(row: LineupRow, profile: SystemProfile): boolean {
  * ── TWO CATALOGS MAY EACH DECLARE ONE, AND THE SMALLEST WINS ────────────────
  *
  * `findIndex` takes the FIRST row in this order that names the class, which is
- * the smallest declared floor. That is not an accident of the implementation, it
- * is the rule: the two files are answering different questions. Crucible's floor
- * is what a CRUCIBLE will serve — it installs one model per class and picks the
- * largest that fits the card, so its 4-bit 27B genuinely is the smallest thing
- * it offers. Foundry's floor is what an OLLAMA on this desk can be asked for,
- * and Ollama's library carries tags no Crucible manifest describes. Taking the
- * larger of the two would dark Translate on a 12 GB card that can run the 9B
- * perfectly well, in the name of a constraint that belongs to a server this
- * machine does not have.
+ * the smallest declared floor. Both files now floor translate and simplify at a
+ * 27B (Owen, 2026-09-14: *"either they use the 27b or they use an api key"*),
+ * and they name DIFFERENT 27Bs — Crucible serves `qwen3.8:27b` and Ollama's
+ * library also carries `qwen3.5:27b`, 0.7 GB apart. Taking the smaller is what
+ * admits both; taking the larger would dark Translate on a card holding a
+ * genuine 27B over a rounding difference.
  *
- * WHICH IS WHY ANALYSIS MOVED. Only Crucible declares a floor for `analysis`,
- * so `analysis` floors at the 4-bit 27B — see the module header, which argues
- * that consequence rather than hiding it.
+ * What it must NEVER do is let one file lower the other below the rule. Nothing
+ * mechanical enforces that — it is a property of what the two files say, and the
+ * day a row here declares a floor Owen did not rule, this function will honour
+ * it silently. The guard is that both floors are written down with his words
+ * beside them, here and in `model-lineup-local.json`'s own note.
+ *
+ * ANALYSIS HAS NO FLOOR in either file and takes the whole list: he named
+ * translate and simplify, and Crucible dropped analysis at the source
+ * (e73467b) rather than leaving Foundry to disagree with the catalog.
  */
 export function eligibleFor(cls: ModelClass): readonly LineupRow[] {
   const serving = MODEL_LINEUP.filter((row) => row.classes.includes(cls));

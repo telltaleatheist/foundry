@@ -3,17 +3,20 @@
  *
  * ── OWEN'S RULE, WHICH IS TWO RULES ─────────────────────────────────────────
  *
- * *"if their system just isnt powerful enough for translation (smaller than 9b)
- * then translation and simplify is disabled. the tiles arent lit up until the
- * models are present."* And: *"if a job is going to take an obscenely long time,
- * like translation on cpu, it should just be disabled."* (docs/SLOTS.md §1.)
+ * *"if their system just isnt powerful enough for translation … then translation
+ * and simplify is disabled. the tiles arent lit up until the models are
+ * present."* And: *"if a job is going to take an obscenely long time, like
+ * translation on cpu, it should just be disabled."* (docs/SLOTS.md §1.)
  *
  * The first is about the CATALOG — a class has a floor, and a machine that
- * cannot hold anything at or above it is not offered the act. The second is
- * about the MACHINE — a processor-only box can hold a 9B in system RAM and will
- * then generate at a word or two a second, which for a three-hundred-page
- * translation is not slow, it is not going to finish. Memory says yes and the
- * clock says no, so the clock gets its own branch.
+ * cannot hold anything at or above it is not offered the act. He settled which
+ * model that is on 2026-09-14: *"either they use the 27b or they use an api key
+ * for Claude or OpenAI"*, so the floor for translate and simplify is a 27B, and
+ * a smaller card reaches those acts through a Crucible or a cloud provider
+ * instead. The second is about the MACHINE — a processor-only box can hold a
+ * model in system RAM and will then generate at a word or two a second, which
+ * for a three-hundred-page translation is not slow, it is not going to finish.
+ * Memory says yes and the clock says no, so the clock gets its own branch.
  *
  * ── THIS GATE IS ABOUT THE MACHINE. THE OTHER ONE IS ABOUT THE BOOK ─────────
  *
@@ -90,6 +93,17 @@ import type { ActGate, ActGates, ModelClass, OllamaFacts, SystemProfile } from '
 
 /** Where somebody goes to fix it. Spelled once so all five sentences agree. */
 const SETTINGS_PATH = 'Settings › Language model';
+
+/**
+ * The two ways off this machine, named in every sentence that refuses for want
+ * of one — Owen, 2026-09-14: *"either they use the 27b or they use an api key
+ * for Claude or OpenAI."* A refusal that states the floor and stops there tells
+ * somebody with a 12 GB card that they are out of luck, which is not what the
+ * product does: both routes are a card away, and the sentence that darkens the
+ * tile is the only place they will be looking.
+ */
+const OTHER_ROUTES = 'Settings › Servers (a Crucible server) or Settings › Cloud providers '
+  + '(an OpenAI or Claude key)';
 
 /** Everything the five gates read, measured once per answer rather than per act. */
 interface Machine {
@@ -202,7 +216,7 @@ function localTextGate(cls: ModelClass, machine: Machine): ActGate {
   const eligible = eligibleFor(cls);
   /*
    * THE SMALLEST THING THAT MAY SERVE THIS CLASS, and the sentences below have
-   * to say WHY it is the smallest. When the class has a declared floor — the 9B
+   * to say WHY it is the smallest. When the class has a declared floor — a 27B
    * for translate and simplify — "X or larger" is the rule being quoted. When it
    * has none, the same phrasing would invent a rule: the 0.8B is merely the
    * first row in the table, and saying "you need the 0.8B or larger" about a
@@ -220,7 +234,7 @@ function localTextGate(cls: ModelClass, machine: Machine): ActGate {
    *
    * `memoryBasis === 'ram'` is `system-probe.ts`'s name for "there is no GPU a
    * model can use" — not a small GPU, none. Sixteen gigabytes of system RAM will
-   * hold the 9B and then produce a word or two a second. `lineupFor` still lists
+   * hold a 9B and then produce a word or two a second. `lineupFor` still lists
    * the whole table with honest fits/doesn't-fit against that RAM, because the
    * wizard's job is to describe the machine; the TILE's job is to not start an
    * eight-day job, so it refuses here and says which of the two facts is the
@@ -232,8 +246,7 @@ function localTextGate(cls: ModelClass, machine: Machine): ActGate {
     return {
       lit: false,
       why: `This machine has no GPU a model can use, and ${need} on the processor alone would take `
-        + `days over a book. Connect a Crucible server, or point ${SETTINGS_PATH} at one that is `
-        + 'not local.',
+        + `days over a book. ${OTHER_ROUTES}.`,
     };
   }
 
@@ -247,7 +260,7 @@ function localTextGate(cls: ModelClass, machine: Machine): ActGate {
       lit: false,
       why: `This needs ${need}, which wants `
         + `${floor === undefined ? 'more' : `${floor.local.needsGB.value} GB`} — this machine has `
-        + `${gb(machine.profile.modelMemoryMB)} of ${pool(machine.profile)}.`,
+        + `${gb(machine.profile.modelMemoryMB)} of ${pool(machine.profile)}. ${OTHER_ROUTES}.`,
     };
   }
 

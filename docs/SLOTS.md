@@ -28,6 +28,11 @@
   than 9b) then translation and simplify is disabled. the tiles arent lit up
   until the models are present."* And: *"if a job is going to take an
   obscenely long time, like translation on cpu, it should just be disabled."*
+- **The floor, settled 2026-09-14** — *"i think either they use the 27b or they
+  use an api key for Claude or OpenAI. thats probably the best solution."* So
+  `minimumFor: [translate, simplify]` sits on a 27B in both catalogs, analysis
+  carries no floor at all, and a machine under the floor reaches those two acts
+  through a Crucible or a connected provider. The dark tile names both routes.
 - Cloud: *"give them the option of connecting an api key for openai or claude
   instead of using the 27b or the 9b… for weaker systems."*
 
