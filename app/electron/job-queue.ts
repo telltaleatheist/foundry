@@ -476,9 +476,38 @@ function promisedBy(request: EngineRequest): Pick<Job, 'mints' | 'after' | 'into
  * no slot list. `waitForOfNewJob` decides that, once, so the picker's "is there
  * anything to pick" and the row's "what did I pick" cannot disagree.
  */
-function placedBy(kind: JobKind): Pick<Job, 'waitFor'> {
-  if (capabilityClassOf(kind) === null) return {};
-  if (kind === 'read' && !CRUCIBLE_READS) return {};
+function placedBy(kind: JobKind, chosen?: string): Pick<Job, 'waitFor'> {
+  /*
+   * ── A SCHEDULER'S CHOICE WINS, AND ITS LOSS IS NEVER SILENT ───────────────
+   *
+   * Hosted, the person picked a machine on the HOST's row, and this app's
+   * default is not an answer to that question — it is an answer to a question
+   * nobody asked. So `chosen` is taken as given when a placement is possible
+   * at all. What it cannot override is whether there IS a placement: an export
+   * or a mint puts nothing in front of a model, and a reading stays on this
+   * machine while `CRUCIBLE_READS` is false. Both of those drop the name, and
+   * both say so, because a control that quietly does nothing is the defect
+   * this seam exists to remove.
+   */
+  if (capabilityClassOf(kind) === null) {
+    if (chosen !== undefined) {
+      console.error(
+        `[slots] a scheduler asked for "${chosen}" on a ${kind} job, which puts nothing in `
+        + 'front of a model. The name was dropped.',
+      );
+    }
+    return {};
+  }
+  if (kind === 'read' && !CRUCIBLE_READS) {
+    if (chosen !== undefined) {
+      console.error(
+        `[slots] a scheduler asked for "${chosen}" on a page reading, which runs on this `
+        + 'machine while remote reads are switched off. The name was dropped.',
+      );
+    }
+    return {};
+  }
+  if (chosen !== undefined) return { waitFor: chosen };
   const waitFor = waitForOfNewJob();
   return waitFor === undefined ? {} : { waitFor };
 }
@@ -5349,6 +5378,22 @@ interface RunOptions {
    * run notices at the next checkpoint.
    */
   signal?: AbortSignal;
+  /**
+   * THE MACHINE THE SCHEDULER'S OWN ROW CHOSE — a slot name, or `any`.
+   *
+   * Hosted, the person picked it on the HOST's queue row, and without this it
+   * never crossed: the row was stamped with THIS app's default
+   * (`waitForOfNewJob`), so a choice made on one screen was answered by a
+   * setting on another. Found by BookForge's session reading the seam,
+   * 2026-09-14, before anybody had pressed it.
+   *
+   * Absent means the caller has no opinion and this app's own default decides,
+   * which is what `runNow` wants and what a host that does not offer a picker
+   * wants. The name is not validated here: a slot that has gone is a wait with
+   * a sentence at the placement (`placeOnSlot`), which is where a name can be
+   * checked against a list that is current.
+   */
+  waitFor?: string;
 }
 
 /**
@@ -5420,7 +5465,7 @@ async function runDetached(
      * that refusal is `materializeDeferred`'s, one function down, where it can name
      * the step rather than the row.
      */
-    ...placedBy(request.kind),
+    ...placedBy(request.kind, opts.waitFor),
     ...promisedBy(request),
     createdAt: Date.now(),
   };

@@ -62,6 +62,7 @@ import {
   type CloudSettingsView,
   type ComputeSlot,
   type SlotAvailability,
+  type SlotRefusal,
   type CrucibleProbe,
   type CrucibleServerEdit,
   type CrucibleServerView,
@@ -98,20 +99,64 @@ export function crucibleServers(): CrucibleServerEntry[] {
    * list and a credential looked up in another — the break `host.ts` describes
    * on `servers?()`. A host with no registry has no servers here, full stop.
    */
-  if (hosted()) return hostServers();
-  return readAppSettings().crucibleServers;
+  return readRegistry().entries;
+}
+
+/** The registry, and the reason it is empty when the reason is not "none". */
+interface RegistryRead {
+  entries: CrucibleServerEntry[];
+  refusal: SlotRefusal | null;
+}
+
+/**
+ * THE ONE READ. Standalone it is the settings file; hosted it is the host's
+ * own registry and never the settings file, which hosted holds an empty list
+ * nobody can write to — reading it would mean a slot drawn from one list and a
+ * credential looked up in another, which is the break `host.ts` describes.
+ *
+ * A THROW IS NOT AN EMPTY REGISTRY. A host that implements the seam and fails
+ * the call is saying something is wrong NOW, not that it has no servers, and
+ * it may answer on the next read: BookForge throws `registry_snapshot_not_taken`
+ * before its first snapshot is taken. Returning [] for that would put "you have
+ * added no servers" in front of somebody whose servers are all still there.
+ */
+function readRegistry(): RegistryRead {
+  if (!hosted()) return { entries: readAppSettings().crucibleServers, refusal: null };
+  const provider = foundryHost()?.servers;
+  if (provider === undefined) {
+    return {
+      entries: [],
+      refusal: {
+        code: 'host_provides_no_registry',
+        sentence: 'This window is running inside another application, and that application has '
+          + 'not offered a list of Crucible servers. Work will run the way it did before '
+          + 'servers could be chosen.',
+      },
+    };
+  }
+  try {
+    return { entries: cleanHostServers(provider.call(foundryHost()) ?? []), refusal: null };
+  } catch (err) {
+    const said = err instanceof Error ? err.message : String(err);
+    return {
+      entries: [],
+      refusal: {
+        code: 'host_registry_unavailable',
+        sentence: `The application this window runs inside could not say which Crucible servers `
+          + `there are (${said}). Its list may not be ready yet; nothing here is lost.`,
+      },
+    };
+  }
 }
 
 /**
  * The host's registry, cleaned. Empty is a real answer; so is "there is none".
  *
- * A MISSING SEAM IS NOT REPORTED HERE. It is a state the PAGE has to draw, so
- * it is typed and returned by `slotAvailability()` rather than written to a
- * console nobody reads and inferred from an empty list. A log line that the
- * product's behaviour depends on is a log line doing a type's job. What this
- * returns for a host with no registry is simply nothing, which is true.
+ * A MISSING OR FAILING SEAM IS NOT REPORTED HERE — `readRegistry` above owns
+ * both, as typed state the page draws, because a log line the product's
+ * behaviour depends on is a log line doing a type's job.
  *
- * WHAT IS LOGGED IS A HOST'S BUG: a row that is not an entry. Name, address
+ * WHAT IS LOGGED HERE IS A HOST'S BUG: a row that is not an entry. Name, address
  * and `enabled` are all required, and a row missing any of them is dropped
  * with a line naming the field. `enabled` is required rather than defaulted
  * because a default here would be this code deciding a fact the host owns —
@@ -119,18 +164,7 @@ export function crucibleServers(): CrucibleServerEntry[] {
  * empty: a server on a trusted network has none, and the request says so
  * itself if it turns out to want one.
  */
-function hostServers(): CrucibleServerEntry[] {
-  const provider = foundryHost()?.servers;
-  if (provider === undefined) return [];
-  let offered: readonly CrucibleServerEntry[];
-  try {
-    offered = provider.call(foundryHost()) ?? [];
-  } catch (err) {
-    console.error(
-      `[slots] the host's registry provider threw: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return [];
-  }
+function cleanHostServers(offered: readonly CrucibleServerEntry[]): CrucibleServerEntry[] {
   const seen = new Set<string>();
   const out: CrucibleServerEntry[] = [];
   for (const entry of offered) {
@@ -352,31 +386,33 @@ export function slotAvailability(): SlotAvailability {
   /*
    * THE ONE PLACE THAT KNOWS WHY THERE IS NO PICKER. `computeSlots()` below is
    * this function's `.slots` and nothing else, so the two cannot drift: one
-   * computes, the other projects. Both exist because most callers — the lanes,
-   * the stored-name check, the cards — want the list and behave identically
-   * either way, while the two that speak to a person, the picker and a
-   * placement's refusal, have to say which of the two silences this is.
+   * reads the registry and derives, the other does the same and throws the
+   * reason away. Both exist because most callers — the lanes, the stored-name
+   * check, the cards — want the list and behave identically either way, while
+   * the two that speak to a person, the picker and a placement's refusal, have
+   * to say which of the silences this is.
    */
-  if (hosted() && foundryHost()?.servers === undefined) {
-    return {
-      slots: [],
-      refusal: {
-        code: 'host_provides_no_registry',
-        sentence: 'This window is running inside another application, and that application has '
-          + 'not offered a list of Crucible servers. Work will run the way it did before '
-          + 'servers could be chosen.',
-      },
-    };
-  }
-  return { slots: computeSlots(), refusal: null };
+  const read = readRegistry();
+  return { slots: slotsFrom(read.entries), refusal: read.refusal };
 }
 
 export function computeSlots(): ComputeSlot[] {
+  return slotsFrom(readRegistry().entries);
+}
+
+/**
+ * The slots a registry implies — the ONE derivation, used by both readers.
+ *
+ * `computeSlots()` throws the refusal away and `slotAvailability()` keeps it;
+ * neither computes a slot the other would not, because there is one function
+ * here that turns servers into slots and both call it.
+ */
+function slotsFrom(entries: readonly CrucibleServerEntry[]): ComputeSlot[] {
   /*
    * ── ONE LIST, ONE DERIVATION, BOTH WAYS ───────────────────────────────────
    *
-   * Hosted, `crucibleServers()` is already the HOST's registry (see there), so
-   * the slots below are derived from it by this same code rather than handed
+   * Hosted, the entries handed in are the HOST's registry (`readRegistry`), so
+   * the slots below are derived from them by this same code rather than handed
    * over as a second list. That is what stops a host and this app computing
    * different slots from the same servers, and it is what makes a credential
    * lookup impossible to miss: every slot named here came from an entry that
@@ -388,7 +424,7 @@ export function computeSlots(): ComputeSlot[] {
    * And no cloud slots: this app's providers are its own, and the bill for
    * work in a hosted window is the host's.
    */
-  const servers = crucibleServers().filter((entry) => entry.enabled);
+  const servers = entries.filter((entry) => entry.enabled);
   const local: ComputeSlot[] = hosted() || servers.some((entry) => isLoopbackUrl(entry.url))
     ? []
     : [{ name: LOCAL_SLOT_NAME, kind: 'local' }];

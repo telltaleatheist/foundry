@@ -63,7 +63,17 @@
  * answer: the list is the whole truth.
  */
 export interface SlotRefusal {
-  code: 'host_provides_no_registry';
+  /**
+   * `host_provides_no_registry` — hosted, and the host implements no registry
+   * seam at all. `host_registry_unavailable` — it implements one and the call
+   * failed, which is a DIFFERENT fact: something is wrong on the host's side
+   * right now rather than missing from its build, and it may work on the next
+   * read. A host that answers "not ready yet" by throwing (BookForge throws
+   * `registry_snapshot_not_taken` before its first snapshot) lands here, and
+   * reporting that as "no servers" would be the silence this type exists to
+   * end.
+   */
+  code: 'host_provides_no_registry' | 'host_registry_unavailable';
   sentence: string;
 }
 
