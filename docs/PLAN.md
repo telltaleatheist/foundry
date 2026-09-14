@@ -4949,7 +4949,19 @@ write echoed back and visible in the capability row's `selected` and `reason`.
 Nothing changed on Foundry's side. Not yet watched: a Foundry JOB placed on it
 from the app (the Mac is not in the registry until Crucible answers whether
 foundry.module.json's ids resolve per backend — its 27B is `qwen3.8-27b` there,
-not `qwen3.8-27b-4bit`).
+not `qwen3.8-27b-4bit`). **Answered as a real defect, and the contract is
+changing (§5.3a, being written):** a module carries `needs` as CLASSES,
+unresolved; the SERVER resolves each through its own capability record and
+pulls that subject; a class the backend has disabled is not a refusal — the task
+finishes `done` with `unmet: [{class, reason}]` and the app shows "not on this
+engine"; explicit `subjects` stay only for genuine app choices. There is ONE
+module and nothing in the app picks per backend. **Owed in Foundry when it
+lands (package H follow-up):** `missingForFoundry` compares CLASSES — for each
+class in `needs`, the capability row's `selected` against the catalog's
+`installed`, a disabled class read as "not on this engine" rather than missing;
+the coordination words gain the `unmet` line; foundry.module.json re-vendored
+from the regenerated file (sha to come from Crucible). The Mac stays out of
+the registry until then.
 
 **Also 2026-09-14:** `foundry-blocks-v1-4b.gguf` deleted from this PC on
 Owen's word after the Hugging Face mirror was proven to hold the same bytes;
