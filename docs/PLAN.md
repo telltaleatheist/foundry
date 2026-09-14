@@ -4892,7 +4892,7 @@ The two things, measured:
 | what | where | size | what it is |
 |---|---|---|---|
 | conda env `dots` | WSL Ubuntu, `/home/telltale/anaconda3/envs/dots` | 9.8 GB | the Foundry-era vLLM environment the retired launcher ran dots.ocr in (vllm 0.11.0, torch 2.8.0, transformers 4.57.1) |
-| `foundry-blocks-v1-4b.gguf` | `%LOCALAPPDATA%\foundry\models\` | 7.5 GB | a MODEL, not an environment — referenced by nothing in this repo or BookForge's; a leftover of the retired blocks-model add-on |
+| `foundry-blocks-v1-4b.gguf` | `%LOCALAPPDATA%\foundry\models\` | 7.5 GB | a MODEL, not an environment — Owen's own fine-tune from the pre-VLM era (docs/BLOCKS_TRAINING.md at the `pre-vlm-strip` tag), referenced by nothing since 7a0d7a4, and ALREADY PUBLISHED on its mirror, Hugging Face `owenmorgan/foundry-models` — so this local file is a download, not the only copy |
 
 **What is worth keeping from each, and it is not a tarball of either.** A conda
 env is not relocatable (PHASE14 §7.2a found the same thing for pip's shebangs),
@@ -4901,9 +4901,10 @@ on the GitHub release — so the artefact of value in the env is its RECIPE: the
 exact pins that were known to serve dots under vLLM on the 4090. That freeze
 (147 lines) is captured at `C:\tmp\foundry-page-reader-spec\dots-env-freeze.txt`
 for Crucible's server agent to check its own recipe against. The GGUF is a
-model: if it is Owen's own fine-tune its home is a model repo or a release
-asset named by a catalog row (models are never packaged into an app or an env
-pack — Owen's ruling), and if it is nobody's, it is deleted.
+model, and it already has its home: `owenmorgan/foundry-models` on Hugging
+Face holds the same bytes (models are never packaged into an app or an env
+pack — Owen's ruling), so nothing is archived and the local file is simply
+deleted. If a future Crucible class wants it, a catalog row names that repo.
 
 **When:** after Wave 62's gate is watched (a Windows engine reads a page and
 cleans a block on a clean box; the WSL engine reads a page from the app on
