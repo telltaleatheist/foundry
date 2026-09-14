@@ -4684,7 +4684,7 @@ that machine connects by reading `<CRUCIBLE_HOME>/pairing` — nobody types.
 |---|---|---|---|
 | H | Coordinate-on-connect: catalog read first, module posted only when something is missing, followed/waited/refused by name; the row says what is happening in BookForge's words | SDK 0.6.0 (vendored) | **LANDED** (below) |
 | I | The settings WINDOW: Settings › AI routes card + the wizard's AI step draw `GET /v1/settings` for the chosen server and write through `PUT`; per-class route rows, three upstream cards, Test before Save; nothing stored in app-settings.json | PHASE15 §3.1–3.2, §5.2 | building |
-| J | Connect three ways, in order, automatic: the pairing file → `local`; a pasted connect code (SDK `parsePairing`); "get one on this machine" through `@crucible/bootstrap install()` when it ships (the door keeps refusing by name until then) | PHASE15 §3.6, §5.1 | building |
+| J | Connect three ways, in order, automatic: the pairing file → `local`; a pasted connect code (SDK `parsePairing`); "get one on this machine" through `@crucible/bootstrap install()` when it ships (the door keeps refusing by name until then) | PHASE15 §3.6, §5.1 | **LANDED** (below) |
 | K | Dispatch + gates on the route: `--model capability.selected`; no lease and no card lane when the route is upstream (a per-server `[cloud]` lane, width 2, as BookForge); tiles lit iff an enabled server's capability row says `enabled`, dark with the row's own `reason` | H, I | next |
 | L | DELETIONS (PHASE15 §5.3, plus Owen's "no ollama fallbacks"): `cloud-providers.ts`, the cloud card, `ComputeSlotKind 'cloud'`, `placeOnCloud`, `FOUNDRY_ENDPOINT_HEADERS` from an app-held key, `model-lineup-local.json` (the floor is `CatalogRow.floors` alone), the engine's `--server anthropic` and `--server ollama` doors, the wizard's Ollama step and pull, `llm:defaults`/`openingModelFor` (the engine's route decides the model; the dialogs lose the model field), the local slot, **`page-reader.ts` and its two cards** (ruled below), act-gates' own "can this machine do it" reasoning and the CPU rule | I, J, K **and the gate below** | gated |
 
@@ -4774,3 +4774,25 @@ dead window cannot abandon a task on someone else's machine. **Unwatched:** no
 live Crucible answered during the build — the SSE follow, the join, the settle
 loop and the refusal memory are BookForge's logic against the same SDK typings,
 typechecked, not exercised.
+
+#### Package J — connect three ways, in order, all automatic — LANDED 2026-09-14
+
+PHASE15 §3.6/§5.1, the path pinned in crucible 3bcd003. At start, standalone
+only, main reads `<CRUCIBLE_HOME>/pairing` when no loopback entry is registered
+and adds what it names as `local` — BookForge's name for the same server — then
+takes the registry's own pass and coordinates with it (package H's moment for a
+server just met). The parser is the SDK's `parsePairing` and is never
+reimplemented; an absent file is A FACT, logged at debug volume, never a
+fallback; a line that will not parse is refused by name in one console line
+with the fragment already elided. Four doors: `crucible:add-from-pairing-file`
+(§3.6's second chance, for an engine installed after the app opened — a button
+in `app-crucible-doors`, not a filesystem watch), and `crucible:parse-connect-
+code` / `test-connect-code` / `add-connect-code`, which each take THE LINE so no
+token is ever handed back to the renderer to be handed forward again. The doors
+are now in §5.1's order — look again, connect code, this machine, install — and
+door 3's sentence says what §4.3 says: Crucible's own installer (install.ps1 /
+install.sh), which leaves a connect code this app then finds. Door 2 stays:
+§3.6 deletes it when the Windows host ships, not before. 138 handlers after the
+merge with H, measured. Nothing is verified against a real pairing file — no
+host writes one on this PC yet — but the read path was exercised by hand with a
+fake `CRUCIBLE_HOME` for all three outcomes, and no token reached a log line.

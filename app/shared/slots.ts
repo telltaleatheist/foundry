@@ -241,6 +241,13 @@ export type CrucibleProbe =
  * saying why). Main reads the file, writes the entry, and answers with the view;
  * nothing about the token crosses the preload, and no second copy is kept beyond
  * the entry the person can see.
+ *
+ * IT IS ALSO THE PAIRING FILE'S ANSWER (`crucible:add-from-pairing-file`, Wave
+ * 62 / PHASE15-HOST.md §3.6 and §5.1), and REUSED rather than copied because the
+ * two doors say the same three things: an entry was made, or there is nothing on
+ * this machine, or there is something here that cannot be read. `configPath` is
+ * the pairing file's own path for that door, which is what "the file the token
+ * came out of" means on either road.
  */
 export type LocalCrucibleAdd =
   | { outcome: 'added'; servers: CrucibleServerView[]; serverName: string; url: string; configPath: string }
@@ -251,18 +258,55 @@ export type LocalCrucibleAdd =
  * it, which is why they are told apart rather than collapsed into one sentence.
  */
 export type LocalCrucibleFailure =
-  /** No config.toml where the local server would keep one. A STATE, not a fault. */
+  /**
+   * No config.toml where the local server would keep one — and, for the pairing
+   * door, NO PAIRING FILE. A STATE, not a fault: PHASE15-HOST.md §3.6 is explicit
+   * that *"an absent file means 'no local server' — a fact the app shows, not a
+   * fallback it fills"*, and both roads reach the same sentence about the same
+   * machine, so a second code for it would be two names for one silence.
+   */
   | 'no_local_config'
   /** Windows, and nothing has said which WSL distro to look in. */
   | 'no_wsl_distro'
   /** `wsl.exe` would not run, or the guest failed for some other reason. */
   | 'wsl_read_failed'
-  /** The file is there and is not something this reader understands. */
+  /**
+   * The file is there and is not something this reader understands — a config.toml
+   * that will not parse, or a pairing file whose line the SDK's `parsePairing`
+   * refuses (`invalid_pairing`, PHASE13-OPERATOR.md §2.1). Somebody's to fix,
+   * which is why it is told apart from the absence above.
+   */
   | 'config_unreadable'
   /** It parses and lacks a key the server itself requires. */
   | 'config_missing_key'
   /** It reads, and an entry for that address is already in the registry. */
   | 'already_registered';
+
+/**
+ * WHAT A PASTED CONNECT CODE SAYS BEFORE ANYBODY PRESSES ANYTHING — the preview
+ * that fills the Name and Address boxes as a person pastes.
+ *
+ * PHASE15-HOST.md §5.1 way 2, through the SDK's `parsePairing`. Owen's words for
+ * it are BookForge's words for it: a **connect code**, never "pairing line" — the
+ * line is what Crucible calls the thing it prints, and the two apps say one word
+ * to the person who pastes it.
+ *
+ * ── THERE IS NO TOKEN ON THIS WIRE, AND THAT IS THE WHOLE SHAPE ─────────────
+ *
+ * The code carries one, and the renderer never receives it back. The person
+ * TYPED the line, so they hold it already — but the standing rule is that the
+ * renderer never holds a credential it did not type INTO A FIELD FOR THAT
+ * PURPOSE, and a preview answer carrying a token would put one in a signal, a
+ * change-detection pass and anything that ever logs a component's state. So the
+ * line goes one way into main (`crucible:parse-connect-code`), main answers with
+ * the name and the address only, and the token stays on main's side of the
+ * preload for `crucible:test-connect-code` and `crucible:add-connect-code` —
+ * which take the LINE again rather than a token handed back and forth.
+ */
+export type ConnectCodePreview =
+  | { outcome: 'read'; name: string; url: string }
+  /** The SDK's own `invalid_pairing` sentence, with the fragment already elided. */
+  | { outcome: 'refused'; message: string };
 
 /**
  * Everything the Servers card draws in one read.
