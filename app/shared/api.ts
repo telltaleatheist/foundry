@@ -27,6 +27,7 @@ import type {
   SlotAvailability,
 } from './slots';
 import type {
+  ModelClass,
   ActGates,
   AnalysisPlan,
   AnalysisReading,
@@ -1338,7 +1339,22 @@ export interface FoundryApi {
      * record and its address from the registry, decided at the spawn rather than
      * carried from a dialog (electron/crucible-dispatch.ts).
      */
-    defaults(): Promise<{ model: string; cleanModel: string; ollama: string }>;
+    /**
+     * What a dialog for this ACT should open with, resolved against the machine
+     * NOW rather than read from a tag the wizard wrote once. The stored choice
+     * wins whenever it can still serve the class; a stale one is replaced by the
+     * largest installed model that can (electron/llm-catalog.ts,
+     * `openingModelFor`). The class matters because the floors differ: translate
+     * and simplify need a 27B, analysis has none, the cleanup has its own.
+     */
+    defaults(cls: ModelClass): Promise<{ model: string; cleanModel: string; ollama: string }>;
+    /**
+     * What is STORED — for the Settings card, which edits these. Deliberately
+     * not `defaults`: that answer is resolved against the machine, and an
+     * editor seeded from it would write the resolution back as the person's
+     * choice the first time they pressed Save.
+     */
+    stored(): Promise<{ model: string; cleanModel: string; ollama: string }>;
     /** Answers with the tag AS STORED — a name main refused comes back changed. */
     setModel(model: string): Promise<string>;
     /** The Clean text model, same rule: answered with what was stored. */

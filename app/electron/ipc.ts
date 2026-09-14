@@ -26,6 +26,7 @@ import { actGates } from './act-gates';
 import { readAppSettings, writeAppSettings } from './app-settings';
 import { probeCloud, writeCloudProviders } from './cloud-providers';
 import { openCrucibleUi } from './crucible-ui';
+import { heldSet, openingModelFor } from './llm-catalog';
 import {
   addCrucibleServer,
   addLocalCrucible,
@@ -88,6 +89,7 @@ import {
   invokeHostOperation, openHostStatus,
 } from './host-ops';
 import type { HostNodeAction } from '../shared/host-ops';
+import type { ModelClass } from '../shared/types';
 import * as queue from './job-queue';
 import { applyPageReaderRemoval, machineModels, removeFoundryDownloads } from './machine-models';
 import { cancelOllamaInstall, cancelPull, installOllama, probeOllama, pullModel } from './ollama';
@@ -3200,7 +3202,24 @@ export function registerIpc(): void {
    * refuses a name with whitespace in it and falls back, and a renderer that
    * kept its own optimistic copy would show a model the next job will not use.
    */
-  ipcMain.handle('llm:defaults', () => {
+  /*
+   * WHAT IS STORED, for the card that EDITS it — a different question from
+   * what a dialog should open with, and the two must not share a door. The
+   * Settings card shows these tags in fields somebody types over and saves; if
+   * it read the resolved answer, opening Settings on a machine whose stored tag
+   * had gone stale would silently rewrite that person's choice the moment they
+   * pressed Save. So the editor reads the file and the dialogs read the
+   * machine.
+   */
+  ipcMain.handle('llm:stored', () => {
+    const settings = readAppSettings();
+    return {
+      model: settings.defaultLlmModel,
+      cleanModel: settings.cleanTextModel,
+      ollama: settings.ollamaUrl,
+    };
+  });
+  ipcMain.handle('llm:defaults', async (_event, cls: ModelClass) => {
     const settings = readAppSettings();
     /*
      * ── ONE ANSWER NOW, BECAUSE THERE IS NO LONGER A CHOICE TO RESOLVE ───────
@@ -3218,9 +3237,29 @@ export function registerIpc(): void {
      * the registry names the address — and that is decided at the spawn, where
      * the server can actually be asked (electron/crucible-dispatch.ts).
      */
+    /*
+     * ── THE MODEL IS RESOLVED NOW, NOT WHEN SETUP RAN ─────────────────────────
+     *
+     * These two tags are SEEDS, and until 2026-09-14 they were handed back
+     * exactly as stored — so a dialog opened with whatever the wizard wrote
+     * months ago, even after the machine gained a model that the stored one
+     * cannot stand in for. A tile lit by a 27B would then run a 9B.
+     * `openingModelFor` answers per CLASS, because the classes have different
+     * floors: translate and simplify need a 27B, analysis has none, and the
+     * cleanup has its own model and its own setting. The stored tag still wins
+     * whenever it can serve the class — a deliberate choice is not overridden,
+     * only a stale one.
+     *
+     * A PROBE PER DIALOG OPEN is what that costs: the machine's memory and
+     * ollama's list. `actGates` already pays it on every menu draw, so the
+     * price is known and the alternative is a field that lies.
+     */
+    const [profile, ollama] = await Promise.all([probeSystem(), probeOllama(settings.ollamaUrl)]);
+    const held = heldSet(ollama.models);
+    const wanted: ModelClass = cls === 'clean' ? 'clean' : cls;
     return {
-      model: settings.defaultLlmModel,
-      cleanModel: settings.cleanTextModel,
+      model: openingModelFor(wanted, settings.defaultLlmModel, profile, held),
+      cleanModel: openingModelFor('clean', settings.cleanTextModel, profile, held),
       ollama: settings.ollamaUrl,
     };
   });

@@ -336,6 +336,51 @@ export function fitsOn(row: LineupRow, profile: SystemProfile): boolean {
  * translate and simplify, and Crucible dropped analysis at the source
  * (e73467b) rather than leaving Foundry to disagree with the catalog.
  */
+/**
+ * The model an act should OPEN WITH on this machine — the answer to a question
+ * that used to be answered by a setting written once and never revisited.
+ *
+ * ── THE DEFECT THIS EXISTS FOR ──────────────────────────────────────────────
+ *
+ * `AppSettings.defaultLlmModel` is stamped by the first-run wizard and by the
+ * Settings card, and the three language dialogs opened with it whatever else
+ * happened afterwards. So: a 24 GB card runs setup, pulls the 9B, and the tag
+ * is stored. Later the person pulls the 27B. The Translate TILE lights, because
+ * a model at or above the floor is now installed — and the JOB still runs the
+ * 9B, because that is what the tag says. The tile told the truth about the
+ * machine and the run used something else, which is the gap Owen named:
+ * *"i think we should be using the largest available compatible model."*
+ *
+ * ── WHAT IT ANSWERS, AND WHY THE STORED TAG STILL WINS SOMETIMES ────────────
+ *
+ * The stored tag wins when it is COMPATIBLE — installed, fitting, and at or
+ * above this class's floor — because a person who picked a smaller model in
+ * Settings picked it on purpose, usually for speed, and overriding a live
+ * choice is not a fix. It loses only when it cannot serve the class at all,
+ * and then the LARGEST that can is what opens, which is the same rule
+ * `lineupFor` recommends by.
+ *
+ * When NOTHING qualifies the stored tag is handed back unchanged: the tile is
+ * dark in that case and says why, and blanking a field underneath a refusal
+ * would replace one honest sentence with an empty box.
+ */
+export function openingModelFor(
+  cls: ModelClass,
+  stored: string,
+  profile: SystemProfile,
+  held: ReadonlySet<string>,
+): string {
+  const usable = eligibleFor(cls)
+    .filter((row) => fitsOn(row, profile) && heldBy(row, held));
+  if (usable.length === 0) return stored;
+  const wanted = stored.trim().toLowerCase();
+  if (usable.some((row) => row.local.kind === 'ollama' && row.local.tag.toLowerCase() === wanted)) {
+    return stored;
+  }
+  const best = usable[usable.length - 1]!;
+  return best.local.kind === 'ollama' ? best.local.tag : stored;
+}
+
 export function eligibleFor(cls: ModelClass): readonly LineupRow[] {
   const serving = MODEL_LINEUP.filter((row) => row.classes.includes(cls));
   const floor = serving.findIndex((row) => row.minimumFor.includes(cls));

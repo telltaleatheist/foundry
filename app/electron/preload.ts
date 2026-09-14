@@ -326,7 +326,8 @@ const api: FoundryApi = {
   },
 
   llm: {
-    defaults: () => ipcRenderer.invoke('llm:defaults'),
+    defaults: (cls) => ipcRenderer.invoke('llm:defaults', cls),
+    stored: () => ipcRenderer.invoke('llm:stored'),
     setModel: (model) => ipcRenderer.invoke('llm:set-model', model),
     setCleanModel: (model) => ipcRenderer.invoke('llm:set-clean-model', model),
     ollamaUrl: () => ipcRenderer.invoke('llm:ollama-url'),

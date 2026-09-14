@@ -707,7 +707,8 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `library:choose` | Native directory picker for the library. Refuses while hosted. |
 | `library:dir` | The effective library directory — the host's, when hosted. |
 | `library:set` | Move the library. Refuses while hosted. |
-| `llm:defaults` | What the language dialogs open with — the LOCAL slot's answers, and only those: `model` (translate/simplify/analyse), `cleanModel` (Clean text's own `cleanTextModel`), and `ollama`, the URL of the Ollama on this machine. Nothing is resolved behind it any more; a job sent to a Crucible takes its model and its address from that server at the spawn. |
+| `llm:defaults` | Takes a MODEL CLASS and answers what a dialog for that act should open with, resolved against the machine now: the stored tag when it can still serve the class, else the largest installed model that can (`openingModelFor`). Was a bare read of the stored tags until 2026-09-14, which let a tile light on a 27B while the job ran a stored 9B. |
+| `llm:stored` | The stored tags themselves, for the Settings card that EDITS them. Deliberately separate from `llm:defaults`: an editor seeded from a resolved answer would write the resolution back as the person's choice on the first Save. |
 | `llm:ollama-url` | Where Ollama is. The one server address this app still keeps by itself. |
 | `llm:set-ollama-url` | Write it. Answers with what was STORED, never with what was sent. |
 | `llm:set-clean-model` | Set the Clean text model. Answers with the tag AS STORED, same rule. |

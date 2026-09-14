@@ -206,7 +206,7 @@ export class LlmCardComponent {
      * STORED. There is no choice to resolve any more: `defaults` IS the stored
      * set, because the only thing it describes is the local slot.
      */
-    const [defaults, state] = await Promise.all([api.llm.defaults(), api.setup.state()]);
+    const [defaults, state] = await Promise.all([api.llm.stored(), api.setup.state()]);
     this.ollama.set(defaults.ollama);
     this.model.set(defaults.model);
     this.cleanModel.set(defaults.cleanModel);
