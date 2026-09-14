@@ -24,9 +24,11 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { actGates } from './act-gates';
 import { readAppSettings, writeAppSettings } from './app-settings';
+import { probeCloud, writeCloudProviders } from './cloud-providers';
 import {
   addCrucibleServer,
   addLocalCrucible,
+  cloudSettingsView,
   crucibleSettingsView,
   computeSlots,
   probeCrucible,
@@ -35,7 +37,12 @@ import {
 } from './crucible-registry';
 import { crucibleInstallPlan, driveCrucibleInstall } from './crucible-install';
 import { forgetCrucibleFacts, refreshCrucibleFacts } from './crucible-provider';
-import { CRUCIBLE_WHEEL, type CrucibleServerEdit, type NewJobsWaitFor } from '../shared/slots';
+import {
+  CRUCIBLE_WHEEL,
+  type CloudProviderEdit,
+  type CrucibleServerEdit,
+  type NewJobsWaitFor,
+} from '../shared/slots';
 import {
   ensureCapture,
   intakePhotos,
@@ -3301,6 +3308,57 @@ export function registerIpc(): void {
     writeAppSettings({ wslDistro: distro }).wslDistro);
   ipcMain.handle('crucible:set-new-jobs-wait-for', (_event, choice: NewJobsWaitFor) =>
     writeAppSettings({ newJobsWaitFor: choice }).newJobsWaitFor);
+  /*
+   * ── THE CLOUD PROVIDERS — Package F's app half (docs/SLOTS.md §3) ─────────
+   *
+   * THREE DOORS, and a family of their own rather than three more members of
+   * `crucible:`. That is this app's own advice taken twice over. Once because a
+   * provider IS NOT A CRUCIBLE: it has no capability record, nothing resident,
+   * no lease and no busy state, and a card reading `crucible:save` to write an
+   * OpenAI key would teach that they are one kind of thing. And once because
+   * `crucible:` is a family BookForge does not have and `cloud:` is one neither
+   * side has — the cheapest possible answer to the collision audit that is still
+   * open (docs/IPC-CHANNELS.md).
+   *
+   * NO KEY CROSSES IN THE ANSWER DIRECTION, ever. The renderer is told
+   * `CloudProviderView.keySet` and may send a new key, which is the whole of
+   * what a write-only field means — `crucible:`'s token rule, one registry
+   * along.
+   */
+  ipcMain.handle('cloud:settings', () => cloudSettingsView());
+  ipcMain.handle('cloud:save', async (_event, providers: CloudProviderEdit[]) => {
+    writeCloudProviders(providers);
+    /*
+     * `gatesChanged` AND NOT `afterRegistryChanged`. Connecting a provider moves
+     * the TILES — an enabled one lights translate, simplify, analysis and clean
+     * on a machine that could not run them (act-gates.ts) — and moves nothing
+     * else. The three steps `afterRegistryChanged` takes are all about a
+     * Crucible: forgetting capability answers nobody asked a provider for,
+     * re-probing servers that have not changed, and §5b's page-reader deletion,
+     * which a cloud provider can never trigger because it does not serve
+     * `pages` at all.
+     */
+    gatesChanged();
+    /*
+     * THE WHOLE VIEW for `crucible:save`'s reason: enabling a provider CHANGES
+     * THE SLOTS, and a card that redrew its list from this answer and its slot
+     * preview from a second read would draw one repaint of the two disagreeing.
+     */
+    return cloudSettingsView();
+  });
+  /**
+   * TEST — the model listing at the provider, and whether the chosen id is in it.
+   *
+   * IT TAKES THE WHOLE EDIT, unsaved, which is `crucible:test-at`'s argument for
+   * a card that has only one Test button: somebody pastes a key and types a
+   * model and wants to know whether the pair is right BEFORE it is written to
+   * disk, and saving first in order to find out would be this app writing a
+   * credential into somebody's settings to answer a question. A key on this wire
+   * goes ONE WAY, into main, out of a box somebody is typing in; `apiKey: null`
+   * means "the one already stored for this name", and no answer carries either.
+   */
+  ipcMain.handle('cloud:test', (_event, provider: CloudProviderEdit) => probeCloud(provider));
+
   /**
    * WHERE WORK MAY GO, for the picker.
    *

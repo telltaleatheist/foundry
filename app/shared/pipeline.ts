@@ -164,8 +164,8 @@ export const CLEAN_TEXT_MODELS: readonly CleanTextModelChoice[] = cleanTextModel
 export const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
 
 /**
- * WHICH DIALECT A TEXT ACT'S `--server` NAMES — the engine's two words, spelled
- * the engine's way.
+ * WHICH DIALECT A TEXT ACT'S `--server` NAMES — the engine's three words,
+ * spelled the engine's way.
  *
  * ── The rename, and why it is a rename and not a new type ──────────────────
  *
@@ -183,8 +183,19 @@ export const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
  * every run); a Crucible slot is the OpenAI door at `<url>/openai`. So the value
  * is decided at dispatch, written onto the request for the one function that
  * spells the flags, and never stored anywhere.
+ *
+ * ── AND `anthropic` IS THE THIRD, ADDED WITH THE CLOUD SLOTS (Package F) ────
+ *
+ * The engine grew it as a dialect of its own — `POST /v1/messages`, a top-level
+ * `system`, `x-api-key`, a forced tool for a constrained verdict (docs/VLLM.md
+ * §2) — and this union is the app's side of the same word. It arrives here for
+ * the same reason the other two did: a CLOUD slot whose provider `kind` is
+ * `anthropic` places onto it, and a provider whose kind is `openai` places onto
+ * the door that already existed, because OpenAI's own API is an
+ * OpenAI-compatible server and needs no dialect of its own. Still not a setting,
+ * still decided at dispatch, still stored nowhere.
  */
-export type LlmServerKind = 'openai' | 'ollama';
+export type LlmServerKind = 'openai' | 'ollama' | 'anthropic';
 
 /**
  * What a rendering at the position is made of: one run of `vlm-convert`, and the

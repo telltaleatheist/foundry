@@ -169,7 +169,9 @@ import * as path from 'node:path';
 
 import { readAppSettings } from './app-settings';
 import { materializeTextPass } from './book';
-import { parseProgressLine, runEngine, stampMintMetadata, writeBookFile } from './engine';
+import {
+  parseProgressLine, parseUsageLine, runEngine, stampMintMetadata, writeBookFile,
+} from './engine';
 import { ENV_SPECS } from './env-catalog';
 import { destFor, installEnv } from './env-install';
 import { foundryHost, type FoundryHostQueue, hostMintMeta } from './host';
@@ -212,6 +214,7 @@ import { ancestry, REWRITE_LABELS } from '../shared/ledger';
 import { inheritMintMeta, type MintMeta } from '../shared/mint-meta';
 import { fold } from '../shared/original';
 import { rowMinting } from '../shared/pending';
+import type { LlmServerKind } from '../shared/pipeline';
 import {
   CPU_LANE_SLOTS, JOB_RESOURCE, computeLanes, localLane, type ComputeLane, type JobResource,
 } from '../shared/queue-board';
@@ -2765,20 +2768,41 @@ function languageOf(request: TranslateRequest | SimplifyRequest): string {
  *
  * `openai` is the engine's default (docs/SLOTS.md §2), so writing the flag out
  * for it would put a new word on thousands of command lines to say what they
- * already said. `ollama` is spelled.
+ * already said. `ollama` is spelled, and so is `anthropic` — the third door
+ * (docs/VLLM.md §2), which a CLOUD slot whose provider is Anthropic places onto.
+ * A cloud provider of the OpenAI kind places onto the default door and therefore
+ * spells nothing, which is right: OpenAI's own API is an OpenAI-compatible
+ * server and the only thing that distinguishes it from a vLLM on this line is
+ * the endpoint.
+ *
+ * THE MAPPING IS OVER THE WHOLE UNION AND NOT A TEST FOR ONE VALUE, which is why
+ * it is a switch rather than the two ternaries it replaced: the engine refuses
+ * an unknown `--server` by name (`--server takes openai, ollama or anthropic,
+ * not "x"`), so a fourth door added to `LlmServerKind` without a line here must
+ * fail the typecheck rather than silently spawn against the default.
  *
  * NOTHING SECRET IS ON THIS LINE, and that is a rule rather than an observation.
- * A Crucible's token travels in the spawn's ENVIRONMENT (`Placement.env`) and
- * never in argv, because argv is spelled into the terminal by `executeJob`,
- * pasted into bug reports, and listed by the process table.
+ * A Crucible's token and a provider's API key both travel in the spawn's
+ * ENVIRONMENT (`Placement.env`) and never in argv, because argv is spelled into
+ * the terminal by `executeJob`, pasted into bug reports, and listed by the
+ * process table.
  */
 function doorArgs(request: { model: string; ollama: string }, placement: Placement): string[] {
   const model = (placement.model ?? request.model).trim();
   return [
     ...(model.length > 0 ? ['--model', model] : []),
-    ...(placement.door === 'ollama' ? ['--server', 'ollama'] : []),
+    ...serverArgs(placement.door),
     '--endpoint', placement.endpoint ?? request.ollama,
   ];
+}
+
+/** `--server`, or nothing at all for the engine's default. See `doorArgs`. */
+function serverArgs(door: LlmServerKind): string[] {
+  switch (door) {
+    case 'openai': return [];
+    case 'ollama': return ['--server', 'ollama'];
+    case 'anthropic': return ['--server', 'anthropic'];
+  }
 }
 
 /**
@@ -4549,6 +4573,23 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
 
   const watch = (line: string): void => {
     next.message = line;
+    /*
+     * WHAT THE RUN SPENT, off the same stderr the counts come off.
+     *
+     * The engine prints one usage line at the very end of a text act
+     * (`usageLine`, src/translate/transport.ts) and only when the server it
+     * talked to counted — so this fires once per run at most, and never on a
+     * local Ollama, which reports nothing. Read BEFORE the progress parse and
+     * kept out of it, because it is not progress: see `parseUsageLine`.
+     *
+     * IT DOES NOT CLEAR THE NOTE AND IS NOT SWALLOWED. The line stays the
+     * message and becomes the note like any other non-count line, because it is
+     * a real thing the engine said and a person reading the row's last line
+     * should see it. What this adds is the STRUCTURED copy, which is what the
+     * finished row and the bench card draw from.
+     */
+    const spent = parseUsageLine(line);
+    if (spent !== null) next.usage = spent;
     const progress = parseProgressLine(line);
     /*
      * A count clears the note; anything else becomes it. So `note` reads as

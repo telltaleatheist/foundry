@@ -172,16 +172,30 @@ export const CPU_LANE_SLOTS = 2;
  * union along: the day a fourth kind of slot exists, the compiler asks what it
  * holds rather than a fallback answering for it.
  *
- * ── `cloud` IS ONE TOO, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT ─────
+ * ── `cloud` IS ONE TOO, AND IT IS NOW A MEASURED-ENOUGH NUMBER RATHER THAN ──
+ * ── A PLACEHOLDER ───────────────────────────────────────────────────────────
  *
- * Nothing constructs a cloud slot today (docs/SLOTS.md §6, Package F) and this
- * row exists so that the day one is constructed it already has a lane and a
- * number, instead of falling through a walk that never heard of it. One is the
- * conservative answer and the one that matches every rule written around it — a
- * job is atomic per slot, and the bench draws a card per slot with what is in it
- * — so a cloud provider that genuinely wants ten at once is a deliberate edit to
- * THIS LINE, with the rate limit and the bill argued beside it, and not
- * something a walk wandered into.
+ * The row was written before anything constructed a cloud slot, so that the day
+ * one existed it already had a lane and a number instead of falling through a
+ * walk that had never heard of it. Package F constructs them (docs/SLOTS.md §3),
+ * and the one STAYS — for a reason that is a fact about providers rather than
+ * about cards.
+ *
+ * A CRUCIBLE'S LANE IS ONE BECAUSE THE GPU IS ONE. A provider has no card to
+ * contend for; what it has is a RATE LIMIT, per key and per tier, counted in
+ * requests and tokens a minute. That limit is already honoured one layer down
+ * and better than a lane could: a single run keeps `DEFAULT_CLOUD_CONCURRENCY`
+ * requests in flight (four, src/translate/model-server.ts) and the engine WAITS
+ * OUT a 429 rather than failing — `retry-after` honoured, else 2 s doubling to
+ * 30 s, six attempts (docs/VLLM.md §2a). Two runs on one key would not go
+ * faster; they would share one limit, trip it more often, and spend the
+ * difference asleep while still paying for every retry that landed. So one at a
+ * time per provider is the honest starting number, and a person who wants two
+ * cloud jobs at once configures a second provider entry — which is a second key,
+ * a second limit and a second slot, said out loud.
+ *
+ * Raising it is a deliberate edit to THIS LINE with a measurement beside it, not
+ * something a walk wandered into and billed somebody for.
  */
 export const SLOT_CAPACITY: Readonly<Record<ComputeSlotKind, number>> = {
   local: 1,

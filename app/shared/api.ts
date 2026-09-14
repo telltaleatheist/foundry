@@ -14,6 +14,9 @@ import type { ReadAsk } from './ledger';
 import type { BookOp, PendingOutcome, PendingStack } from './ops';
 import type { ReReadPrompt } from './reread';
 import type {
+  CloudProbe,
+  CloudProviderEdit,
+  CloudSettingsView,
   ComputeSlot,
   CrucibleInstallPlan,
   CrucibleProbe,
@@ -1435,6 +1438,48 @@ export interface FoundryApi {
      * for. The caller's shape is the same either way — `await`, and catch.
      */
     install(): Promise<void>;
+  };
+
+  /**
+   * ── THE CLOUD PROVIDERS — the Cloud providers card's own doors ────────────
+   *
+   * docs/SLOTS.md §3 (Package F). Owen: *"give them the option of connecting an
+   * api key for openai or claude instead of using the 27b or the 9b… for weaker
+   * systems."* A provider is a SLOT — never busy, nothing resident, TEXT ACTS
+   * ONLY, and a deliberate per-job choice that `any` never falls through to.
+   *
+   * NOTHING HERE CARRIES A KEY IN THE ANSWER DIRECTION. The renderer is told
+   * `CloudProviderView.keySet` and may send a NEW key, which is the whole of
+   * what a write-only field means — `crucible:`'s token rule, one registry
+   * along.
+   *
+   * ITS OWN FAMILY AND NOT THREE MORE `crucible` MEMBERS, because a provider is
+   * not a Crucible: no capability record, no residency, no lease, no busy state.
+   * See electron/ipc.ts, where the collision half of the same argument is made.
+   */
+  cloud: {
+    /** Everything the card draws in one read — see `CloudSettingsView`. */
+    settings(): Promise<CloudSettingsView>;
+    /**
+     * REPLACE THE WHOLE LIST. `apiKey: null` on an entry keeps whatever is
+     * stored, matched by name. Rejects with a sentence naming the entry when one
+     * cannot be stored — a missing model, a name a Crucible already has.
+     *
+     * Answered with the whole view, because enabling a provider changes the
+     * SLOTS and a card that redrew its list here and its slots elsewhere would
+     * draw one repaint of the two disagreeing.
+     */
+    save(providers: CloudProviderEdit[]): Promise<CloudSettingsView>;
+    /**
+     * LIST THE PROVIDER'S MODELS AND SAY WHETHER THE CHOSEN ONE IS THERE.
+     *
+     * Takes the whole EDIT, saved or not, so the button works on a row somebody
+     * is still typing — saving a key in order to find out whether it works would
+     * be this app writing a credential into settings to answer a question. A
+     * failure is a RESULT with the provider's own sentence on it, not a
+     * rejection. It is a `GET` and costs no usage credits.
+     */
+    test(provider: CloudProviderEdit): Promise<CloudProbe>;
   };
 
   /**

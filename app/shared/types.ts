@@ -1553,9 +1553,48 @@ export interface Job {
    * until the row starts, and absent forever on a row that never met a slot.
    */
   ranOn?: string;
+  /**
+   * WHAT THE RUN SPENT, when the server it ran against counted.
+   *
+   * ── Where it comes from, and why it is on the row rather than in a file ────
+   *
+   * Every text act prints ONE line at the end of a run — `translate: 412
+   * requests, 1,203,441 tokens in, 388,120 out` (`usageLine`,
+   * src/translate/transport.ts) — and the app reads it off the same stderr the
+   * progress counts come off (`parseUsageLine`, electron/engine.ts). It is
+   * captured onto the row as the run ends, so the finished row and the bench
+   * card can say what the evening cost without opening anything.
+   *
+   * ABSENT IS THE ORDINARY CASE AND MEANS "NOTHING COUNTED", not zero. Ollama
+   * reports no usage at all, so the engine prints nothing rather than a line of
+   * zeroes — silence being the honest answer from a door that did not count —
+   * and a row that ran there has no `usage` rather than one full of noughts. It
+   * is absent on every job that never meets a model, too.
+   *
+   * FOUNDRY DOES NOT PRICE IT, and that is a ruling rather than a gap
+   * (docs/VLLM.md §2a): prices change weekly and differ per key and per tier, so
+   * a number invented here would be wrong in a way that looks authoritative.
+   * What is drawn is the two counts.
+   */
+  usage?: JobUsage;
   createdAt: number;
   startedAt?: number;
   finishedAt?: number;
+}
+
+/**
+ * The three numbers a cloud run's last line carries — see {@link Job.usage}.
+ *
+ * Named `tokensIn`/`tokensOut` rather than the engine's `inputTokens`/
+ * `outputTokens` because this is the shape a person reads on a row, and the row
+ * says "in" and "out". One rename at one seam (`parseUsageLine`) is cheaper than
+ * a wire shape whose field names only make sense to somebody who has read the
+ * transport module.
+ */
+export interface JobUsage {
+  requests: number;
+  tokensIn: number;
+  tokensOut: number;
 }
 
 /**

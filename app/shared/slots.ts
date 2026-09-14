@@ -62,14 +62,19 @@ export const LOCAL_SLOT_NAME = 'This computer';
 /**
  * Whose compute a slot is.
  *
- * `cloud` IS THE SEAM AND IS NOT BUILT — docs/SLOTS.md §6, Package F. It is
- * declared here rather than added later because every walk in the dispatcher has
- * to know that a cloud slot is *never* what `any` falls through to (SLOTS.md §3:
- * *"a deliberate per-job choice, never something `any` falls through to"*), and
- * a `kind` union that gains a member later would make every one of those walks a
- * place somebody has to remember. Nothing constructs one today; `computeSlots`
- * never returns one, and the one walk that would have to exclude it already
- * does.
+ * `cloud` WAS THE SEAM AND IS NOW BUILT — docs/SLOTS.md §3 and §7 (Package F,
+ * app half). It was declared here before anything constructed one, because every
+ * walk in the dispatcher has to know that a cloud slot is *never* what `any`
+ * falls through to (SLOTS.md §3: *"a deliberate per-job choice, never something
+ * `any` falls through to"*), and a `kind` union that gains a member later would
+ * make every one of those walks a place somebody has to remember.
+ *
+ * `computeSlots` now appends one per ENABLED {@link CloudProviderView}, after
+ * every Crucible slot, and the `any` walk STEPS PAST them by kind with a
+ * sentence rather than refusing — a machine with nothing but a cloud provider
+ * configured is a machine whose `any` rows wait for a person to choose, which is
+ * exactly what "never fallen back to" means when it is spent money on the other
+ * side of the choice.
  */
 export type ComputeSlotKind = 'local' | 'crucible' | 'cloud';
 
@@ -87,6 +92,20 @@ export interface ComputeSlot {
    * "unreachable" sentence, and for composing the engine's `--endpoint`. Absent
    * on the local slot, which has no one address: its text acts go to Ollama and
    * its page reading to whatever the reader owns.
+   *
+   * ── AND DELIBERATELY ABSENT ON A CLOUD SLOT, WHICH DOES HAVE ONE ───────────
+   *
+   * A cloud provider has an address (the provider's own, or an
+   * OpenAI-compatible host somebody named) and it is NOT put here, because this
+   * field is read for one thing besides drawing: `localLane`
+   * (shared/queue-board.ts) decides which lane is THIS MACHINE'S CARD by asking
+   * whether a lane's url is loopback. An OpenAI-compatible endpoint at
+   * `http://localhost:8000/v1` is a perfectly ordinary thing to configure, and a
+   * cloud slot that carried it would be adopted as the local lane — so a page
+   * reading, which loads dots on this machine's GPU whatever the registry says,
+   * would hold the cloud provider's lane and leave the card unguarded. The
+   * address lives on the provider entry, where the settings card reads it; the
+   * placement composes `--endpoint` from there.
    */
   url?: string;
 }
@@ -234,6 +253,183 @@ export interface CrucibleSettingsView {
    */
   hosted: boolean;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLOUD PROVIDERS — Package F's app half (Owen, 2026-09-14)
+//
+// *"give them the option of connecting an api key for openai or claude instead
+// of using the 27b or the 9b. if the user wants to they can use usage credits
+// from a cloud model… for weaker systems."*
+//
+// A provider is a SLOT (docs/SLOTS.md §3): never busy, nothing resident, text
+// acts only, and a DELIBERATE per-job choice. Everything in this section is the
+// wire half of that; the key itself is in `AppSettings.cloudProviders` and never
+// crosses, exactly as a Crucible's token does not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * WHICH WIRE THE PROVIDER SPEAKS — and it is the engine's `--server` value, not
+ * a brand.
+ *
+ * The engine has three doors (docs/VLLM.md §2) and only two of them are ever on
+ * the other end of one of these: `openai`, which is OpenAI's own API and equally
+ * any OpenAI-compatible host somebody points at, and `anthropic`, which is a
+ * different wire end to end (`POST /v1/messages`, a top-level `system`,
+ * `x-api-key`). `ollama` is not here because an Ollama is the LOCAL slot and has
+ * no key.
+ *
+ * IT IS THE KIND THAT DECIDES THE CREDENTIAL HEADER, which is why this is a
+ * declared field on the entry rather than something sniffed out of the URL: a
+ * proxy in front of either, or a self-hosted gateway, would be guessed wrong,
+ * and what a wrong guess costs is a 401 with nothing saying why.
+ */
+export type CloudProviderKind = 'openai' | 'anthropic';
+
+/** The name a person reads, per kind. Spelled once so every surface agrees. */
+export const CLOUD_PROVIDER_LABEL: Readonly<Record<CloudProviderKind, string>> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+};
+
+/**
+ * THE PROVIDER'S OWN ADDRESS, used whenever an entry names none.
+ *
+ * `openai` carries `/v1` and `anthropic` does not, and that difference is the
+ * two engine doors' own normalisation rather than an inconsistency here: the
+ * OpenAI door appends `/v1` to an endpoint that lacks one
+ * (`normaliseVllmEndpoint`, src/translate/vllm.ts) and the Anthropic door STRIPS
+ * a trailing version before composing `/v1/messages`
+ * (`normaliseAnthropicEndpoint`). Spelling each the way its own door wants it is
+ * what makes the Test in main and the run in the engine ask the same server.
+ */
+export const CLOUD_PROVIDER_ENDPOINT: Readonly<Record<CloudProviderKind, string>> = {
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com',
+};
+
+/**
+ * WHAT GOES IN THE MODEL BOX BEFORE ANYBODY TYPES — a PLACEHOLDER, and the
+ * distinction is the whole reason this is not a catalog.
+ *
+ * Hosted model line-ups change monthly: a list compiled into this build would be
+ * wrong by the next release and confidently so, offering models that have been
+ * retired and hiding the one somebody is paying for. So the field is free text,
+ * the placeholder is one plausible id per provider, and the PROOF is the Test
+ * button — which lists `/v1/models` at the provider and says whether the id in
+ * the box is among them. The engine keeps the same posture: `--model` is
+ * REQUIRED on both cloud doors, because a provider holds a catalog and there is
+ * no default to fall back on.
+ */
+export const CLOUD_PROVIDER_MODEL_HINT: Readonly<Record<CloudProviderKind, string>> = {
+  openai: 'gpt-4o-mini',
+  anthropic: 'claude-sonnet-4-5',
+};
+
+/**
+ * THE SENTENCE THAT HAS TO BE UNDER THE KEY FIELD, and it is a rule rather than
+ * a nicety.
+ *
+ * Everything else in this app runs on hardware the person is standing next to.
+ * A cloud slot is the one place where pressing Translate sends somebody's book
+ * to a company, and the card says so in as many words beside the box where the
+ * key is typed — before the choice, not in a changelog. Declared here so the
+ * settings card and any later surface cannot word it differently.
+ */
+export const CLOUD_KEY_SENTENCE =
+  'Text you translate, simplify, clean or analyse is sent to that provider.';
+
+/**
+ * ONE CONFIGURED PROVIDER, AS THE RENDERER IS ALLOWED TO SEE IT.
+ *
+ * `keySet` is where the stored entry has the key — `CrucibleServerView.tokenSet`
+ * exactly, for the same reason and with the same consequence: this shape is what
+ * crosses the preload, so a renderer cannot leak a credential it was never told.
+ */
+export interface CloudProviderView {
+  /** What the picker calls it, and what a row's `waitFor` names. Unique. */
+  name: string;
+  kind: CloudProviderKind;
+  /** The provider's model id, as the person typed it. Never validated against a list. */
+  model: string;
+  /**
+   * An OpenAI-compatible host, or EMPTY for the provider's own address.
+   *
+   * Empty rather than the resolved default, so that the card can show the
+   * default as a placeholder and a person can tell "I have not chosen" from "I
+   * have chosen the same thing the default is". {@link CLOUD_PROVIDER_ENDPOINT}
+   * is what empty resolves to, at the placement.
+   */
+  endpoint: string;
+  /** Off is not a slot at all: no picker entry, and nothing lit in the dock. */
+  enabled: boolean;
+  /** Whether a key is stored. The key itself never crosses this wire. */
+  keySet: boolean;
+}
+
+/**
+ * One entry as the Cloud providers card hands it back. The whole array is sent
+ * and replaces the whole list, on `CrucibleServerEdit`'s argument exactly: four
+ * of the five edits are the same operation on an array, and two writers of one
+ * list is how a save loses half of a gesture.
+ */
+export interface CloudProviderEdit {
+  name: string;
+  kind: CloudProviderKind;
+  model: string;
+  endpoint: string;
+  enabled: boolean;
+  /**
+   * A NEW key, or `null` to keep whatever is stored.
+   *
+   * Write-only in both directions, {@link CrucibleServerEdit.token}'s rule word
+   * for word — and the match against the stored list is by NAME, so a rename and
+   * a new key in one gesture is the one case the card must send a key for.
+   */
+  apiKey: string | null;
+}
+
+/** Everything the Cloud providers card draws in one read. */
+export interface CloudSettingsView {
+  providers: CloudProviderView[];
+  /** The slot list as it stands — cloud entries included, after the Crucibles. */
+  slots: ComputeSlot[];
+  /**
+   * Hosted, the slot list is the HOST's and this window neither adds nor removes
+   * one (docs/SLOTS.md §3) — so the card draws read-only and main refuses the
+   * write, exactly as the Servers card does.
+   */
+  hosted: boolean;
+}
+
+/**
+ * WHAT `Test` LEARNED — the model listing, and whether the chosen id is in it.
+ *
+ * ── Why a listing and not a completion ──────────────────────────────────────
+ *
+ * A test that generated a token would cost money to answer a question about
+ * whether a key works, and would still not say whether the MODEL is one this key
+ * may use. `GET /v1/models` answers both in one unbilled request: a 401 is the
+ * key, and an id missing from `models` is the model.
+ *
+ * `chosen` IS SEPARATE FROM `outcome`, because a key that works and a model that
+ * is not on the account are different news with different fixes, and a card that
+ * folded them into one failure would send somebody to re-paste a working key.
+ */
+export type CloudProbe =
+  | {
+    outcome: 'ok';
+    /** Every id the provider listed, in the order it listed them. */
+    models: string[];
+    /** The id the entry names — echoed so the card's sentence cannot drift. */
+    chosen: string;
+    /** Is `chosen` among `models`? False is a warning, never a refusal to save. */
+    chosenListed: boolean;
+  }
+  | {
+    /** Unreachable, refused, or an answer this reader could not parse. */
+    outcome: 'failed';
+    message: string;
+  };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // "Install Crucible here" — the sequence, and the seam that will run it
