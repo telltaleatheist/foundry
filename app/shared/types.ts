@@ -1839,6 +1839,22 @@ export interface SystemProfile {
   detail: string;
 }
 
+/**
+ * One model ollama holds, with what it costs on disk.
+ *
+ * SEPARATE FROM `models` RATHER THAN REPLACING IT, and the redundancy is the
+ * cheaper of two costs. `models` is the NAME list, which is what the lineup
+ * matches a row against and what every caller but one wants; `bytes` is what
+ * the "Models on this machine" row prints, and it is null whenever `/api/tags`
+ * did not report a size. Deriving the names from this list at each call site
+ * would be the same map written four times to save one field.
+ */
+export interface OllamaHolding {
+  name: string;
+  /** `/api/tags`'s own `size`, in bytes. Null when it reported none. */
+  bytes: number | null;
+}
+
 /** Is ollama here, and is it running? Two different questions, both answered. */
 export interface OllamaFacts {
   /** The server answered `/api/version` on `url`. */
@@ -1849,6 +1865,8 @@ export interface OllamaFacts {
   installed: boolean;
   /** The models it already holds. Empty when nothing is running. */
   models: string[];
+  /** The same models with their sizes, for the disk inventory. */
+  holdings: OllamaHolding[];
   url: string;
   /** One sentence: running, installed-but-stopped, or absent. */
   detail: string;
@@ -1884,6 +1902,108 @@ export interface LlmChoices {
   suggested: string;
   /** The model jobs use today, whether or not setup has ever run. */
   current: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The catalog, the tiles it lights, and the weights on this disk
+// (electron/llm-catalog.ts, electron/act-gates.ts, electron/machine-models.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * WHAT A MODEL IS FOR — the classes `app/shared/model-lineup.json` files its
+ * rows under, and the vocabulary Crucible's manifests use.
+ *
+ * `translate`, `simplify` and `analysis` travel together because they are one
+ * act three ways: the model says every block again, or says something about it,
+ * against the same materialised book. `clean` is separate because the cleanup
+ * wants a DIFFERENT model — a bigger one is slower at punctuation rather than
+ * better (`DEFAULT_CLEAN_TEXT_MODEL`, shared/pipeline.ts). `pages` is the vision
+ * model that reads a scan, which shares nothing with any of them.
+ */
+export type ModelClass = 'translate' | 'simplify' | 'analysis' | 'clean' | 'pages';
+
+/**
+ * The acts the dock draws a tile for and this machine can refuse.
+ *
+ * `read` is the page reader rather than a class name, because the tile says OCR
+ * and the act is "read this book's pages" — the one act whose model is served
+ * locally by Foundry itself instead of pulled into ollama.
+ */
+export type ActName = 'translate' | 'simplify' | 'analysis' | 'clean' | 'read';
+
+/**
+ * ONE ANSWER PER ACT: may it run here, and the sentence either way.
+ *
+ * `why` IS ALWAYS SET, LIT OR DARK. A disabled tile whose tooltip says nothing
+ * is a tile that has told somebody "no" and refused to say what would change it
+ * — Owen's tiles are *"not lit up until the models are present"*, which is only
+ * a usable rule if the tile names the missing model. A lit gate's sentence names
+ * what is answering, which is what makes "why is this slow" answerable later.
+ *
+ * IT IS A FACT ABOUT THE MACHINE AND NOT ABOUT THE BOOK. The stage predicates
+ * (shared/stages.ts) still decide whether the act applies where somebody is
+ * standing; both have to say yes, and they say different things when they say
+ * no, so they are two gates and not one.
+ */
+export interface ActGate {
+  lit: boolean;
+  why: string;
+}
+
+/** Every tile's answer, in one read — `acts:gates`. */
+export type ActGates = Record<ActName, ActGate>;
+
+/** One model on this disk, as the inventory row prints it. */
+export interface MachineModelItem {
+  name: string;
+  /** What it is and where it came from. One line. */
+  detail: string;
+  /** On-disk size. Null when the store did not report one. */
+  bytes: number | null;
+}
+
+/** Which store a row belongs to. The removal rules differ per store, by owner. */
+export type MachineStoreId = 'foundry' | 'ollama' | 'crucible';
+
+/**
+ * ONE STORE THE APP KNOWS ABOUT — SLOTS.md §5b's "Models on this machine".
+ *
+ * Owen: *"id really rather not have multiple copies of gigantic models floating
+ * around"*. The stores do not share files and cannot: ollama holds its own
+ * quantised blobs, Crucible on WSL holds safetensors for vLLM, Crucible on the
+ * Mac holds MLX weights. So the row's job is to make the duplication VISIBLE,
+ * with sizes, rather than let it be discovered from a full disk.
+ */
+export interface MachineStore {
+  id: MachineStoreId;
+  label: string;
+  /** One sentence about this store on this machine, including an empty one. */
+  detail: string;
+  /** The store's total, or null when any part of it could not be measured. */
+  bytes: number | null;
+  items: MachineModelItem[];
+  /**
+   * Whether this screen may delete from it. True for Foundry's own downloads
+   * ONLY — Owen: *"ollama has its own thing going on and we should leave it
+   * be"*, and a Crucible's store belongs to Crucible.
+   */
+  removable: boolean;
+}
+
+/** The whole inventory, plus where the catalog behind it came from. */
+export interface MachineModels {
+  stores: MachineStore[];
+  /** `model-lineup.json`'s own provenance, printed so the table is not anonymous. */
+  generatedBy: string;
+  generatedAt: string;
+}
+
+/** What a removal actually did, in the words the settings row prints. */
+export interface RemovalOutcome {
+  ok: boolean;
+  /** Bytes actually freed. Zero on a refusal, and the detail says why. */
+  freedBytes: number;
+  detail: string;
 }
 
 /** `download` has a percentage; the other two are a sentence and a spinner. */

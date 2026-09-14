@@ -123,7 +123,70 @@ store is a different file. So the rule is ownership, not sharing:
 | A | Engine: `--server ollama` restored beside `openai`; unload always; `--model` required on Ollama; CTX pin for Ollama, `fitsWindow` for openai | nothing | **LANDED** (docs/PLAN.md, Wave 61) |
 | B | App: delete `vllm-server.ts`; local page reader = llama-server + dots GGUF, downloaded in setup; reading jobs ensure it | nothing | building |
 | C | App: server registry (name, url, headers), drag order, enable; slots; per-row `waitFor`; dispatch: header map per spawn, capability read for the model, `load-model` before spawn, the three 409s rendered by name | Crucible SDK shapes | next |
-| D | Catalog: generated lineup JSON, tile gating, CPU rule | BookForge's `[local]` block | after C |
+| D | Catalog: generated lineup JSON, tile gating, CPU rule | BookForge's `[local]` block | **LANDED** (below) |
 | E | Setup/settings: Crucible install offer + connect-to-existing; Ollama wizard stays; dots download; page-reader row | B, C | after C |
 | F | Cloud slots: OpenAI (the `openai` door + key), Anthropic (third dialect); per-job opt-in; 429 as the wait; cost shown | C | later |
 | — | Lease client (transport.ts) | Owen's ruling, Crucible's routes | owed |
+
+### Package D — landed 2026-09-14
+
+**The catalog is a file, the tiles gate on the machine, and the disk says what
+is on it.**
+
+**`app/shared/model-lineup.json`** is the vendored table, in the agreed shape:
+one row per model with a Crucible `id`, its `classes`, a `local` block
+(`kind: "ollama"` with a tag, or `kind: "gguf"` with repo/revision/file/mmproj)
+and a `needsGB` carrying its `basis`. `llm-catalog.ts` READS it —
+`resolveJsonModule` is on in `tsconfig.electron.json`, `rootDir` is `app/`, so
+tsc copies it to `dist/shared/` and `electron-builder`'s `dist/shared/**` ships
+it. `lineupFor` keeps its fit and CPU rules unchanged; `needsGB` now comes from
+the file rather than from arithmetic at the call site. The renderer never imports
+it: its tsconfig has no `resolveJsonModule` and it has no business holding a
+catalog.
+
+**It is written by hand and says so** — `generatedBy: "hand — pending
+crucible/scripts/gen-foundry-lineup.py"` — with every `basis` set to
+`"declared"`, the download plus the 1.5 GB overhead, which is exactly what the
+code used to compute. Two things in it are NOT in the old const and are worth
+naming: **`qwen3.8:27b`**, the app's own `DEFAULT_TRANSLATE_MODEL`, which
+`QWEN_LINEUP` never listed (so the wizard could pull every model except the one
+every dialog opens with) — it carries BookForge's id `qwen3.8-27b-4bit`; and the
+four **`clean`** rows plus the **`pages`** row (`dots-ocr`, the GGUF pair from
+`page-reader.ts`'s own constants). Rows Crucible has no manifest for carry
+`"crucible": false` rather than being omitted: they exist locally, and a Crucible
+cannot be asked for them.
+
+**The tile gate is `app/electron/act-gates.ts`**, one function answering
+`{lit, why}` for all five acts, read over `acts:gates` and pushed at on
+`acts:gates-changed`. `minimum_for` is a **floor, not a name**: the 9B row
+carries it for translate and simplify, and every row at or above it in lineup
+order qualifies — reading it as "only this row lights translate" would dark a
+24 GB card holding the 27B. `memoryBasis === 'ram'` darks translate, simplify and
+analysis outright (Owen's "obscenely long time"); clean is exempt, because a
+cleanup is only offered in a hosted window, where the compute is the host's. Four
+things deliberately do NOT refuse: a hosted window (the work runs on the host's
+compute — BookForge has no ollama at all), a machine pointed at a non-Ollama
+server (the weights are over there, and this gate does not probe it), clean on a
+processor, and reading through a remote endpoint. `why` is always set, lit or
+dark, and a dark one names the model that would change it.
+
+**"Models on this machine" is `machine-models-card.component.ts`** over
+`models:inventory`: Foundry's own downloads (itemised, with the whole `bin/`
+directory counted rather than the 3 MB executable), Ollama's list with the sizes
+`/api/tags` reports and **no Remove button**, and the Crucible line, which today
+says none is configured. `models:remove-page-reader` deletes `pageReaderDir()`
+whole — the only directory this app wrote — stopping the server first if it is
+ours, and answers with the gigabytes freed in main's own sentence.
+
+**§5b's deletion rule is built and inert.** `pageReaderRemovalOffer`
+(`machine-models.ts`) computes what it WOULD remove; `crucible-provider.ts`
+answers `unknown` for every class, and `unknown` takes the same branch as `no` —
+the three-valued answer exists so that a silence cannot read as a permission to
+delete three gigabytes. **Package C** replaces the two function bodies; nothing
+above them changes.
+
+**Not done, deliberately:** the tree footer's "from here" acts (never disabled by
+design — they dim and stay pressable, `open-documents.component.ts`) and the four
+dialogs' own refusals still gate on the book alone; a machine gate there is a
+second surface for the same sentence and belongs with package E's settings work.
+The gate does not probe a configured non-Ollama server for reachability.

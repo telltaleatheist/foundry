@@ -1,5 +1,33 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
+**THREE DOORS AND ONE PUSH ON 2026-09-14 — WAVE 61 PACKAGE D, SO THE COUNT IS
+114.** Two NEW FAMILIES, `acts:` and `models:`, and the argument for them being
+new rather than more members of `llm:` is with the family list below.
+
+`acts:gates` answers, for all five acts at once, whether this MACHINE may run
+them and the sentence either way (Owen, docs/SLOTS.md §1: *"the tiles arent lit
+up until the models are present"*). It is one door and not five because every one
+of those answers comes off the same probe of the same machine, and a dock asking
+separately could draw a lit Translate beside a Simplify that had just gone dark.
+The push `acts:gates-changed` carries NO PAYLOAD, on `projects:changed`'s
+reasoning: main says the machine moved — a model pulled, the page reader
+installed or removed, the language server repointed — and the renderer asks
+again, so the shape has one composer and no pushed copy to go stale.
+
+`models:inventory` and `models:remove-page-reader` are docs/SLOTS.md §5b's
+"Models on this machine": every store of weights the app knows about, with sizes,
+and a removal that touches ONLY the directory this app downloaded into. Ollama's
+store is listed and has no door that writes to it — Owen: *"ollama has its own
+thing going on and we should leave it be"* — and the removal answers with a
+`RemovalOutcome` carrying the gigabytes freed, because a refusal here is a
+sentence for the row rather than a rejection.
+
+TWO PAYLOADS WIDENED INSIDE CHANNELS THAT DID NOT MOVE. `ollama:facts` and
+`ollama:choices` now carry `OllamaFacts.holdings` — the same models as `models`,
+each with the size `/api/tags` reports — so the inventory row can print bytes
+without a second probe. `ollama:pull` and `page-reader:install` are unchanged in
+shape and now fire `acts:gates-changed` when they land.
+
 **REGENERATED 2026-09-13 FOR WAVE 61 PACKAGE B — NINE DOORS REMOVED, SIX ADDED,
 AND ONE FAMILY RETIRED OUTRIGHT.** The app stopped building and launching a vLLM
 inside WSL (docs/SLOTS.md §6, Owen: *"the plan is to leave VLLM to crucible
@@ -18,7 +46,8 @@ two pushes `page-reader:progress` and `page-reader:status-changed`.
 Counted by script over `app/electron/ipc.ts` for this regeneration: **111
 `ipcMain.handle` call sites, 111 distinct channel names, zero `ipcMain.on`**
 (114 before it), and **16 pushes** — ten through `broadcast`, six to one
-window's `webContents`.
+window's `webContents`. (Package D took it back to **114 handles and 17 pushes**
+the next day; see the head of this file.)
 
 NOTHING WAS RENAMED. `vllm:keep-warm` has no successor at all: its value rides
 on `page-reader:state` instead, because everything that read changes with the
@@ -196,12 +225,21 @@ channel work was the one rename the note above describes (`navigate` →
 table is the list the wrapper is applied to. Until then, treat every name here
 as the name.
 
-The families are, RE-MEASURED BY SCRIPT on 2026-09-13 over every
-`ipcMain.handle`, `broadcast` and `webContents.send` in `app/electron`: `analysis`,
-`app`, `book`, `capture`, `dialog`, `doctor`, `document`, `documents`, `engine`,
-`env`, `export`, `host-ops`, `ledger`, `library`, `llm`, `menu`, `meta`, `ollama`,
-`page-reader`, `project`, `projects`, `queue`, `reading`, `recents`, `settings`,
-`setup`, `shell`, `system`, `window`, `workspace` — **thirty**.
+The families are, RE-MEASURED BY SCRIPT on 2026-09-13 and extended by two on
+2026-09-14, over every `ipcMain.handle`, `broadcast` and `webContents.send` in
+`app/electron`: `acts`, `analysis`, `app`, `book`, `capture`, `dialog`, `doctor`,
+`document`, `documents`, `engine`, `env`, `export`, `host-ops`, `ledger`,
+`library`, `llm`, `menu`, `meta`, `models`, `ollama`, `page-reader`, `project`,
+`projects`, `queue`, `reading`, `recents`, `settings`, `setup`, `shell`,
+`system`, `window`, `workspace` — **thirty-two**.
+
+`acts:` and `models:` are NEW FAMILIES rather than members of `llm:`, and that is
+this file's own advice taken: seven family collisions with BookForge are still
+open and a new family is cheaper to audit than a new member of a colliding one.
+It is also true on the merits — neither is about a language model in particular.
+`acts:` answers whether an ACT may run here, which for reading a page has nothing
+to do with `llm:` at all; `models:` is about weights on a DISK, in three stores
+only one of which this app pulls into.
 
 THE LIST THAT STOOD HERE SAID TWENTY-SEVEN AND WAS WRONG IN BOTH DIRECTIONS. It
 had never been re-measured after the first-run wizard landed, so it was missing
@@ -478,13 +516,14 @@ installed — that happens minutes later in a window this app does not own, so
 
 ## Doors the renderer knocks on
 
-All 107 are `ipcMain.handle` — there is not one `ipcMain.on` in the app, on
+All 114 are `ipcMain.handle` — there is not one `ipcMain.on` in the app, on
 purpose: a renderer that cannot tell whether main heard it is a renderer that
 cannot report a failure. They are registered in one function, `registerIpc`
 (`app/electron/ipc.ts`), which `mountFoundry` calls.
 
 | Channel | What it does |
 | --- | --- |
+| `acts:gates` | May each of the five acts run on THIS MACHINE, and the sentence either way — translate, simplify, analysis, clean, read. What is installed, what fits, what is serving. Not the stage gate: whether an act applies where somebody is standing is `shared/stages.ts`, in the renderer, and a tile needs both. |
 | `analysis:read-categories` | The analysis categories this user wrote themselves, from `app-settings.json`. App-level: they are the reader's, not one project's. |
 | `analysis:write-categories` | Replace that list, and answer with it as stored — ids re-derived from names, fields capped, collisions with a built-in or with each other dropped. |
 | `app:hosted` | Whether another app mounted Foundry, so the renderer can drop the controls the host already answers. |
@@ -553,6 +592,8 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `meta:read-pdf` | A PDF's Info dictionary, through the engine. |
 | `meta:write-epub` | Write the six OPF fields back to that export (side file + one rename), and record the metadata step with `kind: 'epub'`. |
 | `meta:write-pdf` | Write it to the project's working copy, and record the metadata step. |
+| `models:inventory` | Every store of weights on this machine, with sizes — Foundry's own downloads, Ollama's list, a local Crucible's residency (docs/SLOTS.md §5b). Measured, never cached. |
+| `models:remove-page-reader` | Delete the page reader Foundry downloaded — that directory and nothing else — stopping the server first if this app started it, and answer with the gigabytes freed. The one door in this app that deletes model files. A refusal is a result with a sentence, not a rejection. |
 | `ollama:choices` | This machine, ollama's state, the Qwen lineup with one row badged, and today's model — the setup wizard's model step in one answer. |
 | `page-reader:install` | Fetch whatever the local page reader is missing — a llama.cpp build for this machine and the two dots.ocr GGUF files — verify each against its published sha256, and unpack. Streams over `page-reader:progress`. A failure is a result, not a rejection. |
 | `page-reader:install-cancel` | Stop that. What has already been fetched is KEPT: the next attempt resumes from it. |
@@ -607,12 +648,13 @@ push, payload `{projectDir, done, total, file}`.
 
 ## Pushes main makes at the renderer
 
-Sixteen, and every one of them is a state change the renderer holds a mirror of
-or a question it has to answer. Ten go to every window through `broadcast`
+Seventeen, and every one of them is a state change the renderer holds a mirror of
+or a question it has to answer. Eleven go to every window through `broadcast`
 (`app/electron/window.ts`); the other six are sent to one window's `webContents`.
 
 | Channel | What it says |
 | --- | --- |
+| `acts:gates-changed` | Something that decides a tile moved — a model pulled, the page reader installed or removed, the language server repointed. No payload: the renderer asks again on `acts:gates`, so the shape has one composer and no pushed copy to go stale. |
 | `app:navigate` | Go to a route — File→Settings, and nothing else today. |
 | `capture:intake-progress` | One dropped photograph copied, hashed and decoded — one push per path asked for, plus a closing one. |
 | `document:opened` | A document was admitted and should open in a tab. |

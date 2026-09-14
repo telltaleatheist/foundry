@@ -4355,3 +4355,46 @@ clicked it.
 **Left for package E, deliberately:** the Crucible connect offer. There is a
 marked place for it beside the page-reader card, and it is a SLOT of its own
 rather than a field on that card (SLOTS.md §3).
+
+#### Package D — LANDED 2026-09-14
+
+**The catalog is a vendored file, the tiles gate on the machine, and Settings
+says what is on the disk.** The full account is in docs/SLOTS.md §6 under
+"Package D — landed"; what follows is the short form.
+
+`app/shared/model-lineup.json` replaces `QWEN_LINEUP`. Crucible's manifests are
+the catalog of record and its generator will emit `foundry-lineup.json` for
+Foundry to vendor (SLOTS.md §4); until it does, the file is written by hand and
+its `generatedBy` says so. `llm-catalog.ts` reads it through `resolveJsonModule`
+— already on in `tsconfig.electron.json`, and tsc copies the file to
+`dist/shared/` where electron-builder already ships from. `lineupFor`'s fit rule
+and its CPU inversion are untouched; only the source of `needsGB` moved.
+
+Two rows are new. **`qwen3.8:27b`** — the app's own `DEFAULT_TRANSLATE_MODEL` —
+was never in the const, so the wizard could pull every model except the one every
+dialog opens with; it is there now under BookForge's id `qwen3.8-27b-4bit`, and
+on a card that holds exactly one 27B it is what gets recommended. The **`clean`**
+rows (the narration cleanup's own picker) and the **`pages`** row (`dots-ocr`,
+from page-reader.ts's constants) are there because the tile gate needs a class to
+ask about.
+
+`app/electron/act-gates.ts` is the gate: one function, `{lit, why}` per act, all
+five at once, over the new `acts:gates` door with an `acts:gates-changed` push
+behind it. `minimum_for` on the 9B is a FLOOR rather than a name — every row at
+or above it qualifies, or a 24 GB card holding the 27B would have a dark
+Translate. A machine with no GPU a model can use darks translate, simplify and
+analysis outright. A HOSTED window lights everything: the work runs on the host's
+compute and BookForge has no ollama fallback at all, so gating its rail on this
+machine's pulls would have been a regression with no upside.
+
+`models:inventory` and `models:remove-page-reader` are SLOTS.md §5b's row: every
+store the app knows, with sizes; a Remove button on Foundry's own downloads and
+on nothing else. §5b's automatic deletion is BUILT AND INERT — the provider seam
+(`crucible-provider.ts`) answers `unknown`, which takes the same branch as `no`,
+and package C replaces the body.
+
+**Not done, deliberately:** the tree footer's "from here" acts and the four
+dialogs' refusals still gate on the book alone (the footer's buttons dim rather
+than disable, by design); the gate does not probe a configured non-Ollama server
+for reachability. **Untested by hand:** nobody has watched a tile go dark on a
+CPU-only machine, because this one has a GPU.

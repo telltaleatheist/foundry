@@ -140,14 +140,33 @@ whether or not this app is looking.
 
 ## 5. The model lineup
 
-`app/electron/llm-catalog.ts`. `QWEN_LINEUP` is the one editable const — sizes
-are ollama's own published figures for `qwen3.5` (read 2026-08-26). The shipping
-line only: not the coding variants, not the MLX or BF16 conversions, which are
-the same weights in formats chosen for a different runtime.
+**THE TABLE IS A VENDORED FILE SINCE WAVE 61 PACKAGE D**, not a const:
+`app/shared/model-lineup.json`, read by `app/electron/llm-catalog.ts`. Crucible's
+manifests are the catalog of record (docs/SLOTS.md §4); each carries a `[local]`
+block naming the model's local form — an Ollama tag, or a GGUF plus its mmproj —
+with a memory figure and its BASIS, and a generator
+(`crucible/scripts/gen-foundry-lineup.py`) will emit `foundry-lineup.json` for
+Foundry to vendor. Until that generator exists the file's `generatedBy` says
+`"hand — pending …"` in as many words, and the rows are the ones this const used
+to hold. Sizes are ollama's own published figures for `qwen3.5` (read
+2026-08-26). The shipping line, plus the four `clean` rows the narration cleanup
+picks from and the `pages` row the page reader serves.
+
+One row is NEW, and it is the app's own default: `qwen3.8:27b`
+(`DEFAULT_TRANSLATE_MODEL`) was never in `QWEN_LINEUP`, so the wizard could
+describe and pull every model except the one every dialog opens with. It is there
+now, after `qwen3.5:27b`, carrying the Crucible id BookForge already uses
+(`qwen3.8-27b-4bit`) — which makes it the recommendation on a card that holds
+exactly one 27B.
 
 ```
 needsGB = downloadGB + OVERHEAD_GB      OVERHEAD_GB = 1.5
 ```
+
+That arithmetic is what the hand-written file was BUILT WITH; the file's own
+numbers are what the code now reads, each carrying `basis: "declared"`. The day
+Crucible measures a model's real resident footprint, that row's basis becomes
+`"measured"` and no code changes.
 
 The overhead is the KV cache, the runner's buffers, and whatever the desktop has
 already taken off the card. **It errs small on purpose**: being wrong this way
@@ -162,6 +181,7 @@ a second, or an out-of-memory failure after a seventeen-gigabyte download.
 | `qwen3.5:4b` | 3.4 GB | 4.9 GB | **fits — recommended** |
 | `qwen3.5:9b` | 6.6 GB | 8.1 GB | does not fit |
 | `qwen3.5:27b` | 17 GB | 18.5 GB | does not fit |
+| `qwen3.8:27b` | 17 GB | 18.5 GB | does not fit |
 | `qwen3.5:35b-a3b` | 24 GB | 25.5 GB | does not fit |
 | `qwen3.5:122b-a10b` | 81 GB | 82.5 GB | does not fit |
 
@@ -178,6 +198,15 @@ still showing its real fits/doesn't-fit and the line above saying there is no GP
 
 Every row is selectable whether or not it fits. Nothing is disabled for being
 large; the sentence beside it is the whole intervention.
+
+**THE TILES ARE A DIFFERENT MATTER, and they DO refuse** (Wave 61 package D,
+docs/SLOTS.md §1). This screen's job is to describe the machine, so it lists
+everything; the dock's job is to not start an eight-day job, so Translate and
+Simplify light only where a model at or above the `minimum_for` floor — the 9B —
+both fits and is installed, and not at all on a machine with no GPU a model can
+use. Analysis takes the same CPU rule with no floor. The gate is
+`app/electron/act-gates.ts`, answered over `acts:gates`, and every refusal names
+the model that would light it.
 
 ## 6. The default model setting
 

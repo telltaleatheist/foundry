@@ -15,11 +15,14 @@ import type { BookOp, PendingOutcome, PendingStack } from './ops';
 import type { ReReadPrompt } from './reread';
 import type { LlmServerKind } from './pipeline';
 import type {
+  ActGates,
   AnalysisPlan,
   AnalysisReading,
   AnalyzeRequest,
   AppQuestion,
   LlmServers,
+  MachineModels,
+  RemovalOutcome,
   BackendSettingsPatch,
   CaptureCreated,
   CaptureIntaken,
@@ -1363,6 +1366,56 @@ export interface FoundryApi {
     /** The download, phase by phase. Returns its own unsubscribe. */
     onProgress(listener: (progress: PageReaderProgress) => void): () => void;
     onStatus(listener: (status: ServerStatus) => void): () => void;
+  };
+
+  /**
+   * ── MAY THIS ACT RUN ON THIS MACHINE, AND WHY NOT ────────────────────────
+   *
+   * Owen (docs/SLOTS.md §1): *"the tiles arent lit up until the models are
+   * present"*, and *"if a job is going to take an obscenely long time, like
+   * translation on cpu, it should just be disabled."*
+   *
+   * THIS IS NOT THE STAGE GATE. `shared/stages.ts` still answers whether an act
+   * applies where somebody is STANDING, in the renderer, where the position
+   * lives. This answers what is installed, what fits and what is serving — five
+   * facts that live in main — and the two are separate because they say
+   * different things when they say no. A tile needs both.
+   */
+  acts: {
+    /**
+     * Every tile's answer at once, measured now. One call rather than five,
+     * because all of them come off the same probe of the same machine and a
+     * screen asking separately could draw a lit Translate beside a Simplify
+     * that had just gone dark.
+     */
+    gates(): Promise<ActGates>;
+    /**
+     * The gates changed — a model was pulled, the reader was installed or
+     * removed, the language server was repointed. No payload: ask again.
+     * Returns its own unsubscribe.
+     */
+    onChanged(listener: () => void): () => void;
+  };
+
+  /**
+   * ── WEIGHTS ON THIS DISK, AND THE ONE STORE FOUNDRY MAY DELETE FROM ──────
+   *
+   * docs/SLOTS.md §5b. Every store the app knows about, with sizes, so that
+   * three copies of a 27B in three different runtimes are SEEN rather than
+   * discovered from a full disk. Foundry's own downloads can be removed here;
+   * Ollama's store is listed and never touched (Owen: *"ollama has its own
+   * thing going on and we should leave it be"*); a local Crucible is a line
+   * that says there is none until package C lands the registry.
+   */
+  models: {
+    inventory(): Promise<MachineModels>;
+    /**
+     * Delete the page reader Foundry downloaded, and answer with the gigabytes
+     * freed. A refusal is a RESULT with a sentence, never a rejection — this is
+     * the one door in this namespace that destroys something, and the row has
+     * to be able to print what happened either way.
+     */
+    removePageReader(): Promise<RemovalOutcome>;
   };
 
   /**
