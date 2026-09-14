@@ -23,6 +23,14 @@ import * as path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { readAppSettings, writeAppSettings } from './app-settings';
+import {
+  addLocalCrucible,
+  crucibleSettingsView,
+  computeSlots,
+  probeCrucible,
+  writeCrucibleServers,
+} from './crucible-registry';
+import type { CrucibleServerEdit, NewJobsWaitFor } from '../shared/slots';
 import { cancelSetup, setupWslEnv } from './backend-setup';
 import {
   ensureCapture,
@@ -2925,6 +2933,18 @@ export function registerIpc(): void {
   ipcMain.handle('queue:remove', (_event, id: string) => { queue.remove(id); });
   ipcMain.handle('queue:cancel', (_event, id: string) => { queue.cancel(id); });
   ipcMain.handle('queue:clear-finished', () => { queue.clearFinished(); });
+  /**
+   * THE ROW PICKER'S ONE DOOR — send this row to a different slot.
+   *
+   * `waitFor` is a slot name or `any` (`ANY_SLOT`, shared/slots.ts). Nothing is
+   * answered: the change publishes on `queue:changed` like every other change to
+   * a row, and a handler returning the row would be a second copy of it racing
+   * the push. Refused silently for a row that has started — see `setWaitFor`,
+   * which carries the atomicity argument.
+   */
+  ipcMain.handle('queue:set-wait-for', (_event, id: string, waitFor: string) => {
+    queue.setWaitFor(id, waitFor);
+  });
 
   ipcMain.handle('engine:info', () => engineInfo());
   ipcMain.handle('doctor:run', (_event, endpointUrl?: string) => runDoctor(endpointUrl));
@@ -3043,30 +3063,25 @@ export function registerIpc(): void {
   ipcMain.handle('llm:defaults', () => {
     const settings = readAppSettings();
     /*
-     * ── ANSWERED FOR THE SERVER THIS MACHINE ACTUALLY RUNS ────────────────────
+     * ── ONE ANSWER NOW, BECAUSE THERE IS NO LONGER A CHOICE TO RESOLVE ───────
      *
-     * A vLLM serves one model under an id of its own shape (`Qwen/Qwen3.5-9B`),
-     * and it is not on the same port as an ollama. So when the machine is set to
-     * vLLM the dialogs open with THAT pair rather than with ollama tags a vLLM
-     * has never heard of — one answer, four dialogs, and none of them needs to
-     * know there was a choice.
+     * This used to branch on `llmServer`: under vLLM it answered with
+     * `vllmModel` and `vllmUrl` instead of the ollama pair, because a vLLM
+     * serves one model under an id of its own shape and is not on ollama's port.
+     * Both of those settings are retired (docs/SLOTS.md, Wave 61,
+     * `AppSettings.crucibleServers`) and the branch went with them.
      *
-     * BOTH CLEAN AND TRANSLATE GET THE SAME NAME under vLLM, and that is not the
-     * two models collapsing into one: it is one SERVER serving one model, which
-     * is what a vLLM is. The two ollama tags are untouched underneath and come
-     * back the moment the machine is set back.
-     *
-     * AN EMPTY MODEL IS A REAL ANSWER HERE — see `AppSettings.vllmModel`. It
-     * means "whatever that server is serving", the engine resolves it against
-     * the server and records what answered, and a dialog showing an empty field
-     * is showing the truth: nobody on this machine has named one.
+     * WHAT THESE THREE FIELDS MEAN NOW is narrower and truer: they are the LOCAL
+     * slot's answers. The tag Translate/Simplify/Analyse open with, the tag Clean
+     * text opens with, and the Ollama on this machine. A job placed on a Crucible
+     * uses none of them — the server's own capability record names the model and
+     * the registry names the address — and that is decided at the spawn, where
+     * the server can actually be asked (electron/crucible-dispatch.ts).
      */
-    const vllm = settings.llmServer === 'vllm';
     return {
-      model: vllm ? settings.vllmModel : settings.defaultLlmModel,
-      cleanModel: vllm ? settings.vllmModel : settings.cleanTextModel,
-      ollama: vllm ? settings.vllmUrl : settings.ollamaUrl,
-      server: settings.llmServer,
+      model: settings.defaultLlmModel,
+      cleanModel: settings.cleanTextModel,
+      ollama: settings.ollamaUrl,
     };
   });
   ipcMain.handle('llm:set-model', (_event, model: string) =>
@@ -3075,43 +3090,65 @@ export function registerIpc(): void {
     writeAppSettings({ cleanTextModel: model }).cleanTextModel);
 
   /*
-   * WHAT IS STORED, rather than what a dialog opens with — the settings card's
-   * own read, and the reason it is not `llm:defaults` with more fields on it.
-   * `defaults` answers ONE question ("what does this job start from") and
-   * resolves the choice away; this one answers the other ("what has this machine
-   * been told"), where both servers' URLs exist at once and neither is in
-   * effect. A single handler doing both would have to return the same URL twice
-   * under two names.
+   * WHERE OLLAMA IS — the one server setting this app still keeps, and the
+   * settings card's own read.
+   *
+   * It was `llm:servers`, a pair of doors answering "what has this machine been
+   * told" over four fields, because two servers' URLs existed at once and
+   * neither was in effect. There is one now: the local slot is Ollama. Every
+   * other server is a registry entry with a token behind it and is read through
+   * `crucible:settings`, which has a card of its own.
    */
-  ipcMain.handle('llm:servers', () => {
-    const settings = readAppSettings();
-    return {
-      server: settings.llmServer,
-      ollamaUrl: settings.ollamaUrl,
-      vllmUrl: settings.vllmUrl,
-      vllmModel: settings.vllmModel,
-    };
-  });
+  ipcMain.handle('llm:ollama-url', () => readAppSettings().ollamaUrl);
   /** Answered with what was STORED, never with what was sent — `llm:set-model`'s rule. */
-  ipcMain.handle('llm:set-servers', (_event, patch: {
-    server?: 'ollama' | 'vllm';
-    ollamaUrl?: string;
-    vllmUrl?: string;
-    vllmModel?: string;
-  }) => {
-    const settings = writeAppSettings({
-      ...(patch.server === undefined ? {} : { llmServer: patch.server }),
-      ...(patch.ollamaUrl === undefined ? {} : { ollamaUrl: patch.ollamaUrl }),
-      ...(patch.vllmUrl === undefined ? {} : { vllmUrl: patch.vllmUrl }),
-      ...(patch.vllmModel === undefined ? {} : { vllmModel: patch.vllmModel }),
-    });
-    return {
-      server: settings.llmServer,
-      ollamaUrl: settings.ollamaUrl,
-      vllmUrl: settings.vllmUrl,
-      vllmModel: settings.vllmModel,
-    };
+  ipcMain.handle('llm:set-ollama-url', (_event, url: string) =>
+    writeAppSettings({ ollamaUrl: url }).ollamaUrl);
+
+  /*
+   * ── THE SERVER REGISTRY AND THE SLOTS DERIVED FROM IT ─────────────────────
+   *
+   * docs/SLOTS.md §6 (Package C). Five doors, and the count is deliberately
+   * small: the whole registry is written in one message (see
+   * `writeCrucibleServers` for why add/remove/rename/reorder/enable cannot be
+   * five doors onto an ordered array), and nothing here ever carries a token in
+   * either direction. `crucible:settings` is the card's one read, and
+   * `slots:list` is the same list on its own for the queue's picker, which has
+   * no business knowing what a registry is.
+   */
+  ipcMain.handle('crucible:settings', () => crucibleSettingsView());
+  ipcMain.handle('crucible:save', (_event, servers: CrucibleServerEdit[]) => {
+    writeCrucibleServers(servers);
+    /*
+     * THE WHOLE VIEW, not just the list, because saving a server CHANGES THE
+     * SLOTS — enabling a loopback entry takes the local slot away — and a card
+     * that redrew its list from this answer and its slot preview from a second
+     * read would draw one repaint of the two disagreeing.
+     */
+    return crucibleSettingsView();
   });
+  ipcMain.handle('crucible:test', (_event, name: string) => probeCrucible(name));
+  ipcMain.handle('crucible:add-local', (_event, name: string) => addLocalCrucible(name));
+  ipcMain.handle('crucible:set-wsl-distro', (_event, distro: string) =>
+    writeAppSettings({ wslDistro: distro }).wslDistro);
+  ipcMain.handle('crucible:set-new-jobs-wait-for', (_event, choice: NewJobsWaitFor) =>
+    writeAppSettings({ newJobsWaitFor: choice }).newJobsWaitFor);
+  /**
+   * WHERE WORK MAY GO, for the picker.
+   *
+   * Its own door rather than a field on `crucible:settings` because the two have
+   * different readers and different lifetimes: the settings card reads a picture
+   * of a registry it is about to edit, and the queue reads a list of names to
+   * draw beside rows. A queue page that had to ask for the registry in order to
+   * draw a picker would be a page that needs the token flag and the WSL distro
+   * to render a dropdown.
+   */
+  ipcMain.handle('slots:list', () => computeSlots());
+  /**
+   * EVERY ROW OF OURS THAT NAMES THIS SLOT — what the Servers card shows before
+   * it offers to move any of them. Owen's rule: told, never moved silently.
+   */
+  ipcMain.handle('slots:rows-waiting-for', (_event, name: string) =>
+    queue.rowsWaitingFor(name));
 
   /*
    * The whole list on every mutation — and hosted, the whole list is the HOST's

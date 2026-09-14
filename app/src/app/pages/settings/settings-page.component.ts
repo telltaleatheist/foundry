@@ -7,6 +7,7 @@ import { api, hosted } from '../../core/foundry';
 import { EnvCardComponent } from './env-card.component';
 import { LibraryCardComponent } from './library-card.component';
 import { LlmCardComponent } from './llm-card.component';
+import { ServersCardComponent } from './servers-card.component';
 import { WslBackendComponent } from './wsl-backend.component';
 
 /**
@@ -24,7 +25,10 @@ import { WslBackendComponent } from './wsl-backend.component';
  */
 @Component({
   selector: 'app-settings-page',
-  imports: [EnvCardComponent, FormsModule, LibraryCardComponent, LlmCardComponent, WslBackendComponent],
+  imports: [
+    EnvCardComponent, FormsModule, LibraryCardComponent, LlmCardComponent,
+    ServersCardComponent, WslBackendComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="page">
@@ -147,6 +151,17 @@ import { WslBackendComponent } from './wsl-backend.component';
             card this one stays.
           -->
           <app-llm-card />
+
+          <!--
+            WHERE ELSE WORK CAN GO — the Crucible servers this machine knows
+            about, in the order it will try them (docs/SLOTS.md). Directly under
+            the language card because the two answer halves of one question: that
+            one is the model on THIS computer, this one is every other computer
+            that could run it. Drawn hosted as well, read-only, because a hosted
+            window still has slots — the host's — and a card that vanished would
+            leave the queue's picker naming machines nothing explains.
+          -->
+          <app-servers-card />
 
           <!--
             The prebuilt Pythons. Above the WSL card on purpose: downloading the

@@ -50,6 +50,34 @@ both servers exist at once and neither is in effect; it is a second channel
 rather than more fields on `defaults` because `defaults` would otherwise have to
 return the same URL twice under two names.
 
+**SLOTS, 2026-09-14 (docs/SLOTS.md, Package C). TWO DOORS REMOVED, ELEVEN ADDED,
+AND ONE PAYLOAD NARROWED. The source measures 123 `ipcMain.handle` call sites,
+123 distinct names, zero `ipcMain.on`.**
+
+- **REMOVED: `llm:servers`, `llm:set-servers`.** The setting behind them —
+  "which kind of server does this machine speak to" — is gone. There is one local
+  server and it is Ollama; every other server is a REGISTERED CRUCIBLE with a
+  token, a rank and an enabled flag. **A vendored host calling either of these
+  now gets no handler**, which is why this entry is at the top rather than in a
+  table: it is the one breaking change in this wave.
+- **ADDED, replacing them: `llm:ollama-url`, `llm:set-ollama-url`** — the one
+  server address this app still keeps by itself.
+- **NARROWED: `llm:defaults`.** The `server` field is gone and nothing is
+  resolved behind it; `model`, `cleanModel` and `ollama` are the LOCAL slot's
+  answers. A caller that read `server` reads `undefined`.
+- **ADDED: `queue:set-wait-for`** — the row picker's one door.
+- **ADDED: `slots:list`, `slots:rows-waiting-for`** — where work may go, and
+  which waiting rows name one slot.
+- **ADDED: `crucible:settings`, `crucible:save`, `crucible:test`,
+  `crucible:add-local`, `crucible:set-wsl-distro`,
+  `crucible:set-new-jobs-wait-for`** — the Servers card's own doors. **No token
+  crosses any of them in either direction**: the renderer is told `tokenSet:
+  boolean` and may send a NEW token, which is the whole of what a write-only
+  field means.
+- **No push was added.** The slot list changes when somebody edits a settings
+  card, which is a screen they are standing on; a push would be main telling a
+  window about a change that window made.
+
 **ONE DOOR ADDED ON 2026-09-08 — `llm:set-clean-model`, so the count is 109.**
 Clean text got its own persisted model setting (`cleanTextModel`,
 app/electron/app-settings.ts, defaulting to `DEFAULT_CLEAN_TEXT_MODEL`) rather
@@ -506,9 +534,9 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `library:choose` | Native directory picker for the library. Refuses while hosted. |
 | `library:dir` | The effective library directory — the host's, when hosted. |
 | `library:set` | Move the library. Refuses while hosted. |
-| `llm:defaults` | What the language dialogs open with: `model` (translate/simplify/analyse), `cleanModel` (Clean text's own `cleanTextModel`), the server URL and `server` — all four already resolved for the kind of server this machine is set to. |
-| `llm:servers` | What is STORED about both servers at once: kind, ollama URL, vLLM URL, served model. The settings card's read. |
-| `llm:set-servers` | Write any of those four. Answers with the whole stored set, never with what was sent. |
+| `llm:defaults` | What the language dialogs open with — the LOCAL slot's answers, and only those: `model` (translate/simplify/analyse), `cleanModel` (Clean text's own `cleanTextModel`), and `ollama`, the URL of the Ollama on this machine. Nothing is resolved behind it any more; a job sent to a Crucible takes its model and its address from that server at the spawn. |
+| `llm:ollama-url` | Where Ollama is. The one server address this app still keeps by itself. |
+| `llm:set-ollama-url` | Write it. Answers with what was STORED, never with what was sent. |
 | `llm:set-clean-model` | Set the Clean text model. Answers with the tag AS STORED, same rule. |
 | `llm:set-model` | Set the default model. Answers with the tag AS STORED — a name main clamped comes back changed. |
 | `meta:mint-host` | The HOST's record of who this book is (`FoundryHost.mintMetaFor`), or null — the hosted mint modal's seed. Null standalone; a host that throws REJECTS in its own words so the form can say so. |
@@ -536,7 +564,16 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `queue:list` | The queue, for the renderer's mirror — the host's rows where a host queue is registered, Foundry's own otherwise. |
 | `queue:remove` | Remove a held or settled row. Forwarded to the host's queue where one is registered. |
 | `queue:run` | Run an export NOW and resolve with the settled row — the Export dialog's door. Never routed to a host queue; the row leaves the list at the settle, so nothing lingers in the shelf. Refuses a `read` by name. |
+| `queue:set-wait-for` | Send a held or queued row to a different SLOT — a slot name, or `any` (docs/SLOTS.md §3). Answers nothing; the row arrives on `queue:changed` like every other change. Refused silently on a row that has started, because a job is atomic on one slot. NOT forwarded to a host queue: a host's placement is the host's. |
 | `queue:start` | Release everything held at this moment. Forwarded to the host's queue where one is registered. |
+| `slots:list` | Every slot, in priority order — where compute-heavy work may go. Hosted, this is the host's own list (`FoundryHost.slots`). One entry or none is the ordinary answer and draws no picker anywhere. |
+| `slots:rows-waiting-for` | The waiting rows of OURS that name one slot — what the Servers card shows before it offers to move any of them. Running rows are deliberately not included. |
+| `crucible:settings` | Everything the Servers card draws in one read: the registry (with `tokenSet`, never a token), the derived slots, the new-jobs default, the WSL distro, and whether this window is hosted. |
+| `crucible:save` | REPLACE the whole registry, in order — the array position IS the rank, so a drag is a save. `token: null` on an entry keeps what is stored. Rejects with a sentence naming the entry it cannot store. Refused outright while hosted. |
+| `crucible:test` | Test connection (`client.info()`). A failure is a RESULT carrying the SDK's own sentence, not a rejection. |
+| `crucible:add-local` | Register the Crucible on this machine by reading its own `config.toml` — on Windows through `wsl.exe -d <distro> --exec`. The token is read and stored in main and never crosses this wire. Refused while hosted. |
+| `crucible:set-wsl-distro` | Which WSL guest that read looks in. Empty is a real answer and means unset; there is no default. |
+| `crucible:set-new-jobs-wait-for` | `top` or `any` — what a new row's `waitFor` starts as. Answers with what was stored. |
 | `reading:confirm-re-read` | Compose the "read this book again?" card, which spends GPU on a yes. |
 | `recents:clear` | Forget every recent. |
 | `recents:forget` | Forget one. |

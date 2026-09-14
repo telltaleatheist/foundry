@@ -130,6 +130,27 @@ export interface RunHandle {
 export function runEngine(
   args: string[],
   onLine?: (line: string) => void,
+  /**
+   * WHAT THIS RUN'S ENVIRONMENT GETS ON TOP OF THE PROCESS'S — per spawn, and
+   * the only way a credential ever reaches the engine.
+   *
+   * `FOUNDRY_ENDPOINT_HEADERS` is a JSON object of header name to value, and the
+   * engine sends every pair on both its doors. It is an environment variable and
+   * not a flag deliberately and permanently (docs/BOOKFORGE-HANDOFF.md, the
+   * 2026-09-13 note): a command line is spelled into the terminal by the queue,
+   * pasted into bug reports, and listed by the process table, and there should
+   * never be a flag for this.
+   *
+   * PER SPAWN, WHICH IS WHY IT IS AN ARGUMENT rather than something set once on
+   * `process.env`. Two rows in flight may be placed on two different Crucible
+   * servers with two different tokens (docs/SLOTS.md §3), and a variable set on
+   * this process would be one credential for both — sent to whichever server the
+   * other row is talking to.
+   *
+   * ABSENT IS EXACTLY TODAY: the child inherits this process's environment and
+   * nothing else, which is what every run in this app did before slots existed.
+   */
+  extraEnv?: Readonly<Record<string, string>>,
 ): RunHandle {
   const cmd = engineCommand();
   let child: ChildProcess | null = null;
@@ -137,7 +158,13 @@ export function runEngine(
 
   const done = new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
     child = spawn(cmd.command, [...cmd.args, ...args], {
-      env: process.env,
+      /*
+       * A COPY, and the copy is load-bearing: `{...process.env, ...extraEnv}`
+       * builds a new object, so nothing this run adds is visible to the next
+       * one. Spreading into `process.env` itself would set the variable on this
+       * process, which is the failure the argument exists to prevent.
+       */
+      env: extraEnv === undefined ? process.env : { ...process.env, ...extraEnv },
       windowsHide: true,
     });
 

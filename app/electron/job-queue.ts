@@ -203,7 +203,17 @@ import type {
   AnalyzeRequest, ConversionKind, DeferredPlan, EnvInstallRequest, ExportLanding, ExportMintMetadata,
   FoundryJobRow, Job, JobKind, JobRequest, SimplifyRequest, TextPassRequest, TranslateRequest,
 } from '../shared/types';
-import type { LlmServerKind } from '../shared/pipeline';
+/*
+ * WHERE A JOB'S COMPUTE GOES, and the two modules that answer it (docs/SLOTS.md
+ * §6, Package C). A one-way edge exactly like the plans above: neither has ever
+ * heard of a queue, and the dispatcher's whole surface is one function that
+ * takes a kind and a `waitFor` and answers `go`, `wait` or `refuse`.
+ */
+import { computeSlots, waitForOfNewJob } from './crucible-registry';
+import {
+  capabilityClassOf, placeJob, CRUCIBLE_READS, UNPLACED, type Lease, type Placement,
+} from './crucible-dispatch';
+import { ANY_SLOT } from '../shared/slots';
 
 /**
  * The three things that become an engine child.
@@ -417,6 +427,40 @@ function promisedBy(request: EngineRequest): Pick<Job, 'mints' | 'after' | 'into
     ...(into !== undefined ? { into } : {}),
     ...(mode !== undefined ? { mode } : {}),
   };
+}
+
+/**
+ * WHICH SLOT THIS ROW WILL WAIT FOR — decided at the PRESS, not at the spawn.
+ *
+ * ── Why the press, which is `Job.parentStep`'s argument again ──────────────
+ *
+ * A row can sit in the queue for an afternoon. Reading the standing preference
+ * at the spawn would mean a batch queued before somebody added a second server
+ * ran somewhere nobody chose, and reading "whichever is ranked first" at the
+ * spawn would mean a drag in the settings screen moved four queued books onto
+ * another machine — which docs/SLOTS.md §3 rules against in as many words:
+ * *"queued rows do NOT move when servers are re-ranked."* So the ANSWER is
+ * written onto the row here, and the only thing that changes it afterwards is a
+ * person changing it (`setWaitFor`).
+ *
+ * ── Absent for everything that does not meet a model ───────────────────────
+ *
+ * An export, a mint, an environment install: no capability class, no placement,
+ * no picker. A READING is absent too for now, and that is the one deliberate
+ * omission rather than a consequence — `CRUCIBLE_READS` is false while Package B
+ * owns the page reader (docs/SLOTS.md §6), and a picker on a row whose dispatch
+ * ignores it would be a control that does nothing.
+ *
+ * ALSO ABSENT WHEN THERE IS NOTHING TO CHOOSE — no slots, or one — which is the
+ * friend with a GPU and no Crucible, and every hosted window whose host offers
+ * no slot list. `waitForOfNewJob` decides that, once, so the picker's "is there
+ * anything to pick" and the row's "what did I pick" cannot disagree.
+ */
+function placedBy(kind: JobKind): Pick<Job, 'waitFor'> {
+  if (capabilityClassOf(kind) === null) return {};
+  if (kind === 'read' && !CRUCIBLE_READS) return {};
+  const waitFor = waitForOfNewJob();
+  return waitFor === undefined ? {} : { waitFor };
 }
 
 /**
@@ -903,6 +947,38 @@ function settled(
    */
   lost: boolean = job.state === 'failed' || job.state === 'cancelled',
 ): void {
+  /*
+   * THE WAIT LEDGER IS CLEARED HERE FOR THE SAME REASON THE CASCADE LIVES HERE:
+   * this is the one place every ending in this file passes through, and a
+   * backoff count left behind on a removed row would be handed to the next job
+   * that happened to be minted with the same id — which cannot happen today,
+   * because ids are uuids, and would be a silent one-in-nothing bug the day
+   * anything about that changed. See `parkedUntil`.
+   */
+  forgetPark(job.id);
+  /*
+   * ── AND THE LEASE ON SOMEBODY ELSE'S CARD IS GIVEN BACK, HERE, FOR THE SAME
+   * REASON ──────────────────────────────────────────────────────────────────
+   *
+   * A Crucible placement holds a claim on the resident model for the length of
+   * the run (`Lease`, electron/crucible-dispatch.ts), and a claim that outlives
+   * its run is a card nobody else can load onto until the TTL expires. The
+   * requirement is that it be released on SUCCESS, FAILURE AND CANCEL alike —
+   * which is exactly the set of endings that reach this function, and is why the
+   * release lives here rather than in a `finally` around the spawn: there are
+   * three arms in `executeJob` that settle without ever reaching one.
+   *
+   * FIRE AND FORGET, AFTER THE STOP. `release()` clears its own heartbeat
+   * synchronously and only then awaits the DELETE, so nothing is still beating by
+   * the time this line returns; the network half is allowed to finish on its own
+   * because a settle must not wait on somebody else's server, and a release that
+   * fails logs itself and expires.
+   */
+  const lease = leases.get(job.id);
+  if (lease !== undefined) {
+    leases.delete(job.id);
+    void lease.release();
+  }
   const row = copyOf(job);
   for (const listener of [...settleListeners]) {
     try {
@@ -1591,6 +1667,7 @@ export function enqueueHere(
     // WHAT THIS ROW WILL PUT IN THE TREE, AND WHAT IT WAITS FOR — see
     // `promisedBy`. Absent for everything but an export and a text pass, which is
     // every row this door has minted since it existed.
+    ...placedBy(request.kind),
     ...promisedBy(request),
     createdAt: Date.now(),
   };
@@ -1819,6 +1896,7 @@ export function enqueueTextPass(
      */
     parentStep,
     // The step this row will land, and the row it waits behind. See `promisedBy`.
+    ...placedBy(chained.kind),
     ...promisedBy(chained),
     createdAt: Date.now(),
   };
@@ -1908,6 +1986,9 @@ export function enqueueAnalysis(
      * press is what the landing appends against.
      */
     parentStep,
+    // AND WHICH SLOT IT WILL WAIT FOR, resolved at the press for the same
+    // reason `parentStep` is — see `placedBy`.
+    ...placedBy('analysis'),
     createdAt: Date.now(),
   };
   jobs.push(job);
@@ -1976,6 +2057,84 @@ export function start(): number {
   changed();
   void pump();
   return released;
+}
+
+/**
+ * SEND THIS ROW SOMEWHERE ELSE — the picker's one gesture.
+ *
+ * ── Only a row that has not started ────────────────────────────────────────
+ *
+ * docs/SLOTS.md §3: *"jobs never start on one slot and finish on another. its
+ * atomic."* A `running` row has an engine talking to a server, a records file
+ * filling up with that server's answers, and a stamp about to record the model
+ * that produced them; moving it would mean one book translated by two machines
+ * and one file claiming both. So this refuses silently — the picker is not drawn
+ * on a running row, and this is the door behind that.
+ *
+ * ── A PARKED ROW IS FREED THE MOMENT IT IS REASSIGNED ──────────────────────
+ *
+ * The backoff is about the server that turned this row away, and the person has
+ * just named a different one. Making them wait out a thirty-second timer for a
+ * decision they made with a click would be the app arguing with the gesture, so
+ * `forgetPark` runs and the pump looks again immediately.
+ *
+ * ── Hosted, the row is the host's ──────────────────────────────────────────
+ *
+ * `remove`'s rule exactly: the id came off a row the host pushed, and there is
+ * no row of ours by that name. Nothing is forwarded, because the host's queue
+ * has its own placement and its own picker — Foundry does not have an opinion
+ * about where somebody else's scheduler sends its work.
+ */
+export function setWaitFor(id: string, waitFor: string): void {
+  const job = jobs.find((row) => row.id === id);
+  if (job === undefined) return;
+  if (job.state !== 'held' && job.state !== 'queued') return;
+  const wanted = waitFor.trim();
+  if (wanted.length === 0 || wanted === job.waitFor) return;
+  /*
+   * A NAME THAT IS NOT A SLOT IS REFUSED, and `any` is the one reserved word
+   * that is not a slot and is always allowed.
+   *
+   * The picker can offer a STALE name — a row waiting for a server that was
+   * switched off keeps it in the list so the select does not silently show
+   * something else — but choosing it again is the no-op above, so nothing
+   * legitimate reaches here with an unknown name. What this refuses is a message
+   * that did not come from a picker, and refusing it is the conservative
+   * direction: a typo'd name would be a row that waits forever for nothing.
+   */
+  if (wanted !== ANY_SLOT && !computeSlots().some((slot) => slot.name === wanted)) return;
+  job.waitFor = wanted;
+  /*
+   * THE SENTENCE ABOUT THE OLD SLOT GOES WITH IT. `message` was "waiting for the
+   * Mac, which is switched off"; leaving that on a row that is now waiting for
+   * something else would be the shelf reporting a wait that has been resolved.
+   */
+  if (job.state === 'queued' && job.message !== undefined) delete job.message;
+  forgetPark(id);
+  changed();
+  void pump();
+}
+
+/**
+ * EVERY ROW OF OURS THAT NAMES THIS SLOT — what the Servers card shows somebody
+ * before it changes anything.
+ *
+ * Owen's rule for a server being switched off is that the rows naming it are
+ * SURFACED, never moved: *"told, never moved silently"*. So this answers the
+ * question and does nothing about it, and the one-click fix in the card is
+ * `setWaitFor` called once per row with {@link ANY_SLOT} — which is a gesture
+ * with a person behind it, like every other thing that changes a row.
+ *
+ * RUNNING ROWS ARE NOT INCLUDED, on `setWaitFor`'s rule: they cannot be moved
+ * and offering them in a list of things about to be moved would be a lie about
+ * what the button does. A run against a server somebody just switched off
+ * finishes against it; switching a server off in a settings card is not a
+ * cancel, and the row's ✕ is where a cancel lives.
+ */
+export function rowsWaitingFor(slotName: string): Job[] {
+  return jobs.filter(
+    (job) => job.waitFor === slotName && (job.state === 'held' || job.state === 'queued'),
+  ).map(copyOf);
 }
 
 /**
@@ -2516,7 +2675,27 @@ function languageOf(request: TranslateRequest | SimplifyRequest): string {
 }
 
 /**
- * `--model` AND `--server`, composed together because they are one decision.
+ * `--model`, `--server` AND `--endpoint`, composed together because they are ONE
+ * decision: which machine this act runs on, and in which dialect.
+ *
+ * ── The three flags used to be spelled in three places, and were one answer ─
+ *
+ * Each of the branches below spelled `'--endpoint', request.ollama` itself and
+ * called `modelArgs` for the other two. That was harmless while the endpoint was
+ * always the request's own; with slots it is not — a Crucible placement replaces
+ * the endpoint AND the model AND the door together, and three call sites each
+ * remembering to apply two thirds of a placement is a translation that runs
+ * against the right server with the wrong model. So the placement is applied
+ * once, here.
+ *
+ * ── Where each value comes from ────────────────────────────────────────────
+ *
+ * The placement wins where it says anything, and null means "the request's own"
+ * — which is the LOCAL slot's whole answer. `request.ollama` is the Ollama URL
+ * the dialog showed and `request.model` is the tag the person could edit; both
+ * are per-run choices this file must not second-guess. A Crucible placement
+ * carries the server's `<url>/openai` and the model its own capability record
+ * selected, because neither of those is anybody's preference (docs/SLOTS.md §5).
  *
  * ── Why the model can be missing ────────────────────────────────────────────
  *
@@ -2534,22 +2713,17 @@ function languageOf(request: TranslateRequest | SimplifyRequest): string {
  * for it would put a new word on thousands of command lines to say what they
  * already said. `ollama` is spelled.
  *
- * THE TWO VOCABULARIES DO NOT AGREE YET, AND THIS IS WHERE THEY MEET. The app's
- * setting is `'ollama' | 'vllm'` (`LlmServerKind`, app/shared/pipeline.ts) and
- * the engine's kind is `openai | ollama` — the engine's door was renamed when it
- * stopped being vLLM-only, and the app's rename is Package C along with the
- * whole slot model. So `'vllm'` here MEANS the engine's `openai` door and is
- * left unspelled; anything else, including today's `'ollama'`, is the local one.
- * Reading it that way round rather than testing for `=== 'ollama'` is deliberate:
- * the day the setting grows a third value it will be another OpenAI-compatible
- * endpoint, and a default that guessed `openai` would send an Ollama job to a
- * door that does not speak its dialect.
+ * NOTHING SECRET IS ON THIS LINE, and that is a rule rather than an observation.
+ * A Crucible's token travels in the spawn's ENVIRONMENT (`Placement.env`) and
+ * never in argv, because argv is spelled into the terminal by `executeJob`,
+ * pasted into bug reports, and listed by the process table.
  */
-function modelArgs(request: { model: string; server?: LlmServerKind }): string[] {
-  const model = request.model.trim();
+function doorArgs(request: { model: string; ollama: string }, placement: Placement): string[] {
+  const model = (placement.model ?? request.model).trim();
   return [
     ...(model.length > 0 ? ['--model', model] : []),
-    ...(request.server !== undefined && request.server !== 'vllm' ? ['--server', 'ollama'] : []),
+    ...(placement.door === 'ollama' ? ['--server', 'ollama'] : []),
+    '--endpoint', placement.endpoint ?? request.ollama,
   ];
 }
 
@@ -2571,6 +2745,19 @@ export function argsFor(
    * ancestry recorded nothing.
    */
   metadata: Record<string, string> = {},
+  /**
+   * WHERE THIS RUN'S COMPUTE GOES — resolved by `executeJob` immediately before
+   * the spawn (`placeJob`, electron/crucible-dispatch.ts).
+   *
+   * DEFAULTED, AND THE DEFAULT IS THE OLD BEHAVIOUR EXACTLY. `UNPLACED` says
+   * "Ollama, the request's own endpoint, the request's own model", which is what
+   * every line this function composed before slots existed. That keeps the one
+   * external caller — BookForge's `cli/clean-step.js --dry-run`, which prints
+   * the command a request WOULD spawn — correct without a re-vendor: a dry run
+   * has no server to ask and no model to make resident, so the local line is the
+   * honest thing for it to print.
+   */
+  placement: Placement = UNPLACED,
 ): string[] {
   if (request.kind === 'analysis') {
     /*
@@ -2581,10 +2768,11 @@ export function argsFor(
      * row per candidate passage, and its own question-keyed cache of every rank
      * score and every verdict it paid for (docs/ANALYSIS.md §6).
      *
-     * `--endpoint` IS PASSED, for the translate line's reason: the URL is the
-     * request's own (`request.ollama`, a field named in an older world and
-     * renamed with the picker rework), and the engine's own settings fallback
-     * must not be what decides which machine a job runs on.
+     * `--endpoint`, `--model` and `--server` ARE ALL `doorArgs`' NOW, and the
+     * reason they moved is that they are one answer: where this run's compute
+     * goes (docs/SLOTS.md §3). The engine's own settings fallback must never be
+     * what decides which machine a job runs on, which is why the flag is always
+     * on the line whichever slot won.
      *
      * NO `--nli-python`, AND IT IS AN OMISSION THIS APP CHOSE. The interpreter
      * the entailment worker runs under is resolved by the engine from its own
@@ -2609,8 +2797,7 @@ export function argsFor(
        */
       '--book', request.bookPath,
       '--out', request.outputPath,
-      ...modelArgs(request),
-      '--endpoint', request.ollama,
+      ...doorArgs(request, placement),
     ];
     /*
      * THE CHECKLIST, AS A FILE BESIDE THE REPORT — written by `spawnOf` at the
@@ -2658,10 +2845,11 @@ export function argsFor(
      * narrator can tell a cleaned book from an uncleaned one without asking this
      * app anything.
      *
-     * `--endpoint` AND NOT `--ollama`, which is the one place this line differs
-     * from its siblings' spelling for the same fact. The engine's own command
-     * declares it that way; a flag renamed on the way through would be this file
-     * having an opinion about somebody else's CLI.
+     * `--endpoint` AND NOT `--ollama`, which USED TO BE the one place this line
+     * differed from its siblings' spelling for the same fact. The engine's own
+     * command declares it that way, every text act declares it that way now, and
+     * `doorArgs` spells it once for all three — a flag renamed on the way through
+     * would be this file having an opinion about somebody else's CLI.
      *
      * NO `--to`, NO `--from`, NO `--rewrite`. A cleanup goes into no language and
      * asks no mode — see `PARAMS_OF.clean` (shared/ledger.ts) for the ledger half
@@ -2672,8 +2860,7 @@ export function argsFor(
       '--book', bookOf(request),
       '--records', request.recordsPath,
       '--stamp', request.stampPath,
-      ...modelArgs(request),
-      '--endpoint', request.ollama,
+      ...doorArgs(request, placement),
     ];
     /*
      * `--concurrency` ONLY WHEN SOMEBODY SAID A NUMBER. Absent, the flag is not on
@@ -2714,9 +2901,10 @@ export function argsFor(
      * bank, and the engine refuses an `--out` beside `--records` by name because
      * the EPUB it would write is a book nobody would ever open.
      *
-     * `--endpoint` IS passed — the URL is the request's own (`request.ollama`, a
-     * field named in an older world and renamed with the picker rework), and
-     * the engine's settings fallback must not decide which machine a job runs on.
+     * `--endpoint`, `--model` and `--server` are `doorArgs`' — one answer about
+     * where this run's compute goes, applied once (docs/SLOTS.md §3). The
+     * engine's settings fallback must never decide which machine a job runs on,
+     * so the flag is on the line whichever slot won.
      *
      * `--records` IS THE CACHE AS WELL AS THE PRODUCT, which is why there is no
      * `--bank` on this line any more and why the engine refuses the pair. It was
@@ -2748,8 +2936,7 @@ export function argsFor(
       '--book', bookOf(request),
       '--records', request.recordsPath,
       '--to', languageOf(request),
-      ...modelArgs(request),
-      '--endpoint', request.ollama,
+      ...doorArgs(request, placement),
     ];
     /*
      * ── THE CHAIN, WHICH IS NOW ONE FLAG AND NO MACHINERY AT ALL ──────────────
@@ -3154,6 +3341,20 @@ function nextStartable(): Job | null {
      */
     if (slots.has(job.id)) continue;
     /*
+     * ── AND A ROW PARKED WAITING FOR A SERVER IS SKIPPED UNTIL ITS TIME ──────
+     *
+     * A row whose slot was busy is back in this list wearing the reason, and it
+     * is skipped rather than held because the two are opposites on a board: a
+     * hold would stop every row behind it on somebody else's narration, and this
+     * one concerns nobody but itself. The timestamp is what keeps it from being
+     * a poll — see `parkedUntil`, which argues the whole shape.
+     *
+     * BEFORE THE CHAIN CHECK, because it is cheaper and answers more often: a
+     * parked row is parked whatever its parent is doing.
+     */
+    const until = parkedUntil.get(job.id);
+    if (until !== undefined && Date.now() < until) continue;
+    /*
      * ── AND A ROW WAITING ON A PROMISE IS SKIPPED, NOT BLOCKED ────────────────
      *
      * `Job.after` names the row this one is downstream of, and the board is
@@ -3549,6 +3750,168 @@ async function runInSlot(job: Job, slot: Slot): Promise<void> {
 }
 
 /**
+ * ── THE WAIT LEDGER: WHEN A PARKED ROW MAY BE LOOKED AT AGAIN ──────────────
+ *
+ * A row whose slot is busy goes BACK TO `queued` wearing the reason, and that is
+ * the whole shape of waiting for a server in this app. The alternative — holding
+ * the lane while the Mac finishes a narration — would mean one unreachable
+ * server stopping every other job on the board, because the GPU lane is one
+ * (`SLOTS`, shared/queue-board.ts) and a row sitting in it is a row nothing can
+ * run beside.
+ *
+ * WHICH MAKES A TIMESTAMP NECESSARY. `pump` re-picks any `queued` row it can,
+ * synchronously, in a loop — so a row parked and immediately re-picked would be
+ * a poll as tight as the CPU allows, hammering somebody else's server with
+ * capability reads. This map is the only thing standing between that and a
+ * denial of service against a machine that is merely busy.
+ *
+ * NOT ON THE ROW, deliberately. It is scheduling state, it is meaningless to a
+ * host mirroring rows, and a wire field that ticked would make every renderer
+ * repaint on a clock. What the person sees is `Job.message`, which already says
+ * the sentence.
+ */
+const parkedUntil = new Map<string, number>();
+
+/**
+ * THE LEASE EACH RUNNING ROW HOLDS ON A CRUCIBLE'S RESIDENT MODEL.
+ *
+ * Off the row for `parkedUntil`'s reason and one stronger: a lease is a live
+ * object with a timer in it, and `Job` is a wire shape that crosses the preload
+ * and is copied to a host. Keyed by job id here, taken out and released in
+ * `settled`, which is the one place every ending in this file passes through.
+ */
+const leases = new Map<string, Lease>();
+
+/** How many times each parked row has been turned away. Drives the backoff. */
+const parkCount = new Map<string, number>();
+
+/**
+ * THE BACKOFF — a few seconds, doubling, capped at half a minute.
+ *
+ * The cap is what makes the whole thing honest rather than clever: a server that
+ * has been narrating for an hour is checked twice a minute forever, which costs
+ * nothing and means the row starts within thirty seconds of the card coming
+ * free. An unbounded backoff would eventually be a row that waits hours after
+ * the thing it was waiting for ended.
+ */
+function parkDelay(id: string): number {
+  const seen = (parkCount.get(id) ?? 0) + 1;
+  parkCount.set(id, seen);
+  return Math.min(30_000, 3_000 * 2 ** (seen - 1));
+}
+
+/** This row is no longer waiting for anything. Called on every settle. */
+function forgetPark(id: string): void {
+  parkedUntil.delete(id);
+  parkCount.delete(id);
+}
+
+/**
+ * RESOLVE WHERE THIS RUN GOES, or take the row out of this call's hands.
+ *
+ * Returns the placement when the job may start now. Returns NULL when it may
+ * not, having already published what happened — which is one of two endings:
+ *
+ *   * PARKED. The row is `queued` again, wearing the sentence about what it is
+ *     waiting for, and `parkedUntil` holds the picker off until the backoff is
+ *     up. `runInSlot`'s `finally` gives the lane back and pumps, so the board
+ *     carries on with everything else while this one waits.
+ *   * FAILED. The refusal would be the same on every machine — an unknown model,
+ *     a class this build's servers do not have — so it is said once, on the row,
+ *     and the row is settled like any other refusal.
+ *
+ * ── A run nobody scheduled waits IN PLACE, and that is not a special case ──
+ *
+ * `runJob` (a host's scheduler) and `runNow` (the Export dialog) both reach
+ * `executeJob` without taking a lane, and both have a caller awaiting a SETTLED
+ * row — `executeJob`'s own contract. Parking one would resolve that caller with
+ * a queued row it has no pump to rescue, so those wait here instead, with the
+ * same backoff and the same sentence on the row. `slots.has` is what tells them
+ * apart, and it is the truth rather than a proxy for it: the lane IS the pump's
+ * claim on this row.
+ */
+async function placeRun(
+  next: Job,
+  request: EngineRequest,
+  wires: RunWires,
+): Promise<Placement | null> {
+  const say = (line: string): void => {
+    next.message = line;
+    changed();
+    if (wires.watch !== undefined) {
+      try {
+        wires.watch(line);
+      } catch {
+        // A listener's throw is not this run's problem — `settled`'s rule, and
+        // the same catch the progress pump one function down already makes.
+      }
+    }
+  };
+  for (;;) {
+    const outcome = await placeJob(request.kind, next.waitFor, say);
+    if (outcome.verdict === 'go') {
+      forgetPark(next.id);
+      /*
+       * WHERE IT ACTUALLY WENT, beside where it was told to wait. `waitFor` is
+       * the person's choice and must not be overwritten by a walk's answer — a
+       * row pinned to `any` that happened to land on the Mac is still a row that
+       * will take whatever is free next time. This is the other half of the
+       * sentence, and it is what the shelf shows while the run is alive.
+       */
+      next.ranOn = outcome.placement.slot.name;
+      /*
+       * THE LEASE GOES WHERE THE SETTLE CAN FIND IT, immediately, before anything
+       * can throw. `settled` is the one ending every path in this file reaches,
+       * and a lease the map never learned about would be a claim on somebody's
+       * card that nothing releases until it expires.
+       */
+      if (outcome.placement.lease !== null) leases.set(next.id, outcome.placement.lease);
+      changed();
+      return outcome.placement;
+    }
+    if (outcome.verdict === 'refuse') {
+      forgetPark(next.id);
+      next.state = 'failed';
+      next.error = outcome.reason;
+      next.finishedAt = Date.now();
+      changed();
+      settled(next);
+      return null;
+    }
+    const delay = parkDelay(next.id);
+    if (slots.has(next.id)) {
+      next.state = 'queued';
+      next.message = outcome.reason;
+      next.note = null;
+      /*
+       * `startedAt` GOES BACK, because this row did not start. Leaving it set
+       * would make the shelf's elapsed clock count the waiting as run time, and
+       * a person reading "3h 12m" off a job that has not spoken to a model yet
+       * would reasonably conclude it was wedged.
+       */
+      delete next.startedAt;
+      parkedUntil.set(next.id, Date.now() + delay);
+      changed();
+      /*
+       * NOTHING WAKES THE PUMP ON ITS OWN. It runs when a row ends and when one
+       * is enqueued, and a board that has gone quiet with one parked row on it
+       * would sit there until somebody pressed something. One timer per park,
+       * armed for the backoff, is what closes that.
+       */
+      const timer = setTimeout(() => { void pump(); }, delay);
+      timer.unref?.();
+      return null;
+    }
+    say(outcome.reason);
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, delay);
+      timer.unref?.();
+    });
+    if (jobs.find((job) => job.id === next.id)?.state === 'cancelled') return null;
+  }
+}
+
+/**
  * RUN THIS JOB — the executor, and the whole of what a job DOES.
  *
  * ── What it is, and what it deliberately is not ─────────────────────────────
@@ -3663,6 +4026,28 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
       return;
     }
   }
+
+  /*
+   * ── WHERE THIS RUN'S COMPUTE GOES, DECIDED HERE AND ONCE ──────────────────
+   *
+   * docs/SLOTS.md §3: *"jobs never start on one slot and finish on another. its
+   * atomic."* This is that sentence as code — one resolution, immediately before
+   * the one spawn, and nothing downstream may ask again. A placement that could
+   * be re-derived at the metadata stage or after a retry would be a book whose
+   * first half was translated by one model and whose second half was translated
+   * by another, with one records file claiming both.
+   *
+   * BEFORE THE SEED COPY AND THE CHECKLIST, deliberately, and on the rule those
+   * two state about themselves: a job that has not committed must leave the
+   * project exactly as it found it. A row that turns out to be waiting for a
+   * server somebody is narrating on goes back to the queue, and it must not have
+   * left a seeded records file behind on the way.
+   *
+   * NULL MEANS THE ROW IS NO LONGER THIS CALL'S — parked back in the queue, or
+   * failed with the reason on it. `placeRun` has already said so and published.
+   */
+  const placement = await placeRun(next, request, wires);
+  if (placement === null) return;
 
   /*
    * ── THE TWO INTERMEDIATES THAT USED TO BE HERE, AND WHY THEY ARE GONE ──────
@@ -4047,7 +4432,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
    */
   let args: string[];
   try {
-    args = argsFor(spawned, merged);
+    args = argsFor(spawned, merged, placement);
   } catch (err) {
     next.state = 'failed';
     next.error = err instanceof Error ? err.message : String(err);
@@ -4056,8 +4441,16 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
     settled(next);
     return;
   }
+  /*
+   * THE LINE IS SAFE TO PRINT AND THAT IS A PROPERTY OF THE DESIGN, not luck. A
+   * Crucible's token is in `placement.env` and never in argv, so the command
+   * this prints is the whole command and carries no credential — which is what
+   * makes it something a person can paste into a terminal and into a bug report.
+   * Anything that ever puts a secret on this line has broken the contract
+   * `Placement.env` states.
+   */
   console.log(`[job] ${next.kind} ${args.join(' ')}`);
-  let handle = runEngine(args, watch);
+  let handle = runEngine(args, watch, placement.env);
   /*
    * THE CANCEL FOLLOWS THE LIVE CHILD. `handle` is reassigned before the metadata
    * stamp and the closure reads it, so the ✕ kills whichever engine is actually
@@ -4790,6 +5183,7 @@ async function runDetached(
      * that refusal is `materializeDeferred`'s, one function down, where it can name
      * the step rather than the row.
      */
+    ...placedBy(request.kind),
     ...promisedBy(request),
     createdAt: Date.now(),
   };

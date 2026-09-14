@@ -285,3 +285,38 @@ naming a row it does not hold or one already failed or cancelled, and cascades i
 removals transitively. Foundry's last line is `materializeDeferred`, which refuses at
 spawn when the step a run was to be made from never landed — so a host that runs a
 chained row out of order gets a failed row with a sentence rather than a wrong book.
+
+## 7. The row picker — WHERE, beside WHEN (2026-09-14, docs/SLOTS.md Package C)
+
+The board above answers **when**: how many things may run at once on this
+machine, one GPU lane and two CPU lanes, and which lane a kind of job waits in.
+A second question arrived with slots and it is orthogonal to every rule in §1–§6:
+**whose machine**. A translation takes the GPU lane whether it runs against the
+Ollama on this desk or against a Crucible in another room.
+
+- **`Job.waitFor`** is a slot name or `any`, written at the PRESS out of
+  `AppSettings.newJobsWaitFor` and never re-read afterwards — SLOTS.md §3:
+  *"queued rows do NOT move when servers are re-ranked."* Absent on every row
+  that never meets a model (an export, a mint, an install), absent on a reading
+  while page reading stays local, and absent whenever there are fewer than two
+  slots — which is the friend with a GPU and no Crucible, who never meets the
+  picker. **`Job.ranOn`** is where it actually started, set at the spawn and
+  drawn on the bench card as "on <slot>".
+- **The picker is a `<select>` on a held or queued row**, on the queue PAGE (the
+  chain rows' right edge and the off-lane rows'), drawn only when there are two
+  or more slots. Not on a running row: a job is atomic on one slot. A stored name
+  that is no longer a slot stays in the option list, labelled "(not available)",
+  because the row really is waiting for it and a select whose value is missing
+  from its options silently shows a different answer instead.
+- **A row whose slot is busy goes BACK TO `queued`**, wearing the sentence about
+  what it is waiting for (the holder's name, "someone is narrating on X", "X is
+  unreachable", "X cannot translate: …"), and is retried on a 3 s → 30 s backoff
+  held in `parkedUntil` (electron/job-queue.ts). **It does not hold the lane**,
+  and that is a correctness rule of the same kind as §3's drain: the GPU lane is
+  one, so a row waiting an hour for the Mac would stop every other job on the
+  board. `nextStartable` skips a parked row until its time, and one `setTimeout`
+  per park wakes the pump — nothing here polls.
+- **Nothing about the lanes changed.** `SLOTS` is still `{gpu: 1, cpu: 2}`, so
+  two Crucible servers do not yet run two text jobs at once. Dispatch is per-row
+  correct and concurrency is not yet per-slot; making it so means a lane capacity
+  both programs derive from the slot list, which is named as owed in SLOTS.md §7.
