@@ -4939,10 +4939,17 @@ Crucible accepted the same hour**: `capability()` will read a no-route document
 as all-local and take a timeout, `cruciblePairingPath()` will resolve win32 to
 LOCALAPPDATA (the host already writes there), `SubjectKind` gains `engine`; a
 re-packed tarball (same version, new sha) follows and `readCapability` switches
-then. Nothing on this network
-speaks PHASE15 yet: `settings()` 404s against the live server, and
-`putSettings`/`testUpstream`/`lease` through the SDK are typechecked, not
-watched.
+then. **WATCHED LIVE the same night against the Mac Studio's Crucible (main
+1c90482, mlx-darwin, the first Phase-15 server on the network), through the SDK
+from a script and with settings restored and re-read afterwards:** parsePairing;
+capability() with `route` on all eleven rows; settings() camelCased as Foundry's
+mirror expects; the three PUT refusals with `details.field` as pinned;
+testUpstream's result shape for a rejected key and a dead URL; a real route
+write echoed back and visible in the capability row's `selected` and `reason`.
+Nothing changed on Foundry's side. Not yet watched: a Foundry JOB placed on it
+from the app (the Mac is not in the registry until Crucible answers whether
+foundry.module.json's ids resolve per backend — its 27B is `qwen3.8-27b` there,
+not `qwen3.8-27b-4bit`).
 
 **Also 2026-09-14:** `foundry-blocks-v1-4b.gguf` deleted from this PC on
 Owen's word after the Hugging Face mirror was proven to hold the same bytes;
