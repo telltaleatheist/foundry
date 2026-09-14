@@ -86,6 +86,36 @@ BookForge, ruling owed to Owen:** an explicit lease on the resident model
 (`POST /v1/models/{id}/lease`, heartbeat, `DELETE` at run end); while leased,
 load/unload refuse `409 model_leased` naming the client, act and since.
 
+## 5b. Weights on disk — one owner per capability per machine (Owen, 2026-09-14)
+
+Owen: *"id really rather not have multiple copies of gigantic models floating
+around… the models cant cross the wsl barrier right?"* They can, but it does
+not help: Ollama holds its own quantised GGUF blobs, Crucible on WSL holds
+safetensors for vLLM, Crucible on the Mac holds MLX weights. The 27B in each
+store is a different file. So the rule is ownership, not sharing:
+
+- **Nothing ships weights.** dots, the 9B, the 27B are downloaded from their
+  official homes on install (the dots GGUF from ggml-org on Hugging Face,
+  Ollama tags through Ollama's library, Crucible's through its manifests),
+  verified against the source's published sha256 before use — the same
+  discipline as the pinned environment tarballs on the `env-v1` release,
+  where a null hash is a refusal to install.
+- **Foundry deletes only what Foundry downloaded, only when a LOCAL Crucible
+  has taken over that class** (its capability record lists the class as
+  served — not merely "a server was configured"), and never silently: the
+  settings row says what was removed and the gigabytes freed. Re-download
+  restores it. Today that is the dots GGUF for the page reader.
+- **A REMOTE Crucible removes nothing.** It takes nothing from this disk, and
+  configured is not present — the local reader is what works when the Mac is
+  asleep. The settings row OFFERS removal with a number on it and the sentence
+  "page reading will then need <server> to be reachable".
+- **Ollama is left alone.** It is its own model manager. The app never pulls
+  into it while a local Crucible serves the class, and offers removal of the
+  models it pulled before, by name and size, but never removes one itself.
+- **A "Models on this machine" settings row** lists every store the app knows
+  (Foundry's own downloads, Ollama's list, a local Crucible's residency) with
+  sizes, so duplication is seen rather than discovered from a full disk.
+
 ## 6. Packages, and their order
 
 | # | Package | Depends on | Status |
