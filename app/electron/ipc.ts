@@ -32,6 +32,7 @@ import {
   crucibleSettingsView,
   computeSlots,
   probeCrucible,
+  slotAvailability,
   probeCrucibleAt,
   writeCrucibleServers,
 } from './crucible-registry';
@@ -3369,7 +3370,14 @@ export function registerIpc(): void {
    * draw a picker would be a page that needs the token flag and the WSL distro
    * to render a dropdown.
    */
-  ipcMain.handle('slots:list', () => computeSlots());
+  /*
+   * THE LIST AND, WHEN THERE IS ONE, WHY IT IS EMPTY. A bare array told the
+   * page "no servers" when the truth could be "there was nobody to ask" — a
+   * hosted window whose host has not implemented the registry seam. The two
+   * want different sentences, so the answer is typed (`SlotAvailability`,
+   * shared/slots.ts) and the picker draws the refusal where the slots would be.
+   */
+  ipcMain.handle('slots:list', () => slotAvailability());
   /**
    * EVERY ROW OF OURS THAT NAMES THIS SLOT — what the Servers card shows before
    * it offers to move any of them. Owen's rule: told, never moved silently.

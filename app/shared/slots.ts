@@ -47,6 +47,32 @@
  * (`AppSettings.newJobsWaitFor`) rather than to any particular slot. The
  * registry refuses a server called this, so the two can never be confused.
  */
+/**
+ * WHY THERE IS NO PICKER — the difference between "none" and "could not ask".
+ *
+ * A bare `ComputeSlot[]` cannot tell a window with no servers from a window
+ * that had nobody to ask, and the two want different sentences: the first is a
+ * person who has not added one, the second is a host that has not implemented
+ * the registry seam. Reporting the second as the first is a page quietly
+ * behaving as though no server were linked, which is the shape this codebase
+ * keeps removing.
+ *
+ * A CODE AND A SENTENCE TOGETHER, because they have different readers. The
+ * sentence is drawn where the picker would be; the code is what anything that
+ * branches reads, so no caller has to match on prose. Null is the ordinary
+ * answer: the list is the whole truth.
+ */
+export interface SlotRefusal {
+  code: 'host_provides_no_registry';
+  sentence: string;
+}
+
+/** The slot list and, when there is one, the reason it could not be asked for. */
+export interface SlotAvailability {
+  slots: ComputeSlot[];
+  refusal: SlotRefusal | null;
+}
+
 export const ANY_SLOT = 'any';
 
 /**

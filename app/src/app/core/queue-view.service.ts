@@ -6,7 +6,7 @@ import {
   CPU_LANE_SLOTS, JOB_RESOURCE, LANES, computeLanes, laneOf, laneOfRun,
   type ComputeLane, type JobResource, type Lane,
 } from '@shared/queue-board';
-import type { ComputeSlot, ComputeSlotKind } from '@shared/slots';
+import type { ComputeSlot, ComputeSlotKind, SlotRefusal } from '@shared/slots';
 import type { Job, JobProgress } from '@shared/types';
 
 import { OpenDocumentsService } from './documents.service';
@@ -92,6 +92,16 @@ export class QueueViewService {
   readonly computeSlots = signal<ComputeSlot[]>([]);
 
   /**
+   * WHY THERE IS NO PICKER, when the answer is not "nobody added a server".
+   *
+   * Null is the ordinary case and draws nothing. A sentence here is a hosted
+   * window whose host offers no registry: the board is not broken and every
+   * job still runs, but the person is owed the difference between a list they
+   * have not filled in and a list nothing could ask for.
+   */
+  readonly slotRefusal = signal<SlotRefusal | null>(null);
+
+  /**
    * THE GPU SIDE OF THE BOARD — one lane per machine, derived from the list.
    *
    * The same `computeLanes` the scheduler rations by (electron/job-queue.ts), so
@@ -102,7 +112,10 @@ export class QueueViewService {
 
   constructor() {
     if (api === null) return;
-    void api.slots.list().then((slots) => { this.computeSlots.set(slots); });
+    void api.slots.list().then((answer) => {
+      this.computeSlots.set(answer.slots);
+      this.slotRefusal.set(answer.refusal);
+    });
   }
 
   /**

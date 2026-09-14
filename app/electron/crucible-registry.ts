@@ -61,6 +61,7 @@ import {
   isLoopbackUrl,
   type CloudSettingsView,
   type ComputeSlot,
+  type SlotAvailability,
   type CrucibleProbe,
   type CrucibleServerEdit,
   type CrucibleServerView,
@@ -104,28 +105,23 @@ export function crucibleServers(): CrucibleServerEntry[] {
 /**
  * The host's registry, cleaned. Empty is a real answer; so is "there is none".
  *
- * A MISSING SEAM IS SAID OUT LOUD AND IS NOT AN ERROR THROWN THROUGH A DRAW.
- * `computeSlots` is called while the queue page is being painted, so a throw
- * here would take a window down over a server list — the wrong end of the
- * rule. The refusal is a named console line and an empty registry: no slots,
- * no picker, every job on the path it took before slots existed, and a
- * sentence in the log that names the seam a host has not implemented.
+ * A MISSING SEAM IS NOT REPORTED HERE. It is a state the PAGE has to draw, so
+ * it is typed and returned by `slotAvailability()` rather than written to a
+ * console nobody reads and inferred from an empty list. A log line that the
+ * product's behaviour depends on is a log line doing a type's job. What this
+ * returns for a host with no registry is simply nothing, which is true.
  *
- * Defensive about the rows for the reason a host's mistake must not strand a
- * job: an entry with no name or no address is dropped at the DRAW, because it
- * is one every placement would fail on at the press, and failing early is
- * quieter. A token is not required here — a server on a trusted network may
- * have none, and the request will say so itself if it does.
+ * WHAT IS LOGGED IS A HOST'S BUG: a row that is not an entry. Name, address
+ * and `enabled` are all required, and a row missing any of them is dropped
+ * with a line naming the field. `enabled` is required rather than defaulted
+ * because a default here would be this code deciding a fact the host owns —
+ * and "switched on" is the dangerous direction to guess in. A token may be
+ * empty: a server on a trusted network has none, and the request says so
+ * itself if it turns out to want one.
  */
 function hostServers(): CrucibleServerEntry[] {
   const provider = foundryHost()?.servers;
-  if (provider === undefined) {
-    console.error(
-      '[slots] host_provides_no_registry — this window is hosted and its host offers no '
-      + 'FoundryHost.servers(), so there are no Crucible servers and no slots to place work on.',
-    );
-    return [];
-  }
+  if (provider === undefined) return [];
   let offered: readonly CrucibleServerEntry[];
   try {
     offered = provider.call(foundryHost()) ?? [];
@@ -142,9 +138,17 @@ function hostServers(): CrucibleServerEntry[] {
     const name = typeof entry.name === 'string' ? entry.name.trim() : '';
     const url = typeof entry.url === 'string' ? entry.url.trim() : '';
     const token = typeof entry.token === 'string' ? entry.token : '';
-    if (name.length === 0 || url.length === 0 || seen.has(name.toLowerCase())) continue;
+    if (name.length === 0 || url.length === 0 || typeof entry.enabled !== 'boolean') {
+      console.error(
+        `[slots] the host offered a server this app cannot read and it was dropped: ${
+          name.length === 0 ? 'no name' : url.length === 0 ? `"${name}" has no address`
+            : `"${name}" does not say whether it is enabled`}.`,
+      );
+      continue;
+    }
+    if (seen.has(name.toLowerCase())) continue;
     seen.add(name.toLowerCase());
-    out.push({ name, url, token, enabled: entry.enabled !== false });
+    out.push({ name, url, token, enabled: entry.enabled });
   }
   return out;
 }
@@ -344,6 +348,29 @@ function refuseHostedRegistryChange(): void {
  * this app's own `cloudProviders` are not merged into a host's list, because the
  * work in a hosted window runs on the host's compute and its bill is the host's.
  */
+export function slotAvailability(): SlotAvailability {
+  /*
+   * THE ONE PLACE THAT KNOWS WHY THERE IS NO PICKER. `computeSlots()` below is
+   * this function's `.slots` and nothing else, so the two cannot drift: one
+   * computes, the other projects. Both exist because most callers — the lanes,
+   * the stored-name check, the cards — want the list and behave identically
+   * either way, while the two that speak to a person, the picker and a
+   * placement's refusal, have to say which of the two silences this is.
+   */
+  if (hosted() && foundryHost()?.servers === undefined) {
+    return {
+      slots: [],
+      refusal: {
+        code: 'host_provides_no_registry',
+        sentence: 'This window is running inside another application, and that application has '
+          + 'not offered a list of Crucible servers. Work will run the way it did before '
+          + 'servers could be chosen.',
+      },
+    };
+  }
+  return { slots: computeSlots(), refusal: null };
+}
+
 export function computeSlots(): ComputeSlot[] {
   /*
    * ── ONE LIST, ONE DERIVATION, BOTH WAYS ───────────────────────────────────

@@ -24,6 +24,7 @@ import type {
   CrucibleSettingsView,
   LocalCrucibleAdd,
   NewJobsWaitFor,
+  SlotAvailability,
 } from './slots';
 import type {
   ActGates,
@@ -1356,8 +1357,13 @@ export interface FoundryApi {
    * host that offers one sees a one-entry list and no picker anywhere.
    */
   slots: {
-    /** Every slot, in priority order. Hosted, this is the host's own list. */
-    list(): Promise<ComputeSlot[]>;
+    /**
+     * Every slot, in priority order, and the reason there are none when that
+     * reason is not simply "none were added" — hosted, a host that offers no
+     * registry (`SlotAvailability`, shared/slots.ts). Hosted, the list is the
+     * host's own.
+     */
+    list(): Promise<SlotAvailability>;
     /**
      * The waiting rows that name this slot — what the Servers card shows before
      * it offers to move any of them. Owen's rule for switching a server off:
