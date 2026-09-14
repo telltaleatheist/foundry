@@ -37,7 +37,6 @@ import type {
   EnvCatalogItem,
   EnvInstallProgress,
   EnvInstallRequest,
-  EnvTooling,
   EpubMetadataFields,
   HostNode,
   HostNodes,
@@ -53,15 +52,14 @@ import type {
   LedgerStep,
   ProjectLedger,
   ProjectSummary,
+  PageReaderProgress,
+  PageReaderState,
   QuestionAnswer,
   ReadingPlan,
   RecentDocument,
   RewriteMode,
   ServerStatus,
   SettingsView,
-  SetupLogEvent,
-  SetupRequest,
-  SetupResult,
   SetupState,
   SystemProfile,
   MintMeta,
@@ -73,7 +71,6 @@ import type {
   UnappliedAnswer,
   UnappliedWarning,
   WorkspacePlan,
-  WslFacts,
 } from './types';
 
 /**
@@ -1236,25 +1233,11 @@ export interface FoundryApi {
   };
 
   /**
-   * WSL, and the environment vLLM is served from.
-   *
-   * Facts are re-measured on demand rather than cached in the renderer: a user
-   * who installs a distro while the settings screen is open should be able to
-   * press the button again and see it.
-   */
-  wsl: {
-    /** Which distros exist, or why there are none. */
-    facts(): Promise<WslFacts>;
-    /** What one distro can build an environment with. */
-    tooling(distro: string): Promise<EnvTooling>;
-  };
-
-  /**
    * The prebuilt environments — the ones the conversions were MEASURED with.
    *
    * The app installs what this machine is missing by itself at startup, as rows
    * in the queue shelf; this surface is the manual path for the cases automation
-   * cannot decide: a different location, a particular WSL distro, a reinstall.
+   * cannot decide: a different location, a reinstall.
    */
   env: {
     /** Platform-relevant entries, with installed state measured now. */
@@ -1266,7 +1249,7 @@ export interface FoundryApi {
      */
     install(request: EnvInstallRequest): Promise<string>;
     cancel(): Promise<void>;
-    /** A directory for an install, or null. Meaningless for a WSL target. */
+    /** A directory for an install, or null when the picker was dismissed. */
     chooseDest(defaultPath: string): Promise<string | null>;
     /** Every phase change, as it happens. Returns its own unsubscribe. */
     onInstallProgress(listener: (progress: EnvInstallProgress) => void): () => void;
@@ -1343,31 +1326,43 @@ export interface FoundryApi {
     setServers(patch: Partial<LlmServers>): Promise<LlmServers>;
   };
 
-  backendSetup: {
+  /**
+   * THE LOCAL PAGE READER — a llama-server holding dots.ocr, on this machine.
+   *
+   * Reading a page is the one act with no Ollama path (Ollama does not serve
+   * dots.ocr), so this is what makes "convert a PDF" work on a machine nobody
+   * has prepared. `backendSetup` and `vllmServer` used to live here and built
+   * and launched a vLLM inside WSL; both went on 2026-09-13 (docs/SLOTS.md §6,
+   * package B), and a vLLM or a Crucible somebody else runs is reached the way
+   * every other server is — by putting its URL in `settings`.
+   */
+  pageReader: {
     /**
-     * Build the environment. Resolves with the outcome; a failure is a result,
-     * not a rejection, because every one of them is a sentence to read.
+     * EVERYTHING THE ROW NEEDS, IN ONE CALL. Measured, never cached, and it
+     * asks the two release indexes for sizes only when something is missing.
      */
-    run(request: SetupRequest): Promise<SetupResult>;
-    cancel(): Promise<void>;
-    /** Every line, as it happens. Returns its own unsubscribe. */
-    onLog(listener: (event: SetupLogEvent) => void): () => void;
-  };
-
-  vllmServer: {
-    status(): Promise<ServerStatus>;
-    /** Rejects with the guest's log tail when it will not start. */
+    state(): Promise<PageReaderState>;
+    /**
+     * Fetch what is missing and verify it. A failure is a RESULT, not a
+     * rejection — every one of them is a sentence to put on the row.
+     */
+    install(): Promise<{ ok: boolean; detail: string }>;
+    /** What has already been fetched survives; starting again continues it. */
+    cancelInstall(): Promise<void>;
+    /** Pre-warm. Rejects with the server's own log tail when it will not start. */
     start(): Promise<ServerStatus>;
     stop(): Promise<ServerStatus>;
-    onStatus(listener: (status: ServerStatus) => void): () => void;
     /**
      * Minutes an app-started server outlives a drained queue. 0 — the default
      * — stops it the moment the queue empties; the ceiling is main's
      * (app-settings.ts), so whatever is asked for, an idle server always has a
-     * scheduled end. `setKeepWarm` returns the value as clamped and stored.
+     * scheduled end. Returns the value as clamped and stored. The current value
+     * rides on `state()` rather than having a read of its own.
      */
-    keepWarm(): Promise<number>;
     setKeepWarm(minutes: number): Promise<number>;
+    /** The download, phase by phase. Returns its own unsubscribe. */
+    onProgress(listener: (progress: PageReaderProgress) => void): () => void;
+    onStatus(listener: (status: ServerStatus) => void): () => void;
   };
 
   /**

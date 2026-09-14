@@ -274,6 +274,17 @@ vllm serve <model> \
   second dialect; the picker rework that reads the service's capability
   record replaces the model field.)
 
+- **THE APP NO LONGER LAUNCHES A vLLM, ANYWHERE.** Until 2026-09-13 there was a
+  second half to this section: a "vLLM in WSL" card that listed distros, built a
+  conda or venv environment, `pip install vllm`'d into it and then started and
+  stopped the server, plus a `vllm-server.ts` in main that owned its lifetime.
+  All of it is deleted (docs/SLOTS.md §6 package B; Owen: *"the plan is to leave
+  VLLM to crucible only"*). A vLLM is now reached exactly the way any other
+  OpenAI-compatible server is — you run it, you put its URL in Settings, and
+  nothing in the app starts, stops or configures it. What the app DOES start is
+  the local page reader, which is llama.cpp serving a dots.ocr GGUF and has
+  nothing to do with this door (`app/electron/page-reader.ts`, docs/SETUP.md §7).
+
 ### What decides the batch depth on THESE models (measured 2026-09-08)
 
 Worth writing down because both sessions guessed it wrong twice before reading

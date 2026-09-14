@@ -19,10 +19,10 @@ import type {
   HostNodes,
   Job,
   OllamaPullProgress,
+  PageReaderProgress,
   QuestionAnswer,
   ReReadAnswer,
   ServerStatus,
-  SetupLogEvent,
   UnappliedAnswer,
 } from '../shared/types';
 
@@ -275,11 +275,6 @@ const api: FoundryApi = {
     write: (patch) => ipcRenderer.invoke('settings:write', patch),
   },
 
-  wsl: {
-    facts: () => ipcRenderer.invoke('wsl:facts'),
-    tooling: (distro) => ipcRenderer.invoke('wsl:tooling', distro),
-  },
-
   env: {
     catalog: () => ipcRenderer.invoke('env:catalog'),
     install: (request) => ipcRenderer.invoke('env:install', request),
@@ -312,19 +307,15 @@ const api: FoundryApi = {
     setServers: (patch) => ipcRenderer.invoke('llm:set-servers', patch),
   },
 
-  backendSetup: {
-    run: (request) => ipcRenderer.invoke('backend:setup-run', request),
-    cancel: () => ipcRenderer.invoke('backend:setup-cancel'),
-    onLog: (listener) => subscribe<SetupLogEvent>('backend:setup-log', listener),
-  },
-
-  vllmServer: {
-    status: () => ipcRenderer.invoke('vllm:status'),
-    start: () => ipcRenderer.invoke('vllm:start'),
-    stop: () => ipcRenderer.invoke('vllm:stop'),
-    onStatus: (listener) => subscribe<ServerStatus>('vllm:status-changed', listener),
-    keepWarm: () => ipcRenderer.invoke('vllm:keep-warm'),
-    setKeepWarm: (minutes) => ipcRenderer.invoke('vllm:set-keep-warm', minutes),
+  pageReader: {
+    state: () => ipcRenderer.invoke('page-reader:state'),
+    install: () => ipcRenderer.invoke('page-reader:install'),
+    cancelInstall: () => ipcRenderer.invoke('page-reader:install-cancel'),
+    start: () => ipcRenderer.invoke('page-reader:start'),
+    stop: () => ipcRenderer.invoke('page-reader:stop'),
+    setKeepWarm: (minutes) => ipcRenderer.invoke('page-reader:set-keep-warm', minutes),
+    onProgress: (listener) => subscribe<PageReaderProgress>('page-reader:progress', listener),
+    onStatus: (listener) => subscribe<ServerStatus>('page-reader:status-changed', listener),
   },
 
   capture: {

@@ -1558,11 +1558,15 @@ export interface DoctorReport {
   /** The tier a run would use, or null with the reason in that tier's detail. */
   chosen: TierId | null;
   /**
-   * WSL itself, separate from the `wsl-vllm` TIER: "WSL exists but nothing in
-   * it can import vllm" is the state the setup screen exists for, and the tier
-   * alone cannot tell it apart from "there is no WSL". OPTIONAL — engine builds
-   * that predate it simply do not carry it, and the app falls back to asking
-   * wsl.exe itself.
+   * WSL itself, separate from the `wsl-vllm` TIER, and now READ BY NOBODY.
+   *
+   * The engine still reports it, because `foundry doctor` still knows how to
+   * find a vLLM somebody else built in WSL and this app does not get to edit
+   * the engine's contract. What changed is that the app stopped having a
+   * setup screen to point at it: this app no longer builds a vLLM environment,
+   * no longer starts one, and no longer offers to (docs/SLOTS.md §3 — all WSL
+   * complexity is Crucible's now). The field stays declared so an engine
+   * report carrying it still type-checks, and nothing in app/ reads it.
    */
   wsl?: { available: boolean; distros: string[] };
 }
@@ -1589,19 +1593,18 @@ export type BackendMode = 'auto' | 'endpoint' | 'mlx';
  * (`endpointModel` is also legal): the writer preserves every key it does not
  * recognise, so a newer engine's settings survive an older app saving over them.
  *
- * `wslDistro` and `vllmPython` are written by the SETUP RUNNER rather than
- * typed into a field — they are the two facts that make an environment this app
- * built findable by the engine, and the settings form leaves them undefined so
- * saving a URL never clears them.
+ * `wslDistro` and `vllmPython` USED TO BE HERE, written by a setup runner that
+ * built a vLLM environment inside WSL for this app to launch. Both the runner
+ * and the launcher are gone (docs/SLOTS.md §6, package B): the local page
+ * reader is a llama-server this app downloads and starts directly, and any
+ * other OpenAI-compatible server is somebody else's to run. The two keys are
+ * not deleted from anybody's settings.json — this writer preserves every key
+ * it does not recognise, so an engine that still reads them still finds them.
  */
 export interface BackendSettingsPatch {
   mode?: BackendMode;
   endpointUrl?: string;
   python?: string;
-  /** The WSL distro the vLLM environment lives in. */
-  wslDistro?: string;
-  /** The interpreter INSIDE that distro that can import vllm. Tilde-form is fine. */
-  vllmPython?: string;
 }
 
 export interface SettingsView {
@@ -1613,55 +1616,24 @@ export interface SettingsView {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WSL — the facts, the setup run, and the server
+// The local page reader — electron/page-reader.ts owns all of this
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface WslFacts {
-  /** True only when wsl.exe ran AND named at least one distro. */
-  available: boolean;
-  distros: string[];
-  /** Why not. Printed verbatim: "not on PATH" and "installed but empty" differ. */
-  reason: string | null;
-}
-
-/** What a distro can build an environment with. Both routes always reported. */
-export interface EnvTooling {
-  /** Path to a conda binary inside the distro, tilde-form, or null. */
-  conda: string | null;
-  /** True when that distro's python3 can import venv. */
-  venv: boolean;
-  detail: string;
-}
-
-/** Which way the environment gets built. The user picks; nothing falls back. */
-export type SetupRoute = 'conda' | 'venv';
-
-export interface SetupRequest {
-  distro: string;
-  route: SetupRoute;
-}
-
-/**
- * One line out of a setup run. `step` is this app talking (the command about to
- * run, what was skipped); `stdout`/`stderr` are the guest's, verbatim.
+/*
+ * WHAT USED TO BE HERE: `WslFacts`, `EnvTooling`, `SetupRoute`, `SetupRequest`,
+ * `SetupLogEvent`, `SetupResult` — the shapes of a screen that built a vLLM
+ * inside a WSL distro so this app could launch it. Gone on 2026-09-13 with the
+ * launcher (docs/SLOTS.md §6, package B). `ServerState`/`ServerStatus` below
+ * are the same two shapes they always were and survived the change unaltered,
+ * because "a reading server is up, down, coming up or broken" did not stop
+ * being the question when the server stopped being vLLM.
  */
-export interface SetupLogEvent {
-  stream: 'step' | 'stdout' | 'stderr';
-  line: string;
-}
-
-export interface SetupResult {
-  ok: boolean;
-  /** The interpreter that now exists, when there is one. */
-  pythonPath: string | null;
-  detail: string;
-}
 
 export type ServerState = 'stopped' | 'starting' | 'ready' | 'failed';
 
 export interface ServerStatus {
   state: ServerState;
-  /** On a failure this carries the guest's log tail. Never paraphrased. */
+  /** On a failure this carries the server's own log tail. Never paraphrased. */
   detail: string;
   url: string;
   model: string;
@@ -1669,12 +1641,73 @@ export interface ServerStatus {
   external: boolean;
 }
 
+/**
+ * `download` has a percentage; the rest are a sentence and an indeterminate bar.
+ * The same five-phase shape as `OllamaPhase`, and deliberately: the wizard draws
+ * both, and one shape means one bar.
+ */
+export type PageReaderPhase = 'download' | 'verify' | 'unpack' | 'done' | 'error';
+
+export interface PageReaderProgress {
+  /** Which of the three files this is about — or `llama-server`, or `all`. */
+  item: string;
+  phase: PageReaderPhase;
+  /** 0–100 while downloading. Meaningless otherwise; read `detail`. */
+  percent: number;
+  detail: string;
+}
+
+/** One file the local page reader needs, and whether this machine has it. */
+export interface PageReaderFile {
+  /** What it is called on disk and on the settings row. */
+  name: string;
+  /** The published size, or null when the index could not be read. */
+  bytes: number | null;
+  present: boolean;
+}
+
+/**
+ * EVERYTHING THE SETTINGS ROW AND THE SETUP STEP NEED, IN ONE READ.
+ *
+ * One IPC call rather than five, because every one of these facts is measured
+ * off the same directory at the same moment and a screen that asked separately
+ * could draw "installed" beside "0 of 2 model files".
+ */
+export interface PageReaderState {
+  /** False on a platform this app has no llama-server build for. */
+  supported: boolean;
+  /** Why not, or what this machine will get. One sentence, always set. */
+  platformNote: string;
+  /** The binary AND both model files are on disk. */
+  installed: boolean;
+  binary: {
+    /** The llama.cpp release tag it came from, recorded beside it. */
+    release: string | null;
+    /** The release asset's file name, so the row can say which build this is. */
+    asset: string | null;
+    path: string | null;
+    /** `CUDA`, `Metal`, `CPU` — what the chosen build will run on. */
+    accel: string;
+  };
+  models: PageReaderFile[];
+  /**
+   * What installing would fetch RIGHT NOW — zero when everything is present,
+   * and only the missing pieces when some of it is. Null when the sizes could
+   * not be read, which is a thing to say rather than a zero to draw.
+   */
+  downloadBytes: number | null;
+  /** One sentence about this machine. */
+  detail: string;
+  server: ServerStatus;
+  keepWarmMinutes: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Prebuilt Python environments — electron/env-catalog.ts owns the numbers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * One environment on the release. Not a platform: `wsl-x64` is driven from win32.
+ * One environment on the release.
  *
  * The `nli-` pair are the analysis worker's Pythons — torch, transformers and
  * the DeBERTa weights baked in. They are separate entries rather than packages
@@ -1682,10 +1715,13 @@ export interface ServerStatus {
  * times by different people: somebody who only ever converts books should not
  * download a gigabyte of NLI to rasterise a PDF, and the Windows reading
  * environment (62 MB of PyMuPDF) would grow twenty-fold if it carried them.
+ *
+ * `wsl-x64` — vLLM inside a WSL distro — was a sixth and is gone
+ * (docs/SLOTS.md §6, package B). Every target left is a plain directory on this
+ * machine's own filesystem.
  */
 export type EnvTarget =
   | 'windows-x64'
-  | 'wsl-x64'
   | 'mac-arm64'
   | 'nli-windows-x64'
   | 'nli-mac-arm64';
@@ -1722,10 +1758,8 @@ export interface EnvCatalogItem {
    * published" and disables Install — never downloads it unverified.
    */
   published: boolean;
-  /** Where it goes by default. A WSL target names a path inside the distro. */
+  /** Where it goes by default. */
   defaultDest: string;
-  /** True when the environment lives in WSL, so there is no directory picker. */
-  inWsl: boolean;
   /** The interpreter, when one is actually on disk. Null when it is not installed. */
   installedPath: string | null;
   /** True when settings.json already points the engine at that interpreter. */
@@ -1736,10 +1770,8 @@ export interface EnvCatalogItem {
 
 export interface EnvInstallRequest {
   target: EnvTarget;
-  /** Overrides the default location. Meaningless for a WSL target; ignored there. */
+  /** Overrides the default location. */
   dest?: string;
-  /** Which distro to extract into. WSL target only. */
-  distro?: string;
 }
 
 export interface EnvInstallResult {

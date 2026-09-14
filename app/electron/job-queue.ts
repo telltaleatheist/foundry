@@ -24,10 +24,10 @@
  * reorders, and a lane that is full is a lane whose rows wait exactly as the
  * whole queue used to.
  *
- * A job that reads through the LOCAL vLLM endpoint waits for that server first
- * (electron/vllm-server.ts). The wait is part of the job, not a thing that
+ * A job that reads through the LOCAL page reader waits for that server first
+ * (electron/page-reader.ts). The wait is part of the job, not a thing that
  * happens beside it: the shelf says "Starting the reading server…", and a
- * server that will not start fails THAT job with the guest's own log tail.
+ * server that will not start fails THAT job with the server's own log tail.
  *
  * ── Nothing EXPENSIVE starts until the user says so ──────────────────────────
  *
@@ -182,7 +182,7 @@ import {
   type Rotation,
 } from './projects';
 import { readSettings } from './settings';
-import { ensureServer, isLocalVllmEndpoint, noteQueueBusy, noteQueueIdle } from './vllm-server';
+import { ensurePageReader, isLocalPageReader, noteQueueBusy, noteQueueIdle } from './page-reader';
 /*
  * THE PLANS, FOR THE RE-PLAN AT SPAWN AND FOR NOTHING ELSE (`materializeDeferred`).
  *
@@ -1398,14 +1398,14 @@ export function seedHostQueueRows(projectDir: string): void {
  *
  * ── Why this has to exist rather than be derived ────────────────────────────
  *
- * The reading server's lifetime hangs off queue drain (`noteQueueIdle`,
- * electron/vllm-server.ts) and `keepServerWarmMinutes` DEFAULTS TO 0
+ * The page reader's lifetime hangs off queue drain (`noteQueueIdle`,
+ * electron/page-reader.ts) and `keepServerWarmMinutes` DEFAULTS TO 0
  * (electron/app-settings.ts), which is not a short timer — it is an immediate
- * `stopServer`. Under a host queue this app's own list is empty between every
- * pair of the host's rows, because the rows live in the host's list until the
- * moment each one runs. Deriving drain from our list would therefore tear the
- * server down after every job and a batch of N readings would pay N model
- * starts, which is twenty gigabytes loaded N times to read one shelf of books.
+ * `stopPageReader`. Under a host queue this app's own list is empty between
+ * every pair of the host's rows, because the rows live in the host's list until
+ * the moment each one runs. Deriving drain from our list would therefore tear
+ * the server down after every job and a batch of N readings would pay N model
+ * loads, which is three gigabytes loaded N times to read one shelf of books.
  *
  * SO THE HOST SAYS IT, AFTER ITS OWN PUMP HAS CHOSEN — it is the only side that
  * knows whether anything is still coming. BUSY STAYS OURS, because every job
@@ -3047,9 +3047,9 @@ function metaFlagsFor(record: Record<string, string>): string[] {
  * not go through one at all.
  *
  * The settings file's, and ONLY in `endpoint` mode. Under `auto` the engine
- * picks its own tier and may well choose `wsl-vllm`, which it serves for
- * itself — starting a server here because the file happens to hold a URL would
- * spend twenty gigabytes on a backend the run was never going to use.
+ * picks its own tier for itself — starting a server here because the file
+ * happens to hold a URL would load three gigabytes for a backend the run was
+ * never going to address.
  */
 function endpointFor(): string | null {
   const settings = readSettings();
@@ -3381,10 +3381,10 @@ async function pump(): Promise<void> {
    * the same three facts it always was (docs/QUEUE-BOARD.md §3).
    *
    * TREAT ANY CHANGE HERE AS A CORRECTNESS CHANGE. The reading server's lifetime
-   * follows the queue's (electron/vllm-server.ts) and `keepServerWarmMinutes`
-   * DEFAULTS TO 0 — which is not a short timer, it is `stopServer` now, with no
-   * window for a busy signal to beat it. An early drain therefore does not waste
-   * a little warmth; it pulls twenty gigabytes out from under whatever is still
+   * follows the queue's (electron/page-reader.ts) and `keepServerWarmMinutes`
+   * DEFAULTS TO 0 — which is not a short timer, it is `stopPageReader` now, with
+   * no window for a busy signal to beat it. An early drain therefore does not
+   * waste a little warmth; it pulls the model out from under whatever is still
    * reading. On a board that hazard is LARGER than it was, because a CPU export
    * finishing while a GPU reading posts pages is now an ordinary Tuesday: the
    * export's ending calls this function, and if the test were "did I find
@@ -3426,8 +3426,8 @@ async function pump(): Promise<void> {
    * An export ordered from a promised cleanup is enqueued `queued`, because a
    * rendering never waits for a person (`enqueueHere`) — but this one does: its
    * cleanup is `held` until somebody finds the shelf and presses Start, which can be
-   * tomorrow. Counting it as work the board is about to do would keep twenty
-   * gigabytes of vLLM resident for exactly as long, with `keepServerWarmMinutes`
+   * tomorrow. Counting it as work the board is about to do would keep the page
+   * reader resident for exactly as long, with `keepServerWarmMinutes`
    * defaulting to 0 and nothing left running to justify it. What it is waiting for
    * is a PERSON, which is the one thing the drain has never counted.
    */
@@ -3617,23 +3617,33 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
    * model is Ollama's, which this app does not start.
    *
    * This used to be worded as a list of exceptions — translate, and the piped
-   * two-stage job — which meant a plain Generate still stood up twenty
-   * gigabytes of vLLM and waited five minutes for a server it would never
-   * address. Pressing a button labelled with a file format lit up the GPU, and
-   * the shelf said "Starting the reading server…" over a job that is
-   * arithmetic; the user reasonably read that as the model being run again.
-   * The exceptions were the majority, so the rule is stated the other way
-   * round: the job that reads waits, and nothing else does.
+   * two-stage job — which meant a plain Generate still stood up the whole
+   * reading backend and waited for a server it would never address. Pressing a
+   * button labelled with a file format lit up the GPU, and the shelf said
+   * "Starting the reading server…" over a job that is arithmetic; the user
+   * reasonably read that as the model being run again. The exceptions were the
+   * majority, so the rule is stated the other way round: the job that reads
+   * waits, and nothing else does.
+   *
+   * WHAT COMES BACK IS TWO FLAGS FOR THE COMMAND LINE, and they are collected
+   * here because this is the only moment anything in this app knows them. The
+   * served model id is whatever `/v1/models` actually answered — our own
+   * llama-server says `dots.ocr` because `--alias` told it to, an adopted vLLM
+   * says `rednote-hilab/dots.ocr` — and handing the engine the wrong one would
+   * refuse a working server by name in `confirmServedModel`. The concurrency is
+   * ours only when the server is: see `PAGE_READER_CONCURRENCY`.
    */
   const endpoint = next.kind === 'read' ? endpointFor() : null;
-  if (endpoint !== null && isLocalVllmEndpoint(endpoint)) {
+  let localReader: { servedModel: string | null; concurrency: number } | null = null;
+  if (endpoint !== null && isLocalPageReader(endpoint)) {
     next.message = 'Starting the reading server…';
     changed();
     try {
-      await ensureServer();
+      const ready = await ensurePageReader();
+      localReader = { servedModel: ready.servedModel, concurrency: ready.concurrency };
     } catch (err) {
-      // The server's own log tail, whole. A conversion that failed because vLLM
-      // ran out of VRAM must say so here, not "the engine exited 1".
+      // The server's own log tail, whole. A conversion that failed because the
+      // card ran out of memory must say so here, not "the engine exited 1".
       next.state = 'failed';
       next.error = err instanceof Error ? err.message : String(err);
       next.finishedAt = Date.now();
@@ -4039,6 +4049,27 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
     changed();
     settled(next);
     return;
+  }
+  /*
+   * ── THE TWO FLAGS THE LOCAL PAGE READER ADDS, AND WHY NOT IN `argsFor` ─────
+   *
+   * `argsFor` is a pure function of the REQUEST: the same request spells the
+   * same command line whenever it is asked, which is what lets the shelf, the
+   * log line and a re-run all agree. Neither of these is a property of the
+   * request. Both are properties of the server that answered a moment ago —
+   * which model it says it holds, and whether it is one this app started — and
+   * a pure function cannot know either without probing a socket.
+   *
+   * A zero concurrency means "say nothing", which is how an ADOPTED server keeps
+   * the engine's own measured default of twelve.
+   */
+  if (localReader !== null) {
+    if (localReader.servedModel !== null) {
+      args.push('--vlm-endpoint-model', localReader.servedModel);
+    }
+    if (localReader.concurrency > 0) {
+      args.push('--vlm-concurrency', String(localReader.concurrency));
+    }
   }
   console.log(`[job] ${next.kind} ${args.join(' ')}`);
   let handle = runEngine(args, watch);
@@ -4872,9 +4903,9 @@ async function runDetached(
    * WHAT A PUMP HERE WOULD DO IS STOP THE READING SERVER. `pump()` declares drain
    * in its nothing-to-do branch, the internal list is empty between every pair of
    * the host's rows, and `keepServerWarmMinutes` defaults to 0 — which is an
-   * immediate `stopServer`, not a countdown. A batch of ten readings would pay ten
-   * model loads for a queue that never actually went quiet. Drain hosted is the
-   * host's to declare, once, when its own pump has nothing left
+   * immediate `stopPageReader`, not a countdown. A batch of ten readings would pay
+   * ten model loads for a queue that never actually went quiet. Drain hosted is
+   * the host's to declare, once, when its own pump has nothing left
    * (`hostQueueDrained`).
    */
   return copyOf(job);

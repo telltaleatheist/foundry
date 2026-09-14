@@ -35,7 +35,7 @@ mounted by the shell, drawn over everything at z-index 1250.
 
 ```
 Welcome  →  Library  →  Ollama and a model  →  Python environments
-                                                     →  The reading model  →  Ready
+                                                     →  The page reader  →  Ready
 ```
 
 **It is a FLOW, not a question**, and three decisions follow from that:
@@ -214,30 +214,68 @@ store, ollama's business.
 **Inside the environment tarball.** See §8. First analysis is offline because
 there is nothing left to fetch.
 
-### The reading model (`dots.ocr`)
+### The reading model (`dots.ocr`) — REWRITTEN 2026-09-13
 
-**Pulled at runtime by the reader itself, and foundry has never hosted it.**
-`docs/ARCHITECTURE.md` §6 is the standing rule — *"Weights are pulled, never
-committed"* — and on the VLM path it is unqualified: vLLM downloads
-`rednote-hilab/dots.ocr` on its first `vllm serve`, mlx-vlm downloads
-`mlx-community/dots.ocr-4bit` on its first `load()`, into whatever Hugging Face
-cache that process has. Nothing sets `HF_HOME` on that path, nothing reports
-where the ~6 GB landed, and the 15-minute vLLM startup budget exists precisely to
-cover it (`app/electron/vllm-server.ts`).
+**This step was a disclosure and is now a download**, and the change is the whole
+of Wave 61 package B (docs/SLOTS.md §6).
 
-**So the wizard's reading step is a disclosure, not a download.** It says the
-first read pays about six gigabytes, once, and that every read after it is
-offline. It does not invent a second delivery path, because there is no second
-place those weights could come from that is not the reader.
+What it used to say was true of what used to be there: the weights arrived inside
+vLLM's or mlx-vlm's own Hugging Face cache on the first read, nothing set
+`HF_HOME`, nothing reported where the ~6 GB landed, and this app had no door to
+them except a button that started a server. The only pre-pull it could honestly
+offer was on Windows, and only if the user had already built a vLLM inside WSL.
 
-Where a pre-pull is genuinely available it is offered, through the door that
-already exists and no other: on Windows with the WSL environment installed, a
-button calls `vllm:start`, which is the same first-serve download the first book
-would have paid for, taken now instead of at the start of somebody's first
-conversion. On a Mac the reading happens in-process through mlx-vlm and there is
-no door that would fetch those weights without also reading a book, so the step
-is disclosure and nothing else — which is the honest shape rather than a button
-that pretends.
+**The local page reader replaced all of it** (`app/electron/page-reader.ts`).
+Reading a page is the one act with no Ollama path — Ollama does not serve
+dots.ocr, only an open request to — so this is the one piece of weights foundry
+fetches itself:
+
+* **llama.cpp**, from `ggml-org/llama.cpp`'s releases. The newest `b<number>`
+  build with an asset for this machine: the CUDA 12.4 Windows build plus the
+  separate CUDA runtime zip when `nvidia-smi` answers, the CPU build otherwise,
+  and the macOS build (Metal is compiled in) on a Mac. Verified against the
+  release's own published sha256. CUDA 12.4 rather than 13.x because 13 needs a
+  580-series driver and 12.4 runs on 550 and anything above it.
+* **Two GGUF files** from `ggml-org/dots.ocr-GGUF` — `dots.ocr-Q8_0.gguf`
+  (1.89 GB) and `mmproj-dots.ocr-Q8_0.gguf` (1.34 GB). BOTH, because llama.cpp
+  serves a vision model as a text tower plus a separate projector: a server
+  started without the second loads, answers `/v1/models`, and then refuses every
+  request that carries an image. Verified against the LFS sha256 the Hugging Face
+  model index publishes.
+
+The download is **resumable and skips what is already there**, which is the point
+of a 3.2 GB fetch on somebody's home line: a cancel keeps the part file, and the
+next attempt sends a `Range` header. The step prints the size before asking, and
+prints only what is actually missing.
+
+It is served as `llama-server -m <gguf> --mmproj <mmproj> --alias dots.ocr --host
+127.0.0.1 --port 8000 --ctx-size 16384`, plus `-ngl 99` where there is a GPU. The
+port is still 8000 — llama-server's own default is 8080 and is deliberately
+ignored — because that is where every existing `backend.endpointUrl` already
+points and where a hand-started vLLM lives. **A server already answering on that
+port is ADOPTED, never owned**: used as it is, never stopped by this app.
+
+### TWO THINGS ABOUT THIS ARE UNMEASURED, AND NOBODY SHOULD PRETEND OTHERWISE
+
+Written down because the path was built without a GPU in the room:
+
+1. **Whether the Q8_0 GGUF answers in the layout dialect the parser expects.**
+   `src/vlm/dots.ts` (`parseDotsPage`) reads one JSON array of
+   `{bbox, category, text}` per page, over eleven categories, and the whole book
+   — dropped furniture, cropped pictures, centred epigraphs, joined paragraphs —
+   is built out of it. Quantised weights under llama.cpp's own vision stack are
+   not bf16 weights under vLLM, and a model that answers in prose, or with a
+   truncated array, or with boxes in a different frame, produces a BOOK rather
+   than an error. **Read one page and look at the JSON before reading three
+   hundred.**
+2. **Seconds per page, on CPU and on a small card.** The MLX 4-bit path is ~27 s
+   a page on an M1 Ultra (`src/vlm/models.ts`) and vLLM on a 3090 Ti is far
+   faster. Where a Q8 GGUF lands between them, and whether the CPU build is
+   usable at all or merely possible, are numbers this work could not produce.
+
+If (1) fails, the F16 pair in the same repo (3.56 GB + 2.53 GB) is the next thing
+to try, and the two file names are two constants at the top of
+`app/electron/page-reader.ts`.
 
 ## 8. The analysis-worker environment
 
@@ -319,12 +357,17 @@ See `docs/DEPLOYING.md` § "The Python environments" for the runbook.
 
 * **The mac analysis environment.** Needs an Apple-silicon Mac to build; the
   script is written and the catalog entry is `null`. (§8.)
-* **A pre-pull for `dots.ocr` on macOS.** There is no door that fetches those
-  weights without reading a book, and inventing one would be a second delivery
-  path for weights this project does not host. The wizard discloses instead. (§7.)
-* **A progress bar for the `dots.ocr` first-serve download.** vLLM's own output
-  is what the 15-minute startup budget watches; parsing its download lines into a
-  bar is a separate piece of work and is not part of this one.
+* **~~A pre-pull for `dots.ocr` on macOS.~~ DONE 2026-09-13.** The local page
+  reader downloads the GGUF on every platform, macOS included, with a real
+  progress bar over `page-reader:progress`. A Mac with mlx-vlm installed does not
+  need it and is offered it anyway, because a Mac WITHOUT that environment has no
+  other way to read a page. (§7.)
+* **~~A progress bar for the `dots.ocr` first-serve download.~~ DONE 2026-09-13,
+  by removing the thing it was a bar for.** There is no first-serve download any
+  more: the files are fetched by name, by byte count, against a published sha256,
+  before any server starts. (§7.)
+* **A measurement of the page reader.** Both numbers in §7's box. The path is one
+  click; nobody has clicked it with a stopwatch.
 * **Any change to how a job composes `--model`.** `job-queue.ts` still passes
   through whatever the dialog sent. The setting seeds the dialog, which is where
   a person can still see and change it. (§6.)

@@ -4266,3 +4266,57 @@ server, cloud) with atomic per-job placement and a per-row `waitFor`; the
 catalog is generated from Crucible's manifests; tiles gate on the machine.
 Packages A–F and their order are in SLOTS.md §6. The 1.3.0 release prep from
 Wave 60 is void and was never published.
+
+#### Package B — LANDED 2026-09-13
+
+**The app's vLLM-in-WSL launcher is gone, and the LOCAL page reader is now a
+llama-server serving dots.ocr from a GGUF this app downloads.**
+
+Deleted outright: `app/electron/vllm-server.ts` (the launcher),
+`app/electron/backend-setup.ts` (the WSL environment builder that existed only to
+feed it), `app/electron/wsl.ts` (whose only consumers were those two and the
+catalog entry below), and `app/src/app/pages/settings/wsl-backend.component.ts`
+(the card). With them went the `wsl-x64` environment — five gigabytes of CUDA
+wheels — and the whole `inWsl` branch of `env-catalog.ts`, `env-install.ts` and
+`env-provision.ts`, which was a second implementation of the installer for one
+target. `backend.wslDistro` and `backend.vllmPython` are no longer read or
+written; they are not deleted from anybody's settings.json, because the writer
+preserves keys it does not recognise.
+
+Nine IPC doors removed (`vllm:status|start|stop|keep-warm|set-keep-warm`,
+`wsl:facts|tooling`, `backend:setup-run|setup-cancel`) and two pushes
+(`vllm:status-changed`, `backend:setup-log`); six added
+(`page-reader:state|install|install-cancel|start|stop|set-keep-warm`) and two
+pushes (`page-reader:progress`, `page-reader:status-changed`).
+docs/IPC-CHANNELS.md is regenerated, and its family list was re-measured at the
+same time — it had been claiming twenty-seven for weeks while missing five
+families the first-run wizard added.
+
+New: `app/electron/page-reader.ts` and
+`app/src/app/pages/settings/page-reader-card.component.ts`. It locates or
+downloads a llama.cpp build for this machine (CUDA 12.4 + its runtime zip on an
+NVIDIA Windows box, CPU otherwise, Metal on a Mac), fetches the two GGUF files
+with progress in `ollama:pull`'s shape — resumable, skip-if-present, sha256 from
+the Hugging Face LFS index and from GitHub's asset digests — and serves on port
+8000, which is deliberately NOT llama-server's own 8080 because every existing
+`backend.endpointUrl` already points at 8000. A server already answering there is
+adopted and never stopped, exactly as the launcher did.
+
+**No engine change was needed.** `--vlm-endpoint-model` already existed
+(`src/commands.ts`), so the queue passes the served id the listing actually
+reported — `dots.ocr` from our `--alias`, `rednote-hilab/dots.ocr` from an
+adopted vLLM — and `confirmServedModel` proves the right thing either way. It
+also passes `--vlm-concurrency 1` for our own server, because llama-server runs
+one slot and twelve in flight would make every page's banked `seconds` its queue
+wait rather than its work. Nothing under `src/` was touched.
+
+**UNMEASURED, and said out loud in docs/SETUP.md §7 as well:** (1) whether the
+Q8_0 GGUF answers in the layout dialect `src/vlm/dots.ts` (`parseDotsPage`)
+parses — a quantised model that answers in prose or with boxes in a different
+frame would produce a BOOK rather than an error; (2) seconds per page on CPU and
+on a small card. The path is one click for Owen to measure and nobody has
+clicked it.
+
+**Left for package E, deliberately:** the Crucible connect offer. There is a
+marked place for it beside the page-reader card, and it is a SLOT of its own
+rather than a field on that card (SLOTS.md §3).

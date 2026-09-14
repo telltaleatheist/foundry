@@ -23,7 +23,6 @@ import * as path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { readAppSettings, writeAppSettings } from './app-settings';
-import { cancelSetup, setupWslEnv } from './backend-setup';
 import {
   ensureCapture,
   intakePhotos,
@@ -106,12 +105,11 @@ import {
   listRecents,
 } from './recents';
 import { readSettings, writeSettings } from './settings';
-import * as vllm from './vllm-server';
+import * as pageReader from './page-reader';
 import { answerLetGo, broadcast, foundryWindow } from './window';
 import {
   planAnalysis, planCleanup, planExport, planReading, planSimplification, planTranslation,
 } from './workspace';
-import { detectEnvTooling, listDistros } from './wsl';
 import { fold, isBook } from '../shared/original';
 import {
   ANALYSIS_CATEGORY_IDS,
@@ -150,7 +148,6 @@ import type {
   StepRow,
   ReReadAnswer,
   RewriteMode,
-  SetupRequest,
   StepDeletion,
   TextPassRequest,
   AnalyzeRequest,
@@ -2936,18 +2933,17 @@ export function registerIpc(): void {
     shell.showItemInFolder(path.resolve(target));
   });
 
-  // ── WSL, the environment, and the server ─────────────────────────────────
-  ipcMain.handle('wsl:facts', () => listDistros());
-  ipcMain.handle('wsl:tooling', (_event, distro: string) => detectEnvTooling(distro));
-
-  // The tooling is re-measured HERE rather than trusted from the renderer: the
-  // route the user picked is a choice, but what the distro actually has is a
-  // fact, and a fact the renderer asserted is a fact main did not check.
-  ipcMain.handle('backend:setup-run', async (_event, request: SetupRequest) => {
-    const tooling = await detectEnvTooling(request.distro);
-    return setupWslEnv(request, tooling, (event) => broadcast('backend:setup-log', event));
-  });
-  ipcMain.handle('backend:setup-cancel', () => { cancelSetup(); });
+  /*
+   * ── WHAT USED TO BE HERE: `wsl:*` AND `backend:setup-*` ───────────────────
+   *
+   * Four doors that listed WSL distros, asked one of them what it could build
+   * with, and ran a conda/venv build of vLLM inside it while streaming the
+   * guest's output over `backend:setup-log`. All four went on 2026-09-13 with
+   * the launcher they fed (docs/SLOTS.md §6, package B). This app does not
+   * build a vLLM, does not start one, and does not ask about WSL. The local
+   * page reader below is what reads pages on this machine now, and a vLLM
+   * somebody else runs is reached the way every other server is: by its URL.
+   */
 
   // ── The prebuilt environments ────────────────────────────────────────────
   ipcMain.handle('env:catalog', () => catalogForThisMachine());
@@ -2975,15 +2971,38 @@ export function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
-  ipcMain.handle('vllm:status', () => vllm.serverStatus());
-  ipcMain.handle('vllm:start', () => vllm.ensureServer());
-  ipcMain.handle('vllm:stop', () => vllm.stopServer('the Stop button'));
+  // ── The local page reader ────────────────────────────────────────────────
+  /*
+   * ONE READ for the settings row and the setup step, and four acts beside it.
+   *
+   * `page-reader:state` answers the whole question — supported here, installed,
+   * which llama.cpp build, which model files, what a download would cost, and
+   * what the server is doing — because every one of those facts is measured off
+   * the same directory at the same moment, and a screen that asked separately
+   * could draw "installed" beside "0 of 2 files". The keep-warm minutes ride on
+   * it for the same reason rather than having a read of their own.
+   */
+  ipcMain.handle('page-reader:state', () =>
+    pageReader.pageReaderState(readAppSettings().keepServerWarmMinutes));
+  /*
+   * The install does NOT go through the job queue, on `ollama:pull`'s reasoning
+   * one door along: the queue exists to keep GPU work from running two at a
+   * time and to give a run a cancellable row, and a download is neither. It is
+   * cancellable through its own door, and what it has already fetched survives
+   * the cancel — see `fetchResumable`.
+   */
+  ipcMain.handle('page-reader:install', () =>
+    pageReader.installPageReader((progress) => broadcast('page-reader:progress', progress)));
+  ipcMain.handle('page-reader:install-cancel', () => { pageReader.cancelPageReaderInstall(); });
+  // Pre-warming, so the first book of an evening does not pay the load. The
+  // same door a reading job uses, pressed by hand.
+  ipcMain.handle('page-reader:start', async () => (await pageReader.ensurePageReader()).status);
+  ipcMain.handle('page-reader:stop', () => pageReader.stopPageReader('the Stop button'));
   // The keep-warm knob is APP policy, not engine settings: the engine neither
   // starts nor stops servers, so its settings.json never carries this. The
   // queue reads it at every drain (job-queue.ts), so a change applies to the
   // very next one — no restart, no re-plumb.
-  ipcMain.handle('vllm:keep-warm', () => readAppSettings().keepServerWarmMinutes);
-  ipcMain.handle('vllm:set-keep-warm', (_event, minutes: number) =>
+  ipcMain.handle('page-reader:set-keep-warm', (_event, minutes: number) =>
     writeAppSettings({ keepServerWarmMinutes: minutes }).keepServerWarmMinutes);
 
   // ── First run ────────────────────────────────────────────────────────────
@@ -3135,7 +3154,7 @@ export function registerIpc(): void {
    * for the list itself, the same way the queue's mirror asks for jobs on boot.
    */
   onProjectsChanged(() => broadcast('projects:changed', null));
-  vllm.onServerStatus((status) => broadcast('vllm:status-changed', status));
+  pageReader.onPageReaderStatus((status) => broadcast('page-reader:status-changed', status));
   // Published beside the job row, not instead of it: the shelf reads the queue,
   // the settings card reads this, and neither of them owns the run.
   onEnvInstallProgress((progress) => broadcast('env:install-progress', progress));
