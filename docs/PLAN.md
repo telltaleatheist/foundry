@@ -4685,7 +4685,7 @@ that machine connects by reading `<CRUCIBLE_HOME>/pairing` — nobody types.
 | H | Coordinate-on-connect: catalog read first, module posted only when something is missing, followed/waited/refused by name; the row says what is happening in BookForge's words | SDK 0.6.0 (vendored) | **LANDED** (below) |
 | I | The settings WINDOW: Settings › AI routes card + the wizard's AI step draw `GET /v1/settings` for the chosen server and write through `PUT`; per-class route rows, three upstream cards, Test before Save; nothing stored in app-settings.json | PHASE15 §3.1–3.2, §5.2 | **LANDED** (below) |
 | J | Connect three ways, in order, automatic: the pairing file → `local`; a pasted connect code (SDK `parsePairing`); "get one on this machine" through `@crucible/bootstrap install()` when it ships (the door keeps refusing by name until then) | PHASE15 §3.6, §5.1 | **LANDED** (below) |
-| K | Dispatch + gates on the route: `--model capability.selected`; no lease and no card lane when the route is upstream (a per-server `[cloud]` lane, width 2, as BookForge); tiles lit iff an enabled server's capability row says `enabled`, dark with the row's own `reason` | H, I | next |
+| K | Dispatch + gates on the route: `--model capability.selected`; no lease and no card lane when the route is upstream (a per-server `[cloud]` lane, width 2, as BookForge); tiles lit iff an enabled server's capability row says `enabled`, dark with the row's own `reason` | H, I | **LANDED** (below) |
 | L | DELETIONS (PHASE15 §5.3, plus Owen's "no ollama fallbacks"): `cloud-providers.ts`, the cloud card, `ComputeSlotKind 'cloud'`, `placeOnCloud`, `FOUNDRY_ENDPOINT_HEADERS` from an app-held key, `model-lineup-local.json` (the floor is `CatalogRow.floors` alone), the engine's `--server anthropic` and `--server ollama` doors, the wizard's Ollama step and pull, `llm:defaults`/`openingModelFor` (the engine's route decides the model; the dialogs lose the model field), the local slot, **`page-reader.ts` and its two cards** (ruled below), act-gates' own "can this machine do it" reasoning and the CPU rule | I, J, K **and the gate below** | gated |
 
 **The gate on L, restated with BookForge:** a host-mode server plus an
@@ -4846,3 +4846,37 @@ rendered verbatim; and the SDK's `testUpstream()` now answers one shape
 (`{ok, models} | {ok:false, code, message}`) and never throws a refusal — the
 hand-rolled reader discriminates on the code across three error classes until
 the tarball carries that method.
+
+#### Package K — dispatch and the tiles on the engine's ROUTE — LANDED 2026-09-14
+
+`CapabilityRow.route` (PHASE15 §3.3, pinned eb59f7b; the row type lives in
+`shared/engine-settings.ts` since package I): a document with NO route anywhere
+is a pre-phase server and every class is `local`; a PARTIAL document is refused
+`capability_route_missing` naming the row, an unknown word
+`capability_route_unknown` — both `CrucibleRefused`, so a placement refuses by
+name and the provider's probe reads them as a server that did not answer.
+`placeOnCrucible` on an upstream route: no `models()`, no `loadModel`, no lease
+(§3.4 — *"no lease, no lane … nothing was on the card"*), the same `/openai`
+endpoint and the same `X-Crucible-Act` header, `Placement.via` carrying the
+upstream's name. Every Crucible slot gains a second lane `<slot>:cloud`, width
+2 (BookForge's `[cloud]`, §5.3), and THE CLAIM MOVED: it is taken after the
+capability read, on the lane the route names, so a card is never held through
+a read that ends upstream — `laneAtPick` therefore reserves only where the
+board has one lane. The bench draws a cloud lane only when something is in it.
+`interpretFailure` gains `upstream_unconfigured` (refuse, naming the engine's
+settings card), `upstream_rejected`/`upstream_unreachable` (wait, the server's
+own sentence), `lease_not_needed` (refuse, saying out loud that the dispatcher
+tried to lease an upstream model). The tiles are lit by ANY enabled server
+whose row says `enabled` — local or remote, naming the upstream when there is
+one — and a dark tile carries the first enabled server's own `reason`, which is
+how host mode's WSL sentence reaches a tooltip. **`CRUCIBLE_READS` IS TRUE**:
+page reads dispatch like any other act, the reading server starts only after a
+LOCAL placement, a placed read carries `--vlm-endpoint`/`--vlm-endpoint-model`,
+and §5b's automatic removal of Foundry's dots files arms with it — on Owen's
+own PC, whose WSL Crucible serves `pages`, the first launch of this build
+deletes Foundry's ~4 GB dots copy and writes a receipt the Models card shows.
+The local slot still ranks first, so a machine with only a REMOTE Crucible
+reads locally; a remote reader is reached once a loopback Crucible has hidden
+the local slot. **Unwatched:** no PHASE15 server exists; every path was
+exercised against fake servers only — an upstream placement was seen to cost
+exactly one HTTP hit and claim the cloud lane.

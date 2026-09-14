@@ -219,6 +219,37 @@ export interface CapabilityRow {
   reason: string;
   /** How much bigger the card would have to be. 0 on an enabled class. */
   shortfallBytes: number;
+  /**
+   * WHERE THIS CLASS'S WORK RUNS ON THAT SERVER (crucible PHASE15 §3.3).
+   *
+   *   `local`    — the selected LOCAL model, resident on that machine's card.
+   *                Everything this module has ever done.
+   *   `upstream` — the server forwards the chat to `anthropic`, `openai` or
+   *                `ollama` on the operator's account, and `selected` is the
+   *                `<upstream>/<model>` id to send.
+   *
+   * ── ABSENT IS `local`, AND THE RULE IS ABOUT THE DOCUMENT, NOT THE ROW ────
+   *
+   * PHASE15 §3.3, pinned with both apps 2026-09-14 (crucible eb59f7b): a
+   * capability document in which NO row carries `route` comes from a server that
+   * predates this phase, and every class on such a server IS local — *"a fact the
+   * document states, not a default the client fills"*. Owen's own WSL Crucible is
+   * one today, and reading its silence as a refusal, or as `upstream`, would dark
+   * every tile on the machine this app is built on.
+   *
+   * A PARTIAL DOCUMENT IS A DEFECT AND IS REFUSED, not patched. `readCapability`
+   * raises `capability_route_missing` naming the row, and
+   * `capability_route_unknown` for a value that is neither word. Filling either
+   * in with `local` would be this app inventing the one fact that decides whether
+   * a run costs GPU-minutes or money — see `readCapability`, which is the one
+   * reader and therefore the one place the rule can live.
+   *
+   * `enabled` ONE FIELD UP STILL READS A MISSING FLAG AS FALSE, and that is not
+   * inconsistent: a missing `enabled` is a server declining to answer a question
+   * it knows about, where a missing `route` on a document that has none anywhere
+   * is a server from before the question existed.
+   */
+  route: 'local' | 'upstream';
 }
 
 export interface CapabilityRecord {

@@ -1554,6 +1554,28 @@ export interface Job {
    */
   ranOn?: string;
   /**
+   * THE UPSTREAM {@link Job.ranOn} FORWARDED THIS RUN TO — `anthropic`, `openai`,
+   * `ollama` — or absent for work that ran on that machine's own card.
+   *
+   * ── Why it is beside `ranOn` and not folded into it ────────────────────────
+   *
+   * crucible docs/PHASE15-HOST.md §3.3: a text class on a server has a ROUTE, and
+   * an upstream one means the SERVER makes the call on the operator's account.
+   * The machine is still the machine — the request went to it, its activity log
+   * records the act, and "Running on the Mac" is the true sentence. What changes
+   * is that nothing is on its GPU (§3.4: *"no lease, no lane … nothing was on the
+   * card"*), so the run belongs in that server's `[cloud]` lane rather than in
+   * its card lane, and this is what says so (`laneOfRun`, shared/queue-board.ts).
+   *
+   * A NAME AND NOT A FLAG, because the two readers want different halves of it:
+   * the board wants "was it forwarded at all", and the person wants to know who
+   * is being billed. One field answers both; a boolean would answer neither
+   * properly and would need the model id parsed somewhere to recover the name.
+   *
+   * ABSENT IS THE ORDINARY CASE and is every row this queue has ever held.
+   */
+  ranVia?: string;
+  /**
    * WHAT THE RUN SPENT, when the server it ran against counted.
    *
    * ── Where it comes from, and why it is on the row rather than in a file ────
