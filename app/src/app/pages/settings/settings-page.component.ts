@@ -6,6 +6,7 @@ import type { BackendMode, DoctorReport, EngineInfo, TierReport } from '@shared/
 import { api, hosted } from '../../core/foundry';
 import { EnvCardComponent } from './env-card.component';
 import { LibraryCardComponent } from './library-card.component';
+import { MachineModelsCardComponent } from './machine-models-card.component';
 import { LlmCardComponent } from './llm-card.component';
 import { PageReaderCardComponent } from './page-reader-card.component';
 import { ServersCardComponent } from './servers-card.component';
@@ -27,7 +28,7 @@ import { ServersCardComponent } from './servers-card.component';
   selector: 'app-settings-page',
   imports: [
     EnvCardComponent, FormsModule, LibraryCardComponent, LlmCardComponent,
-    PageReaderCardComponent, ServersCardComponent,
+    MachineModelsCardComponent, PageReaderCardComponent, ServersCardComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -177,6 +178,15 @@ import { ServersCardComponent } from './servers-card.component';
             be able to read a page.
           -->
           <app-page-reader-card (changed)="probe()" />
+
+          <!--
+            WHAT IS ON THE DISK, across every store the app knows about — docs/
+            SLOTS.md §5b. Last in the column because it is the only card here
+            that acts on nothing: it describes the consequences of the four cards
+            above it, so it reads after them. Its one button removes what Foundry
+            itself downloaded, and nothing else on the machine.
+          -->
+          <app-machine-models-card />
         </div>
       </section>
     </div>

@@ -1,0 +1,166 @@
+{
+  "generatedBy": "hand — pending crucible/scripts/gen-foundry-lineup.py",
+  "generatedAt": "2026-09-14T03:55:21Z",
+  "models": [
+    {
+      "id": "qwen3.5-0.8b",
+      "crucible": false,
+      "classes": ["translate", "simplify", "analysis"],
+      "label": "Qwen 3.5 · 0.8B",
+      "description": "The smallest one. Runs on anything, including on the processor alone — use it when there is no GPU.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.5:0.8b",
+        "downloadGB": 1.0,
+        "needsGB": { "value": 2.5, "basis": "declared" }
+      }
+    },
+    {
+      "id": "qwen3.5-2b",
+      "crucible": false,
+      "classes": ["translate", "simplify", "analysis"],
+      "label": "Qwen 3.5 · 2B",
+      "description": "Small and quick. Fine for simplifying and for short passages; noticeably rougher on long translation.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.5:2b",
+        "downloadGB": 2.7,
+        "needsGB": { "value": 4.2, "basis": "declared" }
+      }
+    },
+    {
+      "id": "qwen3.5-4b",
+      "crucible": false,
+      "classes": ["translate", "simplify", "analysis"],
+      "label": "Qwen 3.5 · 4B",
+      "description": "The sweet spot for a laptop or an 8 GB card. Good prose, fast enough to watch.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.5:4b",
+        "downloadGB": 3.4,
+        "needsGB": { "value": 4.9, "basis": "declared" }
+      }
+    },
+    {
+      "id": "qwen3.5-9b",
+      "crucible": true,
+      "classes": ["translate", "simplify", "analysis"],
+      "label": "Qwen 3.5 · 9B",
+      "description": "Qwen 3.5's own default. Clearly better on long-form translation; wants a 12 GB card or more.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.5:9b",
+        "downloadGB": 6.6,
+        "needsGB": { "value": 8.1, "basis": "declared" }
+      },
+      "minimum_for": ["translate", "simplify"]
+    },
+    {
+      "id": "qwen3.5-9b-q8",
+      "crucible": false,
+      "classes": ["clean"],
+      "label": "Qwen 3.5 9B · 8-bit",
+      "description": "The narration cleanup's own default. Eight-bit weights, because the cleanup is a punctuation job rather than a prose job and the loss shows there first.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.5:9b-q8_0",
+        "downloadGB": 9.8,
+        "needsGB": { "value": 11.3, "basis": "declared" }
+      }
+    },
+    {
+      "id": "qwen3.5-9b-bf16",
+      "crucible": false,
+      "classes": ["clean"],
+      "label": "Qwen 3.5 9B · 16-bit",
+      "description": "The same 9B at full precision, through ollama's llama.cpp runner. Twice the weights for a cleanup that is already close at eight bits.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.5:9b-bf16",
+        "downloadGB": 18.0,
+        "needsGB": { "value": 19.5, "basis": "declared" }
+      }
+    },
+    {
+      "id": "qwen3.5-9b-mlx-bf16",
+      "crucible": false,
+      "classes": ["clean"],
+      "label": "Qwen 3.5 9B · 16-bit (MLX)",
+      "description": "The same weights at the same precision on ollama's MLX runner — the Apple Silicon spelling of the 16-bit row, and the only one that runs there.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.5:9b-mlx-bf16",
+        "downloadGB": 18.0,
+        "needsGB": { "value": 19.5, "basis": "declared" }
+      }
+    },
+    {
+      "id": "qwen3.5-27b",
+      "crucible": false,
+      "classes": ["translate", "simplify", "analysis"],
+      "label": "Qwen 3.5 · 27B",
+      "description": "The 27B standard, in this generation. What a 24 GB card is for.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.5:27b",
+        "downloadGB": 17.0,
+        "needsGB": { "value": 18.5, "basis": "declared" }
+      }
+    },
+    {
+      "id": "qwen3.8-27b-4bit",
+      "crucible": true,
+      "classes": ["translate", "simplify", "analysis", "clean"],
+      "label": "Qwen 3.8 27B · 4-bit",
+      "description": "The standing default for every language task (Owen, 2026-08-22). Four-bit weights, so it is the 27B that fits a 24 GB card.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.8:27b",
+        "downloadGB": 17.0,
+        "needsGB": { "value": 18.5, "basis": "declared" }
+      }
+    },
+    {
+      "id": "qwen3.5-35b-a3b",
+      "crucible": false,
+      "classes": ["translate", "simplify", "analysis"],
+      "label": "Qwen 3.5 · 35B-A3B",
+      "description": "Mixture-of-experts: 35B of weights, about 3B active per token, so it is faster than its size — but all 35B must be resident.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.5:35b-a3b",
+        "downloadGB": 24.0,
+        "needsGB": { "value": 25.5, "basis": "declared" }
+      }
+    },
+    {
+      "id": "qwen3.5-122b-a10b",
+      "crucible": false,
+      "classes": ["translate", "simplify", "analysis"],
+      "label": "Qwen 3.5 · 122B-A10B",
+      "description": "A workstation model. Listed so a machine that can run it is not quietly offered something smaller.",
+      "local": {
+        "kind": "ollama",
+        "tag": "qwen3.5:122b-a10b",
+        "downloadGB": 81.0,
+        "needsGB": { "value": 82.5, "basis": "declared" }
+      }
+    },
+    {
+      "id": "dots-ocr",
+      "crucible": true,
+      "classes": ["pages"],
+      "label": "dots.ocr",
+      "description": "The page reader: a 1.8B vision model that answers with a page's layout and its text. Foundry serves it locally from llama.cpp, and downloads it in setup.",
+      "local": {
+        "kind": "gguf",
+        "hf_repo": "ggml-org/dots.ocr-GGUF",
+        "revision": "main",
+        "file": "dots.ocr-Q8_0.gguf",
+        "mmproj": "mmproj-dots.ocr-Q8_0.gguf",
+        "downloadGB": 3.2,
+        "needsGB": { "value": 4.7, "basis": "declared" }
+      }
+    }
+  ]
+}

@@ -333,6 +333,19 @@ const api: FoundryApi = {
     onStatus: (listener) => subscribe<ServerStatus>('page-reader:status-changed', listener),
   },
 
+  acts: {
+    gates: () => ipcRenderer.invoke('acts:gates'),
+    // NO PAYLOAD, deliberately: the push says the machine moved, and the gates
+    // are read back through the door above rather than pushed, so one shape is
+    // assembled in one place and a listener cannot fall behind a reader.
+    onChanged: (listener) => subscribe<void>('acts:gates-changed', () => listener()),
+  },
+
+  models: {
+    inventory: () => ipcRenderer.invoke('models:inventory'),
+    removePageReader: () => ipcRenderer.invoke('models:remove-page-reader'),
+  },
+
   capture: {
     create: (title) => ipcRenderer.invoke('capture:create', title),
     intake: (projectDir, paths) => ipcRenderer.invoke('capture:intake', projectDir, paths),

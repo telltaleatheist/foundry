@@ -22,6 +22,7 @@ import * as path from 'node:path';
 
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
+import { actGates } from './act-gates';
 import { readAppSettings, writeAppSettings } from './app-settings';
 import {
   addLocalCrucible,
@@ -75,6 +76,7 @@ import {
 } from './host-ops';
 import type { HostNodeAction } from '../shared/host-ops';
 import * as queue from './job-queue';
+import { machineModels, removeFoundryDownloads } from './machine-models';
 import { cancelOllamaInstall, cancelPull, installOllama, probeOllama, pullModel } from './ollama';
 import { finishSetup, llmChoices, setupState } from './setup';
 import { probeSystem } from './system-probe';
@@ -499,6 +501,28 @@ function sizeOnDisk(bytes: number): string {
     unit += 1;
   }
   return unit === 0 ? `${bytes} bytes` : `${value.toFixed(1)} ${units[unit]}`;
+}
+
+/**
+ * SOMETHING THAT DECIDES A TILE MOVED. Say so; say nothing about what.
+ *
+ * The dock's gates are composed in main off five facts (act-gates.ts), and three
+ * of the five are changed by doors in this file: ollama's library, the page
+ * reader's directory, and the settings file. (The other two are the hardware,
+ * which does not change while the app is open, and package C's registry, which
+ * does not exist.) Without this
+ * push a person would pull the 9B the wizard recommended and watch Translate
+ * stay gray until they restarted the app — which is the exact failure Owen's
+ * rule was written to prevent, arriving from the other direction.
+ *
+ * NO PAYLOAD, on `projects:changed`'s reasoning. The gates are one composed
+ * answer and composing them costs a probe, so this says only that the machine
+ * moved and the renderer asks again through `acts:gates`. Pushing the shape
+ * would give the app two writers of it, and the pushed copy would be the one
+ * that goes stale.
+ */
+function gatesChanged(): void {
+  broadcast('acts:gates-changed', null);
 }
 
 export function registerIpc(): void {
@@ -3011,8 +3035,17 @@ export function registerIpc(): void {
    * cancellable through its own door, and what it has already fetched survives
    * the cancel — see `fetchResumable`.
    */
-  ipcMain.handle('page-reader:install', () =>
-    pageReader.installPageReader((progress) => broadcast('page-reader:progress', progress)));
+  ipcMain.handle('page-reader:install', async () => {
+    const outcome = await pageReader.installPageReader(
+      (progress) => broadcast('page-reader:progress', progress),
+    );
+    // The OCR tile is dark on a machine with no reader and lit on one with it,
+    // so the install is one of the three things that moves a gate. Announced on
+    // the failure too: a partial install that got the binary and not the weights
+    // leaves the gate exactly where it was, and re-reading says so.
+    gatesChanged();
+    return outcome;
+  });
   ipcMain.handle('page-reader:install-cancel', () => { pageReader.cancelPageReaderInstall(); });
   // Pre-warming, so the first book of an evening does not pay the load. The
   // same door a reading job uses, pressed by hand.
@@ -3061,8 +3094,18 @@ export function registerIpc(): void {
   ipcMain.handle('ollama:install', () =>
     installOllama((progress) => broadcast('ollama:progress', progress)));
   ipcMain.handle('ollama:install-cancel', () => { cancelOllamaInstall(); });
-  ipcMain.handle('ollama:pull', (_event, tag: string) =>
-    pullModel(tag, readAppSettings().ollamaUrl, (progress) => broadcast('ollama:progress', progress)));
+  ipcMain.handle('ollama:pull', async (_event, tag: string) => {
+    const outcome = await pullModel(
+      tag,
+      readAppSettings().ollamaUrl,
+      (progress) => broadcast('ollama:progress', progress),
+    );
+    // A pull is the commonest way a dark tile becomes a lit one — it is what the
+    // gate's own refusal tells somebody to go and do — so the dock is told the
+    // moment it lands rather than at the next app start.
+    gatesChanged();
+    return outcome;
+  });
   ipcMain.handle('ollama:pull-cancel', () => { cancelPull(); });
 
   /*
@@ -3107,6 +3150,14 @@ export function registerIpc(): void {
     writeAppSettings({ defaultLlmModel: model }).defaultLlmModel);
   ipcMain.handle('llm:set-clean-model', (_event, model: string) =>
     writeAppSettings({ cleanTextModel: model }).cleanTextModel);
+  /*
+   * NEITHER OF THOSE TWO PUSHES `acts:gates-changed`, and the omission is the
+   * rule rather than an oversight: the gate asks what this machine HOLDS and
+   * what FITS, not which tag a dialog opens with. Naming a model nobody has
+   * pulled does not light a tile and does not dark one. `llm:set-servers`
+   * below DOES push, because repointing the machine at a vLLM moves the act
+   * off this machine's own memory entirely.
+   */
 
   /*
    * WHERE OLLAMA IS — the one server setting this app still keeps, and the
@@ -3137,6 +3188,7 @@ export function registerIpc(): void {
   ipcMain.handle('crucible:settings', () => crucibleSettingsView());
   ipcMain.handle('crucible:save', (_event, servers: CrucibleServerEdit[]) => {
     writeCrucibleServers(servers);
+    gatesChanged();
     /*
      * THE WHOLE VIEW, not just the list, because saving a server CHANGES THE
      * SLOTS — enabling a loopback entry takes the local slot away — and a card
@@ -3168,6 +3220,41 @@ export function registerIpc(): void {
    */
   ipcMain.handle('slots:rows-waiting-for', (_event, name: string) =>
     queue.rowsWaitingFor(name));
+
+  // ── What this machine may be asked to do, and what it holds ──────────────
+  /*
+   * THE TILE GATE, AND IT IS ONE DOOR FOR ALL FIVE ACTS.
+   *
+   * Owen (docs/SLOTS.md §1): *"the tiles arent lit up until the models are
+   * present"*, and translation on a processor *"should just be disabled"*. Every
+   * fact that decides it lives here — the hardware probe, ollama's `/api/tags`,
+   * the settings file, the page reader's directory, and eventually package C's
+   * server registry — so the answer is composed in main and the renderer draws
+   * it. Five acts in one call because they come off ONE probe of one machine,
+   * and a dock asking separately could light Translate beside a Simplify that
+   * had just gone dark. The stage gate (shared/stages.ts) is unchanged and still
+   * the renderer's: that one is about the book, this one is about the machine.
+   */
+  ipcMain.handle('acts:gates', () => actGates());
+
+  /*
+   * WEIGHTS ON THIS DISK — docs/SLOTS.md §5b's "Models on this machine".
+   *
+   * The removal is the only door in this app that deletes model files, and it
+   * deletes exactly one directory: the one this app downloaded into. Ollama's
+   * store is listed beside it and never touched (Owen: *"ollama has its own
+   * thing going on and we should leave it be"*), and a local Crucible's line
+   * waits on package C. A refusal comes back as a RESULT with a sentence rather
+   * than as a rejection, because the row prints what happened either way.
+   */
+  ipcMain.handle('models:inventory', () => machineModels());
+  ipcMain.handle('models:remove-page-reader', async () => {
+    const outcome = await removeFoundryDownloads();
+    // Only when something actually went. A refusal changed nothing, and a push
+    // saying otherwise would send every open window to re-probe for no reason.
+    if (outcome.ok && outcome.freedBytes > 0) gatesChanged();
+    return outcome;
+  });
 
   /*
    * The whole list on every mutation — and hosted, the whole list is the HOST's

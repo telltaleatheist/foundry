@@ -90,9 +90,11 @@ import {
 } from './env-downloader';
 import { probeSystem } from './system-probe';
 import type {
+  MachineModelItem,
   PageReaderFile,
   PageReaderProgress,
   PageReaderState,
+  RemovalOutcome,
   ServerState,
   ServerStatus,
 } from '../shared/types';
@@ -1258,4 +1260,181 @@ export async function stopPageReader(reason = 'asked to stop'): Promise<ServerSt
   await terminate(entry, reason);
   publish('stopped', `Stopped — ${reason}.`);
   return serverStatus();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// What this costs on disk, and taking it back — SLOTS.md §5b
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Is the local reader ready to be used, asked WITHOUT touching the network.
+ *
+ * `pageReaderState` answers the same question and more, and it reaches Hugging
+ * Face and GitHub to price the download whenever something is missing — which is
+ * exactly right for a settings card being looked at, and exactly wrong for the
+ * tile gate (act-gates.ts), which is asked whenever the dock reloads its gates
+ * and must not put two HTTP round trips behind a tooltip. So the cheap half is
+ * its own function: three `statSync` calls against a directory this app owns.
+ *
+ * THE SAME THREE FILES `pageReaderState` CALLS INSTALLED, and deliberately
+ * spelled once more rather than shared through a helper that returns both — the
+ * two callers want different work done, and a helper doing the expensive half
+ * for the cheap caller is the defect this function exists to avoid.
+ */
+export function pageReaderInstalled(): boolean {
+  if (serverBinary() === null) return false;
+  return MODEL_FILES.every((name) => {
+    try {
+      return fs.statSync(modelPath(name)).size > 0;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Bytes under a directory, walked. Null when anything in it could not be read.
+ *
+ * NULL RATHER THAN A PARTIAL SUM, because the number this feeds is the one the
+ * Remove button prints as "frees 3.2 GB" — and a sum that silently skipped an
+ * unreadable subdirectory would promise back less than it takes, which is the
+ * one direction that figure must never be wrong in. A missing directory is 0,
+ * not null: nothing there is a measurement, not a failure.
+ */
+function bytesUnder(dir: string): number | null {
+  let total = 0;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? 0 : null;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const under = bytesUnder(full);
+      if (under === null) return null;
+      total += under;
+      continue;
+    }
+    try {
+      total += fs.statSync(full).size;
+    } catch {
+      return null;
+    }
+  }
+  return total;
+}
+
+/**
+ * What Foundry has downloaded for the page reader, itemised for the "Models on
+ * this machine" row.
+ *
+ * THE BINARY IS ONE ITEM AND THE WHOLE `bin/` DIRECTORY, not the executable's
+ * own size. The CUDA build arrives with its runtime zip unpacked beside it —
+ * several hundred megabytes of cuBLAS — and listing the 3 MB executable while
+ * that sat unnamed in the same folder would be an inventory that hides most of
+ * what it is inventorying.
+ */
+export function pageReaderFootprint(): { items: MachineModelItem[]; bytes: number | null } {
+  const items: MachineModelItem[] = [];
+  const record = readRecord();
+
+  const binBytes = bytesUnder(binDir());
+  if (binBytes === null || binBytes > 0) {
+    const build = record === null || record.release.length === 0
+      ? 'llama.cpp (the record of which build this is was lost)'
+      : `llama.cpp ${record.release}`;
+    items.push({
+      name: build,
+      detail: `The server that runs ${PAGE_READER_MODEL}`
+        + `${record === null ? '' : ` (${record.accel})`}, in ${binDir()}.`,
+      bytes: binBytes,
+    });
+  }
+
+  for (const name of MODEL_FILES) {
+    let bytes: number;
+    try {
+      bytes = fs.statSync(modelPath(name)).size;
+    } catch {
+      continue;
+    }
+    items.push({
+      name,
+      detail: name === MMPROJ_FILE
+        ? `${PAGE_READER_MODEL}'s vision projector, from ${HF_REPO}.`
+        : `${PAGE_READER_MODEL}'s weights, from ${HF_REPO}.`,
+      bytes,
+    });
+  }
+
+  const total = items.reduce<number | null>(
+    (sum, item) => (sum === null || item.bytes === null ? null : sum + item.bytes),
+    0,
+  );
+  return { items, bytes: total };
+}
+
+/**
+ * Delete what Foundry downloaded for the page reader, and say what that freed.
+ *
+ * ── ONLY WHAT THIS APP PUT THERE ────────────────────────────────────────────
+ *
+ * `pageReaderDir()` is a directory this app creates, fills and owns — the
+ * llama.cpp build, the two GGUF files and the install record, and nothing else
+ * has ever written into it. So the removal is that directory, whole, and the
+ * blast radius is stated by the path rather than by a list of globs that could
+ * drift from what the installer actually wrote. Ollama's store is not touched
+ * and could not be: it is somewhere else entirely, and Owen's ruling is that
+ * *"ollama has its own thing going on and we should leave it be"*.
+ *
+ * ── THE SERVER COMES DOWN FIRST, AND ONLY IF IT IS OURS ─────────────────────
+ *
+ * Deleting a GGUF out from under a running llama-server is a reader that fails
+ * its next page with an I/O error rather than with a sentence. `stopPageReader`
+ * already knows the difference between the server this app started and one it
+ * ADOPTED on port 8000: an adopted server is somebody else's process, it is left
+ * running, and the files here are still ours to delete.
+ *
+ * ── AND IT IS ALWAYS SAID OUT LOUD ──────────────────────────────────────────
+ *
+ * SLOTS.md §5b: *"never silently: the settings row says what was removed and the
+ * gigabytes freed. Re-download restores it."* The outcome carries the figure,
+ * measured BEFORE the delete, because afterwards there is nothing left to
+ * measure.
+ */
+export async function removePageReader(): Promise<RemovalOutcome> {
+  const dir = pageReaderDir();
+  const bytes = bytesUnder(dir);
+  if (bytes === 0) {
+    return {
+      ok: true,
+      freedBytes: 0,
+      detail: 'There was nothing to remove — the page reader is not installed.',
+    };
+  }
+
+  await stopPageReader('the page reader is being removed');
+
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    return {
+      ok: false,
+      freedBytes: 0,
+      detail: `The page reader could not be removed: ${(err as Error).message}`,
+    };
+  }
+
+  const freed = bytes ?? 0;
+  return {
+    ok: true,
+    freedBytes: freed,
+    detail: bytes === null
+      ? `The page reader was removed from ${dir}. Its size could not be measured first, so there `
+        + 'is no figure to give for what that freed.'
+      : `The page reader was removed from ${dir}, freeing ${gib(freed)}. Installing it again `
+        + 'downloads it back.',
+  };
 }
