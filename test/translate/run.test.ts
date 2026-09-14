@@ -23,9 +23,12 @@ import type { HttpResponse, Transport } from '../../src/translate/transport.js';
 
 /** Where the fakes live. Named on every run because the engine has no default server. */
 const ENDPOINT = 'http://fake:8000/v1';
+/** And the other door's, for the handful of tests that are ABOUT the door. */
+const OLLAMA_ENDPOINT = 'http://fake:11434';
 import {
   CHAPTER_PATH, NAV_PATH, OPF_PATH, PICTURE,
-  chapterWith, fakeServer, foundryEpub, foundryEpubWith, plainEpub, shout, type FakeServer,
+  chapterWith, fakeOllama, fakeServer, foundryEpub, foundryEpubWith, plainEpub, shout,
+  type FakeServer,
 } from './fixture.js';
 
 function scratch(book: Uint8Array = foundryEpub()): { epub: string; out: string; clean: () => void } {
@@ -379,6 +382,79 @@ test('a missing model is refused before any block is sent, with the list of mode
       },
     );
     assert.equal(server.asked.length, 0);
+  } finally {
+    clean();
+  }
+});
+
+/*
+ * ── THE OTHER DOOR, IN THE TWO PLACES IT IS NOT THE SAME RUN ────────────────
+ *
+ * Everything above is `--server openai` and everything above is the SAME on
+ * `--server ollama`: same prompts, same chunking, same verification, same bank
+ * key. Two facts are not, and each has its own test below rather than a second
+ * copy of the suite — a run on the local door is refused differently when the
+ * model is missing (an Ollama holds a library and says what is IN it), and it
+ * gives the card back when it ends. Re-running the other fifty tests through a
+ * second fake would prove the fake, not the engine.
+ */
+test('on the ollama door a missing model is refused with the list of INSTALLED models', async () => {
+  const { epub, out, clean } = scratch();
+  try {
+    const server = fakeOllama(undefined, ['qwen2.5:14b', 'llama3.1:8b']);
+    await assert.rejects(
+      translateEpub({
+        epubPath: epub, outPath: out, to: 'en', model: 'qwen3.8:27b', server: 'ollama',
+        transport: server, endpoint: OLLAMA_ENDPOINT, log: quiet,
+      }),
+      (error: Error) => {
+        assert.match(error.message, /has no model named "qwen3.8:27b"/);
+        assert.match(error.message, /It has: qwen2\.5:14b, llama3\.1:8b/);
+        return true;
+      },
+    );
+    assert.equal(server.asked.length, 0);
+  } finally {
+    clean();
+  }
+});
+
+test('an ollama run that stops answering ends the run AND still gives the card back', async () => {
+  const { epub, out, clean } = scratch();
+  try {
+    /*
+     * THE UNLOAD IS NOT AN ATTEMPT, and is counted separately for that reason.
+     * Every run on this door ends by asking the server to drop the weights — see
+     * `translateEpub` — and on the FAILING path that request is the whole point:
+     * a run that died at block 12 must not leave the model pinned to the card
+     * for five minutes on behalf of work that produced nothing. It carries
+     * `keep_alive` and no messages, so `fakeOllama` tells it apart by its body
+     * rather than by its position in the sequence.
+     *
+     * There is no `--keep-model` to turn this off any more, which is why this is
+     * the whole test: the release is unconditional, so the failing path IS the
+     * hard case and there is no second behaviour to pin.
+     */
+    const server = fakeOllama();
+    let calls = 0;
+    const dying = {
+      ...server,
+      post: async (url: string, body: string) => {
+        if (body.includes('"keep_alive"')) return server.post(url, body);
+        calls += 1;
+        if (calls > 2) return { status: 500, body: 'model runner has crashed' };
+        return server.post(url, body);
+      },
+    };
+    await assert.rejects(
+      translateEpub({
+        epubPath: epub, outPath: out, to: 'en', model: 'qwen3.8:27b', server: 'ollama',
+        transport: dying, endpoint: OLLAMA_ENDPOINT, concurrency: 1, log: quiet,
+      }),
+      /answered 500/,
+    );
+    assert.equal(calls, 3, 'it stops at the first server failure, it does not retry it');
+    assert.equal(server.unloaded(), 1, 'and a failed run still gives the card back');
   } finally {
     clean();
   }

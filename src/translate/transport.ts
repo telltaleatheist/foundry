@@ -1,31 +1,34 @@
 /**
  * translate/transport — HTTP as a value, and the numbers every act shares.
  *
- * ── THE SERVER IS SOMEBODY ELSE'S, AND THERE IS ONE KIND OF IT ──────────────
+ * ── THE SERVER IS SOMEBODY ELSE'S, AND THERE ARE TWO KINDS OF IT ────────────
  *
  * This file sends HTTP and reads what comes back. It does not start a server,
- * does not stop one, does not load a model and does not unload one. Owen's
- * ruling of 2026-09-13: every model call this engine makes goes to ONE kind of
- * server — an OpenAI-compatible chat door, fronted by the inference service the
- * app registers — and the operator puts a model on the card before a pass is
- * spawned. A server that is not answering is not a condition to recover from;
+ * does not stop one and does not pull a model. Owen's ruling of 2026-09-13/14
+ * (docs/SLOTS.md): foundry must work with no inference service of its own, on
+ * the Ollama the person already runs, AND it must speak to an OpenAI-compatible
+ * door when there is one — a shared inference service, a local llama-server, a
+ * vLLM, a cloud provider. A server that is not answering is not a condition to
+ * recover from;
  * it is the end of the run, said in a sentence naming the URL that was tried.
  *
- * Until that ruling this file was `ollama.ts`, and it held a second dialect —
- * `/api/chat` with `num_ctx` per request and `keep_alive: 0` to give the card
- * back. All of that is gone, and deliberately not kept behind a flag: a window
- * pinned per request, a release the pass performs, and a default server on a
- * port nobody registered are three things the ruling forbids, and code that
- * could still do them is code that will be asked to.
+ * For one night in between there was only the OpenAI door, and this file was
+ * renamed out of `ollama.ts` to say so. The rename stands and the dialect came
+ * back beside it: `ollama.ts` now holds ONLY the Ollama dialect — `/api/chat`
+ * with `num_ctx` per request, `/api/tags`, `keep_alive: 0`, the `/api/generate`
+ * schema-constrained verdict — and `vllm.ts` holds only the OpenAI one. Which
+ * of the two is spoken is DECLARED on `--server`, never sniffed from the URL.
  *
- * ── WHAT IS STILL HERE, AND WHY IT IS HERE AND NOT IN `vllm.ts` ─────────────
+ * ── WHAT IS STILL HERE, AND WHY IT IS HERE AND NOT IN EITHER DIALECT ────────
  *
  * `Transport` is the seam the tests drive the whole verification loop through
  * without a GPU; `fetchTransport` is the one real implementation and the one
  * place an endpoint's headers are attached. `answerBudget` and `ChatTuning` are
  * measurements shared by every act, and `takesThinkField` is the rule for which
- * model families take a thinking switch. They are the act-independent half;
- * `vllm.ts` is the dialect.
+ * model families take a thinking switch — one rule, spelled two ways on the
+ * wire (`think: false` there, `chat_template_kwargs` here). They are the
+ * act-independent and dialect-independent half; the two other files are the
+ * dialects.
  *
  * ONE BLOCK PER REQUEST, AND THE ONE EXCEPTION. Measured: at paragraph
  * granularity a 14b model translates German prose reliably, and batching
@@ -151,11 +154,21 @@ export function normaliseEndpoint(endpoint: string): string {
  * `qwen3:32b`, `qwen3.1:8b-instruct-q4_K_M` and somebody's `qwen3:32b-custom`
  * are all the same question and a list would be wrong about the next one.
  *
- * THIS IS ON ITS WAY OUT OF THE WIRE. The server is growing per-model sampling
- * and thinking defaults applied on its side, at which point a request that
- * omits the switch gets the manifest's answer and this rule stops being sent.
- * Until that lands the switch is still sent, because it is harmless and correct
- * today; nothing new is built on it.
+ * ONE RULE, TWO SPELLINGS, AND THAT IS WHY IT LIVES HERE. Ollama takes `think`
+ * as a top-level field on `/api/chat` and is NOT tolerant of it on a model with
+ * no thinking support — qwen2.5 answers such a request with a 400 naming the
+ * field, and a run would fail on block one. An OpenAI-compatible server takes
+ * `chat_template_kwargs: {enable_thinking: false}`, which a template that does
+ * not want it simply ignores. The two doors ask the same question of the same
+ * string and write two different bodies, which is exactly the shape a shared
+ * rule with a dialect file either side of it is for.
+ *
+ * THIS IS ON ITS WAY OUT OF THE WIRE ON THE OpenAI DOOR. That server is growing
+ * per-model sampling and thinking defaults applied on its side, at which point a
+ * request that omits the switch gets the manifest's answer and this rule stops
+ * being sent there. Until that lands the switch is still sent, because it is
+ * harmless and correct today; nothing new is built on it. On Ollama the field
+ * stays: there is no manifest on that side to carry the default.
  */
 export function takesThinkField(model: string): boolean {
   return /^qwen3(\.|:|-|$)/i.test(model.trim());
@@ -212,14 +225,27 @@ export function answerBudget(source: string): number {
  * is bounded by the edits a paragraph can carry, and `answerBudget`'s ratio is
  * derived from a TRANSLATION's length, which an edit list is not.
  *
- * THERE IS NO CONTEXT-WINDOW FIELD. The window is the server's, fixed when the
- * model was made resident and reported back through the model listing, and a
- * request is sized INTO it (`capFor`, vllm.ts) rather than asking for one.
+ * ── AND `numCtx` IS A FIELD ONE OF THE TWO DOORS HAS ───────────────────────
+ *
+ * The context window is a per-request option on Ollama and a property of the
+ * SERVER on an OpenAI-compatible one. So this carries it and `ollama.ts` is the
+ * only file that reads it: `completionsBody` drops it, because a vLLM's window
+ * was fixed when the model was made resident and the KV cache was allocated
+ * against it, and there is no request that can move it — there a request is
+ * sized INTO the window instead (`capFor`, vllm.ts).
+ *
+ * It is OPTIONAL rather than required-and-ignored because most callers have no
+ * opinion: translate wants the one number its measurements were taken at, and a
+ * caller that leaves it off gets it. `clean-text` is the one act that computes a
+ * window, once per book, because Ollama fully reloads the runner on any change
+ * to it and a per-block estimate would churn a 17 GB model between paragraphs.
  */
 export interface ChatTuning {
   temperature: number;
   /** Omitted means `answerBudget` sizes it from the input, as translate wants. */
   numPredict?: number;
+  /** Ollama only. Omitted means `DEFAULT_NUM_CTX` (ollama.ts), translate's own. */
+  numCtx?: number;
 }
 
 /** Translate's own, unchanged — see `ChatTuning` and this file's header. */

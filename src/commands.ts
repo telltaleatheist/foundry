@@ -57,30 +57,93 @@ import {
   translateEpub,
   type RewriteMode,
 } from './translate/run.js';
-import { DEFAULT_TEXT_CONCURRENCY } from './translate/model-server.js';
+import {
+  DEFAULT_OLLAMA_CONCURRENCY, DEFAULT_OLLAMA_ENDPOINT, DEFAULT_TEXT_CONCURRENCY, isServerKind,
+  MODEL_REQUIRED_ON_OLLAMA, SERVER_KINDS, type ServerKind,
+} from './translate/model-server.js';
 import { versionString } from './version.js';
 
 /**
- * The endpoint probed when neither a flag nor a setting names one.
+ * The endpoint probed when neither a flag nor a setting names one, on the
+ * OpenAI door.
  *
- * ONE SERVER FOR EVERY ACT, since Owen's ruling of 2026-09-13: the page reader
- * and the text models are made resident on the same inference door in turn, so
- * `--endpoint` on a text act, `--endpoint` on a reading, and `backend.endpointUrl`
- * in settings all name the same thing. Declared here, above the option specs
- * that quote it, because a `const` read in a template literal before its line
- * runs is a ReferenceError at load.
+ * ONE SERVER FOR EVERY ACT ON THAT DOOR: the page reader and the text models are
+ * made resident on the same inference service in turn, so `--endpoint` on a text
+ * act, `--endpoint` on a reading, and `backend.endpointUrl` in settings all name
+ * the same thing. Declared here, above the option specs that quote it, because a
+ * `const` read in a template literal before its line runs is a ReferenceError at
+ * load.
  */
 const DEFAULT_ENDPOINT_URL = 'http://localhost:8000/v1';
 
 /**
- * Where a text act sends its requests: the flag, else the setting the reading
- * door reads, else the default above. The same three-step resolution as
- * `doctor`'s and `vlm-read`'s, because it is the same server.
+ * Where a text act sends its requests.
+ *
+ * On the OpenAI door: the flag, else the setting the reading door reads, else
+ * the default above — the same three-step resolution as `doctor`'s and
+ * `vlm-read`'s, because it is the same server.
+ *
+ * ON OLLAMA THE SETTING IS NOT CONSULTED, and that is deliberate rather than an
+ * omission. `backend.endpointUrl` is the reading door's OpenAI-compatible URL;
+ * handing it to a run that is about to speak `/api/tags` would point a person's
+ * Ollama job at their vLLM and fail with a message about the wrong protocol.
+ * There is exactly one sensible answer for a server nobody named on that door,
+ * and it is where Ollama is unless somebody moved it.
  */
-function textEndpoint(args: ParsedArgs): string {
-  return optionalString(args, 'endpoint')
-    ?? loadSettings().backend?.endpointUrl
-    ?? DEFAULT_ENDPOINT_URL;
+function textEndpoint(args: ParsedArgs, kind: ServerKind): string {
+  const named = optionalString(args, 'endpoint');
+  if (named !== undefined) return named;
+  if (kind === 'ollama') return DEFAULT_OLLAMA_ENDPOINT;
+  return loadSettings().backend?.endpointUrl ?? DEFAULT_ENDPOINT_URL;
+}
+
+/**
+ * `--server`, refused by name when it is not one of the two.
+ *
+ * There is no third reading of a word this program does not know: a typo'd value
+ * treated as "ollama" would send a run at an OpenAI-compatible server in Ollama's
+ * dialect and fail at block one with a message about JSON, and treated as "the
+ * default" it would quietly be the wrong plumbing for a whole book.
+ */
+function serverKind(args: ParsedArgs): ServerKind {
+  const named = optionalString(args, 'server');
+  if (named === undefined) return 'openai';
+  if (!isServerKind(named)) {
+    throw new UsageError(`--server takes ${SERVER_KINDS.join(' or ')}, not "${named}"`);
+  }
+  return named;
+}
+
+/**
+ * The three things a text act needs to know about its server, decided together.
+ *
+ * ── CALLED FIRST, BEFORE THE ACT'S OWN ARGUMENTS ───────────────────────────
+ *
+ * Every one of these is a fact about the PLUMBING rather than about the book, so
+ * a person who mistyped `--server vlmm` or forgot `--model` hears about the thing
+ * they just typed rather than about an `--epub` they were going to give anyway.
+ * It also means a run can never get as far as opening a file over a dialect
+ * nobody meant.
+ *
+ * ── AND `--model` IS REQUIRED ON ONE DOOR ONLY ─────────────────────────────
+ *
+ * `MODEL_REQUIRED_ON_OLLAMA` carries the sentence and the argument
+ * (model-server.ts): an Ollama holds a LIBRARY, and the engine has no act-level
+ * model default to fall back on — quietly picking one is how a book gets
+ * translated by a model nobody chose. The engine refuses the same absence again
+ * for a caller that is not this one; this is the layer where it is a FLAG.
+ */
+function textServer(args: ParsedArgs): { kind: ServerKind; endpoint: string; model?: string } {
+  const kind = serverKind(args);
+  const model = optionalString(args, 'model');
+  if (kind === 'ollama' && (model === undefined || model.trim().length === 0)) {
+    throw new UsageError(MODEL_REQUIRED_ON_OLLAMA);
+  }
+  return {
+    kind,
+    endpoint: textEndpoint(args, kind),
+    ...(model === undefined ? {} : { model }),
+  };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -595,20 +658,36 @@ const TR_MODEL: OptionSpec = {
   name: 'model',
   type: 'string',
   placeholder: '<name>',
-  describe: 'The model that translates. Default: the one the server holds, proved before any work.',
+  describe: 'The model that translates. Default on --server openai: the one the server holds. Required on ollama.',
 };
 
 /**
- * ONE FLAG FOR ONE SERVER. This was `--ollama`, and a second product's name on
- * a flag is exactly the kind of fact that outlives the product: since Owen's
- * ruling of 2026-09-13 every act speaks to one inference door, so the flag says
- * what it is — an endpoint — and every text act spells it the same way.
+ * ONE FLAG FOR EITHER SERVER. This was `--ollama`, and a product's name on a
+ * flag is exactly the kind of fact that outlives the product — the door it named
+ * is one of two now, and would have been the wrong word on the other. So the
+ * flag says what it is, an endpoint, and every text act spells it the same way.
  */
 const TR_ENDPOINT: OptionSpec = {
   name: 'endpoint',
   type: 'string',
   placeholder: '<url>',
-  describe: `The inference server. Default: backend.endpointUrl in settings, else ${DEFAULT_ENDPOINT_URL}. Used, never started.`,
+  describe: `The inference server. Default on ollama ${DEFAULT_OLLAMA_ENDPOINT}; on openai backend.endpointUrl in settings, else ${DEFAULT_ENDPOINT_URL}. Used, never started.`,
+};
+
+/**
+ * ONE SPEC FOR ALL THREE COMMANDS, which is the opposite of `CT_CONCURRENCY`'s
+ * ruling and for that ruling's own reason. A help line must be right about THIS
+ * command's default, and the concurrency defaults are three numbers declared in
+ * three places — so a shared spec would print the wrong one. This flag's default
+ * is the same word on every command that takes it, `openai`, because it is not a
+ * property of the act: it is a property of the machine, and a machine with an
+ * OpenAI-compatible server on it has one for all three passes.
+ */
+const LLM_SERVER: OptionSpec = {
+  name: 'server',
+  type: 'string',
+  placeholder: '<openai|ollama>',
+  describe: 'Which dialect answers. Default openai. Declared, never guessed from the URL.',
 };
 
 const TR_INSTRUCTIONS: OptionSpec = {
@@ -746,7 +825,7 @@ const TR_CONCURRENCY: OptionSpec = {
   name: 'concurrency',
   type: 'string',
   placeholder: '<n>',
-  describe: `Requests in flight at once. Default ${DEFAULT_TRANSLATE_CONCURRENCY} — a starting point, not a measurement.`,
+  describe: `Requests in flight at once. Default ${DEFAULT_TRANSLATE_CONCURRENCY} on openai, ${DEFAULT_OLLAMA_CONCURRENCY} on ollama — a starting point, not a measurement.`,
 };
 
 // ── epub-final ───────────────────────────────────────────────────────────────
@@ -926,10 +1005,10 @@ const AN_MODEL: OptionSpec = {
   name: 'model',
   type: 'string',
   placeholder: '<name>',
-  describe: 'The model that answers the questions. Default: the one the server holds.',
+  describe: 'The model that answers the questions. Default on openai: the one the server holds. Required on ollama.',
 };
 
-/** `TR_ENDPOINT`'s flag and `TR_ENDPOINT`'s reason: one server, one spelling. */
+/** `TR_ENDPOINT`'s flag and `TR_ENDPOINT`'s reason: one question, one spelling. */
 const AN_ENDPOINT: OptionSpec = TR_ENDPOINT;
 
 const AN_NLI_PYTHON: OptionSpec = {
@@ -954,15 +1033,15 @@ const AN_FETCH: OptionSpec = {
 
 /**
  * ITS OWN SPEC, on `CT_CONCURRENCY`'s ruling: a help line has to be right about
- * THIS command's default. The three text acts share one number today
- * (`DEFAULT_TEXT_CONCURRENCY`), and three specs is what keeps three help pages
- * true the day one of them moves.
+ * THIS command's default. The three text acts share one number per door today
+ * (`DEFAULT_TEXT_CONCURRENCY`, `DEFAULT_OLLAMA_CONCURRENCY`), and three specs is
+ * what keeps three help pages true the day one of them moves.
  */
 const AN_CONCURRENCY: OptionSpec = {
   name: 'concurrency',
   type: 'string',
   placeholder: '<n>',
-  describe: `Verify calls in flight. Default ${DEFAULT_TEXT_CONCURRENCY}. Changes speed, never a verdict.`,
+  describe: `Verify calls in flight. Default ${DEFAULT_TEXT_CONCURRENCY} on openai, ${DEFAULT_OLLAMA_CONCURRENCY} on ollama. Changes speed, never a verdict.`,
 };
 
 const AN_FRESH: OptionSpec = {
@@ -1021,14 +1100,13 @@ const CT_MODEL: OptionSpec = {
   name: 'model',
   type: 'string',
   placeholder: '<name>',
-  describe: 'The model that reads the residue, at temperature 0. Default: the one the server holds.',
+  describe: 'The model that reads the residue, at temperature 0. Default on openai: the one the server holds. Required on ollama.',
 };
 
 /**
  * ITS OWN SPEC RATHER THAN `TR_CONCURRENCY`, though the two flags are spelled
- * the same and both default to four today. What a help line has to be right
- * about is THIS command's default, and the two numbers are declared in two
- * places — `DEFAULT_CLEAN_CONCURRENCY` and `DEFAULT_TRANSLATE_CONCURRENCY` —
+ * the same and land on the same pair of numbers today. What a help line has to
+ * be right about is THIS command's default, and each act declares its own —
  * exactly as the two models are (Owen's 2026-09-02 ruling for `--model`). A
  * shared spec would print translate's number on this page the day somebody
  * moved one of them, which is a help page lying about the run it documents.
@@ -1037,7 +1115,7 @@ const CT_CONCURRENCY: OptionSpec = {
   name: 'concurrency',
   type: 'string',
   placeholder: '<n>',
-  describe: `Blocks in flight at once. Default ${DEFAULT_TEXT_CONCURRENCY}. Changes the speed, never the text.`,
+  describe: `Blocks in flight at once. Default ${DEFAULT_TEXT_CONCURRENCY} on openai, ${DEFAULT_OLLAMA_CONCURRENCY} on ollama. Changes the speed, never the text.`,
 };
 
 /**
@@ -1061,6 +1139,10 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
    * a flag this command accepted and dropped on the floor is how somebody ends
    * up looking for a file that was never going to exist.
    */
+  // The plumbing first, for `textServer`'s reason: a typo'd --server or a
+  // missing --model on Ollama is a mistake about the machine rather than about
+  // the book, and it must not become a book cleaned over the wrong dialect.
+  const server = textServer(args);
   // A count of requests, and the only readings of "0", "-2" and "four" are
   // mistakes — translate's rule and translate's sentence, because it is the same
   // flag answering the same question. Checked before either door, since both
@@ -1089,9 +1171,9 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
     await cleanTextEpub({
       epubPath: epubIn,
       outPath,
-      endpoint: textEndpoint(args),
-      ...(optionalString(args, 'model') === undefined
-        ? {} : { model: optionalString(args, 'model')! }),
+      endpoint: server.endpoint,
+      server: server.kind,
+      ...(server.model === undefined ? {} : { model: server.model }),
       ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
       log,
     });
@@ -1114,9 +1196,9 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
     bookPath,
     recordsPath,
     stampPath,
-    endpoint: textEndpoint(args),
-    ...(optionalString(args, 'model') === undefined
-      ? {} : { model: optionalString(args, 'model')! }),
+    endpoint: server.endpoint,
+    server: server.kind,
+    ...(server.model === undefined ? {} : { model: server.model }),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(optionalString(args, 'generation') === undefined
       ? {} : { generation: optionalString(args, 'generation')! }),
@@ -1679,6 +1761,10 @@ async function runVlmCompile(args: ParsedArgs): Promise<void> {
 // ═════════════════════════════════════════════════════════════════════════════
 
 async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
+  // The plumbing first — `textServer`'s rule: a typo'd --server or a missing
+  // --model on Ollama is a mistake about the machine, and hearing about it
+  // before a gigabyte of entailment weights is loaded is the whole point.
+  const server = textServer(args);
   const bookPath = requireString(args, 'book', 'the book file to analyse');
   const outPath = requireString(args, 'out', 'where the report is written');
   const categoriesPath = optionalString(args, 'categories');
@@ -1698,16 +1784,20 @@ async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
   if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
     throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
   }
-  // An absent `--model` IS an answer: the server holds one resident model and
-  // the engine asks it which (src/translate/vllm.ts).
-  const named = optionalString(args, 'model');
-
+  /*
+   * AN ABSENT `--model` MEANS TWO DIFFERENT THINGS and the door decides which.
+   * On `--server openai` the absence IS the answer: the server holds one
+   * resident model and the engine asks it which (src/translate/vllm.ts). On
+   * `--server ollama` there is no absence to interpret — `textServer` refused it
+   * above, because an Ollama holds a library.
+   */
   const result = await analyzeBook({
     bookPath,
     outPath,
     ...(categoriesPath !== undefined ? { categoriesPath } : {}),
-    ...(named !== undefined ? { model: named } : {}),
-    endpoint: textEndpoint(args),
+    ...(server.model === undefined ? {} : { model: server.model }),
+    endpoint: server.endpoint,
+    server: server.kind,
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     nli: {
       ...(nliPython !== undefined ? { python: nliPython } : {}),
@@ -1747,6 +1837,11 @@ export function defaultTranslationOut(epubPath: string, to: string): string {
 }
 
 async function runTranslate(args: ParsedArgs): Promise<void> {
+  // The plumbing first, on `textServer`'s rule: which dialect, which URL, and
+  // (on Ollama) which model are facts about the machine rather than about the
+  // book, and a person who mistyped one of them should hear about the thing they
+  // typed rather than about an --epub they were going to give anyway.
+  const server = textServer(args);
   /*
    * ── WHICH SOURCE, and exactly one of them ──────────────────────────────────
    *
@@ -1925,8 +2020,9 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
     ...(freshBank ? { freshBank: true } : {}),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(optionalString(args, 'from') !== undefined ? { from: optionalString(args, 'from')! } : {}),
-    ...(optionalString(args, 'model') !== undefined ? { model: optionalString(args, 'model')! } : {}),
-    endpoint: textEndpoint(args),
+    ...(server.model === undefined ? {} : { model: server.model }),
+    endpoint: server.endpoint,
+    server: server.kind,
     ...(optionalString(args, 'instructions') !== undefined
       ? { instructions: optionalString(args, 'instructions')! }
       : {}),
@@ -3176,7 +3272,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'analyze',
     summary: 'Read a book against the categories: entailment ranks it, a model judges stance.',
     usage: '--book <book.jsonl> --out <report.jsonl> [--categories <cats.json>] [--model <name>]'
-      + ' [--endpoint <url>] [--concurrency <n>]'
+      + ' [--endpoint <url>] [--server <openai|ollama>] [--concurrency <n>]'
       + ' [--nli-python <path>] [--nli-home <dir>] [--fresh]',
     detail: [
       'THE BOOK, READ AGAINST THE CATEGORIES. Every sentence of every prose block',
@@ -3208,9 +3304,10 @@ export const COMMANDS: readonly Command[] = [
       'when the report is READ, so changing your mind about it costs a click',
       'rather than an hour.',
       '',
-      'WHAT IT NEEDS. The inference server at --endpoint holding the model,',
-      'which foundry never starts, stops or loads — the operator makes it',
-      'resident first; and a Python with torch, transformers and the',
+      'WHAT IT NEEDS. A server at --endpoint holding the model, which foundry',
+      'never starts, stops or pulls — on --server openai the operator makes it',
+      'resident first, and on --server ollama it is a tag that has to be pulled',
+      'already; and a Python with torch, transformers and the',
       'MoritzLaurer/deberta-v3-base-zeroshot-v2.0 weights, named with',
       '--nli-python or FOUNDRY_NLI_PYTHON. There is no PATH search: a miss prints',
       'every path that was tried. The weights live under --nli-home (or',
@@ -3253,27 +3350,33 @@ export const COMMANDS: readonly Command[] = [
       'hot book. Passages are verified STRONGEST FIRST, so a run you interrupt',
       'has already finished the findings most worth trusting.',
       '',
-      'ONE KIND OF SERVER. Each verdict is asked of an OpenAI-compatible server',
-      'with the schema as response_format, and the server batches the calls in',
-      `flight together — so --concurrency defaults to ${DEFAULT_TEXT_CONCURRENCY}. The verdicts`,
-      'do not move with it: same prompts, same schema, same temperature 0, and',
-      'the answers are put back into strongest-first order before a finding is',
-      'composed. --model may be left off; the served id is used and written into',
-      'the report header. The NLI ranker is a Python worker and is untouched by',
+      'TWO KINDS OF SERVER. --server openai (the default) asks each verdict of an',
+      'OpenAI-compatible server with the schema as response_format, and that',
+      'server batches the calls in flight together — so --concurrency defaults to',
+      `${DEFAULT_TEXT_CONCURRENCY} there. --server ollama asks the same question on /api/generate`,
+      `with the same schema as \`format\`, at ${DEFAULT_OLLAMA_ENDPOINT} unless`,
+      `--endpoint says otherwise, ${DEFAULT_OLLAMA_CONCURRENCY} in flight, and with one num_ctx pinned for`,
+      'the whole stage because Ollama reloads the model on any change to it. The',
+      'verdicts do not move with any of that: same prompts, same schema, same',
+      'temperature 0, and the answers are put back into strongest-first order',
+      'before a finding is composed. --model may be left off on openai — the',
+      'served id is used and written into the report header — and is REQUIRED on',
+      'ollama, which holds a library. The model is unloaded at the end of an',
+      'ollama run, always. The NLI ranker is a Python worker and is untouched by',
       'any of this.',
     ].join('\n'),
     options: [
-      AN_BOOK, AN_OUT, AN_CATEGORIES, AN_MODEL, AN_ENDPOINT, AN_CONCURRENCY,
+      AN_BOOK, AN_OUT, AN_CATEGORIES, AN_MODEL, AN_ENDPOINT, LLM_SERVER, AN_CONCURRENCY,
       AN_NLI_PYTHON, AN_NLI_HOME, AN_FETCH, AN_FRESH,
     ],
     run: runVlmAnalyze,
   },
   {
     name: 'translate',
-    summary: 'Translate a foundry EPUB with the inference server\'s model: EPUB in, a second EPUB out.',
+    summary: 'Translate a foundry EPUB with a local Ollama or an OpenAI-compatible server: EPUB in, a second EPUB out.',
     usage: '--epub <book.epub> --to <lang> [--from <lang>] [--out <path>|--records <file.jsonl>]'
       + ' [--model <name>] [--instructions <text>] [--rewrite <mode>] [--bank <file.jsonl>]'
-      + ' [--concurrency <n>] [--endpoint <url>]',
+      + ' [--concurrency <n>] [--endpoint <url>] [--server <openai|ollama>]',
     detail: [
       'Reads a book foundry converted and writes a SECOND BOOK beside it with the',
       'same structure, the same pictures and the same page provenance, and the',
@@ -3282,10 +3385,11 @@ export const COMMANDS: readonly Command[] = [
       'Buch.epub becomes Buch.en.epub.',
       '',
       'THE SERVER IS SOMEBODY ELSE\'S. foundry sends it HTTP at --endpoint and does',
-      'not start it, stop it, load a model or configure it: the operator makes',
-      'the model resident before this runs. A server that is not answering ends',
-      'the run with the URL that was tried in the message; a server holding a',
-      'different model ends it naming the model it HAS.',
+      'not start it, stop it, pull a model or configure it. A server that is not',
+      'answering ends the run with the URL that was tried in the message; a model',
+      'it has not got ends it with the list of models it HAS. The one thing this',
+      'command ever does to a server is UNLOAD, on --server ollama, at the end of',
+      'every run — a job is not a chat, and a job that is over holds no card.',
       '',
       'WHY THIS READS AN EPUB AND NOT A PDF. Measured on an OCR\'d 1933 German',
       'book: paragraph-sized inputs translate well and page FRAGMENTS are',
@@ -3355,16 +3459,20 @@ export const COMMANDS: readonly Command[] = [
       'because that book would be its own source text with a new dc:language on',
       'it: a lie about the file that looks exactly like a success.',
       '',
-      '--model picks the translator. qwen3.8:27b is the default (Owen, 2026-08-22:',
-      '27b is the standard for every task). qwen3:32b was the best of',
+      '--model picks the translator, and the engine has no default of its own:',
+      'on --server openai it is the model the server holds, and on --server',
+      'ollama it is required. qwen3.8:27b is what the app\'s picker starts from',
+      '(Owen, 2026-08-22: 27b is the standard for every task).',
+      'qwen3:32b was the best of',
       'the three measured; it can invent smoothing text and soften loaded',
       'vocabulary, which is why the verification exists and why --instructions',
       'does. qwen2.5:14b is roughly twice as fast and good for a draft, but omits',
       'silently. qwen2.5:7b inverted meanings — sentences whose translation said',
       'the opposite of the source, fluently — and should not be used for this at',
       'all. For a qwen3 model the request switches thinking off, because a',
-      'reasoning pass on a translation is latency and nothing else; the server is',
-      'growing per-model defaults for this, after which nothing is sent.',
+      'reasoning pass on a translation is latency and nothing else; qwen2.5',
+      'models do not get the field on ollama, because Ollama rejects it on a model',
+      'without thinking support.',
       '',
       '--instructions is appended to the system prompt verbatim, and it is the',
       'control that matters on a historical text: "Leave \'völkisch\'',
@@ -3409,7 +3517,7 @@ export const COMMANDS: readonly Command[] = [
       'would ask something new.',
       '',
       `--concurrency puts N requests in flight at once, default `
-      + `${DEFAULT_TRANSLATE_CONCURRENCY}. The server`,
+      + `${DEFAULT_TRANSLATE_CONCURRENCY} on openai and ${DEFAULT_OLLAMA_CONCURRENCY} on ollama. A server`,
       'batches concurrent requests and a serial run leaves the GPU idle between',
       'blocks: 456 blocks at two seconds each is fifteen minutes of mostly',
       'waiting. THE DEFAULT IS A STARTING POINT AND NOT A MEASUREMENT — unlike',
@@ -3531,17 +3639,25 @@ export const COMMANDS: readonly Command[] = [
       'plain needs no rewriting, and the prompt says so rather than leaving the',
       'model to find something to change.',
       '',
-      'ONE KIND OF SERVER. The requests go to an OpenAI-compatible chat door,',
-      'which batches the requests in flight together instead of running them one',
-      `behind another — so --concurrency defaults to ${DEFAULT_TRANSLATE_CONCURRENCY}. --model may be left off:`,
-      'the server holds one resident model, and the served id is what gets used,',
-      'logged and written into the bank key. Nothing is loaded and nothing is',
-      'unloaded by this command; a bank filled under one model is not reused',
-      'under another, because the model name in the key is a different string',
-      'and correctly so.',
+      'TWO KINDS OF SERVER, SAID OUT LOUD. --server openai (the default) speaks',
+      '/v1/chat/completions to anything OpenAI-compatible — a shared inference',
+      'service, a local llama-server, a vLLM, a cloud provider — which batches the',
+      'requests in flight together instead of running them one behind another, so',
+      `--concurrency defaults to ${DEFAULT_TRANSLATE_CONCURRENCY} there and the URL defaults to`,
+      'backend.endpointUrl in settings. --model may be left off on that door: the',
+      'server holds one resident model, the served id is what gets used, logged',
+      'and written into the bank key, and nothing is loaded or unloaded.',
+      '--server ollama speaks /api/chat to the Ollama on this machine',
+      `(${DEFAULT_OLLAMA_ENDPOINT} unless --endpoint says otherwise), ${DEFAULT_OLLAMA_CONCURRENCY} in flight,`,
+      '--model REQUIRED because an Ollama holds a library, and the model UNLOADED',
+      'when the run ends whether it succeeded or not. The choice is never guessed',
+      'from the URL. Nothing else changes — same prompt, same temperature, same',
+      'checks — so a bank filled through one server is not reused through the',
+      'other, because the model name in the key is a different string and',
+      'correctly so.',
     ].join('\n'),
     options: [
-      TR_EPUB_IN, TR_BOOK_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_ENDPOINT,
+      TR_EPUB_IN, TR_BOOK_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_ENDPOINT, LLM_SERVER,
       TR_INSTRUCTIONS,
       TR_REWRITE, TR_BANK, TR_FRESH_BANK, TR_CONCURRENCY,
       TR_RECORDS, TR_SOURCE_RECORDS, TR_GENERATION,
@@ -3552,9 +3668,10 @@ export const COMMANDS: readonly Command[] = [
     name: 'clean-text',
     summary: 'Clean a book\'s text for a narrator: punctuation, numbers as words, the model on every block.',
     usage: '--book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
-      + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--concurrency <n>]'
+      + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--server <openai|ollama>]'
+      + ' [--concurrency <n>]'
       + '  |  --epub <in.epub> --out <out.epub> [--endpoint <url>] [--model <name>]'
-      + ' [--concurrency <n>]',
+      + ' [--server <openai|ollama>] [--concurrency <n>]',
     detail: [
       'THE THIRD TEXT ACT. translate turns a book into another language, --rewrite',
       'turns it into plainer prose, and this turns it into the text a NARRATOR is',
@@ -3595,13 +3712,16 @@ export const COMMANDS: readonly Command[] = [
       'the result.',
       '',
       `--concurrency puts N of those calls in flight at once, default `
-      + `${DEFAULT_TEXT_CONCURRENCY} —`,
-      'translate\'s number for translate\'s reason: the server batches concurrent',
+      + `${DEFAULT_TEXT_CONCURRENCY} on openai and ${DEFAULT_OLLAMA_CONCURRENCY} on ollama —`,
+      'translate\'s numbers for translate\'s reason: a server batches concurrent',
       'requests and a serial run leaves the GPU idle between blocks, which on a',
-      'book of four thousand blocks IS the pass. It is a starting point and not a',
-      'measurement, because the right number is a property of your GPU and your',
-      'model\'s size; the server admits what fits its KV cache and queues the',
-      'rest, so being high costs waiting in the server rather than a thrashed card.',
+      'book of four thousand blocks IS the pass. They are starting points and not',
+      'measurements, because the right number is a property of your GPU and your',
+      'model\'s size; an OpenAI-compatible server admits what fits its KV cache and',
+      'queues the rest, so being high costs waiting in the server rather than a',
+      'thrashed card, while an Ollama pinned to one parallel slot',
+      '(OLLAMA_NUM_PARALLEL=1) queues them and gains nothing, which is a setting on',
+      'the server rather than a reason to type a different number here.',
       '',
       'IT CHANGES THE SPEED AND NOTHING ELSE. The blocks are independent questions,',
       'each composed from the book before the first request goes out and answered',
@@ -3710,23 +3830,30 @@ export const COMMANDS: readonly Command[] = [
       'refuses, which is the correct answer.',
       '',
       'THE SERVER IS SOMEBODY ELSE\'S. foundry sends HTTP at --endpoint and does',
-      'not start it, stop it, load a model or configure it: the operator makes the',
-      'model resident before this runs, and nothing is unloaded when it ends. A',
-      'server that is not answering ends the run with the URL that was tried; a',
-      'server holding a different model ends it naming the model it HAS.',
+      'not start it, stop it, pull a model or configure it. A server that is not',
+      'answering ends the run with the URL that was tried; a model it has not got',
+      'ends it with the list of models it HAS. On --server ollama the weights are',
+      'released when the run ends, always: a job is not a chat.',
       '',
-      'ONE KIND OF SERVER. The requests go to an OpenAI-compatible chat door, which',
-      'batches the requests in flight together instead of running them one behind',
-      `another, so --concurrency defaults to ${DEFAULT_TEXT_CONCURRENCY}. --model may be left off: the`,
-      'server holds one resident model and the served id is used and recorded.',
-      'The context window is the server\'s own; a book whose longest block cannot',
-      'fit it beside a full answer is refused by name before anything is asked,',
-      'never sent to come back cut off. Nothing else about the pass changes: same',
-      'prompt, same temperature 0, same rules, same stamp.',
+      'TWO KINDS OF SERVER, SAID OUT LOUD. --server openai (the default) speaks',
+      '/v1/chat/completions, which batches the requests in flight together instead',
+      `of running them one behind another, so --concurrency defaults to ${DEFAULT_TEXT_CONCURRENCY}`,
+      'there and the URL defaults to backend.endpointUrl in settings. --model may',
+      'be left off on that door: the server holds one resident model and the served',
+      'id is used and recorded. Its context window is the server\'s own, so nothing',
+      'is pinned and a book whose longest block cannot fit it beside a full answer',
+      'is refused by name before anything is asked, never sent to come back cut',
+      `off. --server ollama speaks /api/chat at ${DEFAULT_OLLAMA_ENDPOINT} unless`,
+      `--endpoint says otherwise, ${DEFAULT_OLLAMA_CONCURRENCY} in flight, --model REQUIRED because an`,
+      'Ollama holds a library, and the context window PINNED once for the whole',
+      'book — sized from its longest request — because Ollama reloads the runner on',
+      'any change to it. The choice is never guessed from the URL, and nothing else',
+      'about the pass changes: same prompt, same temperature 0, same rules, same',
+      'stamp.',
     ].join('\n'),
     options: [
       CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_EPUB_IN, CT_EPUB_OUT,
-      CT_ENDPOINT, CT_MODEL, CT_CONCURRENCY, TR_GENERATION,
+      CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION,
     ],
     run: runCleanText,
   },

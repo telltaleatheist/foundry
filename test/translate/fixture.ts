@@ -570,13 +570,13 @@ export interface FakeServer extends Transport {
 }
 
 /**
- * An inference server that is not one.
+ * An OpenAI-compatible server that is not one — `--server openai`, the default.
  *
- * It speaks the one dialect the engine speaks — `/models` lists what it holds,
- * `/chat/completions` answers — and nothing else. `answer` decides what comes
- * back for each request; the default shouts. The attempt number is passed so a
- * test can fail a block once and let the retry through. `models` is what the
- * listing says is served: one by default, because that is what a server holds.
+ * It speaks that door's dialect and nothing else: `/models` lists what it holds,
+ * `/chat/completions` answers. `answer` decides what comes back for each
+ * request; the default shouts. The attempt number is passed so a test can fail a
+ * block once and let the retry through. `models` is what the listing says is
+ * served: one by default, because that is what a resident model is.
  */
 export function fakeServer(
   answer: (user: string, attempt: number) => string = (user) => shout(user),
@@ -601,6 +601,53 @@ export function fakeServer(
         status: 200,
         body: JSON.stringify({ choices: [{ message: { content: answer(user, attempt) } }] }),
       };
+    },
+  };
+}
+
+/**
+ * And an Ollama that is not one — `--server ollama`, the local door.
+ *
+ * A SECOND FAKE RATHER THAN A FLAG ON THE FIRST, because the two differ in every
+ * byte a test could assert about: `/api/tags` against `/models`, a `models[].name`
+ * list against a `data[].id` one, `message.content` against `choices[0].message
+ * .content`. A fake that branched on a kind would be this repo's own dialect
+ * choice re-implemented in the fixture, and a test that passed against it would
+ * be proving the fixture right rather than the engine.
+ *
+ * IT ALSO COUNTS THE UNLOAD, which is the one thing this door does and the other
+ * never does. The release request carries `keep_alive` and no messages, so it is
+ * told apart by its BODY rather than by its position in the sequence, and it is
+ * deliberately not in `asked`: it is not a block anybody translated.
+ */
+export interface FakeOllama extends FakeServer {
+  /** How many times the run asked the server to drop the weights. */
+  unloaded(): number;
+}
+
+export function fakeOllama(
+  answer: (user: string, attempt: number) => string = (user) => shout(user),
+  models: string[] = ['qwen3.8:27b'],
+): FakeOllama {
+  const asked: string[] = [];
+  const attempts = new Map<string, number>();
+  let unloads = 0;
+  return {
+    asked,
+    unloaded: () => unloads,
+    async get(url: string): Promise<HttpResponse> {
+      if (!url.endsWith('/api/tags')) return { status: 404, body: '' };
+      return { status: 200, body: JSON.stringify({ models: models.map((name) => ({ name })) }) };
+    },
+    async post(url: string, body: string): Promise<HttpResponse> {
+      if (!url.endsWith('/api/chat')) return { status: 404, body: '' };
+      if (body.includes('"keep_alive"')) { unloads += 1; return { status: 200, body: '{}' }; }
+      const parsed = JSON.parse(body) as { messages: { role: string; content: string }[] };
+      const user = parsed.messages[parsed.messages.length - 1].content;
+      asked.push(user);
+      const attempt = (attempts.get(user) ?? 0) + 1;
+      attempts.set(user, attempt);
+      return { status: 200, body: JSON.stringify({ message: { content: answer(user, attempt) } }) };
     },
   };
 }

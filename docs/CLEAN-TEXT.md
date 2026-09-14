@@ -30,7 +30,8 @@ remembers.
 ```
 foundry clean-text --book <book.jsonl> --records <out.records.jsonl>
                    --stamp <out.stamp.json> [--generation <id>]
-                   [--endpoint <url>] [--model <name>] [--concurrency <n>]
+                   [--server <openai|ollama>] [--endpoint <url>] [--model <name>]
+                   [--concurrency <n>]
 ```
 
 `--generation` is `translate`'s field in `translate`'s words — the app's binding
@@ -52,7 +53,8 @@ exactly how a translation reaches a file.
 
 ```
 foundry clean-text --epub <in.epub> --out <out.epub>
-                   [--endpoint <url>] [--model <name>] [--concurrency <n>]
+                   [--server <openai|ollama>] [--endpoint <url>] [--model <name>]
+                   [--concurrency <n>]
 ```
 
 > Owen, 2026-09-05: the bare-EPUB cleanup **STAYS as a FAILSAFE** — a user who
@@ -411,40 +413,56 @@ not fail a pass that had nothing to ask it.
 
 ### The model
 
-**The one the server holds** — since 2026-09-13 the engine speaks to one
-inference door and the operator makes the model resident before the pass is
-spawned, so an absent `--model` means the served model (resolved before any
-records key is computed and written into the stamp), and a name that is given
-is proved against the server first. `DEFAULT_NORMALIZER_MODEL` in the vendored
-driver is the name the app's settings START from, not a default this pass
-falls back to. **Temperature 0**, 2048 tokens of answer, one call per block,
-over `/v1/chat/completions` (`src/translate/vllm.ts`). The context window is
-the server's own; the pass measures its longest request against it before the
-first one is sent and refuses by name if it cannot fit beside a full answer.
-Nothing is loaded and nothing is released: a pass ending is not a reason to
-take a model off the card (docs/VLLM.md §5).
+**On `--server openai`, the one the server holds.** The operator makes a model
+resident before the pass is spawned, so an absent `--model` means the served
+model (resolved before any records key is computed and written into the stamp),
+and a name that is given is proved against the server first.
+
+**On `--server ollama`, `--model` is REQUIRED** and an absent one is refused by
+name before any work: an Ollama holds a library, and there is no act-level
+default behind the flag. `DEFAULT_NORMALIZER_MODEL` in the vendored driver is a
+name the app's settings START from, not a default this pass falls back to — the
+engine stopped reading it on 2026-09-13 and did not start again.
+
+**Temperature 0**, 2048 tokens of answer, one call per block, over
+`/v1/chat/completions` (`src/translate/vllm.ts`) or `/api/chat`
+(`src/translate/ollama.ts`). The context window is the one difference that shows
+in the log: on the OpenAI door it is the server's own, so nothing is pinned and
+the pass measures its longest request against it before the first one is sent and
+refuses by name if it cannot fit beside a full answer; on Ollama it is
+`num_ctx`, PINNED once for the whole book from that same longest request
+(`contextWindowFor`), because Ollama reloads the runner on any change to it. The
+log line says which of the two happened. Nothing is ever loaded; on Ollama the
+model is UNLOADED when the run ends, always, and on the OpenAI door nothing is
+released because a pass ending is not a reason to take a model off somebody
+else's card (docs/VLLM.md §5).
 
 ### How many at once — `--concurrency <n>`
 
-**Default 12** (`DEFAULT_TEXT_CONCURRENCY`, `src/translate/model-server.ts`),
-on both doors. It is `translate`'s number for `translate`'s reason: the server
-batches concurrent requests and a serial run leaves the GPU idle between
-blocks, and stage 3 asks one question per block of the whole book — 4,283 of
-them on the book this was measured against — so the serial loop **was** the
-cost of the pass. (It was 4 under the serial server this engine no longer
-speaks to; the vendored driver's `DEFAULT_CLEAN_CONCURRENCY` still says 4 and
-is not read here.)
+**Default 12 on the OpenAI door** (`DEFAULT_TEXT_CONCURRENCY`,
+`src/translate/model-server.ts`) **and 4 on Ollama**
+(`DEFAULT_OLLAMA_CONCURRENCY`, same file). It is `translate`'s number for
+`translate`'s reason: a server batches concurrent requests and a serial run
+leaves the GPU idle between blocks, and stage 3 asks one question per block of
+the whole book — 4,283 of them on the book this was measured against — so the
+serial loop **was** the cost of the pass. (The vendored driver's
+`DEFAULT_CLEAN_CONCURRENCY` is the same 4 and is still not read here: the
+interface is the vendored contract, the number is this engine's.)
 
 > Owen, 2026-09-08: he wants the cleanup batched, and had assumed the three text
 > acts already shared a pipeline. They did not: `translate` has run a worker pool
 > since it existed, and this pass asked one block at a time with nothing else in
 > flight.
 
-Like `translate`'s, the 12 is **a starting point and not a measurement for this
-act** — it is the knee `--vlm-concurrency` measured for the reading path against
-the same scheduler — because the right number is a property of the GPU and of
-the model's size. The server admits what fits its KV cache and queues the rest,
-so being high costs waiting in the server rather than a thrashed card.
+Like `translate`'s, both numbers are **starting points and not measurements for
+this act** — the 12 is the knee `--vlm-concurrency` measured for the reading path
+against the same scheduler, and the 4 is the number this pass ran at for its
+whole history — because the right value is a property of the GPU and of the
+model's size. An OpenAI-compatible server admits what fits its KV cache and
+queues the rest, so being high there costs waiting in the server rather than a
+thrashed card; an Ollama pinned to one parallel slot (`OLLAMA_NUM_PARALLEL=1`)
+queues them and gains nothing, which is a setting on the server rather than a
+reason to type a different number here.
 
 **IT CHANGES NOTHING ABOUT WHAT THE PASS DECIDES.** Not the transform, not the
 prompt, not `NORMALIZER_VERSION`, not `PUNCTUATION_SPEC_VERSION`, not the records
@@ -638,15 +656,26 @@ number edit and the replacement was refused for carrying a digit.
 
 ## Which server it runs against
 
-One kind, since 2026-09-13: the OpenAI-compatible door the inference service
-fronts (docs/VLLM.md owns the whole story). The route is
-`/v1/chat/completions`, `--model` may be left off and the served id is used and
-recorded in the stamp, `--concurrency` defaults to 12, and nothing is loaded or
-unloaded by the pass because the operator owns what is resident. Nothing about
-what this pass DECIDES changes with the machine — same prompt, same temperature
-0, same rules, same version constants, same stamp shape — so no book already on
-disk is
-invalidated by the choice. **docs/VLLM.md** is the whole of it.
+**Two kinds, declared on `--server` and never sniffed from the URL**
+(docs/SLOTS.md §2 is the ruling, docs/VLLM.md owns the whole story).
+
+* `openai` (the default) — the OpenAI-compatible door an inference service
+  fronts, and also a local llama-server, a vLLM or a cloud provider. Route
+  `/v1/chat/completions`; `--model` may be left off and the served id is used and
+  recorded in the stamp; `--concurrency` defaults to 12; the context window is
+  the server's, so nothing is pinned and a request that cannot fit is refused
+  before it is sent; nothing is loaded or unloaded, because the operator owns
+  what is resident.
+* `ollama` — the Ollama on the person's own machine, `http://localhost:11434`
+  unless `--endpoint` says otherwise. Route `/api/chat`; `--model` is REQUIRED,
+  because an Ollama holds a library; `--concurrency` defaults to 4; `num_ctx` is
+  pinned once for the book; and the model is **unloaded when the run ends,
+  always** — a job is not a chat.
+
+Nothing about what this pass DECIDES changes with the door — same prompt, same
+temperature 0, same rules, same version constants, same stamp shape — so no book
+already on disk is invalidated by the choice. **docs/VLLM.md** is the whole of
+it.
 
 The one thing to carry away here: the records cache keys every block on the
 model's NAME, so a book cleaned through `qwen3.5:9b-q8_0` re-asks every block

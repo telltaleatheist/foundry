@@ -4266,3 +4266,38 @@ server, cloud) with atomic per-job placement and a per-row `waitFor`; the
 catalog is generated from Crucible's manifests; tiles gate on the machine.
 Packages A–F and their order are in SLOTS.md §6. The 1.3.0 release prep from
 Wave 60 is void and was never published.
+
+**Package A — landed.** `--server openai|ollama` is back on translate,
+clean-text and analyze, declared and refused by name when it is neither
+(`--server takes openai or ollama, not "x"`). The kind is `openai` rather than
+`vllm` because that door serves a shared inference service, a local
+llama-server, a vLLM and a cloud provider alike; `src/translate/vllm.ts` keeps
+its filename so docs/VLLM.md's measurements keep their addresses, and
+`src/translate/ollama.ts` is a NEW file holding only the Ollama dialect —
+`/api/chat` with `num_ctx` and `think`, `/api/tags` with the exact-tag-or-latest
+match, `keep_alive: 0`, and the `/api/generate` schema-constrained verdict with
+its thinking trap. `transport.ts` stays the shared seam and keeps everything
+dialect-agnostic that Wave 60 moved into it, including `takesThinkField`, which
+is one rule spelled two ways on the wire. Also kept from Wave 60: the act naming
+(`translate:`/`simplify:`), `fitsWindow` and the clean-text refusal before
+request one, `textEndpoint`, the runner-model resolution, the header map, and
+`DEFAULT_TEXT_CONCURRENCY`.
+
+Three rulings the restoration did NOT undo. **The unload is unconditional on
+Ollama** — Owen: *"ollama should always, always bring down the model as soon as
+the job is done. they arent chatting with it, theyre using it for a job and then
+closing the connection."* — so `releaseModel` runs in a `finally` on every run,
+success or failure, and there is no `--keep-model` anywhere. **There are no
+act-level model defaults**: `--model` is REQUIRED on Ollama and an absent one is
+refused by name before any work (`MODEL_REQUIRED_ON_OLLAMA`, thrown as a usage
+error by the CLI and as a dialect error by `openModelServer`);
+`DEFAULT_TRANSLATE_MODEL` survives only as the app picker's starting point and
+`DEFAULT_NORMALIZER_MODEL` is not an engine fallback. **The engine still never
+loads.** Concurrency is `concurrencyFor(kind, …)`: 12 on the OpenAI door, 4 on
+Ollama. The context-window pin is back for Ollama only (`contextWindowFor`,
+`stageNumCtx`), and the clean runner's log line says which of the two happened.
+
+App, minimal: `modelArgs` spells `--server ollama` when the request's kind is
+not the app's `'vllm'` — the app's `LlmServerKind` is still `'ollama' | 'vllm'`
+and its rename is Package C, so the mapping is written down at the seam. The
+full slot model, the registry and the pickers are C.
