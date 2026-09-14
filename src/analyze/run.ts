@@ -36,7 +36,7 @@ import {
   concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel,
   type ModelServer, type ServerKind,
 } from '../translate/model-server.js';
-import { fetchTransport, type Transport } from '../translate/transport.js';
+import { fetchTransport, usageLine, type Transport } from '../translate/transport.js';
 import { parseBookFile } from '../vlm/book-file.js';
 import { NliWorker, NLI_MODEL_ID, type NliWorkerOptions } from './nli-bridge.js';
 import {
@@ -278,6 +278,7 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
     kind,
     transport,
     endpoint: opts.endpoint,
+    log,
     ...(opts.model === undefined ? {} : { model: opts.model }),
   });
 
@@ -375,12 +376,21 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
      */
     const outcome = await releaseModel(transport, kind, server.endpoint, server.model);
     log(outcome === 'not-ours'
-      ? 'analyze: nothing to unload — this run never loaded a model, and taking one off a card '
-        + 'somebody else put it on is not one job\'s decision to make (translate/model-server.ts).'
+      ? 'analyze: nothing to unload — this run never loaded a model, and nothing on the other end '
+        + 'is this job\'s to take down (translate/model-server.ts).'
       : outcome === 'released'
         ? `analyze: asked ollama to unload "${server.model}" — the card is free for the next job.`
         : `analyze: ollama did not acknowledge unloading "${server.model}". If it is still resident `
           + 'it will fall out on its own idle timer.');
+    /*
+     * WHAT THE RUN SPENT, once, last, in this act's prefix — and in the
+     * `finally` for the release's own reason: a stage that was interrupted an
+     * hour in still spent what it spent, and a count that printed only on the
+     * happy path would be missing from the runs somebody most wants it for.
+     * Null and therefore silent where no server reported usage; see `usageLine`.
+     */
+    const spent = usageLine('analyze');
+    if (spent !== null) log(spent);
   }
   return result;
 }
@@ -403,7 +413,7 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
  * hundreds of tiny closed questions over one loaded model — is the shape that
  * gains most. On Ollama the default is four and even that mostly buys queueing,
  * because Ollama serialises per model unless its own parallelism was turned up.
- * A pool never moved a verdict on either door, which is the next paragraph.
+ * A pool never moved a verdict on any door, which is the next paragraph.
  *
  * ── WHAT THE POOL IS NOT ALLOWED TO MOVE ───────────────────────────────────
  *

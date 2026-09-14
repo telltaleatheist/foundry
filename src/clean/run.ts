@@ -217,7 +217,7 @@ export interface CleanTextOptions {
    * server's own, and whether the weights are given back when the run ends — and
    * nothing about what this pass decides: same prompt, same temperature 0, same
    * validators, same `NORMALIZER_VERSION`. A book cleaned through Ollama and the
-   * same book cleaned through the other door are the same pass asked of
+   * same book cleaned through another door are the same pass asked of
    * different plumbing.
    */
   server?: ServerKind;
@@ -424,7 +424,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    */
   const model = opts.model
     ?? opts.runner?.model
-    ?? (await openModelServer({ kind, transport, endpoint })).model;
+    ?? (await openModelServer({ kind, transport, endpoint, log: opts.log })).model;
 
   const { text: bookText, where } = openBook(opts.bookPath);
   const book = readBookFile(bookText, where);

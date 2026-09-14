@@ -30,9 +30,10 @@
  * the bank, the records and the stamp are untouched. This file asks the two
  * questions a pass has for a server — is it there and which model does it hold,
  * and what does it say to this block — in the shape an OpenAI-compatible server
- * understands. It is one of TWO dialects: `ollama.ts` is the local door beside
- * it (docs/SLOTS.md §2), the choice is declared on `--server` and never sniffed,
- * and `model-server.ts` is the one file that makes it.
+ * understands. It is one of THREE dialects: `ollama.ts` is the local door beside
+ * it and `anthropic.ts` is the cloud one (docs/SLOTS.md §2), the choice is
+ * declared on `--server` and never sniffed, and `model-server.ts` is the one file
+ * that makes it.
  *
  * ── THE THINGS THIS DOOR DOES DIFFERENTLY, EACH PAID FOR ────────────────────
  *
@@ -63,9 +64,55 @@
  *    model is a refusal by name, and a pass ending is not a reason to take a
  *    model off — where on Ollama a pass ending is exactly that reason, always
  *    (`releaseModel`, model-server.ts).
+ *
+ * ── AND SINCE 2026-09-14 ONE OF THE FOUR IS OPENAI ITSELF ───────────────────
+ *
+ * Owen's cloud ruling (docs/SLOTS.md §6 Package F) needed NO new code on this
+ * door, which is the whole point of an interoperable protocol: `--server openai
+ * --endpoint https://api.openai.com/v1` with `{"Authorization": "Bearer sk-…"}`
+ * in the header map is an OpenAI-compatible server reached over TLS, and every
+ * sentence above is still true of it. Four things were CHECKED rather than
+ * changed, and each is argued where it lives:
+ *
+ *   a. an absent `--model` hits `requireServedModel`'s "serving N models"
+ *      refusal, because a provider's listing is a catalog — the refusal's
+ *      wording was widened there so it does not tell a cloud user to make a
+ *      model resident, and the list it quotes is bounded so eighty ids do not
+ *      bury the sentence;
+ *   b. `chat_template_kwargs` never reaches a provider that would reject it —
+ *      see `completionsBody`, where the rule is `takesThinkField`'s qwen3
+ *      prefix and no `gpt-*` or `o*` name can match it;
+ *   c. `max_tokens` stays `max_tokens` — see `completionsBody` for the whole
+ *      argument about the models that want `max_completion_tokens` instead;
+ *   d. `response_format: json_schema` with `strict: true` is exactly what
+ *      OpenAI wants for `analyze`, so `constrainedChatBody` is unchanged;
+ *   e. `max_model_len` is absent from a provider's listing, so `capFor` gets
+ *      null and sends the wanted budget — the honest reading of "it did not
+ *      say", and the provider enforces its own window with a 400 that names it.
+ *
+ * What WAS added is two things that are true of a provider and harmless on a
+ * vLLM: a 429 is waited out rather than ending the run (`withBusyWait`,
+ * transport.ts — a rate limit is a busy signal, docs/SLOTS.md §3), and the
+ * `usage` object every OpenAI-compatible server returns is counted so the run
+ * can say what it spent (`recordUsage`). Neither knows whether the endpoint is
+ * local or billed, and neither needs to.
  */
 import { explainHttpRefusal } from '../backend/http-refusal.js';
-import { answerBudget, takesThinkField, type ChatTuning, type Transport } from './transport.js';
+import {
+  answerBudget, readUsage, recordUsage, takesThinkField, withBusyWait, type ChatTuning,
+  type HttpResponse, type Transport,
+} from './transport.js';
+
+/**
+ * The status that means "not yet" on this door.
+ *
+ * Just the standard 429: a 5xx from an OpenAI-compatible server is a server
+ * that is broken, and this program's rule about those has never changed — it is
+ * the end of the run. Anthropic's 529 is not read here, because 529 is not a
+ * standard status and an endpoint that meant something else by it would be
+ * waited on for nothing (anthropic.ts declares its own list).
+ */
+const BUSY_STATUSES = [429] as const;
 
 /** The server did not do its job. Always names the endpoint. */
 export class VllmError extends Error {
@@ -114,9 +161,12 @@ export async function servedModels(
   endpoint: string,
 ): Promise<ServedModel[]> {
   const base = normaliseVllmEndpoint(endpoint);
-  let response: { status: number; body: string };
+  let response: HttpResponse;
   try {
-    response = await transport.get(`${base}/models`);
+    response = await withBusyWait(
+      () => transport.get(`${base}/models`),
+      { retryOn: BUSY_STATUSES, where: `${base}/models` },
+    );
   } catch (error) {
     throw new VllmError(
       `no server answered at ${base} (${(error as Error).message}). foundry uses an `
@@ -166,7 +216,27 @@ export async function servedModels(
  * A NAME THAT WAS GIVEN IS STILL PROVED, and a mismatch is refused with both
  * names in it. Two models are two different books, and "close enough" here would
  * mean silently translating with weights nobody chose.
+ *
+ * ── AND THE SENTENCES HAD TO WORK FOR A CATALOG, NOT JUST A CARD ────────────
+ *
+ * Package F put a cloud provider behind this door, and both refusals read badly
+ * against one. `GET /v1/models` at OpenAI lists dozens of ids — every quoted
+ * one of them, in a message about the one thing that is wrong, is a wall
+ * somebody has to read past to find the sentence. And "make the one this run
+ * needs resident first" is advice about a GPU nobody in that story owns. So the
+ * quoted list is bounded and the advice names both cases. Nothing about the
+ * RULE changed: a name that was given is still proved exactly, an absent name
+ * over more than one model is still a refusal, and this file still cannot tell
+ * which kind of server answered — which is the point.
  */
+const LISTED_IDS_SHOWN = 12;
+
+function quoteIds(served: readonly ServedModel[]): string {
+  const ids = served.map((one) => one.id);
+  if (ids.length <= LISTED_IDS_SHOWN) return ids.join(', ') || '(nothing)';
+  return `${ids.slice(0, LISTED_IDS_SHOWN).join(', ')}, and ${ids.length - LISTED_IDS_SHOWN} more`;
+}
+
 export async function requireServedModel(
   transport: Transport,
   endpoint: string,
@@ -185,7 +255,7 @@ export async function requireServedModel(
     if (served.length > 1) {
       throw new VllmError(
         `${base} is serving ${served.length} models and no --model was given, so there is no way `
-        + `to know which one this run means. It has: ${served.map((one) => one.id).join(', ')}.`,
+        + `to know which one this run means. It has: ${quoteIds(served)}. Name one with --model.`,
       );
     }
     return served[0]!;
@@ -193,10 +263,10 @@ export async function requireServedModel(
   const found = served.find((one) => one.id === wanted);
   if (found === undefined) {
     throw new VllmError(
-      `the server at ${base} is not serving "${wanted}". It is serving: `
-      + `${served.map((one) => one.id).join(', ')}. Name one of those with --model, or leave `
-      + '--model off and the served model is used. A pass never loads a model: make the one '
-      + 'this run needs resident first.',
+      `the server at ${base} is not serving "${wanted}". It is serving: ${quoteIds(served)}. `
+      + 'Name one of those with --model, or — where the endpoint holds exactly one model — leave '
+      + '--model off and the served one is used. A pass never loads a model: on a server you own, '
+      + 'make the one this run needs resident first.',
     );
   }
   return found;
@@ -289,6 +359,12 @@ export function completionsBody(
    * model is made resident; a per-request field for it does not exist, and the
    * nearest thing — sending a smaller `max_tokens` — is a different fact about
    * a different thing. `capFor` is where the server's window is honoured.
+   *
+   * A CLOUD PROVIDER REPORTS NO `max_model_len`, so `capFor` is handed null and
+   * answers the wanted budget unchanged. That is the honest reading of "it did
+   * not say" rather than a special case: the provider enforces its own window
+   * and says so in a 400 that names the number, which is a better sentence than
+   * any arithmetic this file could do over a figure it does not have.
    */
   const body: Record<string, unknown> = {
     model,
@@ -298,8 +374,42 @@ export function completionsBody(
       { role: 'user', content: user },
     ],
     temperature: tuning.temperature,
+    /*
+     * ── `max_tokens`, AND THE MODELS THAT WANT `max_completion_tokens` ───────
+     *
+     * Newer OpenAI models refuse `max_tokens` and want `max_completion_tokens`
+     * instead. This door sends `max_tokens` to all of them and that is a
+     * DECISION, not an oversight, because every way of deciding per request is
+     * a sniff and this program's rule (docs/SLOTS.md §2) is that a dialect is
+     * DECLARED. Sniffing the URL for `api.openai.com` breaks the moment a proxy
+     * or an Azure mount is in front of it; sniffing the MODEL NAME for `gpt-*`
+     * or `o*` is `takesThinkField`'s own warning in a worse form — a list of
+     * prefixes that is right about today's names and wrong about the next one,
+     * on a field whose absence is a 400 rather than something ignored.
+     *
+     * The honest shape for a provider whose wire genuinely differs is a KIND of
+     * its own, which is exactly what `--server anthropic` is. If somebody needs
+     * OpenAI's reasoning models through this engine, the answer is a fourth
+     * declared kind with that field in its body, not a guess in this one — and
+     * it is not built until somebody does, because an unused dialect is a
+     * dialect nobody has checked.
+     *
+     * Until then the failure is loud and self-explaining: the provider answers
+     * 400 with "Unsupported parameter: 'max_tokens' … use 'max_completion_
+     * tokens' instead", `explainHttpRefusal` quotes it back verbatim, and the
+     * person reading it picks a model this door can speak to.
+     */
     max_tokens: capFor(system, user, tuning.numPredict ?? answerBudget(user), maxModelLen),
   };
+  /*
+   * AND NO PROVIDER SEES THIS FIELD. `takesThinkField` matches the qwen3 family
+   * prefix and nothing else, so `gpt-4o`, `o3`, `claude-*` and every other
+   * hosted name fail it — which matters here rather than on a vLLM, because a
+   * vLLM hands an unknown `chat_template_kwargs` to a Jinja template that
+   * ignores it, where a provider rejects an unknown top-level field with a 400.
+   * The rule stays one rule (transport.ts); what this comment records is that
+   * the rule was CHECKED against the names Package F put behind this door.
+   */
   if (takesThinkField(familyOf(model))) {
     body['chat_template_kwargs'] = { enable_thinking: false };
   }
@@ -328,6 +438,12 @@ export function completionsBody(
  * The name is a label the protocol requires and nothing reads it back. The
  * schema is passed through exactly as the caller wrote it, because the caller
  * is the one place that knows what a legal answer is.
+ *
+ * `strict: true` IS ALSO EXACTLY WHAT OPENAI ITSELF WANTS — structured outputs
+ * are only guaranteed there when the flag is set — so the body Package F sends
+ * to a provider is the body that was already being sent to a vLLM, unchanged.
+ * The thinking switch below is still governed by `takesThinkField`, which no
+ * hosted model name matches; `completionsBody` carries that argument in full.
  */
 export function constrainedChatBody(
   model: string,
@@ -376,9 +492,12 @@ export async function readChatAnswer(
   body: string,
 ): Promise<VllmAnswer> {
   const base = normaliseVllmEndpoint(endpoint);
-  let response: { status: number; body: string };
+  let response: HttpResponse;
   try {
-    response = await transport.post(`${base}/chat/completions`, body);
+    response = await withBusyWait(
+      () => transport.post(`${base}/chat/completions`, body),
+      { retryOn: BUSY_STATUSES, where: `${base}/chat/completions` },
+    );
   } catch (error) {
     return { text: null, degraded: (error as Error).message };
   }
@@ -388,12 +507,18 @@ export async function readChatAnswer(
       degraded: `${base} ${explainHttpRefusal(response.status, '', response.body)}`,
     };
   }
-  let parsed: { choices?: { message?: { content?: unknown }; finish_reason?: unknown }[] };
+  let parsed: {
+    choices?: { message?: { content?: unknown }; finish_reason?: unknown }[];
+    usage?: unknown;
+  };
   try {
     parsed = JSON.parse(response.body) as typeof parsed;
   } catch {
     return { text: null, degraded: `vllm at ${base} answered 200 with something that is not JSON` };
   }
+  // What this call cost, counted where it is reported. See `recordUsage`.
+  const spent = readUsage(parsed.usage);
+  recordUsage(spent.input, spent.output);
   const choice = parsed.choices?.[0];
   if (choice === undefined || typeof choice.message?.content !== 'string') {
     return {
@@ -436,6 +561,10 @@ export function withoutThinking(text: string): string {
  * rather than returning something the caller might retry. `chat`'s rule,
  * verbatim, because it is the same rule: a server that is not there is not going
  * to be there on the second attempt either.
+ *
+ * THE ONE EXCEPTION IS A 429, and it has already been waited out by the time a
+ * status reaches this line — `withBusyWait` holds the argument (transport.ts).
+ * A rate limit is the only status that means "there, and not yet".
  */
 export async function complete(
   transport: Transport,
@@ -446,9 +575,12 @@ export async function complete(
   tuning: ChatTuning,
 ): Promise<string> {
   const base = normaliseVllmEndpoint(endpoint);
-  const response = await transport.post(
-    `${base}/chat/completions`,
-    completionsBody(served.id, system, user, tuning, served.maxModelLen),
+  const response = await withBusyWait(
+    () => transport.post(
+      `${base}/chat/completions`,
+      completionsBody(served.id, system, user, tuning, served.maxModelLen),
+    ),
+    { retryOn: BUSY_STATUSES, where: `${base}/chat/completions` },
   );
   if (response.status !== 200) {
     throw new VllmError(
@@ -465,6 +597,9 @@ export async function complete(
       + `${response.body.trim().slice(0, 200)}`,
     );
   }
+  // What this call cost, counted where it is reported. See `recordUsage`.
+  const spent = readUsage((parsed as { usage?: unknown })?.usage);
+  recordUsage(spent.input, spent.output);
   const content = (parsed as { choices?: { message?: { content?: unknown } }[] })
     ?.choices?.[0]?.message?.content;
   if (typeof content !== 'string') {

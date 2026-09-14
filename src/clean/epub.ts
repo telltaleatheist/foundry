@@ -382,7 +382,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
    */
   const model = opts.model
     ?? opts.runner?.model
-    ?? (await openModelServer({ kind, transport, endpoint })).model;
+    ?? (await openModelServer({ kind, transport, endpoint, log: opts.log })).model;
   const epubPath = path.resolve(opts.epubPath);
   const outPath = path.resolve(opts.outPath);
 

@@ -6,21 +6,21 @@
  * Four passes ask a model for text: `translate`, its `--rewrite` siblings
  * (simplify), `clean-text` and `analyze`. Every one of them asks the same small
  * set of things of a server — prove you are there and say which model you hold,
- * answer this block, and (on one of the two doors) give the card back — and this
+ * answer this block, and (on one of the three doors) give the card back — and this
  * file is the ONLY place a pass learns which server, which dialect and which
  * model, so that "which model answered" can never be answered differently by two
  * commands on the same run. Everything that records a model (the bank key, the
  * stamp, the verdict key, the log line) reads it from the `ModelServer` this
  * hands back.
  *
- * ── TWO DOORS, DECLARED, NEVER SNIFFED ──────────────────────────────────────
+ * ── THREE DOORS, DECLARED, NEVER SNIFFED ────────────────────────────────────
  *
- * `--server openai|ollama`, and no probing of the URL to work it out. A sniff
- * gets it right until it doesn't: a proxy in front of both, an Ollama on 8000
- * because somebody moved it, an OpenAI-compatible server behind a path that also
- * answers `/api/tags`. What a wrong guess costs is not an error — it is a book
- * translated by a model nobody chose, or a run that fails at block one with a
- * message about the wrong protocol. A person who launched a server knows which
+ * `--server openai|ollama|anthropic`, and no probing of the URL to work it out.
+ * A sniff gets it right until it doesn't: a proxy in front of both, an Ollama on
+ * 8000 because somebody moved it, an OpenAI-compatible server behind a path that
+ * also answers `/api/tags`. What a wrong guess costs is not an error — it is a
+ * book translated by a model nobody chose, or a run that fails at block one with
+ * a message about the wrong protocol. A person who launched a server knows which
  * one they launched, and saying so costs them one flag.
  *
  * THE KIND WAS SPELLED `vllm` UNTIL 2026-09-14 and is `openai` now. Not a
@@ -30,23 +30,37 @@
  * filename because the measurements in docs/VLLM.md were taken through it and a
  * file rename would cost every one of them its address.
  *
- * ── WHAT THE TWO DOORS DISAGREE ABOUT, AND IT IS A SHORT LIST ───────────────
+ * THE THIRD DOOR IS PACKAGE F (docs/SLOTS.md §6), and the asymmetry in it is
+ * worth stating: Owen asked for "an api key for openai or claude", and only ONE
+ * of the two needed a dialect. OpenAI's own API is an OpenAI-compatible server
+ * with a credential in the header map, so it is the door that already existed;
+ * Anthropic's is a different wire end to end — `/v1/messages`, a top-level
+ * `system`, content blocks, `stop_reason`, a forced tool for a constrained
+ * answer — so it is `anthropic.ts`, named for the dialect rather than for the
+ * company's product, because that is what the file knows.
  *
- *  - THE MODEL. An Ollama holds a LIBRARY, so a run must say which model it
- *    means and an absent `--model` is refused by name before any work. The
- *    OpenAI door serves what the operator made resident, so an absent `--model`
- *    IS the answer and the server is asked.
+ * ── WHAT THE THREE DOORS DISAGREE ABOUT, AND IT IS A SHORT LIST ─────────────
+ *
+ *  - THE MODEL. An Ollama holds a LIBRARY and a provider holds a CATALOG, so on
+ *    both of those a run must say which model it means and an absent `--model`
+ *    is refused by name before any work. The OpenAI door serves what the
+ *    operator made resident, so an absent `--model` IS the answer there and the
+ *    server is asked — including when that server is a cloud provider serving
+ *    exactly one model to this key, which is why the absence is still allowed
+ *    on that door and still refused when the listing holds more than one.
  *  - THE WINDOW. Ollama takes `num_ctx` per request and reloads the runner on a
  *    change, so a caller that computes one computes it once a book. The OpenAI
  *    door's window was fixed when the model was made resident; a request is
- *    sized INTO it and one that cannot fit is refused before it is sent.
+ *    sized INTO it and one that cannot fit is refused before it is sent. A
+ *    provider's window is the provider's: nothing is read back, nothing is
+ *    pinned, and `maxModelLen` is null.
  *  - THE END OF THE RUN. Ollama is unloaded, always (`releaseModel`). The other
- *    door is never loaded and never unloaded by a pass.
+ *    two are never loaded and never unloaded by a pass.
  *  - HOW MANY REQUESTS ARE WORTH HAVING IN FLIGHT (`concurrencyFor`).
  *
- * Everything else is the same on both: the prompts, the temperature, the
+ * Everything else is the same on all three: the prompts, the temperature, the
  * validators, the retries, the bank, the records, the stamp. A book translated
- * through one door and the same book translated through the other are the same
+ * through one door and the same book translated through another are the same
  * pass asked of different plumbing — and the bank does not carry across, because
  * the model name in the key is a different string and correctly so.
  *
@@ -65,22 +79,26 @@
  */
 import { isPageReadingModel } from '../vlm/models.js';
 import type { ChatTuning, Transport } from './transport.js';
-import { normaliseEndpoint, TRANSLATE_TUNING } from './transport.js';
+import { forgetUsage, normaliseEndpoint, TRANSLATE_TUNING } from './transport.js';
 import { chat, OllamaError, requireModel, unloadModel } from './ollama.js';
 import {
   complete, normaliseVllmEndpoint, requireServedModel, VllmError, type ServedModel,
 } from './vllm.js';
+import {
+  AnthropicError, complete as anthropicComplete, MODEL_REQUIRED_ON_ANTHROPIC,
+  normaliseAnthropicEndpoint, requireListedModel,
+} from './anthropic.js';
 
 /** Ollama's own default, which is where it is unless somebody moved it. */
 export const DEFAULT_OLLAMA_ENDPOINT = 'http://localhost:11434';
 
 /**
- * The two things that can be on the other end. Declared, never sniffed.
+ * The three things that can be on the other end. Declared, never sniffed.
  *
  * `openai` is first because it is the default, and the order is what the refusal
- * message lists (`--server takes openai or ollama, not "x"`).
+ * message lists (`--server takes openai, ollama or anthropic, not "x"`).
  */
-export const SERVER_KINDS = ['openai', 'ollama'] as const;
+export const SERVER_KINDS = ['openai', 'ollama', 'anthropic'] as const;
 export type ServerKind = (typeof SERVER_KINDS)[number];
 
 export function isServerKind(value: string): value is ServerKind {
@@ -102,20 +120,37 @@ export const MODEL_REQUIRED_ON_OLLAMA =
   'an Ollama holds a library, so this run must say which model it means with --model';
 
 /**
+ * And the same fact about the third door, said in that door's own terms.
+ *
+ * It is DECLARED in `anthropic.ts` rather than here, because the whole of that
+ * dialect's vocabulary is there and a sentence about what a provider holds is
+ * part of it; it is RE-EXPORTED here so the CLI has one module to import a
+ * "which model does this run mean" refusal from, exactly as it has for Ollama.
+ */
+export { MODEL_REQUIRED_ON_ANTHROPIC };
+
+/**
  * A proved server: what to speak to, in what dialect, about which model.
  *
- * `model` is RESOLVED — under Ollama it is the tag that was asked for and
- * proved, under the OpenAI door it is the id the server said it is serving,
- * which may be a name nobody typed (`requireServedModel`). Everything that
- * records a model reads it from here, so a run can never record a model
- * different from the one that answered.
+ * `model` is RESOLVED — under Ollama and under a provider it is the name that
+ * was asked for and proved, under the OpenAI door it is the id the server said
+ * it is serving, which may be a name nobody typed (`requireServedModel`).
+ * Everything that records a model reads it from here, so a run can never record
+ * a model different from the one that answered.
  */
 export interface ModelServer {
   kind: ServerKind;
   /** The base URL as it is actually spoken to, after normalisation. */
   endpoint: string;
   model: string;
-  /** The server's context window when it reported one. Null under Ollama. */
+  /**
+   * The server's context window when it reported one.
+   *
+   * Null under Ollama, where it is a per-request option instead, and null on a
+   * cloud provider, which does not publish one — "it did not say" rather than
+   * "it has none", which is what every reader of this field already treats null
+   * as (`capFor`, `fitsWindow`).
+   */
   maxModelLen: number | null;
 }
 
@@ -148,6 +183,25 @@ export const DEFAULT_TEXT_CONCURRENCY = 12;
 export const DEFAULT_OLLAMA_CONCURRENCY = 4;
 
 /**
+ * And a cloud provider's, which is four for a reason neither of the others has.
+ *
+ * The number twelve is about a GPU: it is how many sequences keep a batch full
+ * on a card this project measured. A provider has no card to fill — it has a
+ * RATE LIMIT, per key, counted in requests and tokens per minute, and a pool of
+ * twelve trips it. What that costs is not an error somebody sees once: every
+ * tripped request is a 429, every 429 is a wait (`withBusyWait`), and a book
+ * sending twelve at a time into a limit built for fewer spends most of its run
+ * asleep while still paying for every retry that landed. Four is small enough
+ * to sit under the entry-tier limits of both providers and large enough that
+ * the round trip to a datacentre — which is most of a cloud request's latency —
+ * is overlapped instead of paid four hundred times in a row.
+ *
+ * IT IS A STARTING POINT AND `--concurrency` OVERRIDES IT, which is the honest
+ * shape for a number that is really a property of somebody's key and tier.
+ */
+export const DEFAULT_CLOUD_CONCURRENCY = 4;
+
+/**
  * The default for this door, given what THIS ACT wants on the OpenAI one.
  *
  * The act passes its own OpenAI-door number rather than reading a shared one
@@ -155,9 +209,18 @@ export const DEFAULT_OLLAMA_CONCURRENCY = 4;
  * default so its help line stays true the day one of them moves. Today all three
  * pass `DEFAULT_TEXT_CONCURRENCY`; the day one of them does not, nothing here
  * has to change.
+ *
+ * THE OpenAI DOOR STILL GETS THE ACT'S NUMBER even when a cloud provider is on
+ * the other end of it, and that is the cost of a declared dialect rather than a
+ * sniffed one: this program cannot tell OpenAI's API from a vLLM, does not try,
+ * and a person pointing that door at a provider names `--concurrency` the way
+ * they name `--endpoint` and `--model`. `anthropic` is a kind of its own, so on
+ * that one the smaller number IS the default.
  */
 export function concurrencyFor(kind: ServerKind, openaiDefault: number): number {
-  return kind === 'ollama' ? DEFAULT_OLLAMA_CONCURRENCY : openaiDefault;
+  if (kind === 'ollama') return DEFAULT_OLLAMA_CONCURRENCY;
+  if (kind === 'anthropic') return DEFAULT_CLOUD_CONCURRENCY;
+  return openaiDefault;
 }
 
 /**
@@ -168,23 +231,63 @@ export function concurrencyFor(kind: ServerKind, openaiDefault: number): number 
  * sentence naming the URL that was silent, which is the only thing the person
  * about to check their server needs from this program.
  *
- * `model` is optional in the TYPE and the two doors read its absence
- * differently, which is the header's short list: an Ollama holds a library and
- * an absent name is refused by name here; the OpenAI door serves one resident
- * model, so the absence IS the answer and `requireServedModel` asks it.
+ * `model` is optional in the TYPE and the doors read its absence differently,
+ * which is the header's short list: an Ollama holds a library and a provider
+ * holds a catalog, so an absent name is refused by name on both of those here;
+ * the OpenAI door serves one resident model, so the absence IS the answer and
+ * `requireServedModel` asks it.
+ *
+ * ── AND THIS IS WHERE THE RUN'S TOKEN COUNT STARTS AT ZERO ──────────────────
+ *
+ * `forgetUsage` is called here because this function is the one thing every run
+ * does exactly once, before any request: a count anchored anywhere else would
+ * either be a process-lifetime total (wrong the second time a harness drives a
+ * run) or would need every act to remember to reset it (a rule somebody has to
+ * remember, which this repo's own header on `withoutEndpointHeaders` argues
+ * against). See `recordUsage`, transport.ts.
  */
 export async function openModelServer(options: {
   kind: ServerKind;
   transport: Transport;
   endpoint: string;
   model?: string;
+  /**
+   * Where a line goes that the run has to SAY rather than throw — today just
+   * the one case on the Anthropic door where a model listing could not be read
+   * and the name therefore went unchecked (`requireListedModel`). Optional
+   * because most callers are already logging elsewhere and because the default
+   * is stderr, which is where every act's lines go anyway; what it is NOT
+   * allowed to default to is silence, since an unperformed check that says
+   * nothing is indistinguishable from one that passed.
+   */
+  log?: (line: string) => void;
 }): Promise<ModelServer> {
   const { kind, transport } = options;
+  forgetUsage();
   if (kind === 'ollama') {
     const endpoint = normaliseEndpoint(options.endpoint);
     const model = options.model?.trim() ?? '';
     if (model.length === 0) throw new OllamaError(MODEL_REQUIRED_ON_OLLAMA);
     await requireModel(transport, endpoint, model);
+    return { kind, endpoint, model, maxModelLen: null };
+  }
+  if (kind === 'anthropic') {
+    const endpoint = normaliseAnthropicEndpoint(options.endpoint);
+    const model = options.model?.trim() ?? '';
+    if (model.length === 0) throw new AnthropicError(MODEL_REQUIRED_ON_ANTHROPIC);
+    await requireListedModel(
+      transport,
+      endpoint,
+      model,
+      options.log ?? ((line) => process.stderr.write(`${line}\n`)),
+    );
+    /*
+     * `maxModelLen` IS NULL AND THAT IS A STATEMENT. A provider publishes no
+     * window in its listing and takes no field for one, so nothing is read back
+     * and nothing is pinned; `capFor` and `fitsWindow` both read null as "it
+     * did not say" and let the request through, which is right — the provider
+     * enforces its own limit and names the number when it refuses.
+     */
     return { kind, endpoint, model, maxModelLen: null };
   }
   const endpoint = normaliseVllmEndpoint(options.endpoint);
@@ -216,6 +319,11 @@ export async function askModel(
 ): Promise<string> {
   if (server.kind === 'ollama') {
     return chat(transport, server.endpoint, server.model, system, user, tuning);
+  }
+  if (server.kind === 'anthropic') {
+    return anthropicComplete(
+      transport, server.endpoint, server.model, system, user, tuning,
+    );
   }
   return complete(
     transport,
@@ -250,13 +358,19 @@ export type ReleaseOutcome = 'released' | 'refused' | 'not-ours';
  * it. `unloadModel` cannot throw, so this can never turn a finished book into a
  * failed run.
  *
- * ── THE OpenAI DOOR: A DECLARED NO-OP, AND THAT IS THE DESIGN ───────────────
+ * ── THE OTHER TWO DOORS: A DECLARED NO-OP, AND THAT IS THE DESIGN ───────────
  *
  * A vLLM process IS its model: the weights are loaded at launch, the KV cache is
  * pre-allocated against them, and there is no request that says "let go". Behind
  * a service that can load and evict, a pass asking for an unload would be one
  * job taking a narrator's voice off the card on behalf of work that is over. The
  * operator owns that card; foundry uses what it is pointed at.
+ *
+ * On a cloud provider there is no card at all — nothing was made resident,
+ * nothing is held, and the only thing a run could give back is a connection it
+ * has already closed. `not-ours` covers both: this pass took nothing and
+ * therefore returns nothing. The callers' sentences are written to be true of
+ * either, which is why none of them promises somebody a freed GPU.
  *
  * So this answers `not-ours` and the caller says so out loud, once, in a
  * sentence. Silence would look like a release that happened.

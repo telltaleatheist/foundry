@@ -13,13 +13,14 @@
  * Mac, and the fast shared server is a thing they can CONNECT to for the speed
  * tricks rather than a thing they must install to run anything.
  *
- * So there are two doors, and this is the one a person has on their own machine
- * with nothing installed but Ollama. It is NOT the file it was before the
- * deletion: everything dialect-agnostic that came out of it stayed out — the
- * `Transport` seam, `fetchTransport` and the header map, `answerBudget`,
- * `ChatTuning`, `takesThinkField` all live in `transport.ts` and are shared with
- * the OpenAI door (`vllm.ts`). What is here is only what is true of Ollama and
- * false of the other one.
+ * So there are three doors now — this one, the OpenAI-compatible `vllm.ts`, and
+ * the cloud `anthropic.ts` that Package F added — and this is the one a person
+ * has on their own machine with nothing installed but Ollama. It is NOT the file
+ * it was before the deletion: everything dialect-agnostic that came out of it
+ * stayed out — the `Transport` seam, `fetchTransport` and the header map,
+ * `answerBudget`, `ChatTuning`, `takesThinkField` all live in `transport.ts` and
+ * are shared with the other doors. What is here is only what is true of Ollama
+ * and false of the others.
  *
  * ── OLLAMA IS EXTERNAL ──────────────────────────────────────────────────────
  *
@@ -97,8 +98,8 @@ export class OllamaError extends Error {
  * IT IS A REQUEST OPTION AND THAT IS THE DIFFERENCE BETWEEN THE DOORS. Ollama
  * allocates the KV cache when it loads the runner for a given `num_ctx` and
  * FULLY RELOADS on any change to it — which is why a caller that computes one
- * computes it once for a whole book, and why the other door, whose window was
- * fixed when the model was made resident, is sent no such field at all.
+ * computes it once for a whole book, and why the other doors — whose window is
+ * the server's or the provider's — are sent no such field at all.
  */
 const DEFAULT_NUM_CTX = 8192;
 
@@ -326,10 +327,10 @@ export function constrainedGenerateBody(
  * What one `/api/generate` answer carries, for a caller that treats a bad call
  * as a DEGRADATION rather than an error.
  *
- * The same three fields `VllmAnswer` carries (vllm.ts), because the caller reads
- * them the same way on both doors: one bad call must not end a stage that is
- * making hundreds of tiny ones, and a truncated answer is a specific complaint
- * rather than a missing one.
+ * The same three fields `VllmAnswer` and `AnthropicAnswer` carry, because the
+ * caller reads them the same way on every door: one bad call must not end a stage
+ * that is making hundreds of tiny ones, and a truncated answer is a specific
+ * complaint rather than a missing one.
  */
 export interface OllamaAnswer {
   text: string | null;

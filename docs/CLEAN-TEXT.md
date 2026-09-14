@@ -30,7 +30,7 @@ remembers.
 ```
 foundry clean-text --book <book.jsonl> --records <out.records.jsonl>
                    --stamp <out.stamp.json> [--generation <id>]
-                   [--server <openai|ollama>] [--endpoint <url>] [--model <name>]
+                   [--server <openai|ollama|anthropic>] [--endpoint <url>] [--model <name>]
                    [--concurrency <n>]
 ```
 
@@ -53,7 +53,7 @@ exactly how a translation reaches a file.
 
 ```
 foundry clean-text --epub <in.epub> --out <out.epub>
-                   [--server <openai|ollama>] [--endpoint <url>] [--model <name>]
+                   [--server <openai|ollama|anthropic>] [--endpoint <url>] [--model <name>]
                    [--concurrency <n>]
 ```
 
