@@ -4253,3 +4253,16 @@ did not change), the vendored driver's own constants (`DEFAULT_NORMALIZER_MODEL`
 `DEFAULT_CLEAN_CONCURRENCY`, the `pinContextTo`/`release` member names — the
 interface is the vendored contract), and the measurement history in
 docs/VLLM.md.
+
+### Wave 61 — slots: Foundry without Crucible, Crucible as the speed tier (Owen, 2026-09-13/14) — BUILDING
+
+Owen reversed Wave 60's "no Crucible, no Foundry" the same night, in his own
+words, and the plan of record is **docs/SLOTS.md**. Short form: Ollama is the
+default text door again (`--server ollama`, model required, unloaded always);
+the OpenAI-compatible door (`--server openai`, the default) serves Crucible, a
+local llama-server for dots.ocr, vLLM and cloud OpenAI alike; the app's own
+vLLM-in-WSL launcher is deleted for good; slots (local, one per Crucible
+server, cloud) with atomic per-job placement and a per-row `waitFor`; the
+catalog is generated from Crucible's manifests; tiles gate on the machine.
+Packages A–F and their order are in SLOTS.md §6. The 1.3.0 release prep from
+Wave 60 is void and was never published.
