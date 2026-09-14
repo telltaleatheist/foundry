@@ -170,6 +170,36 @@ export function writeCrucibleServers(edits: readonly CrucibleServerEdit[]): Cruc
 }
 
 /**
+ * ADD ONE SERVER, for a caller that is not editing the list.
+ *
+ * The Servers card sends the whole registry because it holds the whole registry;
+ * the setup wizard holds three text boxes and has never seen the list, and
+ * making it read one in order to append to it would be a second reader of the
+ * order with a window between the read and the write. So this reads, appends and
+ * hands the result to {@link writeCrucibleServers} — THE SAME ONE WRITER, with
+ * every refusal it makes, rather than a second path into the settings file.
+ *
+ * AN EXISTING NAME IS REPLACED IN PLACE, keeping its position and its enabled
+ * state, which is `addLocalCrucible`'s rule for the same reason: somebody
+ * re-adding a server they already have is fixing its token, and a second entry
+ * beside the first would leave the stale one in the picker.
+ */
+export function addCrucibleServer(name: string, url: string, token: string): CrucibleServerView[] {
+  const label = name.replace(/\s+/g, ' ').trim();
+  const kept = crucibleServers()
+    .filter((entry) => entry.name.toLowerCase() !== label.toLowerCase())
+    .map((entry): CrucibleServerEdit => ({
+      name: entry.name,
+      url: entry.url,
+      enabled: entry.enabled,
+      // Null, so the stored token is carried forward — this function has no
+      // business handling the tokens of servers it was not asked about.
+      token: null,
+    }));
+  return writeCrucibleServers([...kept, { name: label, url, enabled: true, token }]);
+}
+
+/**
  * HOSTED, THE REGISTRY IS SOMEBODY ELSE'S — `library:set`'s refusal, for the
  * same reason (docs/SLOTS.md §3: *"The vendored (BookForge-hosted) app takes its
  * slot list from the host"*).
@@ -314,6 +344,48 @@ export function clientFor(entry: CrucibleServerEntry): CrucibleClient {
 export async function probeCrucible(name: string): Promise<CrucibleProbe> {
   const entry = crucibleServerNamed(name);
   if (entry === null) return { outcome: 'failed', message: `There is no server called "${name}".` };
+  return probeEntry(entry);
+}
+
+/**
+ * TEST AN ADDRESS AND A TOKEN THAT ARE NOT IN THE REGISTRY YET.
+ *
+ * The setup wizard's "Connect to a Crucible server" door (docs/SETUP.md, Wave 61
+ * package E) has a URL box, a token box and a Test button, and none of those
+ * three has been saved when the button is pressed. Testing after adding would be
+ * this app writing a server into somebody's settings in order to find out
+ * whether it is a server.
+ *
+ * IT IS THE SAME PROBE, through the same client and the same error handling —
+ * the only difference is where the two fields came from. A second probe with its
+ * own error branches is how one surface starts reporting "unreachable" where the
+ * other reports the SDK's sentence about a refused token.
+ *
+ * THE TOKEN IS NOT STORED BY THIS CALL and is not logged by it. It arrives over
+ * IPC from a box the person is typing in, is used for one request, and is
+ * dropped; only a later `crucible:save` writes it anywhere.
+ */
+export async function probeCrucibleAt(url: string, token: string): Promise<CrucibleProbe> {
+  const clamped = clampCrucibleUrl(url);
+  if (clamped === null) {
+    return {
+      outcome: 'failed',
+      message: 'That needs to be an address like http://192.168.1.20:7100 — the server\'s base URL, '
+        + 'without /v1 on the end.',
+    };
+  }
+  if (token.trim().length === 0) {
+    return {
+      outcome: 'failed',
+      message: 'A Crucible has no anonymous mode. Run `crucible token --show` on that machine and '
+        + 'paste what it prints.',
+    };
+  }
+  return probeEntry({ name: clamped, url: clamped, token: token.trim(), enabled: true });
+}
+
+/** The probe itself. Both doors above are this function plus a way of naming the server. */
+async function probeEntry(entry: CrucibleServerEntry): Promise<CrucibleProbe> {
   try {
     const info = await clientFor(entry).info();
     return {
@@ -623,7 +695,7 @@ function readTomlInteger(raw: string, configPath: string, line: number): number 
   return Number.parseInt(raw, 10);
 }
 
-interface CommandResult {
+export interface CommandResult {
   code: number | null;
   stdout: string;
   stderr: string;
@@ -645,7 +717,7 @@ interface CommandResult {
  * therefore decoded on its own, by the one thing that tells the two apart at a
  * glance: UTF-16LE ASCII has a NUL in every other byte.
  */
-function runCommand(command: string, args: string[]): Promise<CommandResult> {
+export function runCommand(command: string, args: string[]): Promise<CommandResult> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (result: CommandResult): void => {

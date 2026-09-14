@@ -1,6 +1,48 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
-**THREE DOORS AND ONE PUSH ON 2026-09-14 — WAVE 61 PACKAGE D, SO THE COUNT IS
+**FOUR DOORS AND ONE PUSH ON 2026-09-14 — WAVE 61 PACKAGE E, SO THE COUNT IS
+119.** Nothing was removed and no existing shape narrowed; three payloads
+widened.
+
+- **`crucible:test-at` (url, token) → `CrucibleProbe`** — test an address and a
+  token that are NOT SAVED YET. The setup wizard's Connect door has three boxes
+  and no registry entry behind them, and adding a server in order to find out
+  whether it is a server leaves a dead entry behind every failure. The token
+  crosses **one way only**, into main, out of a box somebody is typing in; it is
+  used for one request and dropped, and `CrucibleProbe` has no token field.
+- **`crucible:add` (name, url, token) → `CrucibleSettingsView`** — add ONE
+  server, through `writeCrucibleServers`, the registry's one writer. Answered
+  with the whole settings view rather than a list, because adding a loopback
+  server changes the SLOTS. An existing name is replaced in place, keeping its
+  rank and its enabled state.
+- **`crucible:install-plan` → `CrucibleInstallPlan`** — the hand sequence for
+  installing a Crucible on this machine, composed for this platform. A READ: the
+  only process it spawns is `wsl.exe -l -v`, which lists. Everything else in the
+  answer is a string for a person to read and run.
+- **`crucible:install` → rejects** — the driven install, and it refuses on every
+  machine today with `CrucibleInstallPlan.drivenWhy`'s sentence.
+  `@crucible/bootstrap` is released with Crucible's next version and is
+  deliberately not a dependency until it exists. The button is disabled with the
+  same sentence AND the door refuses, because something reachable by an IPC
+  message must refuse at the door or the disabling is a decoration.
+- **`models:changed` (push, no payload)** — the weights on this disk moved. The
+  one thing that moves them without somebody pressing a button on the card is
+  SLOTS.md §5b's automatic removal, which fires from `crucible:save` and once at
+  startup. No payload, on `acts:gates-changed`'s reasoning.
+
+WIDENED INSIDE CHANNELS THAT DID NOT MOVE. `models:inventory` now carries
+`MachineModels.pageReader` — §5b's offer: whether the reader has been (or would
+be) removed, the bytes, and the REMOTE server page reading would then need.
+`page-reader:state` carries `supersededBy`, the local Crucible that has taken
+page reading over (null while `CRUCIBLE_READS` is false — see docs/SLOTS.md §5b).
+`ollama:choices` carries `LlmChoices.crucible`, the classes a local Crucible
+already serves, so the wizard says so in the rows rather than pulling a second
+copy.
+
+`crucible:add-local` is unchanged in shape and now runs §5b's pass when it lands,
+exactly as `crucible:save` does.
+
+**THREE DOORS AND ONE PUSH ON 2026-09-14 — WAVE 61 PACKAGE D, SO THE COUNT WAS
 114.** Two NEW FAMILIES, `acts:` and `models:`, and the argument for them being
 new rather than more members of `llm:` is with the family list below.
 
@@ -620,7 +662,7 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `meta:read-pdf` | A PDF's Info dictionary, through the engine. |
 | `meta:write-epub` | Write the six OPF fields back to that export (side file + one rename), and record the metadata step with `kind: 'epub'`. |
 | `meta:write-pdf` | Write it to the project's working copy, and record the metadata step. |
-| `models:inventory` | Every store of weights on this machine, with sizes — Foundry's own downloads, Ollama's list, a local Crucible's residency (docs/SLOTS.md §5b). Measured, never cached. |
+| `models:inventory` | Every store of weights on this machine, with sizes — Foundry's own downloads, Ollama's list, a local Crucible's residency (docs/SLOTS.md §5b). Measured, never cached. Carries `pageReader`, §5b's offer: what has been or would be removed, the bytes, and the remote server page reading would then need. |
 | `models:remove-page-reader` | Delete the page reader Foundry downloaded — that directory and nothing else — stopping the server first if this app started it, and answer with the gigabytes freed. The one door in this app that deletes model files. A refusal is a result with a sentence, not a rejection. |
 | `ollama:choices` | This machine, ollama's state, the Qwen lineup with one row badged, and today's model — the setup wizard's model step in one answer. |
 | `page-reader:install` | Fetch whatever the local page reader is missing — a llama.cpp build for this machine and the two dots.ocr GGUF files — verify each against its published sha256, and unpack. Streams over `page-reader:progress`. A failure is a result, not a rejection. |
@@ -652,9 +694,13 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `crucible:settings` | Everything the Servers card draws in one read: the registry (with `tokenSet`, never a token), the derived slots, the new-jobs default, the WSL distro, and whether this window is hosted. |
 | `crucible:save` | REPLACE the whole registry, in order — the array position IS the rank, so a drag is a save. `token: null` on an entry keeps what is stored. Rejects with a sentence naming the entry it cannot store. Refused outright while hosted. |
 | `crucible:test` | Test connection (`client.info()`). A failure is a RESULT carrying the SDK's own sentence, not a rejection. |
+| `crucible:test-at` | The same probe against an address and token that are NOT in the registry — the wizard's Connect door, which has nothing saved to test. Writes nothing. The token goes one way, into main, and no answer carries it back. |
+| `crucible:add` | Add ONE server, through the registry's one writer. Answers with the whole settings view, because adding a loopback entry changes the slots. An existing name is replaced in place, keeping its rank. |
 | `crucible:add-local` | Register the Crucible on this machine by reading its own `config.toml` — on Windows through `wsl.exe -d <distro> --exec`. The token is read and stored in main and never crosses this wire. Refused while hosted. |
 | `crucible:set-wsl-distro` | Which WSL guest that read looks in. Empty is a real answer and means unset; there is no default. |
 | `crucible:set-new-jobs-wait-for` | `top` or `any` — what a new row's `waitFor` starts as. Answers with what was stored. |
+| `crucible:install-plan` | The hand sequence for installing a Crucible on this machine, composed for this platform: the numbered steps with every command copyable, the elevated ones listed apart, the README link and the wheel. A read — the only process it spawns is `wsl.exe -l -v`. |
+| `crucible:install` | The driven install. REJECTS on every machine today with the same sentence the disabled button wears — `@crucible/bootstrap` ships with Crucible's next release. The door refuses as well as the button, because a disabled control over an open door is a decoration. |
 | `reading:confirm-re-read` | Compose the "read this book again?" card, which spends GPU on a yes. |
 | `recents:clear` | Forget every recent. |
 | `recents:forget` | Forget one. |
@@ -692,6 +738,7 @@ or a question it has to answer. Eleven go to every window through `broadcast`
 | Channel | What it says |
 | --- | --- |
 | `acts:gates-changed` | Something that decides a tile moved — a model pulled, the page reader installed or removed, the language server repointed. No payload: the renderer asks again on `acts:gates`, so the shape has one composer and no pushed copy to go stale. |
+| `models:changed` | The weights on this disk moved without this window doing it — docs/SLOTS.md §5b's automatic removal, which fires from `crucible:save` and once at startup. No payload, for `acts:gates-changed`'s reason: the inventory costs a directory walk and has one composer. |
 | `app:navigate` | Go to a route — File→Settings, and nothing else today. |
 | `capture:intake-progress` | One dropped photograph copied, hashed and decoded — one push per path asked for, plus a closing one. |
 | `document:opened` | A document was admitted and should open in a tab. |

@@ -684,7 +684,7 @@ export class CapabilityUndecided extends Error {}
 async function crucibleRequest(
   entry: CrucibleServerEntry,
   route: string,
-  options: { method: string; body?: unknown } = { method: 'GET' },
+  options: { method: string; body?: unknown; timeoutMs?: number } = { method: 'GET' },
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -696,6 +696,17 @@ async function crucibleRequest(
         ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      /*
+       * NO TIMEOUT BY DEFAULT, and the placement path passes none. A dispatch is
+       * a person's press being answered and there is a row on screen wearing the
+       * word "placing"; cutting that off at three seconds would fail a job
+       * because a load was slow. The one caller that DOES pass one is the
+       * settings-side probe (`crucible-provider.ts`), which runs on every gate
+       * read: a Mac that is asleep must not put a network timeout behind a
+       * tooltip, so that path asks with a clock on it and reads a cut-off answer
+       * as `unknown`.
+       */
+      ...(options.timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(options.timeoutMs) }),
     });
   } catch (err) {
     throw new CrucibleUnreachable(entry.url, err instanceof Error ? err.message : String(err), err);
@@ -756,9 +767,22 @@ async function crucibleRequest(
   throw new CrucibleRefused(response.status, code, message, details);
 }
 
-/** `GET /v1/capability` — see {@link crucibleRequest} for why it is a fetch. */
-async function readCapability(entry: CrucibleServerEntry): Promise<CapabilityRecord> {
-  const body = await crucibleRequest(entry, '/v1/capability');
+/**
+ * `GET /v1/capability` — see {@link crucibleRequest} for why it is a fetch.
+ *
+ * EXPORTED FOR THE SETTINGS SIDE (`crucible-provider.ts`, Wave 61 package E),
+ * which asks the same question for a different reason: not "may this job start"
+ * but "does a Crucible on this machine own this class of weights", which is what
+ * decides whether Foundry deletes its own copy of the page reader (SLOTS.md
+ * §5b). ONE READER OF THIS ROUTE, because the shape of a capability record and
+ * the mapping of its refusals onto the SDK's error types is exactly the kind of
+ * thing that is written twice and then only fixed once.
+ */
+export async function readCapability(
+  entry: CrucibleServerEntry,
+  timeoutMs?: number,
+): Promise<CapabilityRecord> {
+  const body = await crucibleRequest(entry, '/v1/capability', { method: 'GET', timeoutMs });
   if (typeof body !== 'object' || body === null) {
     throw new CrucibleRefused(200, 'capability_unreadable', 'the capability record was not an object', null);
   }

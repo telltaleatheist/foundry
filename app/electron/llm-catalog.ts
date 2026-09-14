@@ -15,21 +15,38 @@
  * the BF16 conversions kept for a different runtime — because every row here is
  * something a person is going to run through ollama for prose.
  *
- * ── THE TABLE IS NO LONGER A CONST IN THIS FILE ──────────────────────────────
+ * ── THE TABLE IS NO LONGER A CONST IN THIS FILE, AND IS NOW TWO FILES ────────
  *
- * It is `app/shared/model-lineup.json`, vendored, and this file READS it
- * (Wave 61 package D, docs/SLOTS.md §4). **Crucible's manifests are the catalog
- * of record**: each carries a `[local]` block naming the model's local form — an
- * Ollama tag, or a GGUF plus its mmproj — with a memory figure and the BASIS of
- * that figure, and a generator (`crucible/scripts/gen-foundry-lineup.py`) emits
- * `foundry-lineup.json` for Foundry to vendor. A keeper compares by content.
+ * `app/shared/model-lineup.json` is **Crucible's own `foundry-lineup.json`**,
+ * vendored byte for byte (docs/SLOTS.md §4: *"Crucible's manifests are the
+ * catalog of record"*). Its generator reads the manifests' `[local]` blocks —
+ * an Ollama tag, or a GGUF plus its mmproj — with a memory figure and the BASIS
+ * of that figure, and emits the file; a keeper compares OUR copy against a fresh
+ * emission by content, which is only possible while nothing here edits it. So
+ * nothing here edits it.
  *
- * Until that generator exists the JSON is written by hand from what this file
- * used to hold, which is why its `generatedBy` says so in as many words rather
- * than claiming a provenance it does not have. Every `needsGB.basis` in it is
- * `"declared"` — the download plus the overhead argued below, arithmetic rather
- * than a measurement — and the day Crucible measures a model's real resident
- * footprint that row's basis becomes `"measured"` and this file does not change.
+ * `app/shared/model-lineup-local.json` is **Foundry's own additions** and its
+ * header argues the whole case. In one line: Crucible lists the three models a
+ * Crucible serves, and Foundry's local path is not a Crucible — it is Ollama on
+ * whatever card the person already owns, and Ollama's library carries the
+ * smaller quantised Qwen tags that Crucible has no manifest for. Dropping them
+ * would leave the wizard on an 8 GB laptop offering exactly one model, 17.7 GB,
+ * which the same screen then marks as too big for the machine. Every id in that
+ * file is prefixed `foundry/` so a row of ours can never collide with a Crucible
+ * id, and `crucible: false` on the merged row records which file it came from.
+ *
+ * THE MERGED ORDER IS COMPUTED, NOT READ. Everything below depends on the
+ * lineup being SMALLEST FIRST — `lineupFor` takes the last one that fits,
+ * `eligibleFor` slices at a floor's POSITION, act-gates names "the largest
+ * present one" — and neither file is sorted (Crucible's emits in manifest
+ * order). So the two are concatenated and sorted by `needsGB.value`, ties broken
+ * by id so the order cannot wobble between runs. Sorting here rather than asking
+ * Crucible to sort keeps the vendored file comparable by content.
+ *
+ * Every `needsGB.basis` in both files is `"declared"` today — the download plus
+ * the overhead argued below, arithmetic rather than a measurement — and the day
+ * Crucible measures a model's real resident footprint that row's basis becomes
+ * `"measured"` and this file does not change.
  *
  * ── THE HEADROOM IS DELIBERATELY GENEROUS, AND ERRS SMALL ────────────────────
  *
@@ -65,21 +82,34 @@
  * text picker's largest option, and it was NOT in `QWEN_LINEUP` — so the wizard
  * could recommend, describe and pull every model except the one every dialog
  * opens with. That is a hole rather than a decision, and the vendored file
- * closes it: the row is there, with the Crucible id BookForge already uses
- * (`qwen3.8-27b-4bit`), placed after `qwen3.5:27b` so that a card which holds
- * exactly one 27B is offered the one the rest of the app defaults to.
+ * closes it: Crucible's `qwen3.8-27b-4bit` row names exactly that tag.
+ *
+ * ── AND ONE FLOOR THAT MOVED WHEN THE FILE BECAME CRUCIBLE'S ─────────────────
+ *
+ * Crucible's row declares `minimumFor: [translate, simplify, analysis]` — *"the
+ * smallest model those three may run on"*. Package D's hand-written table put
+ * the floor on the 9B and left ANALYSIS with no floor at all, on Owen's
+ * *"analysis is a sentence at a time and a small model does it, a translation is
+ * a book"*. `model-lineup-local.json` keeps the 9B floor for translate and
+ * simplify, because those are the two acts Owen named; **analysis now floors at
+ * the 4-bit 27B, because that is what the catalog of record says and this file
+ * does not overrule it.** The consequence is visible and deliberate: a 12 GB
+ * card that used to light Analysis no longer does, and the tile says which model
+ * would change it. If that is wrong it is a fact in Crucible's manifests, and it
+ * is fixed there and re-vendored — not patched here.
  */
 import type { LlmModelOption, ModelClass, SystemProfile } from '../shared/types';
 
 /*
- * THE VENDORED TABLE. `resolveJsonModule` is on in tsconfig.electron.json, and
- * `rootDir` is `app/`, so tsc copies this file to `dist/shared/model-lineup.json`
- * beside the emitted JavaScript and electron-builder's `dist/shared/**` picks it
- * up. The RENDERER never imports it — its tsconfig has no `resolveJsonModule`,
- * and it has no business holding a catalog: everything it needs off this table
+ * THE TWO VENDORED TABLES. `resolveJsonModule` is on in tsconfig.electron.json,
+ * and `rootDir` is `app/`, so tsc copies both to `dist/shared/` beside the
+ * emitted JavaScript and electron-builder's `dist/shared/**` picks them up. The
+ * RENDERER never imports either — its tsconfig has no `resolveJsonModule`, and
+ * it has no business holding a catalog: everything it needs off this table
  * arrives already decided, over IPC.
  */
 import lineupFile from '../shared/model-lineup.json';
+import localLineupFile from '../shared/model-lineup-local.json';
 
 /** Weights plus working room, for a `declared` figure. See the header. */
 export const OVERHEAD_GB = 1.5;
@@ -101,7 +131,14 @@ export interface OllamaForm {
 /**
  * The model as llama.cpp holds it: a GGUF, and — for a vision model — the
  * separate projector `--mmproj` takes. Two files, because that is how llama.cpp
- * serves a vision tower; see page-reader.ts, which downloads exactly this pair.
+ * serves a vision tower; see page-reader.ts, which downloads exactly this pair
+ * AND TAKES THESE FOUR FIELDS FROM HERE rather than from constants of its own
+ * (`pagesForm()` below). One owner for "which weights is the reader".
+ *
+ * `revision` IS A COMMIT AND NOT A BRANCH on Crucible's row, and both the index
+ * read and the download URL use it, so a repository re-cut upstream cannot
+ * change what a machine fetches under a checksum recorded against something
+ * else.
  */
 export interface GgufForm {
   kind: 'gguf';
@@ -115,14 +152,20 @@ export interface GgufForm {
 
 export type LocalForm = OllamaForm | GgufForm;
 
-/** One row of the vendored catalog. */
+/** One row of the vendored catalog — either file's, once merged. */
 export interface LineupRow {
-  /** Crucible's model id. The record everything else is keyed by. */
+  /**
+   * The model id. Crucible's own for a row out of `model-lineup.json`, and
+   * `foundry/<something>` for one of ours — see that file's header for why the
+   * prefix is load-bearing rather than decorative.
+   */
   id: string;
   /**
    * False for a row Crucible has no manifest for — a model that exists only as
-   * an Ollama tag on this machine. Kept honest rather than omitted: the app can
-   * still fit, pull and run it, and a Crucible server cannot be asked for it.
+   * an Ollama tag on this machine. DERIVED FROM WHICH FILE THE ROW CAME OUT OF
+   * rather than written in either of them: the vendored file is compared by
+   * content against a fresh generator emission, so a field of ours inside it
+   * would fail that comparison for ever.
    */
   crucible: boolean;
   classes: readonly ModelClass[];
@@ -130,35 +173,91 @@ export interface LineupRow {
   description: string;
   local: LocalForm;
   /**
+   * Whether this row is the floor for anything at all. Crucible's generator
+   * emits it beside `minimumFor`, and it is exactly `minimumFor.length > 0`, so
+   * NOTHING READS IT — `eligibleFor` asks the class list, because a boolean that
+   * says "this is a floor" cannot say which class it is a floor for.
+   */
+  minimum: boolean;
+  /**
    * The FLOOR this row sets for those classes — Owen: *"if their system just
    * isnt powerful enough for translation (smaller than 9b) then translation and
    * simplify is disabled."* Read by `eligibleFor`, argued there.
    */
-  minimum_for?: readonly ModelClass[];
+  minimumFor: readonly ModelClass[];
+}
+
+/** Either file's shape, as far as anything here needs to know it. */
+interface LineupFile {
+  models: readonly LineupRow[];
 }
 
 /**
- * ★ THE LINEUP ★ — smallest first, because that is the order the screen reads
- * in, because `lineupFor` walks it forward looking for the last one that fits,
- * and because the `minimum_for` floor is a POSITION in this order.
+ * ★ THE LINEUP ★ — both files, merged and sorted SMALLEST FIRST, because that is
+ * the order the screen reads in, because `lineupFor` walks it forward looking
+ * for the last one that fits, and because a `minimumFor` floor is a POSITION in
+ * this order.
  *
- * ONE CAST, AND IT IS NOT A SHRUG. `resolveJsonModule` widens every string in a
- * JSON file to `string`, so `"ollama"` does not arrive as the literal `'ollama'`
- * and no amount of annotation makes the assignment check itself. The alternative
- * is a validator that runs at module load and throws — which would mean the app
- * refusing to start because a file that ships INSIDE it is malformed, a state
- * that cannot survive one run of the build. So the shape is asserted here and
- * proved by the keeper that compares this file against Crucible's generator
- * output, which is where a shape disagreement actually originates.
+ * THE SORT IS BY `needsGB.value`, WHICH IS THE SAME NUMBER `fitsOn` DECIDES ON.
+ * Sorting by the download size instead would put the bf16 9B (19.3 GB down,
+ * 20.8 GB resident) below the 4-bit 27B (17.7 down, 19.2 resident) in the list
+ * while the fit test ordered them the other way, and "the largest one that fits"
+ * would then be able to pick a row that a larger machine is not offered. Ties
+ * break on the id so that two rows of equal weight cannot swap places between
+ * runs and move a floor with them.
+ *
+ * ONE CAST PER FILE, AND IT IS NOT A SHRUG. `resolveJsonModule` widens every
+ * string in a JSON file to `string`, so `"ollama"` does not arrive as the
+ * literal `'ollama'` and no amount of annotation makes the assignment check
+ * itself. The alternative is a validator that runs at module load and throws —
+ * which would mean the app refusing to start because a file that ships INSIDE it
+ * is malformed, a state that cannot survive one run of the build. So the shape
+ * is asserted here and proved by the keeper that compares the vendored half
+ * against Crucible's generator output, which is where a shape disagreement
+ * actually originates.
  */
-export const MODEL_LINEUP: readonly LineupRow[] =
-  lineupFile.models as unknown as readonly LineupRow[];
+export const MODEL_LINEUP: readonly LineupRow[] = [
+  ...(lineupFile as unknown as LineupFile).models.map((row) => ({ ...row, crucible: true })),
+  ...(localLineupFile as unknown as LineupFile).models.map((row) => ({ ...row, crucible: false })),
+].sort((a, b) => (
+  a.local.needsGB.value - b.local.needsGB.value || a.id.localeCompare(b.id)
+));
 
-/** What the file says this file was written from, for the settings row to print. */
+/**
+ * Where the table came from, for the settings row to print.
+ *
+ * `generatedBy` NAMES CRUCIBLE'S COMMIT rather than saying "hand-written", which
+ * is what it said while package D's stopgap was in place. `generatedAt` is the
+ * date this app VENDORED it — a fact Foundry owns and Crucible's file does not
+ * carry — and it lives in `model-lineup-local.json`'s `vendoredWith` block,
+ * beside the commit it was taken from, so the two halves of that sentence cannot
+ * drift apart in two files.
+ */
 export const LINEUP_PROVENANCE: { generatedBy: string; generatedAt: string } = {
-  generatedBy: lineupFile.generatedBy,
-  generatedAt: lineupFile.generatedAt,
+  generatedBy: `crucible ${localLineupFile.vendoredWith.file} @ `
+    + `${localLineupFile.vendoredWith.commit} (generated from `
+    + `${localLineupFile.vendoredWith.generated_from.slice(0, 12)}), plus `
+    + `${(localLineupFile as unknown as LineupFile).models.length} of Foundry's own rows`,
+  generatedAt: localLineupFile.vendoredWith.at,
 };
+
+/**
+ * THE PAGE READER'S WEIGHTS, as the catalog names them — the `pages` row's local
+ * form, and the ONE OWNER of "which GGUF pair is the reader".
+ *
+ * page-reader.ts held its own `HF_REPO`/`MODEL_FILE`/`MMPROJ_FILE` constants
+ * until Wave 61 package E, and two owners of that fact is how a re-vendored
+ * catalog silently disagrees with what the installer actually fetches. It reads
+ * them from here now. NULL is possible — a catalog with no `pages` row at all —
+ * and the reader treats it as "this build cannot install a reader", which is an
+ * honest refusal rather than a fallback to a repository nothing named.
+ */
+export function pagesForm(): GgufForm | null {
+  const row = MODEL_LINEUP.find(
+    (entry) => entry.classes.includes('pages') && entry.local.kind === 'gguf',
+  );
+  return row === undefined ? null : row.local as GgufForm;
+}
 
 /** The rows a person pulls through ollama for prose — the wizard's whole list. */
 function textRows(): readonly LineupRow[] {
@@ -199,20 +298,35 @@ export function fitsOn(row: LineupRow, profile: SystemProfile): boolean {
 /**
  * The rows that may serve a class on this machine, in lineup order.
  *
- * ── `minimum_for` IS A FLOOR, NOT A NAME ────────────────────────────────────
+ * ── `minimumFor` IS A FLOOR, NOT A NAME ─────────────────────────────────────
  *
  * Owen's rule is about SIZE — *"if their system just isnt powerful enough for
- * translation (smaller than 9b)"* — so the row carrying `minimum_for` marks a
+ * translation (smaller than 9b)"* — so a row carrying `minimumFor` marks a
  * position in the lineup and everything from there upward qualifies. Reading it
  * as "only this row lights translate" would leave a 24 GB card holding the 27B
  * and nothing else with a dark Translate tile, which is the opposite of the
- * rule's purpose. A class with no floor anywhere (analysis, clean) takes the
- * whole list, which is also Owen's: analysis is a sentence at a time and a small
- * model does it, a translation is a book.
+ * rule's purpose. A class with no floor anywhere (clean) takes the whole list.
+ *
+ * ── TWO CATALOGS MAY EACH DECLARE ONE, AND THE SMALLEST WINS ────────────────
+ *
+ * `findIndex` takes the FIRST row in this order that names the class, which is
+ * the smallest declared floor. That is not an accident of the implementation, it
+ * is the rule: the two files are answering different questions. Crucible's floor
+ * is what a CRUCIBLE will serve — it installs one model per class and picks the
+ * largest that fits the card, so its 4-bit 27B genuinely is the smallest thing
+ * it offers. Foundry's floor is what an OLLAMA on this desk can be asked for,
+ * and Ollama's library carries tags no Crucible manifest describes. Taking the
+ * larger of the two would dark Translate on a 12 GB card that can run the 9B
+ * perfectly well, in the name of a constraint that belongs to a server this
+ * machine does not have.
+ *
+ * WHICH IS WHY ANALYSIS MOVED. Only Crucible declares a floor for `analysis`,
+ * so `analysis` floors at the 4-bit 27B — see the module header, which argues
+ * that consequence rather than hiding it.
  */
 export function eligibleFor(cls: ModelClass): readonly LineupRow[] {
   const serving = MODEL_LINEUP.filter((row) => row.classes.includes(cls));
-  const floor = serving.findIndex((row) => row.minimum_for?.includes(cls) === true);
+  const floor = serving.findIndex((row) => row.minimumFor.includes(cls));
   return floor < 0 ? serving : serving.slice(floor);
 }
 

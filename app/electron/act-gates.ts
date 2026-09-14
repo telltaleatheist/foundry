@@ -29,8 +29,8 @@
  * ── WHY IT IS MAIN'S, AND WHY IT IS ONE FUNCTION ────────────────────────────
  *
  * Every fact in it lives in main: the hardware probe, ollama's `/api/tags`, the
- * settings file, the page reader's directory, the server registry when package C
- * lands. A renderer assembling the answer would be four IPC calls and a join
+ * settings file, the page reader's directory, and the server registry's
+ * capability reads. A renderer assembling the answer would be five IPC calls and a join
  * written once per surface, and the two surfaces would drift the first time one
  * of them forgot a clause. So `actGates()` is the whole answer, every act at
  * once, and the tiles read it.
@@ -59,11 +59,20 @@
  * 4. **READING THROUGH A REMOTE ENDPOINT.** See `readGate`.
  */
 import { readAppSettings } from './app-settings';
-import { localCrucibleServes } from './crucible-provider';
+import {
+  localCrucibleServes,
+  localCrucibleTakeover,
+  refreshCrucibleFacts,
+} from './crucible-provider';
 import { hosted } from './host';
 import { eligibleFor, fitsOn, heldBy, heldSet, type LineupRow } from './llm-catalog';
 import { probeOllama } from './ollama';
-import { isLocalPageReader, PAGE_READER_MODEL, pageReaderInstalled } from './page-reader';
+import {
+  isLocalPageReader,
+  PAGE_READER_MODEL,
+  pageReaderInstalled,
+  pageReaderSuperseded,
+} from './page-reader';
 import { readSettings } from './settings';
 import { probeSystem } from './system-probe';
 import type { ActGate, ActGates, ModelClass, OllamaFacts, SystemProfile } from '../shared/types';
@@ -103,13 +112,20 @@ function pool(profile: SystemProfile): string {
  */
 function textGate(cls: ModelClass, machine: Machine): ActGate {
   /*
-   * A LOCAL CRUCIBLE SERVING THE CLASS LIGHTS IT OUTRIGHT. `unknown` — which is
-   * every answer until package C lands its registry — falls through to the
-   * ollama path rather than lighting anything, because a tile lit by a server
-   * this app cannot yet see would be a tile lit by a guess.
+   * A LOCAL CRUCIBLE SERVING THE CLASS LIGHTS IT OUTRIGHT. `unknown` — no local
+   * entry, nothing probed yet, or a local server that did not answer — falls
+   * through to the ollama path rather than lighting anything, because a tile lit
+   * by a server this app has not heard from would be a tile lit by a guess. The
+   * answer comes out of `refreshCrucibleFacts`, awaited once in `actGates`.
    */
   if (localCrucibleServes(cls) === 'yes') {
-    return { lit: true, why: 'A Crucible on this machine is serving this class.' };
+    const server = localCrucibleTakeover()?.server;
+    return {
+      lit: true,
+      why: server === undefined
+        ? 'A Crucible on this machine is serving this class.'
+        : `"${server}", the Crucible on this machine, is serving this class.`,
+    };
   }
 
   /*
@@ -131,7 +147,7 @@ function textGate(cls: ModelClass, machine: Machine): ActGate {
    * there. So the two cases get two sentences.
    */
   const floor = eligible[0];
-  const floored = eligible.some((row) => row.minimum_for?.includes(cls) === true);
+  const floored = eligible.some((row) => row.minimumFor.includes(cls));
   const need = floor === undefined
     ? 'a language model'
     : floored ? `${floor.label} or larger` : `at least ${floor.label}`;
@@ -214,8 +230,23 @@ function namesOf(rows: readonly LineupRow[]): string {
  * a tooltip.
  */
 function readGate(): ActGate {
-  if (localCrucibleServes('pages') === 'yes') {
-    return { lit: true, why: 'A Crucible on this machine is reading pages.' };
+  /*
+   * A CRUCIBLE THAT IS SERVING PAGES IS NOT YET A CRUCIBLE THAT IS READING THEM.
+   *
+   * `pageReaderSuperseded` is the question with both halves in it: the server
+   * says it serves the class AND this app sends reads there (`CRUCIBLE_READS`,
+   * crucible-dispatch.ts, still false). Asking `localCrucibleServes` directly
+   * here would light the tile on the strength of a capability record while the
+   * job still went to a local llama-server that may not be installed — a lit tile
+   * over a read that fails, which is the exact failure a gate exists to prevent.
+   */
+  const superseded = pageReaderSuperseded();
+  if (superseded !== null) {
+    return {
+      lit: true,
+      why: `"${superseded}", the Crucible on this machine, is reading pages — so Foundry's own `
+        + 'copy of the reader is not needed here.',
+    };
   }
 
   const settings = readSettings();
@@ -271,9 +302,19 @@ export async function actGates(): Promise<ActGates> {
   }
 
   const settings = readAppSettings();
+  /*
+   * THE CRUCIBLE FACTS ARE REFRESHED HERE AND READ SYNCHRONOUSLY BELOW.
+   * `localCrucibleServes` cannot be awaited inside a gate — the gates are five
+   * synchronous answers composed from one measurement — so the measurement is
+   * taken once, up front, beside the two probes that were always here. The
+   * provider's cache keeps this to one round of requests every fifteen seconds
+   * however often the dock reloads, and its own timeout keeps a sleeping server
+   * from putting a stall behind a tooltip.
+   */
   const [profile, ollama] = await Promise.all([
     probeSystem(),
     probeOllama(settings.ollamaUrl),
+    refreshCrucibleFacts(),
   ]);
 
   const machine: Machine = {

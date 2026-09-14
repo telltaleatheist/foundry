@@ -255,6 +255,39 @@ export interface AppSettings {
    * a wizard step into a migration.
    */
   setupSkipped: string[];
+  /**
+   * WHAT §5b's AUTOMATIC DELETION TOOK, AND WHEN — or null, on every machine
+   * where it has never fired.
+   *
+   * docs/SLOTS.md §5b: Foundry removes its own page-reader download when a LOCAL
+   * Crucible has taken over the `pages` class, *"and never silently: the settings
+   * row says what was removed and the gigabytes freed. Re-download restores it."*
+   * That sentence has to survive the app being closed — the removal happens the
+   * moment a server is registered, and the person may not look at Settings until
+   * the next day — so the fact is written here rather than held in a signal.
+   *
+   * IT IS A RECEIPT, NOT A FLAG. Nothing reads it to decide whether to remove
+   * again: `pageReaderRemovalOffer` measures the disk every time, and a directory
+   * that is already gone is already gone. Re-installing the reader clears it,
+   * because a receipt for a deletion that has been undone is a lie on a screen.
+   */
+  pageReaderRemoved: PageReaderRemoval | null;
+}
+
+/**
+ * The receipt for one automatic removal — see {@link AppSettings.pageReaderRemoved}.
+ *
+ * `server` NAMES THE CRUCIBLE that took the class over, because "Foundry deleted
+ * four gigabytes" is alarming and "the Crucible on this machine took over page
+ * reading, so Foundry removed its own copy of the reader (4.4 GB)" is an
+ * explanation. `bytes` is null when the directory could not be measured before
+ * it went, which is rare and must not print as a confident zero.
+ */
+export interface PageReaderRemoval {
+  server: string;
+  bytes: number | null;
+  /** ISO 8601, in this machine's clock. For the sentence, never for a comparison. */
+  at: string;
 }
 
 export const KEEP_WARM_MAX_MINUTES = 240;
@@ -544,6 +577,29 @@ export function readAppSettings(): AppSettings {
     wslDistro: clampWslDistro(raw?.['wslDistro']),
     setupCompleted: raw?.['setupCompleted'] === true,
     setupSkipped: clampSkipped(raw?.['setupSkipped']),
+    pageReaderRemoved: clampPageReaderRemoval(raw?.['pageReaderRemoved']),
+  };
+}
+
+/**
+ * The removal receipt, read defensively.
+ *
+ * NULL FOR ANYTHING THAT IS NOT A COMPLETE ONE, including a half-written record
+ * from a version that stored it differently. This value is printed at a person
+ * in a sentence about their disk; a partial one would produce "Foundry removed
+ * undefined on undefined", and no record at all is a better sentence than that —
+ * the disk is measured either way, so nothing is lost but the explanation.
+ */
+function clampPageReaderRemoval(value: unknown): PageReaderRemoval | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const raw = value as Record<string, unknown>;
+  const server = typeof raw['server'] === 'string' ? raw['server'].trim() : '';
+  const at = typeof raw['at'] === 'string' ? raw['at'].trim() : '';
+  if (server.length === 0 || at.length === 0) return null;
+  return {
+    server,
+    bytes: typeof raw['bytes'] === 'number' && Number.isFinite(raw['bytes']) ? raw['bytes'] : null,
+    at,
   };
 }
 
@@ -581,6 +637,17 @@ export function writeAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
   if (patch.setupSkipped !== undefined) {
     root['setupSkipped'] = clampSkipped(patch.setupSkipped);
+  }
+  /*
+   * NULL IS A VALUE HERE and clears the receipt — which is what re-installing
+   * the page reader does. `undefined` still means "not in this patch", so the
+   * two are genuinely different and the check has to be on `undefined` rather
+   * than on truthiness.
+   */
+  if (patch.pageReaderRemoved !== undefined) {
+    root['pageReaderRemoved'] = patch.pageReaderRemoved === null
+      ? null
+      : clampPageReaderRemoval(patch.pageReaderRemoved);
   }
   const file = settingsFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });

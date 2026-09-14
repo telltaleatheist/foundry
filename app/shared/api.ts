@@ -15,6 +15,7 @@ import type { BookOp, PendingOutcome, PendingStack } from './ops';
 import type { ReReadPrompt } from './reread';
 import type {
   ComputeSlot,
+  CrucibleInstallPlan,
   CrucibleProbe,
   CrucibleServerEdit,
   CrucibleSettingsView,
@@ -1382,6 +1383,25 @@ export interface FoundryApi {
     /** Test connection. A failure is a RESULT with the SDK's own sentence on it. */
     test(name: string): Promise<CrucibleProbe>;
     /**
+     * Test an address and a token that are NOT SAVED YET — the setup wizard's
+     * Connect door, which has three boxes and no registry entry behind them.
+     *
+     * The token goes ONE WAY, into main, out of a box somebody is typing in; it
+     * is used for one request and dropped, and no answer carries it back. Adding
+     * the server first in order to test it would be this app writing into
+     * somebody's settings to find out whether an address is a Crucible.
+     */
+    testAt(url: string, token: string): Promise<CrucibleProbe>;
+    /**
+     * Add one server — the wizard's Add, through the registry's ONE writer.
+     *
+     * The card sends the whole list because it holds the whole list; a caller
+     * with three text boxes sends one entry and main appends it. An existing
+     * name is replaced in place, keeping its rank and its enabled state, which
+     * is how re-adding a server is the fix for a stale token.
+     */
+    add(name: string, url: string, token: string): Promise<CrucibleSettingsView>;
+    /**
      * Register the Crucible on this machine by reading its own config.toml —
      * the file that server reads, so no second copy of its token exists. On
      * Windows that file is inside WSL and `wslDistro` decides which guest.
@@ -1391,6 +1411,30 @@ export interface FoundryApi {
     setWslDistro(distro: string): Promise<string>;
     /** What a new row's `waitFor` starts as. Answered with what was stored. */
     setNewJobsWaitFor(choice: NewJobsWaitFor): Promise<NewJobsWaitFor>;
+    /**
+     * THE HAND SEQUENCE FOR INSTALLING A CRUCIBLE ON THIS MACHINE — every
+     * command, in order, with the elevated ones listed apart.
+     *
+     * A READ. The only process it spawns is `wsl.exe -l -v`, which lists; it
+     * changes nothing and downloads nothing. See `CrucibleInstallPlan`.
+     */
+    installPlan(): Promise<CrucibleInstallPlan>;
+    /**
+     * RUN THAT SEQUENCE — and it REJECTS on every machine today, with
+     * `CrucibleInstallPlan.drivenWhy`'s sentence.
+     *
+     * `@crucible/bootstrap` is released with Crucible's next version and is
+     * deliberately not a dependency until it exists. The button that calls this
+     * is disabled with the same sentence; the door refuses anyway, because
+     * something reachable by an IPC message must refuse at the door as well or
+     * the disabling is a decoration.
+     *
+     * `Promise<void>` and not `Promise<never>`: this door is expected to RESOLVE
+     * the day the bootstrap package lands, and typing today's refusal into the
+     * signature would make turning it on a change every caller has to be edited
+     * for. The caller's shape is the same either way — `await`, and catch.
+     */
+    install(): Promise<void>;
   };
 
   /**
@@ -1473,6 +1517,20 @@ export interface FoundryApi {
    */
   models: {
     inventory(): Promise<MachineModels>;
+    /**
+     * THE WEIGHTS ON THIS DISK MOVED — said out loud, with no payload.
+     *
+     * The one thing that changes them without somebody pressing a button on the
+     * card is SLOTS.md §5b's automatic removal: registering the Crucible on this
+     * machine takes page reading over, and Foundry's own copy of the reader goes.
+     * Without this push the card would go on listing four gigabytes of files
+     * that are not there until it was reopened.
+     *
+     * NO PAYLOAD, on `acts:gates-changed`'s reasoning: the inventory is main's
+     * to compose and composing it costs a directory walk, so this says only that
+     * something moved and the card asks again through `inventory()`.
+     */
+    onChanged(listener: () => void): () => void;
     /**
      * Delete the page reader Foundry downloaded, and answer with the gigabytes
      * freed. A refusal is a RESULT with a sentence, never a rejection — this is

@@ -25,13 +25,17 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { actGates } from './act-gates';
 import { readAppSettings, writeAppSettings } from './app-settings';
 import {
+  addCrucibleServer,
   addLocalCrucible,
   crucibleSettingsView,
   computeSlots,
   probeCrucible,
+  probeCrucibleAt,
   writeCrucibleServers,
 } from './crucible-registry';
-import type { CrucibleServerEdit, NewJobsWaitFor } from '../shared/slots';
+import { crucibleInstallPlan, driveCrucibleInstall } from './crucible-install';
+import { forgetCrucibleFacts, refreshCrucibleFacts } from './crucible-provider';
+import { CRUCIBLE_WHEEL, type CrucibleServerEdit, type NewJobsWaitFor } from '../shared/slots';
 import {
   ensureCapture,
   intakePhotos,
@@ -76,7 +80,7 @@ import {
 } from './host-ops';
 import type { HostNodeAction } from '../shared/host-ops';
 import * as queue from './job-queue';
-import { machineModels, removeFoundryDownloads } from './machine-models';
+import { applyPageReaderRemoval, machineModels, removeFoundryDownloads } from './machine-models';
 import { cancelOllamaInstall, cancelPull, installOllama, probeOllama, pullModel } from './ollama';
 import { finishSetup, llmChoices, setupState } from './setup';
 import { probeSystem } from './system-probe';
@@ -508,12 +512,12 @@ function sizeOnDisk(bytes: number): string {
  *
  * The dock's gates are composed in main off five facts (act-gates.ts), and three
  * of the five are changed by doors in this file: ollama's library, the page
- * reader's directory, and the settings file. (The other two are the hardware,
- * which does not change while the app is open, and package C's registry, which
- * does not exist.) Without this
- * push a person would pull the 9B the wizard recommended and watch Translate
- * stay gray until they restarted the app — which is the exact failure Owen's
- * rule was written to prevent, arriving from the other direction.
+ * reader's directory, and the settings file. A fourth is the server registry,
+ * whose capability reads light a tile outright — `afterRegistryChanged` below is
+ * that door. (The fifth is the hardware, which does not change while the app is
+ * open.) Without this push a person would pull the 9B the wizard recommended and
+ * watch Translate stay gray until they restarted the app — which is the exact
+ * failure Owen's rule was written to prevent, arriving from the other direction.
  *
  * NO PAYLOAD, on `projects:changed`'s reasoning. The gates are one composed
  * answer and composing them costs a probe, so this says only that the machine
@@ -523,6 +527,41 @@ function sizeOnDisk(bytes: number): string {
  */
 function gatesChanged(): void {
   broadcast('acts:gates-changed', null);
+}
+
+/**
+ * THE REGISTRY CHANGED — everything that follows from that, in one place.
+ *
+ * Adding, enabling, renaming or removing a server moves three things at once and
+ * they have to move in this order:
+ *
+ *   1. FORGET the cached capability answers. They were measured against the old
+ *      list and every one of them may now be wrong; a fifteen-second stale
+ *      window after a deliberate press is the one case a person reads as the app
+ *      ignoring them (`crucible-provider.ts`).
+ *   2. MEASURE again, so the deletion below is decided on what the servers say
+ *      NOW rather than on a silence that has not been broken yet. `unknown` is
+ *      not a permission to delete, so skipping this would simply mean nothing
+ *      happens — which is safe and is also not what somebody who just registered
+ *      their local Crucible is expecting to see.
+ *   3. APPLY docs/SLOTS.md §5b: if a LOCAL Crucible now serves `pages`, Foundry's
+ *      own copy of the page reader is a duplicate and goes, out loud.
+ *
+ * THE REMOVAL IS ANNOUNCED TWICE OVER, on purpose. `acts:gates-changed` moves
+ * the OCR tile's sentence, and `models:changed` moves the two cards that draw
+ * the files themselves — they are different questions with different readers,
+ * and one push doing both would be a card re-reading an inventory because a
+ * tooltip changed.
+ */
+async function afterRegistryChanged(): Promise<void> {
+  forgetCrucibleFacts();
+  await refreshCrucibleFacts();
+  const removed = await applyPageReaderRemoval();
+  gatesChanged();
+  if (removed !== null) {
+    console.log(`[slots] ${removed}`);
+    broadcast('models:changed', null);
+  }
 }
 
 export function registerIpc(): void {
@@ -3039,6 +3078,15 @@ export function registerIpc(): void {
     const outcome = await pageReader.installPageReader(
       (progress) => broadcast('page-reader:progress', progress),
     );
+    /*
+     * AND THE §5b RECEIPT IS TORN UP. `AppSettings.pageReaderRemoved` is the
+     * sentence the Models card prints about an automatic removal — *"a Crucible
+     * took over page reading, so Foundry removed its own copy"* — and a reader
+     * that is back on this disk makes that sentence false. Cleared on the
+     * failure too: a half-finished install leaves files here either way, and a
+     * receipt claiming they are gone is the worse of the two wrong screens.
+     */
+    writeAppSettings({ pageReaderRemoved: null });
     // The OCR tile is dark on a machine with no reader and lit on one with it,
     // so the install is one of the three things that moves a gate. Announced on
     // the failure too: a partial install that got the binary and not the weights
@@ -3186,9 +3234,9 @@ export function registerIpc(): void {
    * no business knowing what a registry is.
    */
   ipcMain.handle('crucible:settings', () => crucibleSettingsView());
-  ipcMain.handle('crucible:save', (_event, servers: CrucibleServerEdit[]) => {
+  ipcMain.handle('crucible:save', async (_event, servers: CrucibleServerEdit[]) => {
     writeCrucibleServers(servers);
-    gatesChanged();
+    await afterRegistryChanged();
     /*
      * THE WHOLE VIEW, not just the list, because saving a server CHANGES THE
      * SLOTS — enabling a loopback entry takes the local slot away — and a card
@@ -3198,7 +3246,57 @@ export function registerIpc(): void {
     return crucibleSettingsView();
   });
   ipcMain.handle('crucible:test', (_event, name: string) => probeCrucible(name));
-  ipcMain.handle('crucible:add-local', (_event, name: string) => addLocalCrucible(name));
+  /**
+   * TEST AN ADDRESS AND A TOKEN THAT ARE NOT SAVED YET — the setup wizard's
+   * Connect door, which has three boxes and no registry entry behind them.
+   *
+   * The token crosses this wire ONE WAY ONLY, into main, out of a box somebody
+   * is typing in. It is used for one request and dropped; nothing stores it and
+   * no answer carries it back (`CrucibleProbe` has no token field). That is the
+   * same rule the registry keeps — see crucible-registry.ts's header.
+   */
+  ipcMain.handle('crucible:test-at', (_event, url: string, token: string) =>
+    probeCrucibleAt(url, token));
+  /**
+   * ADD ONE SERVER — the wizard's Add, through the registry's one writer.
+   *
+   * Answered with the whole settings view for `crucible:save`'s reason: adding a
+   * loopback server changes the SLOTS, and a caller that redrew a list without
+   * the slots would be showing a picker that is about to be wrong.
+   */
+  ipcMain.handle('crucible:add', async (_event, name: string, url: string, token: string) => {
+    addCrucibleServer(name, url, token);
+    await afterRegistryChanged();
+    return crucibleSettingsView();
+  });
+  ipcMain.handle('crucible:add-local', async (_event, name: string) => {
+    const answer = await addLocalCrucible(name);
+    if (answer.outcome === 'added') await afterRegistryChanged();
+    return answer;
+  });
+  /**
+   * THE HAND SEQUENCE FOR "INSTALL CRUCIBLE HERE", composed for this machine.
+   *
+   * A READ, and it changes nothing: the only process it spawns is `wsl.exe -l -v`
+   * (electron/crucible-install.ts), which lists. Everything else in the answer is
+   * a string for a person to read and run.
+   */
+  ipcMain.handle('crucible:install-plan', () => crucibleInstallPlan());
+  /**
+   * THE DRIVEN INSTALL — and it refuses, today, by name.
+   *
+   * The button is disabled in the renderer with the same sentence this throws,
+   * and the door refuses anyway: something reachable by an IPC message must
+   * refuse at the door as well, or the disabling is a decoration (the Servers
+   * card's hosted refusal makes the same argument). `@crucible/bootstrap` is
+   * released with Crucible's next version; see crucible-install.ts for the
+   * four-step change that turns this on.
+   */
+  ipcMain.handle('crucible:install', () => driveCrucibleInstall({
+    jobTypes: ['llm'],
+    wheel: CRUCIBLE_WHEEL,
+    onLine: () => { /* nothing to relay while the door refuses. */ },
+  }));
   ipcMain.handle('crucible:set-wsl-distro', (_event, distro: string) =>
     writeAppSettings({ wslDistro: distro }).wslDistro);
   ipcMain.handle('crucible:set-new-jobs-wait-for', (_event, choice: NewJobsWaitFor) =>
@@ -3286,4 +3384,41 @@ export function registerIpc(): void {
   // because an intake of a whole shoot is a minute long and a promise that
   // resolves at the end cannot say anything until there is nothing to say.
   onIntakeProgress((progress) => broadcast('capture:intake-progress', progress));
+
+  /*
+   * ── DOCS/SLOTS.MD §5b, ONCE AT STARTUP ────────────────────────────────────
+   *
+   * For the machine where the Crucible was installed while Foundry was closed.
+   * `afterRegistryChanged` covers somebody registering the local server while
+   * the app is open; neither is the whole of it alone, because a person who runs
+   * `crucible install llm` in a terminal and reopens Foundry has changed nothing
+   * this app was watching, and their disk is still holding four gigabytes of a
+   * page reader the machine no longer needs.
+   *
+   * IT CANNOT FIRE HOSTED, AND NOT BY A GUARD. Inside BookForge the slot list is
+   * the HOST's (SLOTS.md §3) and `AppSettings.crucibleServers` is empty, so
+   * `localCrucibleServes` answers `unknown` — which is not a permission to
+   * delete. That is the three-valued answer doing the work it was shaped for,
+   * rather than a `hosted()` check that would have to be kept in step with a
+   * rule written somewhere else.
+   *
+   * DELIBERATELY NOT AWAITED: it probes every registered server, and blocking
+   * the mount on a sleeping Mac would put a three-second stall in front of the
+   * first window for a tidy-up nobody is waiting on. A failure is logged and
+   * changes nothing — the files stay, and the next registry save asks again.
+   */
+  void refreshCrucibleFacts()
+    .then(() => applyPageReaderRemoval())
+    .then((removed) => {
+      if (removed === null) return;
+      console.log(`[slots] ${removed}`);
+      gatesChanged();
+      broadcast('models:changed', null);
+    })
+    .catch((err: unknown) => {
+      console.error(
+        '[slots] the weights-ownership pass could not finish: '
+        + `${err instanceof Error ? err.message : String(err)}. Nothing was removed.`,
+      );
+    });
 }

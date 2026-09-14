@@ -245,9 +245,13 @@ const api: FoundryApi = {
     settings: () => ipcRenderer.invoke('crucible:settings'),
     save: (servers) => ipcRenderer.invoke('crucible:save', servers),
     test: (name) => ipcRenderer.invoke('crucible:test', name),
+    testAt: (url, token) => ipcRenderer.invoke('crucible:test-at', url, token),
+    add: (name, url, token) => ipcRenderer.invoke('crucible:add', name, url, token),
     addLocal: (name) => ipcRenderer.invoke('crucible:add-local', name),
     setWslDistro: (distro) => ipcRenderer.invoke('crucible:set-wsl-distro', distro),
     setNewJobsWaitFor: (choice) => ipcRenderer.invoke('crucible:set-new-jobs-wait-for', choice),
+    installPlan: () => ipcRenderer.invoke('crucible:install-plan'),
+    install: () => ipcRenderer.invoke('crucible:install'),
   },
 
   /*
@@ -343,6 +347,8 @@ const api: FoundryApi = {
 
   models: {
     inventory: () => ipcRenderer.invoke('models:inventory'),
+    // NO PAYLOAD, on `acts:gates-changed`'s reasoning — the card asks again.
+    onChanged: (listener) => subscribe<void>('models:changed', () => listener()),
     removePageReader: () => ipcRenderer.invoke('models:remove-page-reader'),
   },
 
