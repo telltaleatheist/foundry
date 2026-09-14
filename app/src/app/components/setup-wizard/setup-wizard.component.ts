@@ -107,7 +107,7 @@ const STEPS: readonly StepDef[] = [
   {
     id: 'ollama',
     title: 'Ollama and a model',
-    blurb: 'Translation, simplification and analysis all speak to ollama. This machine gets the largest model that fits it.',
+    blurb: 'The model this machine runs text on. It gets the largest that fits — and a card that cannot hold a 27B reaches translation another way.',
   },
   {
     /*
@@ -220,6 +220,23 @@ const STEPS: readonly StepDef[] = [
                 </div>
               } @else {
                 <p class="machine">{{ facts.profile.detail }}</p>
+                <!--
+                  THE ONE THING THIS SCREEN MUST NOT PROMISE. Owen's floor
+                  (docs/SLOTS.md §1): translation and simplification need a 27B,
+                  or a Crucible, or a cloud key. On a smaller card no amount of
+                  pulling makes them work, so it is said BEFORE the download
+                  rather than discovered afterwards as a dark tile. The
+                  narration cleanup and the analysis still run here, which is
+                  why the step is not skipped — it is narrowed.
+                -->
+                @if (facts.translateFloorMiss; as miss) {
+                  <p class="warn">
+                    Translation and simplification need {{ miss.needs }} or larger, which wants
+                    {{ miss.needsGB }} GB — more than this machine has. The models below still
+                    clean text for the narrator and run analysis. For translation, connect a
+                    Crucible server or a cloud provider in Settings.
+                  </p>
+                }
                 <!--
                   docs/SLOTS.md §5b: the app never pulls into Ollama while a
                   LOCAL Crucible serves the class. Said in the rows rather than

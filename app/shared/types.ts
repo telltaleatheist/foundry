@@ -2004,6 +2004,28 @@ export interface LlmModelOption {
 }
 
 /** What the wizard's model step is looking at. */
+/**
+ * WHAT A MACHINE UNDER THE TRANSLATE FLOOR IS TOLD, and why the wizard needs
+ * it rather than working it out.
+ *
+ * Owen, 2026-09-14: *"either they use the 27b or they use an api key for Claude
+ * or OpenAI."* So on a card that cannot hold a 27B, translation and
+ * simplification are not something Ollama will ever do here, however many
+ * models are pulled — and a step whose blurb promised them would be selling a
+ * download that cannot deliver. The floor is `llm-catalog.ts`'s, read with the
+ * same `eligibleFor`/`fitsOn` the act gate uses, so the wizard and the tile
+ * cannot disagree about what this machine can run.
+ *
+ * Null when the machine DOES clear the floor, which is the ordinary answer and
+ * draws nothing.
+ */
+export interface TranslateFloorMiss {
+  /** The smallest model that would serve translate here — "Qwen 3.5 · 27B". */
+  needs: string;
+  /** What it wants, in gigabytes, against what this machine has. */
+  needsGB: number;
+}
+
 export interface LlmChoices {
   profile: SystemProfile;
   ollama: OllamaFacts;
@@ -2015,6 +2037,8 @@ export interface LlmChoices {
   suggested: string;
   /** The model jobs use today, whether or not setup has ever run. */
   current: string;
+  /** Set when no model that fits this machine can serve translate. See the type. */
+  translateFloorMiss: TranslateFloorMiss | null;
   /**
    * THE CLASSES A CRUCIBLE ON THIS MACHINE HAS ALREADY TAKEN OVER — null when
    * none has, which is every machine without one.
