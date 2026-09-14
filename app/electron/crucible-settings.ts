@@ -35,21 +35,30 @@
  * That is electron/crucible-registry.ts's rule for a server token, one wire
  * along, and it is why no function in this file logs a request body.
  *
- * ── WHY THESE ARE HAND-ROLLED FETCHES ─────────────────────────────────────
+ * ── THE SDK OWNS THE WIRE, AND AS OF crucible 762484f IT OWNS ALL THREE ────
  *
- * The vendored `@crucible/client` (0.5.0) has no `settings()`, `putSettings()`
- * or `testUpstream()`; PHASE15 §3.8 says the SDK gains all three. Until the
- * tarball carries them these go through `crucibleRequest`, the dispatcher's own
- * one-fetch-with-the-SDK's-error-mapping (electron/crucible-dispatch.ts says
- * why at length) — NOT a second parser, because a refusal that arrived as a
- * bare `Error` would lose the code every card below prints.
+ * These were hand-rolled fetches while `@crucible/client` had no `settings()`,
+ * `putSettings()` or `testUpstream()`, with a standing note to switch the
+ * moment the tarball carried them. It does: **0.6.0, packed from crucible
+ * `762484f`**, and all three now go through `clientFor(entry)` — the same
+ * client every other Crucible call in this app goes through, with the same
+ * error types, the same `User-Agent` and the same `X-Crucible-Api` header.
  *
- * **Switch all three to the SDK's own methods the moment the tarball carries
- * them.**
+ * WHAT WENT WITH THE SWITCH is the snake_case translation this file used to
+ * carry. The SDK reads `key_hint`, `desktop_allowance_bytes` and
+ * `backend_kind` off the wire and hands back camelCase, so the only shaping
+ * left here is the one thing the SDK deliberately does NOT do: fill in the
+ * route rows the server omitted (§2, *"absent key = local"*), because the SDK
+ * reports the document as sent and this app's card draws four rows always.
  */
-import { CrucibleAuthError, CrucibleRefused, CrucibleServerError } from '@crucible/client';
+import {
+  CrucibleRefused,
+  type SettingsDocument as EngineSettingsDocument,
+  type SettingsPatch as EngineSettingsPatch,
+  type UpstreamName as EngineUpstreamName,
+} from '@crucible/client';
 
-import { crucibleRequest } from './crucible-dispatch';
+import { clientFor } from './crucible-registry';
 import type { CrucibleServerEntry } from './app-settings';
 import {
   LLM_CLASSES,
@@ -63,63 +72,23 @@ import {
 } from '../shared/engine-settings';
 
 /**
- * THE THREE REFUSALS `POST …/test` CAN ANSWER WITH (PHASE15 §3.2), and the only
- * codes that become a RESULT rather than a rejection.
- *
- * They are a result for `CrucibleProbe`'s reason (shared/slots.ts): the card
- * prints the sentence beside the box somebody is typing in and offers nothing
- * to press, and a rejection would make a wrong key look like a broken app.
- * Anything else — a version refusal, an engine that is not answering at all —
- * is a different kind of news and is left to throw, so it reads as "the engine
- * is down" rather than "your key is bad".
- *
- * ── AND THEY ARRIVE AS THREE DIFFERENT ERROR TYPES, WHICH IS WHY THE CODE IS
- * THE DISCRIMINATOR AND THE STATUS IS NOT ─────────────────────────────────
- *
- * §3.2 gives them statuses: `502 upstream_unreachable`, `401 upstream_rejected`,
- * `400 upstream_unconfigured`. `crucibleRequest` maps a status onto the SDK's
- * error classes before anything here sees it, so those become
- * `CrucibleServerError`, `CrucibleAuthError` and `CrucibleRefused`
- * respectively — three classes, one meaning. All three carry `code` and
- * `serverMessage`, so this switches on the CODE, which is the name the contract
- * actually owns. It also keeps the one distinction that matters: a 401 about
- * the SERVER's own token carries a different code and still throws, because a
- * stale registry token is not something to draw beside a key box.
- */
-const TEST_REFUSALS: readonly string[] = [
-  'upstream_unreachable',
-  'upstream_rejected',
-  'upstream_unconfigured',
-];
-
-/** A refusal that named itself, whatever class `crucibleRequest` chose for it. */
-type NamedRefusal = { code: string; serverMessage: string };
-
-function namedRefusal(err: unknown): NamedRefusal | null {
-  if (err instanceof CrucibleRefused
-    || err instanceof CrucibleAuthError
-    || err instanceof CrucibleServerError) {
-    return { code: err.code, serverMessage: err.serverMessage };
-  }
-  return null;
-}
-
-/**
  * `GET /v1/settings` — the document, for one server.
  *
- * EVERY FIELD IS READ DEFENSIVELY, `readCapability`'s rule: a server one
- * version ahead may carry a field this build has never heard of, and a reader
- * that trusted the shape would throw on the whole document because one number
- * arrived as a string. The four route rows are filled in even when the server
- * omits one — §2 says *"absent key = local"*, so an absent row IS an answer and
- * is spelled out here rather than left for a template to find missing.
+ * THE FOUR ROUTE ROWS ARE FILLED IN even when the server omits one — §2 says
+ * *"absent key = local"*, so an absent row IS an answer and is spelled out here
+ * rather than left for a template to find missing. That is the whole of what
+ * {@link documentFrom} does now; every field's type is the SDK's problem and a
+ * document that is not API v1's shape is a `CrucibleProtocolError` from it,
+ * which is the honest news rather than a row quietly reading `local`.
+ *
+ * NO TIMEOUT PARAMETER. `CrucibleClient` takes none and this call has never had
+ * a caller that passed one — a settings card is a person's press being answered
+ * and may wait, exactly as a placement may.
  */
 export async function readEngineSettings(
   entry: CrucibleServerEntry,
-  timeoutMs?: number,
 ): Promise<SettingsDocument> {
-  const body = await crucibleRequest(entry, '/v1/settings', { method: 'GET', timeoutMs });
-  return documentFrom(body);
+  return documentFrom(await clientFor(entry).settings());
 }
 
 /**
@@ -144,11 +113,7 @@ export async function writeEngineSettings(
   patch: SettingsPatch,
 ): Promise<SettingsDocument> {
   try {
-    const body = await crucibleRequest(entry, '/v1/settings', {
-      method: 'PUT',
-      body: httpBodyOf(patch),
-    });
-    return documentFrom(body);
+    return documentFrom(await clientFor(entry).putSettings(patchFor(patch)));
   } catch (err) {
     if (err instanceof CrucibleRefused) throw new Error(refusalSentence(err));
     throw err;
@@ -170,104 +135,115 @@ export async function writeEngineSettings(
  * `probe` IS THE UNSAVED CREDENTIAL, or absent for the one already configured.
  * The key crosses into main out of a box somebody is typing in, is used for one
  * request and is dropped; nothing here stores it and no answer carries it back.
+ *
+ * ── THE THREE REFUSALS ARE A RESULT, AND THE SDK IS WHAT DECIDES THAT ──────
+ *
+ * `upstream_unreachable`, `upstream_rejected` and `upstream_unconfigured` come
+ * back as `{ok: false, code, message}` rather than as a throw, because the card
+ * prints the sentence beside the box somebody is typing in and offers nothing
+ * to press (`CrucibleProbe`'s reason, shared/slots.ts) — a rejection would make
+ * a wrong key look like a broken app. That test used to live here, over three
+ * different error classes; since crucible `762484f` it is the SDK's
+ * (`UPSTREAM_TEST_REFUSALS`), which is the right owner: the three codes are the
+ * contract's and this file had a second copy of them.
+ *
+ * ALL THAT IS LEFT IS THE WORD FOR THE ARM. The SDK says `ok`; this app's wire
+ * says `outcome`, for the same reason every other three-way answer here does.
  */
 export async function testUpstream(
   entry: CrucibleServerEntry,
   name: UpstreamName,
   probe?: UpstreamProbe,
 ): Promise<UpstreamTestResult> {
-  try {
-    const body = await crucibleRequest(
-      entry,
-      `/v1/settings/upstreams/${encodeURIComponent(name)}/test`,
-      /*
-       * A BODY OF `{}` AND NOT NO BODY AT ALL when nothing was typed. §3.2 calls
-       * the body optional, and an empty object is the shape that says "test what
-       * is configured" without asking a JSON reader to cope with a POST that has
-       * a content-type and no content.
-       */
-      { method: 'POST', body: probe ?? {} },
-    );
-    const record = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
-    const listed = Array.isArray(record['models']) ? record['models'] : [];
-    return {
-      outcome: 'ok',
-      models: listed.filter((id): id is string => typeof id === 'string'),
-    };
-  } catch (err) {
-    const refusal = namedRefusal(err);
-    if (refusal !== null && TEST_REFUSALS.includes(refusal.code)) {
-      return { outcome: 'failed', code: refusal.code, message: refusal.serverMessage };
-    }
-    throw err;
-  }
+  const result = await clientFor(entry).testUpstream(name as EngineUpstreamName, probe);
+  return result.ok
+    ? { outcome: 'ok', models: [...result.models] }
+    : { outcome: 'failed', code: result.code, message: result.message };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The HTTP shape ↔ this app's shape, translated exactly once
+// The SDK's shape ↔ this app's shape
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The patch, in the doc's own snake_case.
+ * The patch, as the SDK takes it.
  *
- * ONLY THE KEYS SOMEBODY SET. §3.2's body is *"any subset"*, and sending
- * `{"routes": undefined}` through `JSON.stringify` would drop it anyway — but
- * an explicit build says out loud that an absent key means "leave it" while
+ * ONLY THE KEYS SOMEBODY SET. §3.2's body is *"any subset"*, and an explicit
+ * build says out loud that an absent key means "leave it" while
  * `upstreams.<name>: null` means REMOVE, which are two different instructions
- * that look alike in a debugger.
+ * that look alike in a debugger. The SDK serialises the snake_case from here
+ * (`desktop_allowance_bytes`); this app stopped spelling it in Wave 62.
+ *
+ * THE ROUTES ARE COPIED KEY BY KEY rather than spread, because this app's patch
+ * types the four llm classes and the SDK's types any class name — a spread
+ * would carry `undefined` values into a record whose values are strings, which
+ * is a different instruction from "leave it".
  */
-function httpBodyOf(patch: SettingsPatch): Record<string, unknown> {
-  const body: Record<string, unknown> = {};
-  if (patch.routes !== undefined) body['routes'] = { ...patch.routes };
-  if (patch.upstreams !== undefined) body['upstreams'] = { ...patch.upstreams };
-  if (patch.desktopAllowanceBytes !== undefined) {
-    body['desktop_allowance_bytes'] = patch.desktopAllowanceBytes;
+function patchFor(patch: SettingsPatch): EngineSettingsPatch {
+  const out: {
+    routes?: Record<string, string>;
+    upstreams?: Partial<Record<EngineUpstreamName, { key?: string; url?: string } | null>>;
+    desktopAllowanceBytes?: number;
+  } = {};
+  if (patch.routes !== undefined) {
+    const routes: Record<string, string> = {};
+    for (const cls of LLM_CLASSES) {
+      const named = patch.routes[cls];
+      if (named !== undefined) routes[cls] = named;
+    }
+    out.routes = routes;
   }
-  return body;
+  if (patch.upstreams !== undefined) {
+    const upstreams: Partial<Record<EngineUpstreamName, { key?: string; url?: string } | null>> = {};
+    if (patch.upstreams.anthropic !== undefined) upstreams.anthropic = patch.upstreams.anthropic;
+    if (patch.upstreams.openai !== undefined) upstreams.openai = patch.upstreams.openai;
+    if (patch.upstreams.ollama !== undefined) upstreams.ollama = patch.upstreams.ollama;
+    out.upstreams = upstreams;
+  }
+  if (patch.desktopAllowanceBytes !== undefined) {
+    out.desktopAllowanceBytes = patch.desktopAllowanceBytes;
+  }
+  return out;
 }
 
-/** The document, read out of whatever the server actually sent. */
-function documentFrom(body: unknown): SettingsDocument {
-  const record = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
-  const routes = asRecord(record['routes']);
-  const upstreams = asRecord(record['upstreams']);
-  const anthropic = asRecord(upstreams['anthropic']);
-  const openai = asRecord(upstreams['openai']);
-  const ollama = asRecord(upstreams['ollama']);
+/**
+ * The document, with the four route rows spelled out.
+ *
+ * THE ONLY SHAPING LEFT. The SDK reads every field and refuses a document that
+ * is not API v1's, so there is nothing here to read defensively; what it does
+ * NOT do is invent a row the server omitted, and §2 says an omitted row IS an
+ * answer (*"absent key = local"*). `local` is also the answer for a class the
+ * server named with a route this app has no row for, which is the conservative
+ * direction: it does not claim a person's book is being sent to a company.
+ */
+function documentFrom(doc: EngineSettingsDocument): SettingsDocument {
   return {
     routes: Object.fromEntries(
-      LLM_CLASSES.map((cls) => [cls, routeRowFrom(routes[cls])]),
+      LLM_CLASSES.map((cls) => {
+        const row = doc.routes[cls];
+        return [cls, {
+          route: row?.route === 'upstream' ? 'upstream' : 'local',
+          model: row?.model ?? null,
+        }];
+      }),
     ) as Record<LlmClass, SettingsDocument['routes'][LlmClass]>,
     upstreams: {
       anthropic: {
-        configured: anthropic['configured'] === true,
-        keyHint: typeof anthropic['key_hint'] === 'string' ? anthropic['key_hint'] : null,
+        configured: doc.upstreams.anthropic.configured,
+        keyHint: doc.upstreams.anthropic.keyHint ?? null,
       },
       openai: {
-        configured: openai['configured'] === true,
-        keyHint: typeof openai['key_hint'] === 'string' ? openai['key_hint'] : null,
+        configured: doc.upstreams.openai.configured,
+        keyHint: doc.upstreams.openai.keyHint ?? null,
       },
       ollama: {
-        configured: ollama['configured'] === true,
-        url: typeof ollama['url'] === 'string' ? ollama['url'] : null,
+        configured: doc.upstreams.ollama.configured,
+        url: doc.upstreams.ollama.url ?? null,
       },
     },
-    desktopAllowanceBytes:
-      typeof record['desktop_allowance_bytes'] === 'number' ? record['desktop_allowance_bytes'] : 0,
-    backendKind: typeof record['backend_kind'] === 'string' ? record['backend_kind'] : '',
+    desktopAllowanceBytes: doc.desktopAllowanceBytes,
+    backendKind: doc.backendKind,
   };
-}
-
-/**
- * One route row. `local` IS THE ANSWER FOR ANYTHING UNREADABLE, because it is
- * the answer for an absent one (§2: *"absent key = local"*) and because the
- * conservative direction here is the one that does not claim a person's book is
- * being sent to a company.
- */
-function routeRowFrom(raw: unknown): SettingsDocument['routes'][LlmClass] {
-  const row = asRecord(raw);
-  const model = typeof row['model'] === 'string' && row['model'].length > 0 ? row['model'] : null;
-  return { route: row['route'] === 'upstream' ? 'upstream' : 'local', model };
 }
 
 function asRecord(raw: unknown): Record<string, unknown> {

@@ -58,13 +58,29 @@ const JOB_TYPE_WORDS: Readonly<Record<string, string>> = {
   denoise: 'the noise remover',
 };
 
-/** What each kind of weights is, for somebody who has never heard of a subject. */
+/**
+ * What each kind of weights is, for somebody who has never heard of a subject.
+ *
+ * `engine` IS THE CATALOG KIND ADDED BY crucible `762484f`, and it is not
+ * weights at all — it is the inference runtime a job type needs, `llama-cpp`
+ * being the one that exists. It reads the OTHER WAY ROUND from the rest ("the
+ * llama.cpp engine", never "the inference engine llama.cpp"), because that is
+ * how a person says it; the word is still declared here, once, and
+ * {@link missingWords} is where it is put after the name instead of before it.
+ *
+ * NOTE THE SDK'S `SubjectKind` DOES NOT LIST IT YET — 0.6.0 still types the
+ * five (`model voice rvc rvc-base denoise`). This table is keyed by `string`
+ * and `CrucibleMissingEntry.kind` is a `string` (shared/coordinate-wire.ts),
+ * so nothing had to widen; the day the SDK's union grows the word, nothing
+ * here changes either.
+ */
 const SUBJECT_KIND_WORDS: Readonly<Record<string, string>> = {
   model: 'the text model',
   voice: 'the narration voice',
   rvc: 'the voice-matching model',
   'rvc-base': 'the voice-matching basics',
   denoise: 'the noise remover',
+  engine: 'engine',
 };
 
 function jobTypeWords(jobType: string): string {
@@ -91,6 +107,9 @@ function subjectKindWords(kind: string): string {
  */
 export function missingWords(entry: CrucibleMissingEntry): string {
   if (entry.what === 'job-type') return jobTypeWords(entry.jobType);
+  // An ENGINE is named first and classed second — "the llama.cpp engine" — for
+  // the reason SUBJECT_KIND_WORDS gives. Every other kind reads kind-then-name.
+  if (entry.kind === 'engine') return `the ${subjectWords(entry)} ${subjectKindWords('engine')}`;
   return `${subjectKindWords(entry.kind)} ${subjectWords(entry)}`;
 }
 

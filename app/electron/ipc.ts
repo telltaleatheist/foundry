@@ -733,7 +733,7 @@ export async function adoptPairingFile(): Promise<LocalCrucibleAdd> {
         + `at ${already.url}.`,
     };
   }
-  const read = pairingFileRead();
+  const read = await pairingFileRead();
   if (read.found === 'absent') {
     // Debug volume, one line, and the SAME sentence the button shows — see
     // crucible-pairing.ts: an absent file is a fact about this machine.

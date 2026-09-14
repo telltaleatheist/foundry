@@ -37,70 +37,42 @@
  * already elides everything after the `#`, which is why its sentence can be
  * printed verbatim when a line will not parse.
  *
- * ── STANDING NOTE: SWITCH TO THE SDK'S THE MOMENT THE TARBALL CARRIES IT ────
+ * ── THE PATH TABLE IS THE SDK'S NOW, AND SO IS THE READ ─────────────────────
  *
- * PHASE15 §3.8 gives `@crucible/client` a `readPairingFile(home?)` of its own.
- * When the vendored tarball has it, {@link readPairingFile} below becomes one
- * line that calls it and {@link pairingFilePath} goes with it — the path table
- * is the contract's, not this app's, and two copies of a path is how a Windows
- * build starts looking somewhere the host never writes.
+ * PHASE15 §3.8 gave `@crucible/client` a `readPairingFile(home?)` and a
+ * `cruciblePairingPath(home?)` of its own, and the vendored 0.6.0 (packed from
+ * crucible `762484f`) carries both. The standing note that said "switch the
+ * moment the tarball carries it" has been acted on: this module's own path
+ * table, its `crucibleHome()` and its `node:fs` read are gone, and what is left
+ * is the one thing that is Foundry's — the THREE-WAY answer below, which the
+ * SDK's `Pairing | null` cannot express and the "Look again" door needs.
+ *
+ * BOTH SDK CALLS ARE ASYNC, deliberately (the SDK assembles its `node:fs`
+ * import at run time so a bundler cannot resolve it), so {@link pairingFileRead}
+ * is async too. Its one caller was already inside an `await`.
+ *
+ * ── A NOTE FOR WHOEVER GOES LOOKING ON WINDOWS ──────────────────────────────
+ *
+ * This module used to look in `%LOCALAPPDATA%\Crucible\pairing` on win32, from
+ * a reading of §3.6 pinned at crucible `3bcd003`. The SDK looks in
+ * `~/.crucible/pairing` on every platform, `$CRUCIBLE_HOME` overriding. That is
+ * now the answer, because the path has one owner and it is the package the
+ * server ships — a second table here is exactly how a Windows build starts
+ * looking somewhere the host never writes. Nothing writes either location on
+ * this machine today; door 2 ("the Crucible on this machine", which reads
+ * config.toml through wsl.exe) is still how a WSL server is registered.
  */
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
-
-import { CruciblePairingError, parsePairing, type Pairing } from '@crucible/client';
-
-/**
- * WHERE THE PAIRING FILE IS, PER PLATFORM — and the table has one owner.
- *
- * crucible `docs/PHASE15-HOST.md` §3.6, pinned 2026-09-14 in Crucible commit
- * `3bcd003` for exactly this package. That file is the authority; this constant
- * is a reading of it and nothing more:
- *
- *   `CRUCIBLE_HOME` set          `$CRUCIBLE_HOME/pairing`, on every platform
- *   linux, darwin                `~/.crucible/pairing`
- *   win32                        `%LOCALAPPDATA%\Crucible\pairing`
- *
- * WHY WINDOWS IS NOT `~/.crucible`. On Windows the server itself lives inside
- * the WSL guest, whose home is a filesystem no Windows app looks in, so the file
- * here is the HOST's copy of the guest's line — same token, same host, same port
- * (§3.6, §4.3). Before the host lands, nothing writes it on a Windows box and
- * door 2 ("the Crucible on this machine", which reads config.toml through
- * wsl.exe) is how Owen's PC registers its WSL server; §3.6 says that door is
- * deleted when the host ships and not before.
- *
- * ONE CONSTANT, read through one function, because a path composed at two call
- * sites is two paths the first time one of them is edited.
- */
-function crucibleHome(): string {
-  const named = process.env['CRUCIBLE_HOME']?.trim();
-  if (named !== undefined && named.length > 0) return named;
-  if (process.platform === 'win32') {
-    /*
-     * `%LOCALAPPDATA%` and not `app.getPath('userData')`: this directory is
-     * CRUCIBLE's, written by Crucible's installer beside its `host\`, and
-     * resolving it through Electron would be this app naming a folder it does
-     * not own. The homedir join is the documented expansion of the variable and
-     * exists only because a stripped environment is not a reason to throw.
-     */
-    const local = process.env['LOCALAPPDATA']?.trim();
-    const base = local !== undefined && local.length > 0
-      ? local
-      : path.join(os.homedir(), 'AppData', 'Local');
-    return path.join(base, 'Crucible');
-  }
-  return path.join(os.homedir(), '.crucible');
-}
-
-/** The one path, composed from {@link crucibleHome}. Exported so a log can name it. */
-export function pairingFilePath(): string {
-  return path.join(crucibleHome(), 'pairing');
-}
+import {
+  CruciblePairingError,
+  cruciblePairingPath,
+  parsePairing,
+  readPairingFile as readSdkPairingFile,
+  type Pairing,
+} from '@crucible/client';
 
 /**
  * What the read found — the three answers the "Look again" door has to tell
- * apart, which is one more than {@link readPairingFile} can express.
+ * apart, which is one more than the SDK's `Pairing | null` can express.
  *
  * `absent` and `refused` are DIFFERENT THINGS TO DO. Absent is the ordinary
  * state of a machine with no engine on it and the person is told a fact; refused
@@ -113,37 +85,29 @@ export type PairingFileRead =
   | { found: 'refused'; message: string; path: string };
 
 /**
- * Read `<CRUCIBLE_HOME>/pairing` and say which of the three it was.
+ * Read the SDK's pairing path and say which of the three it was.
  *
- * ONE LINE, TRAILING NEWLINE (§3.6). The file is trimmed and the FIRST non-empty
- * line is parsed rather than the whole buffer, because a trailing newline is
- * promised and a text editor that added a second one should not turn a working
- * pairing into a refusal — while a file with two DIFFERENT lines in it is still
- * one server's file and the first line is the one the writer wrote.
+ * THE READ AND THE PARSE ARE BOTH THE SDK'S. `readPairingFile()` answers null
+ * for ENOENT/ENOTDIR and for an empty file — which is `absent`, the ordinary
+ * state of a machine with no engine on it — and RAISES for everything else:
+ * `CruciblePairingError` for a line that is not one, and the raw fs error for a
+ * permission problem or a directory where the file should be. The SDK's own
+ * note says why the second is not null-ed: *"a caller told `null` would offer
+ * to install a second Crucible over the top of one that is already running."*
+ * Both raises become `refused` here, which is the same reading this module
+ * always had — a file we can see and cannot read is not "you have no engine".
  *
- * EVERY read failure that is not "no such file" is a REFUSAL rather than an
- * absence: a permission error on a file we can see is not "you have no engine",
- * and reporting it as one would leave somebody looking for an engine they have
- * already installed.
+ * THE PATH IS ASKED FOR SEPARATELY because every one of the three answers
+ * carries it: a door that can say WHERE it looked is more useful than one that
+ * only says "not found", and it is the sentence the "Look again" button shows.
  */
-export function pairingFileRead(): PairingFileRead {
-  const file = pairingFilePath();
-  let text: string;
+export async function pairingFileRead(): Promise<PairingFileRead> {
+  const file = await cruciblePairingPath();
   try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') return { found: 'absent', path: file };
-    return {
-      found: 'refused',
-      message: `${file} could not be read: ${err instanceof Error ? err.message : String(err)}`,
-      path: file,
-    };
-  }
-  const line = text.split(/\r?\n/).find((candidate) => candidate.trim().length > 0)?.trim();
-  if (line === undefined) return { found: 'absent', path: file };
-  try {
-    return { found: 'pairing', pairing: parsePairing(line), path: file };
+    const pairing = await readSdkPairingFile();
+    return pairing === null
+      ? { found: 'absent', path: file }
+      : { found: 'pairing', pairing, path: file };
   } catch (err) {
     /*
      * REFUSED BY NAME, IN ONE LINE, WITH NO TOKEN IN IT. `CruciblePairingError`'s
@@ -154,32 +118,9 @@ export function pairingFileRead(): PairingFileRead {
      */
     const message = err instanceof CruciblePairingError
       ? `${file}: ${err.message}`
-      : `${file}: ${err instanceof Error ? err.message : String(err)}`;
+      : `${file} could not be read: ${err instanceof Error ? err.message : String(err)}`;
     return { found: 'refused', message, path: file };
   }
-}
-
-/**
- * THE SDK-SHAPED DOOR — `Pairing` or null, and the one function that goes when
- * `@crucible/client` grows `readPairingFile(home?)` (PHASE15 §3.8).
- *
- * It is deliberately the whole of what the startup path needs: at start there is
- * nobody to show a refusal to, so both silences are the same silence and the
- * difference between them is a console line. The "Look again on this machine"
- * button, which a person pressed and is owed an answer, reads
- * {@link pairingFileRead} instead.
- */
-export function readPairingFile(): Pairing | null {
-  const read = pairingFileRead();
-  if (read.found === 'pairing') return read.pairing;
-  if (read.found === 'refused') {
-    console.error(`[pairing] refused: ${read.message}`);
-    return null;
-  }
-  // DEBUG VOLUME, one line: no pairing file is the ordinary state of a machine
-  // that has no engine on it, and a machine that has one writes this file.
-  console.log(`[pairing] no pairing file at ${read.path} — no local Crucible on this machine.`);
-  return null;
 }
 
 /**

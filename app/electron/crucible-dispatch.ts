@@ -834,6 +834,15 @@ const LEASE_HEARTBEAT_MS = (LEASE_TTL_SECONDS / 3) * 1000;
 /**
  * Take the lease, and arm the heartbeat that keeps it.
  *
+ * THE THREE ROUTES ARE THE SDK'S. They were hand-rolled here while the lease
+ * was landing in Crucible and `@crucible/client` had no verb for it, under a
+ * standing note to switch the moment the tarball carried them; 0.6.0 (packed
+ * from crucible `762484f`) carries `lease()`, `heartbeat()` and `release()`,
+ * and this is them. What went with the switch is the `lease_id` read and its
+ * `lease_unreadable` guard — a receipt without an id is a
+ * `CrucibleProtocolError` from the SDK now, which is the same refusal under the
+ * name the contract owns.
+ *
  * A REFUSAL HERE PROPAGATES AS A THROW and is read by `interpretFailure` like
  * every other one on this path — which is what makes `model_leased` a WAIT (the
  * card is somebody else's for now, and another server's may be free) rather than
@@ -847,29 +856,14 @@ async function takeLease(
   model: string,
   capability: CapabilityClass,
 ): Promise<Lease> {
-  const acquire = async (): Promise<string> => {
-    const body = await crucibleRequest(entry, `/v1/models/${encodeURIComponent(model)}/lease`, {
-      method: 'POST',
-      body: { act: capability, ttl_seconds: LEASE_TTL_SECONDS },
-    });
-    const granted = typeof (body as Record<string, unknown> | null)?.['lease_id'] === 'string'
-      ? (body as Record<string, string>)['lease_id'] as string
-      : '';
-    if (granted.length === 0) {
-      /*
-       * A 201 with no `lease_id` in it. Refused rather than shrugged off: carrying
-       * on without a lease would mean running a whole book under a protection this
-       * code believes it has, which is worse than not having it — nobody would
-       * look for the eviction, because the lease was "taken".
-       */
-      throw new CrucibleRefused(201, 'lease_unreadable', 'the lease was granted without an id', body);
-    }
-    return granted;
-  };
+  const client = clientFor(entry);
+  const acquire = async (): Promise<string> => (
+    await client.lease(model, { act: capability, ttlSeconds: LEASE_TTL_SECONDS })
+  ).leaseId;
   let id = await acquire();
   let stopped = false;
   const timer = setInterval(() => {
-    void crucibleRequest(entry, `/v1/leases/${encodeURIComponent(id)}/heartbeat`, { method: 'POST' })
+    void client.heartbeat(id)
       .catch(async (err: unknown) => {
         /*
          * THE SERVER FORGOT THE LEASE, which is what a restart does: leases are
@@ -916,7 +910,7 @@ async function takeLease(
       stopped = true;
       clearInterval(timer);
       try {
-        await crucibleRequest(entry, `/v1/leases/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        await client.release(id);
       } catch (err) {
         // Already gone — released by a restart or expired — is exactly the state
         // a release wants, and not a failure to report.
@@ -1064,7 +1058,7 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /v1/capability — one fetch, because the SDK has no method for it yet
+// GET /v1/capability — the one route on this wire that is still a fetch
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -1085,32 +1079,43 @@ export type { CapabilityRecord, CapabilityRow } from '../shared/engine-settings'
 export class CapabilityUndecided extends Error {}
 
 /**
- * ── THE FOUR ROUTES THE SDK HAS NO METHOD FOR, AND ONE WAY TO CALL THEM ────
+ * ── THE ONE ROUTE STILL CALLED BY HAND, AND THE TWO REASONS IT IS ──────────
  *
- * `GET /v1/capability` and the three lease routes are not on `@crucible/client`
- * v0.5.0 — capability has never been, and the lease routes are landing in the
- * same Crucible commit as this work. One `fetch` each is the honest way to say
- * so, rather than a wrapper pretending to be part of the client that somebody
- * would later have to un-pick.
+ * This used to serve four routes the vendored SDK had no method for, plus the
+ * three settings routes electron/crucible-settings.ts called through it, under
+ * a standing note to switch the moment the tarball carried them. 0.6.0 (packed
+ * from crucible `762484f`) carries all six, and all six have switched: the
+ * lease trio in {@link takeLease}, the settings trio in crucible-settings.ts.
+ * The export went with them — {@link readCapability} is the only caller left.
  *
- * **Switch these four to the SDK's own `capability()` / `lease()` /
- * `heartbeat()` / `release()` the moment the tarball carries them.**
+ * `GET /v1/capability` DID NOT SWITCH, and the two reasons are both about what
+ * `client.capability()` cannot do rather than about preferring a fetch:
  *
- * EXPORTED IN WAVE 62 PACKAGE I for the same reason `readCapability` is: the
- * three settings routes (PHASE15-HOST.md §3.1/§3.2) are not on the vendored SDK
- * either, and electron/crucible-settings.ts calls them. It takes the EXPORT
- * rather than a second fetch of its own because what this function is for is
- * the ERROR MAPPING — a `route_upstream_unconfigured` arriving as a bare
- * `Error` instead of a `CrucibleRefused` would lose the code the card prints.
+ *   1. **It has no clock.** `CrucibleClientOptions` is url/token/clientName and
+ *      `capability()` passes no `signal`, so `readCapability(entry, timeoutMs)`
+ *      cannot be expressed through it. crucible-provider.ts's gate read passes
+ *      `PROBE_TIMEOUT_MS` on every tooltip, and a Mac that is asleep must not
+ *      put a network timeout behind one.
+ *   2. **It refuses a pre-PHASE-15 document outright.** The SDK's reader takes
+ *      `route` through `str()`, so a row without one is a
+ *      `CrucibleProtocolError` and the whole record is unreadable. Measured on
+ *      2026-09-14 against the WSL Crucible at 127.0.0.1:7100, which sends
+ *      eleven rows and no `route` on any of them: `capability()` throws,
+ *      `readCapability` answers. §3.3's document-level rule — *no row carries
+ *      `route` → every class is local, a fact the document states* — is a
+ *      TOLERANCE the SDK does not grant, and it is the state of every Crucible
+ *      on this network today.
  *
- * WHAT THIS FUNCTION IS FOR IS THE ERROR MAPPING, not the fetch. Everything else
- * on this path throws the SDK's error types, and `interpretFailure` switches on
- * them — so a route called by hand that threw a bare `Error` would be a 409
- * `model_leased` arriving as "could not be asked", losing the one distinction
- * that decides whether the row waits or fails. The two headers are exactly the
- * ones the SDK sends on every authenticated route.
+ * **Switch it the moment `capability()` takes a signal and either grants that
+ * tolerance or the servers are all past it** — whichever lands second. Until
+ * then this stays, and it stays for the ERROR MAPPING as much as the fetch:
+ * everything else on this path throws the SDK's error types and
+ * `interpretFailure` switches on them, so a route called by hand that threw a
+ * bare `Error` would be a 409 `model_leased` arriving as "could not be asked",
+ * losing the one distinction that decides whether the row waits or fails. The
+ * two headers are exactly the ones the SDK sends on every authenticated route.
  */
-export async function crucibleRequest(
+async function crucibleRequest(
   entry: CrucibleServerEntry,
   route: string,
   options: { method: string; body?: unknown; timeoutMs?: number } = { method: 'GET' },
@@ -1197,7 +1202,8 @@ export async function crucibleRequest(
 }
 
 /**
- * `GET /v1/capability` — see {@link crucibleRequest} for why it is a fetch.
+ * `GET /v1/capability` — see {@link crucibleRequest} for why this one route is
+ * still a fetch when every other call on this wire is the SDK's.
  *
  * EXPORTED FOR THE SETTINGS SIDE (`crucible-provider.ts`, Wave 61 package E),
  * which asks the same question for a different reason: not "may this job start"
@@ -1235,6 +1241,16 @@ export async function readCapability(
    * document, then the rows; the alternative — deciding per row and discovering
    * the inconsistency halfway — would refuse some documents and not others
    * depending on which class came first in a list nothing orders.
+   *
+   * THE SDK IS STRICTER AND THAT IS WHY THIS RULE IS STILL HERE. 0.6.0's own
+   * reader (crucible `762484f`) takes `route` through its `str()` helper and
+   * `oneOf(…, ['local','upstream'])`, so it enforces two of these three arms
+   * already — a partial document and an unknown value are both a
+   * `CrucibleProtocolError` from it, under names the contract owns. What it
+   * does NOT grant is the FIRST arm, the pre-PHASE-15 tolerance, and a document
+   * with no `route` anywhere is the state of every Crucible on this network
+   * today. The day that stops being true, this whole pass is deletable and the
+   * route rule moves to the SDK entire.
    *
    * REFUSED AS `CrucibleRefused`, WHICH IS WHAT MAKES IT BEHAVE. That is the type
    * every other refusal on this path throws, so `interpretFailure` gives it the

@@ -4910,3 +4910,41 @@ deleted. If a future Crucible class wants it, a catalog row names that repo.
 cleans a block on a clean box; the WSL engine reads a page from the app on
 this PC). Not before — the env is the one thing that could still serve dots
 here if the new path stumbles on first contact.
+
+### Wave 63 — `@crucible/client` 0.6.0 (crucible 762484f) replaces the hand-rolled wire — LANDED 2026-09-14
+
+The tarball is packed from crucible 762484f (sha256 af354344…bdbdc6, 319,802
+bytes — the same bytes BookForge vendors) at `app/vendor/`. Settings
+(`settings`/`putSettings`/`testUpstream`), the pairing-file reader and the lease
+trio (`lease`/`heartbeat`/`release`) are the SDK's now; the snake_case
+translation, the `TEST_REFUSALS` table, Foundry's pairing path table and its dead
+`readPairingFile` are deleted. Foundry's shared engine types stay a MIRROR of
+the SDK's rather than a re-export, for three written reasons (they cross the
+preload; Foundry's `routes` is always all four classes; this wire says
+`outcome`, the SDK says `ok`). New catalog kind `engine` reads as "the llama.cpp
+engine".
+
+**`GET /v1/capability` did NOT switch, for two measured reasons**, both put to
+Crucible: the SDK's `capability()` takes no signal, so the gate read's 3 s probe
+clock cannot be expressed; and it throws `CrucibleProtocolError` on any document
+whose rows carry no `route` — proved live against the WSL Crucible at :7100,
+which sends eleven rows and none — which is the pre-Phase-15 document §3.3
+(eb59f7b) says both apps read as all-local. `readCapability` stays the one
+fetch with the document-level rule until the SDK tolerates that document and
+accepts a timeout. **Also put to Crucible:** the SDK's `cruciblePairingPath()`
+answers `~/.crucible/pairing` on win32 where §3.6 (3bcd003) pins
+`%LOCALAPPDATA%\Crucible\pairing`; the host writes that file, so one of the two
+must change before a Windows pairing file can be found. **Both are SDK defects
+Crucible accepted the same hour**: `capability()` will read a no-route document
+as all-local and take a timeout, `cruciblePairingPath()` will resolve win32 to
+LOCALAPPDATA (the host already writes there), `SubjectKind` gains `engine`; a
+re-packed tarball (same version, new sha) follows and `readCapability` switches
+then. Nothing on this network
+speaks PHASE15 yet: `settings()` 404s against the live server, and
+`putSettings`/`testUpstream`/`lease` through the SDK are typechecked, not
+watched.
+
+**Also 2026-09-14:** `foundry-blocks-v1-4b.gguf` deleted from this PC on
+Owen's word after the Hugging Face mirror was proven to hold the same bytes;
+the WSL Crucible registered in Foundry as `local`; no Foundry-owned dots copy
+exists on the machine.

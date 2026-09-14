@@ -68,7 +68,7 @@
       "icon": "build/icon.png"
     }
   },
-  "_crucibleClientNote": "STOPGAP, 2026-09-14. @crucible/client 0.6.0 is not published yet; this is vendor/crucible-client-0.6.0.tgz, packed with `npm pack` from the crucible checkout at feat/phase6-remote-render 337a47c (sha256 ce41c1af688a6805e88da523...). Replace with the release URL the day Owen publishes — the bytes are built from the same commit. NEVER a file: DIRECTORY: npm junctions a directory dependency into the crucible checkout, so an edit there would silently change this app.",
+  "_crucibleClientNote": "STOPGAP, 2026-09-14. @crucible/client 0.6.0 is not published yet; this is vendor/crucible-client-0.6.0.tgz, packed with `npm pack` from the crucible checkout at feat/phase6-remote-render 762484f (sha256 af354344d776806d7e051335b674f461d555e29d072a03de3b5b36bbfabdbdc6, 319,802 bytes — the same bytes BookForge vendors). Replace with the release URL the day Owen publishes. NEVER a file: DIRECTORY: npm junctions a directory dependency into the crucible checkout, so an edit there would silently change this app.",
   "dependencies": {
     "@angular/common": "^21.0.0",
     "@angular/compiler": "^21.0.0",

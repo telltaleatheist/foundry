@@ -23,14 +23,32 @@
  * from a server — and the only thing this app keeps between presses is the
  * document it was last answered with.
  *
- * ── CAMEL CASE HERE, SNAKE CASE ON THE HTTP BODY ──────────────────────────
+ * ── WHY THESE ARE A MIRROR OF THE SDK'S TYPES AND NOT A RE-EXPORT ─────────
  *
- * The doc's JSON is `desktop_allowance_bytes` / `backend_kind` / `key_hint`.
- * This app's IPC surface is camelCase everywhere else and a second convention
- * inside one preload is a thing somebody gets wrong at 1am. The translation
- * happens ONCE, in electron/crucible-settings.ts, which is the only module that
- * speaks the HTTP shape — the same arrangement `readCapability` already has for
- * `shortfall_bytes`.
+ * `@crucible/client` 0.6.0 (crucible `762484f`) declares `SettingsDocument`,
+ * `SettingsPatch`, `RouteSetting`, `UpstreamSetting`, `UpstreamName` and
+ * `UpstreamTestResult` of its own, and the snake_case translation this file's
+ * header used to describe is GONE — the SDK reads `key_hint`,
+ * `desktop_allowance_bytes` and `backend_kind` off the wire itself. What is
+ * here is still a separate declaration, on purpose, for three reasons:
+ *
+ *   1. **This is the IPC wire, not the HTTP one.** Everything in this file
+ *      crosses the preload, and a preload type whose definition lives in
+ *      `node_modules` is a renderer whose shapes change when a tarball is
+ *      re-vendored, silently.
+ *   2. **The four routes are always all four here.** The SDK's `routes` is
+ *      `Record<string, RouteSetting>` — what the server sent. This app's is
+ *      `Record<LlmClass, RouteRow>`, filled in by
+ *      electron/crucible-settings.ts, because the card draws four rows and a
+ *      template that had to find a missing one is a template with a hole in it.
+ *   3. **The arm words are this app's.** `{outcome: 'ok' | 'failed'}` is the
+ *      shape every three-way answer on this wire wears (`CrucibleProbe`,
+ *      shared/slots.ts); the SDK says `{ok: true | false}`. One word is
+ *      translated, in one place, rather than two conventions inside one
+ *      preload.
+ *
+ * The SDK's shapes are the HTTP truth and these are the IPC truth, and
+ * electron/crucible-settings.ts is the single seam between them.
  *
  * ── THE KEY GOES ONE WAY ──────────────────────────────────────────────────
  *
@@ -243,6 +261,13 @@ export interface CapabilityRow {
    * in with `local` would be this app inventing the one fact that decides whether
    * a run costs GPU-minutes or money — see `readCapability`, which is the one
    * reader and therefore the one place the rule can live.
+   *
+   * `@crucible/client` 0.6.0 ENFORCES THE SECOND AND THIRD ARMS ITSELF and not
+   * the first: its reader takes `route` through `str()` and `oneOf`, so a
+   * partial document and an unknown value are a `CrucibleProtocolError` from
+   * it, while a document with no `route` anywhere — Owen's WSL Crucible, and
+   * every other server on this network today — is unreadable by it rather than
+   * local. That is why `readCapability` is still a fetch; see its note.
    *
    * `enabled` ONE FIELD UP STILL READS A MISSING FLAG AS FALSE, and that is not
    * inconsistent: a missing `enabled` is a server declining to answer a question
