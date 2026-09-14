@@ -95,43 +95,56 @@ import { ServersCardComponent } from './servers-card.component';
 
         <!-- ── What the file says ───────────────────────────────────────── -->
         <div class="col">
-          <div class="card form">
-            <div class="card-head"><span class="card-title">settings.json</span></div>
-            <p class="mono small">{{ settingsFile() }}</p>
+          <!--
+            THE ENGINE'S OWN SETTINGS, AND NOT INSIDE A HOST. settings.json is
+            the engine's and machine-global, and a host runs that same engine
+            with that same file — so changing the mode, the endpoint or the
+            interpreter here inside BookForge would reconfigure the host's own
+            conversions from a window that does not own them. settings:write
+            refuses there too (electron/ipc.ts); this is the half a person sees,
+            and it is the library card's rule: a control that can only refuse is
+            not a control, so the card goes. Found by BookForge's audit,
+            2026-09-14, unguarded on both sides.
+          -->
+          @if (!hosted()) {
+            <div class="card form">
+              <div class="card-head"><span class="card-title">settings.json</span></div>
+              <p class="mono small">{{ settingsFile() }}</p>
 
-            @if (settingsProblem(); as problem) {
-              <p class="warn">{{ problem }}</p>
-            }
+              @if (settingsProblem(); as problem) {
+                <p class="warn">{{ problem }}</p>
+              }
 
-            <label class="field">
-              <span class="label">Mode</span>
-              <select [ngModel]="mode()" (ngModelChange)="mode.set($event)" name="mode">
-                <option value="auto">auto — the first available tier</option>
-                <option value="endpoint">endpoint — that tier or nothing</option>
-                <option value="mlx">mlx — that tier or nothing</option>
-              </select>
-            </label>
+              <label class="field">
+                <span class="label">Mode</span>
+                <select [ngModel]="mode()" (ngModelChange)="mode.set($event)" name="mode">
+                  <option value="auto">auto — the first available tier</option>
+                  <option value="endpoint">endpoint — that tier or nothing</option>
+                  <option value="mlx">mlx — that tier or nothing</option>
+                </select>
+              </label>
 
-            <label class="field">
-              <span class="label">Endpoint URL</span>
-              <input type="text" placeholder="http://localhost:8000/v1"
-                     [ngModel]="endpointUrl()" (ngModelChange)="endpointUrl.set($event)" name="url">
-            </label>
+              <label class="field">
+                <span class="label">Endpoint URL</span>
+                <input type="text" placeholder="http://localhost:8000/v1"
+                       [ngModel]="endpointUrl()" (ngModelChange)="endpointUrl.set($event)" name="url">
+              </label>
 
-            <label class="field">
-              <span class="label">Python <em>needs PyMuPDF; every run rasterises locally</em></span>
-              <input type="text" placeholder="C:\\path\\to\\python.exe"
-                     [ngModel]="python()" (ngModelChange)="python.set($event)" name="python">
-            </label>
+              <label class="field">
+                <span class="label">Python <em>needs PyMuPDF; every run rasterises locally</em></span>
+                <input type="text" placeholder="C:\\path\\to\\python.exe"
+                       [ngModel]="python()" (ngModelChange)="python.set($event)" name="python">
+              </label>
 
-            <div class="actions">
-              <button class="primary" [disabled]="saving()" (click)="save()">
-                {{ saving() ? 'Saving…' : 'Save' }}
-              </button>
-              @if (saved()) { <span class="ok-note">Saved</span> }
+              <div class="actions">
+                <button class="primary" [disabled]="saving()" (click)="save()">
+                  {{ saving() ? 'Saving…' : 'Save' }}
+                </button>
+                @if (saved()) { <span class="ok-note">Saved</span> }
+              </div>
+              @if (saveProblem(); as problem) { <p class="warn">{{ problem }}</p> }
             </div>
-            @if (saveProblem(); as problem) { <p class="warn">{{ problem }}</p> }
-          </div>
+          }
 
           <!--
             Where the books go. Above the environment cards because it is the one

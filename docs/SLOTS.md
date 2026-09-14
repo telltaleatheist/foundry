@@ -70,7 +70,14 @@ A **slot** is a place a job's compute can go. The queue lists one row per slot.
 - **A Crucible server** — one per registered server, in drag order; a
   loopback Crucible **replaces** the local slot (one card, one owner).
 - **A cloud provider** — never busy, nothing resident, text acts only; a
-  deliberate per-job choice, never something `any` falls through to.
+  deliberate per-job choice, never something `any` falls through to. **Drawn
+  hosted as well** (2026-09-14): Owen's rule is that a machine under the
+  translate floor reaches those acts through a 27B or *"an api key for Claude
+  or OpenAI"*, and a BookForge user on a laptop is that machine — suppressing
+  it there left them no path at all. The key is the host USER's own, typed into
+  Foundry's card, and hosted that settings file IS the host's userData, so
+  there is one store and the host's own doors read it rather than keeping a
+  second list of keys.
 
 Rules: a job is **atomic per slot**. `waitFor` on a row is a slot name or
 `any`; `any` walks the enabled slots in priority order and takes the first that

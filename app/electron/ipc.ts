@@ -3018,7 +3018,28 @@ export function registerIpc(): void {
   ipcMain.handle('doctor:run', (_event, endpointUrl?: string) => runDoctor(endpointUrl));
 
   ipcMain.handle('settings:read', () => readSettings());
-  ipcMain.handle('settings:write', (_event, patch: BackendSettingsPatch) => writeSettings(patch));
+  /*
+   * ── THE ENGINE'S SETTINGS ARE NOT OURS TO WRITE INSIDE A HOST ─────────────
+   *
+   * `settings.json` is the ENGINE's, machine-global, and hosted the host runs
+   * that same engine with that same file (docs/BOOKFORGE-HANDOFF.md). A person
+   * changing the mode or the endpoint on this screen inside BookForge would be
+   * reconfiguring the host's own conversions from a window that does not own
+   * them. The form is hidden there, and this is the door behind it: something
+   * reachable by an IPC message must refuse at the door as well, or the hiding
+   * is a decoration (`refuseHostedRegistryChange`'s rule, crucible-registry.ts).
+   *
+   * Found by BookForge's audit, 2026-09-14, unguarded on both sides.
+   */
+  ipcMain.handle('settings:write', (_event, patch: BackendSettingsPatch) => {
+    if (hosted()) {
+      throw new Error(
+        'The engine\'s settings belong to the application Foundry is running inside, which '
+        + 'runs the same engine. Change them there.',
+      );
+    }
+    return writeSettings(patch);
+  });
 
   ipcMain.handle('shell:reveal', (_event, target: string) => {
     shell.showItemInFolder(path.resolve(target));

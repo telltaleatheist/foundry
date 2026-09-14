@@ -418,11 +418,20 @@ function slotsFrom(entries: readonly CrucibleServerEntry[]): ComputeSlot[] {
    * lookup impossible to miss: every slot named here came from an entry that
    * `crucibleServerNamed` will find.
    *
-   * TWO SUPPRESSIONS HOSTED. No local slot — BookForge requires Crucible and
-   * has no ollama fallback (SLOTS.md §1), so offering this window the host's
-   * own card would be offering a GPU the host's queue is already rationing.
-   * And no cloud slots: this app's providers are its own, and the bill for
-   * work in a hosted window is the host's.
+   * ONE SUPPRESSION HOSTED, AND IT USED TO BE TWO. No local slot — BookForge
+   * requires Crucible and has no ollama fallback (SLOTS.md §1), so offering
+   * this window the host's own card would be offering a GPU the host's queue
+   * is already rationing.
+   *
+   * CLOUD SLOTS ARE DRAWN HOSTED, and the reverse was a mistake that
+   * contradicted a ruling. Owen: *"if a user can't run a 27b for translation,
+   * the only way the translate/simplify cards can light up is if we connect a
+   * cloud model."* A person running BookForge on a laptop IS that user, and
+   * suppressing the cloud here left them no path at all — translate and
+   * simplify dark, with the sentence naming a card this window did not draw.
+   * The argument for suppressing was that the bill is the host's; it is not.
+   * The key is the host USER's own, typed into this card by the person who
+   * will pay for it, and there is no third party anywhere in it.
    */
   const servers = entries.filter((entry) => entry.enabled);
   const local: ComputeSlot[] = hosted() || servers.some((entry) => isLoopbackUrl(entry.url))
@@ -432,7 +441,6 @@ function slotsFrom(entries: readonly CrucibleServerEntry[]): ComputeSlot[] {
     ...local,
     ...servers.map((entry): ComputeSlot => ({ name: entry.name, kind: 'crucible', url: entry.url })),
   ];
-  if (hosted()) return out;
   const taken = new Set(out.map((slot) => slot.name.toLowerCase()));
   for (const provider of enabledCloudProviders()) {
     if (taken.has(provider.name.toLowerCase())) continue;
