@@ -204,6 +204,14 @@ interface PickerGroup {
                 @if (slot.lane === 'cpu' && view.computeSlots().length > 1) {
                   @if (slot.occupant?.ranOn; as where) { <span class="on">on {{ where }}</span> }
                 }
+                <!--
+                  WHO IS ACTUALLY ANSWERING, on the card that is a server sending
+                  the work on. The head names the machine; this names the service
+                  its settings route this class to, which is the half a person is
+                  owed because it is the half that is billed (Job.ranVia, and
+                  crucible docs/PHASE15-HOST.md section 3.3).
+                -->
+                @if (slot.occupant?.ranVia; as via) { <span class="on">via {{ via }}</span> }
                 @if (slot.occupant; as busy) {
                   <button class="btn stop" (click)="queue.cancel(busy.id)"
                           [attr.aria-label]="'Cancel ' + view.label(busy)"
