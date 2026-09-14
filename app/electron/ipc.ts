@@ -31,6 +31,8 @@ import {
   addCrucibleServer,
   addLocalCrucible,
   cloudSettingsView,
+  crucibleServers,
+  crucibleServerViews,
   crucibleSettingsView,
   computeSlots,
   probeCrucible,
@@ -39,11 +41,16 @@ import {
   writeCrucibleServers,
 } from './crucible-registry';
 import { crucibleInstallPlan, driveCrucibleInstall } from './crucible-install';
+import { pairingFileRead, readConnectCode } from './crucible-pairing';
 import { forgetCrucibleFacts, refreshCrucibleFacts } from './crucible-provider';
 import {
   CRUCIBLE_WHEEL,
+  isLoopbackUrl,
   type CloudProviderEdit,
+  type ConnectCodePreview,
+  type CrucibleProbe,
   type CrucibleServerEdit,
+  type LocalCrucibleAdd,
   type NewJobsWaitFor,
 } from '../shared/slots';
 import {
@@ -574,6 +581,98 @@ async function afterRegistryChanged(): Promise<void> {
     broadcast('models:changed', null);
   }
 }
+
+/**
+ * THE FIRST OF PHASE15 §5.1's THREE WAYS IN: the pairing file on this machine,
+ * read and registered as `local`, with nobody typing anything.
+ *
+ * ── Why it is here and not in crucible-pairing.ts ───────────────────────────
+ *
+ * Because it WRITES THE REGISTRY, and everything that writes the registry ends
+ * in `afterRegistryChanged` above — forget the capability answers, measure
+ * again, apply docs/SLOTS.md §5b — which is this module's and deliberately
+ * private to it. A second caller that wrote an entry and did not take that pass
+ * would leave a registered engine behind gates that still say there is none, and
+ * that is the exact failure the pass was written for. crucible-pairing.ts reads
+ * a file; this decides what the app does about what it read.
+ *
+ * ── THE NAME IS `local`, FOR PARITY WITH BOOKFORGE ──────────────────────────
+ *
+ * Both apps register this machine's engine under the same name, so a person
+ * looking at two apps' settings sees one server called one thing. `local` also
+ * survives re-reading: `addCrucibleServer` replaces an existing name IN PLACE,
+ * keeping its rank and its enabled state, so pressing "Look again" after the
+ * host rotated a token fixes the entry rather than growing a second one.
+ *
+ * ── IT DOES NOTHING WHEN THERE IS ALREADY A LOOPBACK ENTRY ──────────────────
+ *
+ * §5.1 way 1 is "when the app has no `local` entry yet", and the test is the
+ * LOOPBACK-NESS of what is registered rather than the name — Owen's PC registers
+ * its WSL server through door 2 under whatever name he typed, and adopting the
+ * pairing file on top of that would be two entries pointing at one engine, which
+ * is the duplicate `slotsFrom` exists to drop. A person who wants the file read
+ * anyway presses the button, which calls this same function; it will still
+ * decline, and that is an honest answer about a machine that already has its
+ * engine.
+ *
+ * ── HOSTED, THE REGISTRY IS THE HOST'S AND THIS DOES NOTHING ────────────────
+ *
+ * Refused at the door as well as skipped at the call, because `addCrucibleServer`
+ * throws hosted (`refuseHostedRegistryChange`) and an unguarded startup call
+ * would put that throw in a console every time BookForge opened the window.
+ */
+export async function adoptPairingFile(): Promise<LocalCrucibleAdd> {
+  if (hosted()) {
+    return {
+      outcome: 'failed',
+      code: 'no_local_config',
+      message: 'The servers are the host application\'s while Foundry is running inside it.',
+    };
+  }
+  const already = crucibleServers().find((entry) => isLoopbackUrl(entry.url));
+  if (already !== undefined) {
+    return {
+      outcome: 'failed',
+      code: 'already_registered',
+      message: `This machine's Crucible is already registered as "${already.name}" `
+        + `at ${already.url}.`,
+    };
+  }
+  const read = pairingFileRead();
+  if (read.found === 'absent') {
+    // Debug volume, one line, and the SAME sentence the button shows — see
+    // crucible-pairing.ts: an absent file is a fact about this machine.
+    console.log(`[pairing] no pairing file at ${read.path} — no local Crucible on this machine.`);
+    return {
+      outcome: 'failed',
+      code: 'no_local_config',
+      message: `No Crucible has left a connect code on this machine (${read.path}). `
+        + 'Install one here, or connect to one somewhere else.',
+    };
+  }
+  if (read.found === 'refused') {
+    console.error(`[pairing] refused: ${read.message}`);
+    return { outcome: 'failed', code: 'config_unreadable', message: read.message };
+  }
+  addCrucibleServer(PAIRING_SERVER_NAME, read.pairing.url, read.pairing.token);
+  await afterRegistryChanged();
+  console.log(
+    `[pairing] registered "${PAIRING_SERVER_NAME}" at ${read.pairing.url} from ${read.path}.`,
+  );
+  return {
+    outcome: 'added',
+    servers: crucibleServerViews(),
+    serverName: read.pairing.name,
+    url: read.pairing.url,
+    configPath: read.path,
+  };
+}
+
+/**
+ * The name this machine's own engine is registered under, in both apps.
+ * See {@link adoptPairingFile} — parity with BookForge is the whole argument.
+ */
+const PAIRING_SERVER_NAME = 'local';
 
 export function registerIpc(): void {
   /**
@@ -3350,6 +3449,70 @@ export function registerIpc(): void {
     const answer = await addLocalCrucible(name);
     if (answer.outcome === 'added') await afterRegistryChanged();
     return answer;
+  });
+  /*
+   * ── PHASE15 §5.1's THREE WAYS IN, IN ITS ORDER ────────────────────────────
+   *
+   * 1. THE PAIRING FILE ON THIS MACHINE. Read once at start (electron/mount.ts)
+   *    and again whenever somebody presses "Look again on this machine" — the
+   *    same function, because the second press is for the case §3.6 names: the
+   *    engine was installed AFTER this app started, so the answer that was
+   *    honest at start ("there is nothing here") has stopped being true. It is a
+   *    BUTTON and not a watcher on purpose: a filesystem watch on a directory
+   *    Crucible's installer creates would have this app reacting to a file
+   *    appearing mid-keystroke, and "press it when you have installed one" is a
+   *    sentence a person can act on.
+   */
+  ipcMain.handle('crucible:add-from-pairing-file', () => adoptPairingFile());
+  /*
+   * 2. A PASTED CONNECT CODE, in three doors that all take THE LINE.
+   *
+   * The preview answers NAME AND ADDRESS ONLY (`ConnectCodePreview` argues the
+   * shape at length): the renderer fills its two boxes from it so a person can
+   * rename before adding, and the token never crosses the preload in either
+   * direction. Test and Add re-read the same line in main. Three doors rather
+   * than one for the reason `crucible:test-at` is not `crucible:add`: testing an
+   * address in order to find out whether it is a Crucible must not write
+   * anything, and previewing must not dial anybody at all — it runs on every
+   * keystroke of a paste.
+   */
+  ipcMain.handle('crucible:parse-connect-code', (_event, line: string): ConnectCodePreview => {
+    const read = readConnectCode(line);
+    return read.read
+      ? { outcome: 'read', name: read.pairing.name, url: read.pairing.url }
+      : { outcome: 'refused', message: read.message };
+  });
+  ipcMain.handle('crucible:test-connect-code', async (_event, line: string): Promise<CrucibleProbe> => {
+    const read = readConnectCode(line);
+    // A REFUSAL IS A RESULT HERE, not a rejection, because the door it is drawn
+    // in already draws `CrucibleProbe.outcome === 'failed'` — one sentence, one
+    // place to look, whether the line was unreadable or the server was.
+    if (!read.read) return { outcome: 'failed', message: read.message };
+    return probeCrucibleAt(read.pairing.url, read.pairing.token);
+  });
+  /*
+   * Add, through the registry's ONE writer, answering with the whole settings
+   * view for `crucible:add`'s reason. The NAME is the caller's: the preview
+   * filled a box with the code's own name and somebody may have renamed it
+   * before pressing, and a door that re-read the name out of the line would
+   * silently throw that away. An EMPTY name falls back to the code's, which is
+   * what pressing Add on an untouched preview means.
+   *
+   * IT REJECTS BY NAME on a line that will not parse, rather than answering a
+   * view: this is the door that WRITES, and everything that writes the registry
+   * in this file rejects rather than returning a failed shape.
+   */
+  ipcMain.handle('crucible:add-connect-code', async (_event, line: string, name: string) => {
+    const read = readConnectCode(line);
+    if (!read.read) throw new Error(read.message);
+    const wanted = name.replace(/\s+/g, ' ').trim();
+    addCrucibleServer(
+      wanted.length > 0 ? wanted : read.pairing.name,
+      read.pairing.url,
+      read.pairing.token,
+    );
+    await afterRegistryChanged();
+    return crucibleSettingsView();
   });
   /**
    * THE HAND SEQUENCE FOR "INSTALL CRUCIBLE HERE", composed for this machine.

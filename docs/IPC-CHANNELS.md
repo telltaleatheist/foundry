@@ -1,5 +1,52 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
+**FOUR DOORS ON 2026-09-14 — WAVE 62 PACKAGE J, CONNECT THREE WAYS. COUNTED BY
+SCRIPT OVER `app/electron/ipc.ts`: 136 `ipcMain.handle` call sites, 136 distinct
+channel names, zero `ipcMain.on`.** Nothing was removed, nothing was renamed, and
+no existing shape narrowed. One shared type gained a member
+(`LocalCrucibleAdd` is now the pairing file's answer as well — see below).
+
+**THE STANDING FAILURE, A THIRD TIME, AND IT IS RECORDED RATHER THAN QUIETLY
+FIXED.** The head of this file said **130** and the source at `5d37806` measured
+**132** — two doors added under a stale figure, which is the exact thing the
+2026-08-22, 2026-08-23 and Wave 61 paragraphs below already record. **136 is a
+measurement**, taken with the script over the source in this worktree; every
+name in it is in the per-family tables, which are and remain the authority.
+
+- **`crucible:add-from-pairing-file` → `LocalCrucibleAdd`** — look for the
+  connect code Crucible leaves on this machine (`<CRUCIBLE_HOME>/pairing`,
+  crucible `docs/PHASE15-HOST.md` §3.6, pinned in Crucible `3bcd003`) and
+  register what it names as `local`. **The same read runs once at start**
+  (electron/mount.ts, standalone only — hosted the registry is the host's), so
+  this door is §3.6's SECOND CHANCE: an engine installed after this app opened.
+  `LocalCrucibleAdd` is REUSED rather than given a twin, because the two doors
+  say the same three things — added, nothing here (`no_local_config`, and an
+  absent file is a FACT, not a fallback), or something here that will not read
+  (`config_unreadable`, carrying the SDK's own `invalid_pairing` sentence).
+  **No token crosses**: main reads the line, writes the entry, answers the view.
+- **`crucible:parse-connect-code` (line) → `ConnectCodePreview`** — what a pasted
+  connect code says, **name and address only**. Pure: the SDK's `parsePairing`
+  (PHASE13-OPERATOR.md §2.1) and no network, so the door runs on every change of
+  the paste field. The person typed the token, but the answer does not carry it
+  back — the renderer never holds a credential it did not type into a field for
+  that purpose, and a preview carrying one would put a token in a signal for as
+  long as the door stayed open.
+- **`crucible:test-connect-code` (line) → `CrucibleProbe`** — `crucible:test-at`
+  for a pasted line, and it exists BECAUSE that door cannot serve this one: it
+  takes a token, and handing the code's token back so it could be handed forward
+  is exactly what the preview refuses. Writes nothing. An unreadable line is a
+  RESULT (`outcome: 'failed'` with the SDK's sentence), not a rejection.
+- **`crucible:add-connect-code` (line, name) → `CrucibleSettingsView`** — add what
+  the code names, through the registry's one writer. The NAME is the caller's
+  (the preview filled the box and somebody may have renamed it); empty falls back
+  to the name inside the code. Rejects by name on a line that will not parse, and
+  answers the whole view for `crucible:add`'s reason.
+
+The line takes **the same road three times** rather than a token being handed
+back and forth: preview, Test and Add each send the LINE into main, which parses
+it afresh. Parsing is pure and costs nothing, and the alternative is a secret
+making two extra crossings of the preload for no gain.
+
 **THREE DOORS AND A NEW FAMILY ON 2026-09-14 — WAVE 61 PACKAGE F (APP HALF).
 COUNTED BY SCRIPT OVER `app/electron/ipc.ts`: 130 `ipcMain.handle` call sites,
 130 distinct channel names, zero `ipcMain.on`.** Nothing was removed, nothing was
@@ -756,7 +803,11 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `crucible:open` | Open a REGISTERED server's own operator page, by name. The window has no preload, is sandboxed, keeps its own session partition, refuses navigation off the server's origin and denies every popup and permission — it is a remote page this app merely hosts (electron/crucible-ui.ts argues each setting). By name rather than by URL so no token reaches the renderer. Deliberately NOT `crucible:open-ui`, which is BookForge's name for their own. |
 | `crucible:test-at` | The same probe against an address and token that are NOT in the registry — the wizard's Connect door, which has nothing saved to test. Writes nothing. The token goes one way, into main, and no answer carries it back. |
 | `crucible:add` | Add ONE server, through the registry's one writer. Answers with the whole settings view, because adding a loopback entry changes the slots. An existing name is replaced in place, keeping its rank. |
-| `crucible:add-local` | Register the Crucible on this machine by reading its own `config.toml` — on Windows through `wsl.exe -d <distro> --exec`. The token is read and stored in main and never crosses this wire. Refused while hosted. |
+| `crucible:add-local` | Register the Crucible on this machine by reading its own `config.toml` — on Windows through `wsl.exe -d <distro> --exec`. The token is read and stored in main and never crosses this wire. Refused while hosted. **Crucible `docs/PHASE15-HOST.md` §3.6 keeps this door until the Windows host ships and DELETES it then** — until there is a host, it is how a WSL server gets registered on Windows. |
+| `crucible:add-from-pairing-file` | Look for the connect code Crucible leaves on this machine (`$CRUCIBLE_HOME/pairing`; `~/.crucible/pairing` on linux/darwin, `%LOCALAPPDATA%\Crucible\pairing` on win32 — PHASE15 §3.6, pinned in Crucible `3bcd003`) and register what it names as `local`, the name BookForge uses for the same server. The read also runs once at app start (electron/mount.ts), standalone only; this door is §3.6's second chance, for an engine installed after the app opened. It declines when the registry already holds a loopback entry, because that is one engine with two rows. Answers `LocalCrucibleAdd`, reused: `added`, `no_local_config` (no file — a FACT the app shows, never a fallback it fills), `config_unreadable` (the SDK's `invalid_pairing` sentence, fragment already elided), `already_registered`. No token crosses. |
+| `crucible:parse-connect-code` | What a pasted connect code says — **name and address only**, through the SDK's `parsePairing`. Pure and networkless, so the connect door runs it on every change of the paste field. The token is deliberately not in the answer, though the person pasted it: the renderer never holds a credential it did not type into a field for that purpose. `ConnectCodePreview`: `read` with name+url, or `refused` with the SDK's sentence. |
+| `crucible:test-connect-code` | `crucible:test-at` for a pasted line. It exists because that door takes a TOKEN, and handing the code's token back to the renderer so it could be handed forward again is the one thing the preview refuses to do — so main re-reads the line instead. Writes nothing. An unreadable line is a RESULT with the SDK's sentence, not a rejection. |
+| `crucible:add-connect-code` | Add what a pasted connect code names, through the registry's one writer. Takes the line and a NAME — the preview filled the name box and somebody may have renamed the server before pressing; empty falls back to the name inside the code. Rejects by name on a line that will not parse. Answers the whole settings view, because a loopback code changes the slots. |
 | `crucible:set-wsl-distro` | Which WSL guest that read looks in. Empty is a real answer and means unset; there is no default. |
 | `crucible:set-new-jobs-wait-for` | `top` or `any` — what a new row's `waitFor` starts as. Answers with what was stored. |
 | `crucible:install-plan` | The hand sequence for installing a Crucible on this machine, composed for this platform: the numbered steps with every command copyable, the elevated ones listed apart, the README link and the wheel. A read — the only process it spawns is `wsl.exe -l -v`. |

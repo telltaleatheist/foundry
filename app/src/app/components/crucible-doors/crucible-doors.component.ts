@@ -17,25 +17,55 @@
  * because a component that handed its parent a server list would be a second
  * copy of a list main has already answered with.
  *
- * ── THE THREE DOORS, AND WHY THEY ARE IN THIS ORDER ─────────────────────────
+ * ── THE DOORS, AND WHY THEY ARE IN THIS ORDER ───────────────────────────────
  *
- * 1. **Connect to a Crucible server.** First because it is the one that needs
- *    nothing installed anywhere — a person whose Mac already runs one is two
- *    fields away from using it. Test before Add, and the test goes through
- *    `testAt`, which does NOT write anything: adding a server in order to find
- *    out whether it is a server would leave a dead entry behind every failure.
+ * THE ORDER IS THE CONTRACT'S, NOT A LAYOUT CHOICE. crucible
+ * `docs/PHASE15-HOST.md` §5.1 — *"Connect: three ways, in this order, all
+ * automatic"* — names the pairing file first, a pasted connect code second, and
+ * getting one installed here last, and the reason is that each is more work for
+ * the person than the one above it. A screen that offered them in another order
+ * would be asking somebody to type a token they never needed to see.
+ *
+ * 0. **The engine on this machine, found on its own.** No door at all in the
+ *    ordinary case: main reads the connect code Crucible left at
+ *    `<CRUCIBLE_HOME>/pairing` at start and registers what it names as `local`
+ *    (§3.6; electron/ipc.ts `adoptPairingFile`). What is here is the SECOND
+ *    CHANCE §3.6 asks for — "Look again on this machine", for an engine
+ *    installed AFTER this app opened, which is exactly what happens when
+ *    somebody runs Crucible's installer with Foundry already up.
+ *
+ * 1. **Connect to a Crucible server**, and the first thing in it is the PASTED
+ *    CONNECT CODE (§5.1 way 2, PHASE13-OPERATOR.md §5.1): one field instead of
+ *    three, and nobody transcribes a 43-character secret. The three boxes below
+ *    it are unchanged and still work by hand, for a server whose operator page
+ *    nobody can reach. Test before Add either way, and the test does NOT write
+ *    anything: adding a server in order to find out whether it is a server would
+ *    leave a dead entry behind every failure.
  *
  * 2. **Use the Crucible on this machine.** Reads that server's own config.toml
  *    rather than asking anybody to copy a token, so the file stays the token's
  *    single owner and a later `crucible init --force` is fixed by pressing the
- *    button again (crucible-registry.ts argues this at length).
+ *    button again (crucible-registry.ts argues this at length). §3.6 keeps this
+ *    door alive until the Windows host ships — it is how Owen's PC registers its
+ *    WSL server — and says it is DELETED then, not before.
  *
  * 3. **Install Crucible here.** Last, because it is the longest, and today it is
  *    a DOCUMENT: the exact sequence, in order, with the commands that need
  *    elevation listed apart because this app cannot obtain elevation on somebody's
  *    behalf. The button that will run it is present and disabled, wearing main's
  *    own sentence — see `CrucibleInstallPlan.drivenWhy` and
- *    electron/crucible-install.ts, which says what turning it on costs.
+ *    electron/crucible-install.ts, which says what turning it on costs. PHASE15
+ *    §4.3 names what that will be: `@crucible/bootstrap`'s `install()` becomes a
+ *    CLIENT of the Windows host, whose own installer owns the sequence. The
+ *    sentence at the top of this door now says that, in link text and no
+ *    commands — the commands below it are the plan main composed, unchanged.
+ *
+ * ── THE WORD IS "CONNECT CODE", EVERYWHERE A PERSON READS IT ────────────────
+ *
+ * BookForge says connect code and so does this. Crucible's own documents call
+ * the thing a "pairing line", because that is what the PRODUCER calls the
+ * format; a person pasting one is not reading those documents, and two words for
+ * one thing across two apps is how somebody concludes they have two things.
  *
  * ── NOTHING HERE IS A STEP ANYBODY HAS TO TAKE ──────────────────────────────
  *
@@ -60,6 +90,29 @@ type DoorId = 'connect' | 'local' | 'install';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="doors">
+      <!--
+        ── 0. THIS MACHINE, FOUND WITHOUT A DOOR ──────────────────────────
+        PHASE15 section 5.1 way 1: main already read the connect code Crucible
+        leaves on this machine, at start. The button is for the engine that was
+        installed after this window opened — section 3.6's own case. (NO
+        BACKTICKS ANYWHERE IN THIS TEMPLATE, not even in a comment: it is a
+        template literal and one would end it mid-sentence.)
+      -->
+      <div class="blurb">
+        <p class="small">
+          Foundry looks for an engine on this machine on its own. If one was installed after
+          this app started, press Look again.
+        </p>
+        <div class="actions">
+          <button class="ghost" type="button" [disabled]="busy()" (click)="lookAgain()">
+            {{ busy() === 'pairing' ? 'Looking…' : 'Look again on this machine' }}
+          </button>
+        </div>
+        @if (pairingNote(); as note) {
+          <p class="small" [class.warn]="pairingFailed()">{{ note }}</p>
+        }
+      </div>
+
       <!-- ── 1. Connect ────────────────────────────────────────────────── -->
       <button class="door" type="button" (click)="toggle('connect')">
         <span class="door-name">Connect to a Crucible server</span>
@@ -68,6 +121,16 @@ type DoorId = 'connect' | 'local' | 'install';
       @if (open() === 'connect') {
         <div class="panel">
           <label class="field">
+            <span class="label">Paste a connect code</span>
+            <input type="text" name="cCode" placeholder="crucible://…"
+                   [ngModel]="code()" (ngModelChange)="onCode($event)">
+          </label>
+          <p class="small">
+            A Crucible prints one on its own page — it carries the name, the address and the
+            token together, so there is nothing to transcribe.
+          </p>
+          @if (codeRefusal(); as said) { <p class="small warn">{{ said }}</p> }
+          <label class="field">
             <span class="label">Name</span>
             <input type="text" name="cName" placeholder="Mac Studio"
                    [ngModel]="name()" (ngModelChange)="name.set($event)">
@@ -75,12 +138,18 @@ type DoorId = 'connect' | 'local' | 'install';
           <label class="field">
             <span class="label">Address</span>
             <input type="text" name="cUrl" placeholder="http://192.168.1.20:7100"
-                   [ngModel]="url()" (ngModelChange)="url.set($event)">
+                   [ngModel]="url()" (ngModelChange)="url.set($event)"
+                   [readonly]="hasCode()">
           </label>
           <label class="field">
             <span class="label">Token</span>
-            <input type="password" name="cToken" placeholder="crucible token --show, on that machine"
-                   [ngModel]="token()" (ngModelChange)="token.set($event)">
+            @if (hasCode()) {
+              <input type="text" name="cToken" value="from the connect code" readonly>
+            } @else {
+              <input type="password" name="cToken"
+                     placeholder="crucible token --show, on that machine"
+                     [ngModel]="token()" (ngModelChange)="token.set($event)">
+            }
           </label>
           <div class="actions">
             <button class="ghost" type="button" [disabled]="busy()" (click)="test()">
@@ -147,6 +216,26 @@ type DoorId = 'connect' | 'local' | 'install';
       </button>
       @if (open() === 'install') {
         <div class="panel">
+          <!--
+            WHAT PHASE15 SECTION 4.3 SAYS, AND ONLY THAT. The sequence below is
+            still main's plan, unchanged; this is the sentence above it, and it
+            names the installers as NAMES rather than printing a command to
+            paste, because the installer is Crucible's own front door and this
+            app is not its manual.
+          -->
+          @if (isWindows) {
+            <p class="small">
+              On Windows the engine is installed by Crucible's own installer, install.ps1 from
+              the release. It sets up WSL and leaves a connect code on this machine, and Foundry
+              finds the engine through that — there is nothing to paste afterwards.
+            </p>
+          } @else {
+            <p class="small">
+              On a Mac the engine is installed by Crucible's own installer, install.sh from the
+              release. It leaves a connect code on this machine, and Foundry finds the engine
+              through that — there is nothing to paste afterwards.
+            </p>
+          }
           @if (plan(); as it) {
             <p class="small">{{ it.machine }}</p>
             @if (it.platform === 'other') {
@@ -219,6 +308,14 @@ type DoorId = 'connect' | 'local' | 'install';
     .door-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
     .door-note { font-size: 11px; color: var(--text-tertiary); }
 
+    /*
+     * NOT A DOOR — it is the sentence above the doors, and the one control in it
+     * is a retry of something the app already did. Drawn flat rather than as a
+     * fourth pressable row, because a row that looked like the three below it
+     * would read as a fourth alternative to them.
+     */
+    .blurb { display: flex; flex-direction: column; gap: 6px; padding: 0 2px 4px; }
+
     .panel {
       display: flex; flex-direction: column; gap: 8px;
       padding: 10px; margin-bottom: 4px;
@@ -290,9 +387,30 @@ export class CrucibleDoorsComponent {
   protected readonly localNote = signal<string | null>(null);
   protected readonly localFailed = signal(false);
   protected readonly installSaid = signal<string | null>(null);
+  protected readonly pairingNote = signal<string | null>(null);
+  protected readonly pairingFailed = signal(false);
+
+  /**
+   * THE PASTED LINE, AND IT IS A CREDENTIAL FOR AS LONG AS THIS DOOR IS OPEN.
+   *
+   * It is held because the three acts — preview, Test, Add — each need the WHOLE
+   * line, and main answers none of them with a token (docs' `ConnectCodePreview`
+   * argues the shape). The person typed it into this box, which is the one case
+   * the renderer is allowed to hold one; it is cleared on a successful Add, with
+   * the token box, exactly as the hand-typed token already was.
+   */
+  protected readonly code = signal('');
+  /** The SDK's `invalid_pairing` sentence for what is in the box, or null. */
+  protected readonly codeRefusal = signal<string | null>(null);
+  /**
+   * Is a READABLE code driving the boxes? Not "is the box non-empty": a half-
+   * pasted line must leave Address and Token editable, or somebody correcting a
+   * typo by hand would find the fields locked by the very thing they are fixing.
+   */
+  protected readonly hasCode = signal(false);
 
   /** Which call is in flight, so the right button says so and the others are off. */
-  protected readonly busy = signal<'test' | 'add' | 'local' | 'install' | null>(null);
+  protected readonly busy = signal<'test' | 'add' | 'local' | 'install' | 'pairing' | null>(null);
 
   constructor() {
     if (!api) return;
@@ -333,7 +451,99 @@ export class CrucibleDoorsComponent {
     this.busy.set('test');
     this.probe.set(null);
     try {
-      this.probe.set(await api.crucible.testAt(this.url(), this.token()));
+      /*
+       * THE CONNECT CODE HAS ITS OWN TEST, and it is not `testAt` with a token
+       * fished out of a preview: the token would have to come back across the
+       * preload to be sent forward again, which is the one thing the preview
+       * shape exists to refuse. Main re-reads the line it was given, which costs
+       * a parse and owes nobody a secret.
+       */
+      this.probe.set(this.hasCode()
+        ? await api.crucible.testConnectCode(this.code())
+        : await api.crucible.testAt(this.url(), this.token()));
+    } finally {
+      this.busy.set(null);
+    }
+  }
+
+  /**
+   * EVERY CHANGE OF THE PASTE FIELD, previewed in main.
+   *
+   * On change and not on blur, because the gesture is a PASTE: there is no
+   * keystroke after it and a person who pasted a line expects to see the name of
+   * the machine they pasted, not after they click somewhere else. The call is
+   * pure on main's side — the SDK's `parsePairing` and no network — so running it
+   * per change costs an IPC round trip and nothing else.
+   *
+   * AN EMPTY BOX IS NOT A REFUSAL. Clearing the field hands the three boxes back
+   * to whoever wants to type in them and says nothing, because "paste a connect
+   * code" printed under an empty box is an instruction, not an error.
+   */
+  protected async onCode(line: string): Promise<void> {
+    this.code.set(line);
+    this.probe.set(null);
+    if (!api || line.trim().length === 0) {
+      this.hasCode.set(false);
+      this.codeRefusal.set(null);
+      return;
+    }
+    const preview = await api.crucible.parseConnectCode(line);
+    // The box may have moved on while that was in flight — a slow round trip
+    // landing after the next keystroke would overwrite what is being typed now.
+    if (this.code() !== line) return;
+    if (preview.outcome === 'refused') {
+      this.hasCode.set(false);
+      this.codeRefusal.set(preview.message);
+      return;
+    }
+    this.codeRefusal.set(null);
+    this.hasCode.set(true);
+    /*
+     * THE NAME IS FILLED SO IT CAN BE CHANGED. The code carries the server's own
+     * name (`crucible@mac-studio`), and a person with two of them wants to say
+     * which is which before it lands in a picker — so the box is filled, not
+     * locked, and Add sends whatever is in it.
+     *
+     * THE ADDRESS IS FILLED AND READ-ONLY, because it is not a preference: the
+     * token in the code is that address's token, and an address edited under it
+     * would be a credential pointed at a machine it was not issued for.
+     */
+    this.name.set(preview.name);
+    this.url.set(preview.url);
+  }
+
+  /**
+   * LOOK FOR AN ENGINE ON THIS MACHINE AGAIN — PHASE15 §3.6's second chance.
+   *
+   * Main already did this at start (electron/mount.ts). This is the press for
+   * the machine where Crucible was installed WHILE Foundry was open, where the
+   * answer at start was true and has stopped being. It is a button rather than a
+   * filesystem watch because "press it when you have installed one" is a
+   * sentence somebody can act on, and a watch on a directory an installer
+   * creates would have this app reacting mid-keystroke.
+   *
+   * ALL THREE OUTCOMES ARE SAID, including the absence: *"an absent file means
+   * 'no local server' — a fact the app shows, not a fallback it fills"* (§3.6).
+   * A button that did nothing visible on the ordinary answer would be a button
+   * somebody presses twice.
+   */
+  protected async lookAgain(): Promise<void> {
+    if (!api) return;
+    this.busy.set('pairing');
+    this.pairingNote.set(null);
+    try {
+      const answer = await api.crucible.addFromPairingFile();
+      if (answer.outcome === 'added') {
+        this.pairingFailed.set(false);
+        this.pairingNote.set(
+          `Found ${answer.serverName} at ${answer.url}, from ${answer.configPath}. `
+          + 'Its token stays that file\'s.',
+        );
+        this.changed.emit();
+      } else {
+        this.pairingFailed.set(true);
+        this.pairingNote.set(answer.message);
+      }
     } finally {
       this.busy.set(null);
     }
@@ -348,9 +558,23 @@ export class CrucibleDoorsComponent {
     if (!api) return;
     this.busy.set('add');
     try {
-      await api.crucible.add(this.name(), this.url(), this.token());
+      /*
+       * ONE DOOR OR THE OTHER, never both, and the code wins when there is one:
+       * the address box is read-only under a readable code and the token box
+       * holds a placeholder rather than a secret, so `add(name, url, token)`
+       * here would register a server with an empty token.
+       */
+      if (this.hasCode()) {
+        await api.crucible.addConnectCode(this.code(), this.name());
+      } else {
+        await api.crucible.add(this.name(), this.url(), this.token());
+      }
       this.probe.set(null);
       this.token.set('');
+      // The line goes with the token, and for the token's reason: it carries one.
+      this.code.set('');
+      this.hasCode.set(false);
+      this.codeRefusal.set(null);
       this.open.set(null);
       this.changed.emit();
     } catch (err) {

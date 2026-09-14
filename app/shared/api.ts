@@ -18,6 +18,7 @@ import type {
   CloudProviderEdit,
   CloudSettingsView,
   ComputeSlot,
+  ConnectCodePreview,
   CrucibleInstallPlan,
   CrucibleProbe,
   CrucibleServerEdit,
@@ -1440,6 +1441,59 @@ export interface FoundryApi {
      * Windows that file is inside WSL and `wslDistro` decides which guest.
      */
     addLocal(name: string): Promise<LocalCrucibleAdd>;
+    /**
+     * LOOK FOR A CONNECT CODE CRUCIBLE LEFT ON THIS MACHINE, and register what
+     * it names as `local` — PHASE15-HOST.md §3.6 and §5.1, way 1.
+     *
+     * The same read runs once at start (electron/mount.ts) and needs no button
+     * to have happened. This door is the SECOND CHANCE §3.6 asks for: the engine
+     * may have been installed after this app opened, in which case the honest
+     * answer at start ("there is nothing on this machine") has stopped being
+     * true and nothing would notice until the next launch.
+     *
+     * `LocalCrucibleAdd` REUSED rather than a shape of its own, because the two
+     * doors say the same three things — an entry was made, there is nothing here
+     * (`no_local_config`, a FACT and not a fallback), or there is something here
+     * that will not read (`config_unreadable`, carrying the SDK's own
+     * `invalid_pairing` sentence). `configPath` is the pairing file's path.
+     *
+     * NO TOKEN CROSSES. Main reads the line, writes the entry, answers with the
+     * view — `crucible:add-local`'s rule, for the same file-is-the-owner reason.
+     */
+    addFromPairingFile(): Promise<LocalCrucibleAdd>;
+    /**
+     * WHAT A PASTED CONNECT CODE SAYS — name and address, and nothing else.
+     *
+     * Run on every change of the paste field, so it is PURE: the SDK's
+     * `parsePairing` and no network at all. The name and the address fill the
+     * two boxes beside it, so somebody can rename the server before adding it.
+     *
+     * **The token is not in the answer**, though the person pasted it. The
+     * standing rule is that the renderer never holds a credential it did not
+     * type into a field for that purpose, and a preview carrying one would put a
+     * token in a signal for as long as the door stayed open. The line goes one
+     * way, in; Test and Add below take the LINE again.
+     */
+    parseConnectCode(line: string): Promise<ConnectCodePreview>;
+    /**
+     * Test what the code names, WITHOUT saving it — `crucible:test-at` for a
+     * pasted line, and it exists because that door cannot serve this one: it
+     * takes a token, and handing the code's token back to the renderer so it
+     * could be handed forward again is exactly what the preview refuses to do.
+     *
+     * An unreadable line is a RESULT here (`outcome: 'failed'` with the SDK's
+     * sentence), not a rejection: the door draws one sentence in one place
+     * whether it was the line or the server that would not answer.
+     */
+    testConnectCode(line: string): Promise<CrucibleProbe>;
+    /**
+     * Add what the code names, through the registry's one writer. `name` is the
+     * person's — the preview filled the box and they may have renamed it — and
+     * an empty one falls back to the name inside the code. Answers with the whole
+     * settings view for `crucible:add`'s reason, and REJECTS by name on a line
+     * that will not parse.
+     */
+    addConnectCode(line: string, name: string): Promise<CrucibleSettingsView>;
     /** Answered with what was stored. Empty is a real answer and means unset. */
     setWslDistro(distro: string): Promise<string>;
     /** What a new row's `waitFor` starts as. Answered with what was stored. */
