@@ -587,26 +587,52 @@ async function takeLease(
   model: string,
   capability: CapabilityClass,
 ): Promise<Lease> {
-  const body = await crucibleRequest(entry, `/v1/models/${encodeURIComponent(model)}/lease`, {
-    method: 'POST',
-    body: { act: capability, ttl_seconds: LEASE_TTL_SECONDS },
-  });
-  const id = typeof (body as Record<string, unknown> | null)?.['lease_id'] === 'string'
-    ? (body as Record<string, string>)['lease_id'] as string
-    : '';
-  if (id.length === 0) {
-    /*
-     * A 201 with no `lease_id` in it. Refused rather than shrugged off: carrying
-     * on without a lease would mean running a whole book under a protection this
-     * code believes it has, which is worse than not having it — nobody would
-     * look for the eviction, because the lease was "taken".
-     */
-    throw new CrucibleRefused(201, 'lease_unreadable', 'the lease was granted without an id', body);
-  }
+  const acquire = async (): Promise<string> => {
+    const body = await crucibleRequest(entry, `/v1/models/${encodeURIComponent(model)}/lease`, {
+      method: 'POST',
+      body: { act: capability, ttl_seconds: LEASE_TTL_SECONDS },
+    });
+    const granted = typeof (body as Record<string, unknown> | null)?.['lease_id'] === 'string'
+      ? (body as Record<string, string>)['lease_id'] as string
+      : '';
+    if (granted.length === 0) {
+      /*
+       * A 201 with no `lease_id` in it. Refused rather than shrugged off: carrying
+       * on without a lease would mean running a whole book under a protection this
+       * code believes it has, which is worse than not having it — nobody would
+       * look for the eviction, because the lease was "taken".
+       */
+      throw new CrucibleRefused(201, 'lease_unreadable', 'the lease was granted without an id', body);
+    }
+    return granted;
+  };
+  let id = await acquire();
   let stopped = false;
   const timer = setInterval(() => {
     void crucibleRequest(entry, `/v1/leases/${encodeURIComponent(id)}/heartbeat`, { method: 'POST' })
-      .catch((err: unknown) => {
+      .catch(async (err: unknown) => {
+        /*
+         * THE SERVER FORGOT THE LEASE, which is what a restart does: leases are
+         * in memory there, so `unknown_lease` on a heartbeat means the card is
+         * unprotected NOW while the engine is mid-book. The right answer is not
+         * a log line but a new lease on the same model — the model is still
+         * resident (a restart that lost it would be answering the engine
+         * `model_not_resident` already, which the engine refuses by name) and
+         * this run still intends every request it has left. A re-lease that is
+         * itself refused falls through to the log below, and the run goes on
+         * unprotected and said so.
+         */
+        if (err instanceof CrucibleRefused && err.code === 'unknown_lease' && !stopped) {
+          try {
+            id = await acquire();
+            console.error(
+              `[slots] ${entry.name} had forgotten the lease on ${model} (restarted?); took a new one`,
+            );
+            return;
+          } catch (again) {
+            err = again;
+          }
+        }
         /*
          * A LOST HEARTBEAT IS NOT A LOST RUN AND MUST NOT STOP ONE. The engine is
          * talking to the same server over its own socket and is the thing that
@@ -624,7 +650,7 @@ async function takeLease(
   }, LEASE_HEARTBEAT_MS);
   timer.unref?.();
   return {
-    id,
+    get id(): string { return id; },
     async release(): Promise<void> {
       if (stopped) return;
       stopped = true;
@@ -632,6 +658,9 @@ async function takeLease(
       try {
         await crucibleRequest(entry, `/v1/leases/${encodeURIComponent(id)}`, { method: 'DELETE' });
       } catch (err) {
+        // Already gone — released by a restart or expired — is exactly the state
+        // a release wants, and not a failure to report.
+        if (err instanceof CrucibleRefused && err.code === 'unknown_lease') return;
         console.error(
           `[slots] the lease on ${model} at ${entry.name} could not be released `
           + `(it expires in ${LEASE_TTL_SECONDS}s): ${err instanceof Error ? err.message : String(err)}`,
