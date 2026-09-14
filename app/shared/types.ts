@@ -772,19 +772,28 @@ export interface TranslateRequest {
   /** `--ollama`: the server's URL. Used, never started. */
   ollama: string;
   /**
-   * `--server`: which kind of server answers, when it is not the default Ollama.
+   * WHICH DIALECT — and it is no longer a field, because it is no longer
+   * anybody's preference.
    *
-   * CARRIED ON THE REQUEST RATHER THAN READ AT SPAWN, so that the three things
-   * that must agree — the kind, the URL and the model name — are the ONE set the
-   * dialog was looking at. They are stored together in Settings and answered
-   * together (`llm:defaults`); reading the kind again at spawn would mean a
-   * queue filled before somebody flipped the setting runs an Ollama tag against
-   * a vLLM, which fails at the first block with a message about a model nobody
-   * typed.
+   * ── What used to be here, and why it went ─────────────────────────────────
    *
-   * Absent is `ollama` and is what every job carried before this existed.
+   * A `server?: LlmServerKind`, carried from the dialog so that the three things
+   * that must agree — the kind, the URL and the model name — were the one set the
+   * dialog was looking at. The premise of that was a machine-wide SETTING saying
+   * which kind of server the language acts spoke to, and Wave 61 retired it
+   * (docs/SLOTS.md): the local slot is Ollama, always, and an OpenAI-compatible
+   * server is a registered Crucible rather than a mode this app can be put into.
+   *
+   * So the dialect falls out of WHERE the row was placed, decided in one breath
+   * with the endpoint and the model immediately before the spawn (`placeJob`,
+   * electron/crucible-dispatch.ts; `doorArgs`, electron/job-queue.ts). The three
+   * still agree — more strictly than before, because one function now composes
+   * all three out of one placement, where three branches each spelled two.
+   *
+   * WHAT `model` AND `ollama` NOW MEAN, precisely: the LOCAL slot's answers — the
+   * tag the person could edit in the dialog, and the Ollama on this machine. A
+   * Crucible placement replaces both, and neither field is consulted.
    */
-  server?: LlmServerKind;
   /** `--instructions`: appended to the system prompt verbatim, per book. */
   instructions?: string;
   /**
@@ -986,19 +995,28 @@ export interface CleanRequest {
   model: string;
   ollama: string;
   /**
-   * `--server`: which kind of server answers, when it is not the default Ollama.
+   * WHICH DIALECT — and it is no longer a field, because it is no longer
+   * anybody's preference.
    *
-   * CARRIED ON THE REQUEST RATHER THAN READ AT SPAWN, so that the three things
-   * that must agree — the kind, the URL and the model name — are the ONE set the
-   * dialog was looking at. They are stored together in Settings and answered
-   * together (`llm:defaults`); reading the kind again at spawn would mean a
-   * queue filled before somebody flipped the setting runs an Ollama tag against
-   * a vLLM, which fails at the first block with a message about a model nobody
-   * typed.
+   * ── What used to be here, and why it went ─────────────────────────────────
    *
-   * Absent is `ollama` and is what every job carried before this existed.
+   * A `server?: LlmServerKind`, carried from the dialog so that the three things
+   * that must agree — the kind, the URL and the model name — were the one set the
+   * dialog was looking at. The premise of that was a machine-wide SETTING saying
+   * which kind of server the language acts spoke to, and Wave 61 retired it
+   * (docs/SLOTS.md): the local slot is Ollama, always, and an OpenAI-compatible
+   * server is a registered Crucible rather than a mode this app can be put into.
+   *
+   * So the dialect falls out of WHERE the row was placed, decided in one breath
+   * with the endpoint and the model immediately before the spawn (`placeJob`,
+   * electron/crucible-dispatch.ts; `doorArgs`, electron/job-queue.ts). The three
+   * still agree — more strictly than before, because one function now composes
+   * all three out of one placement, where three branches each spelled two.
+   *
+   * WHAT `model` AND `ollama` NOW MEAN, precisely: the LOCAL slot's answers — the
+   * tag the person could edit in the dialog, and the Ollama on this machine. A
+   * Crucible placement replaces both, and neither field is consulted.
    */
-  server?: LlmServerKind;
   /**
    * `--concurrency`: blocks in flight at once. Absent means the engine's own
    * (`DEFAULT_CLEAN_CONCURRENCY`, 4) — a number is never filled in here, because a
@@ -1152,12 +1170,9 @@ export interface AnalyzeRequest {
   /** `--ollama`: the server's URL. Used, never started. */
   ollama: string;
   /**
-   * `--server`: which kind of server answers, when it is not the default Ollama.
-   *
-   * `TranslateRequest.server`'s arrangement and its reason — the kind, the URL
-   * and the model name have to be the ONE set the dialog was looking at.
+   * NO `--server` FIELD — `TranslateRequest`'s note says where the dialect went
+   * and why. `model` and `ollama` above are the LOCAL slot's answers.
    */
-  server?: LlmServerKind;
   /**
    * THE STEP THIS REPORT BELONGS TO, minted with it and travelling with it.
    *
@@ -1491,6 +1506,53 @@ export interface Job {
    * declaration.
    */
   mode?: RewriteMode;
+  /**
+   * WHICH SLOT THIS ROW IS WAITING FOR — a slot name, or `any` (`ANY_SLOT`,
+   * shared/slots.ts), decided at the PRESS.
+   *
+   * ── A different axis from `after`, and they are easy to confuse ────────────
+   *
+   * `after` is WHEN: the row this one is downstream of, whose loss takes it with
+   * it. This is WHERE: which machine's GPU the work goes to. A cleanup chained
+   * behind a reading can perfectly well name a different slot from the reading,
+   * and an export chained behind a cleanup names none at all.
+   *
+   * ── Why the answer is written down instead of derived ─────────────────────
+   *
+   * `Job.parentStep`'s argument, about a different pointer. A row sits in the
+   * queue for as long as it takes somebody to assemble a batch, and the standing
+   * preference (`AppSettings.newJobsWaitFor`) and the server RANKING both move
+   * while it sits. docs/SLOTS.md §3 rules that *"queued rows do NOT move when
+   * servers are re-ranked"*, so `top` is resolved to a NAME at the press and the
+   * name is what the row carries. The only thing that changes it afterwards is a
+   * person, through the picker.
+   *
+   * ── ABSENT IS EVERY ROW THIS QUEUE HAS EVER HELD ──────────────────────────
+   *
+   * And it means "wherever this app would have sent it anyway" — which is the
+   * local machine. It is absent on a job that never meets a model (an export, a
+   * mint, an install), on a reading for as long as page reading stays on its own
+   * local path, and — the common case — whenever there is nothing to choose from:
+   * one slot, or none. A picker is not drawn for it and nothing needs to be.
+   *
+   * A HOST THAT MIRRORS ROWS MAY CARRY IT AND NEED NOT. Hosted, the slot list is
+   * the host's (`FoundryHost.slots`), so a host that offers no list produces rows
+   * with nothing to put here and loses nothing by it — docs/BOOKFORGE-HANDOFF.md
+   * §8b names it optional at the next re-vendor.
+   */
+  waitFor?: string;
+  /**
+   * WHERE IT ACTUALLY WENT — set at the spawn, on the run that is happening.
+   *
+   * Beside `waitFor` rather than overwriting it, because they answer different
+   * questions and a person needs both: a row pinned to `any` that landed on the
+   * Mac is still a row that will take whatever is free the next time it runs, and
+   * folding the walk's answer back into the choice would quietly pin it.
+   *
+   * It is the shelf's "Running on the Mac" and nothing else reads it. Absent
+   * until the row starts, and absent forever on a row that never met a slot.
+   */
+  ranOn?: string;
   createdAt: number;
   startedAt?: number;
   finishedAt?: number;
@@ -1785,22 +1847,20 @@ export interface EnvInstallResult {
 // First run — electron/system-probe.ts, electron/ollama.ts, electron/llm-catalog.ts
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * WHAT THIS MACHINE HAS BEEN TOLD ABOUT ITS LANGUAGE SERVERS — the settings
- * card's read and write, in one shape (electron/app-settings.ts owns the rules).
+/*
+ * `LlmServers` STOOD HERE — `{server, ollamaUrl, vllmUrl, vllmModel}`, the
+ * settings card's read and write for a machine that had been told which of two
+ * kinds of server its language acts spoke to, with both URLs kept at once so
+ * that trying vLLM for an evening did not cost somebody an address they had
+ * already typed.
  *
- * BOTH URLS EXIST AT ONCE and only one is in effect, which is deliberate: a
- * person who tries vLLM for an evening and switches back must not have to retype
- * an address they already gave. `vllmModel` may be empty, and empty MEANS
- * something — "whatever that server is serving", resolved by the engine against
- * the server and then recorded, because a vLLM process serves exactly one model.
+ * It is gone with the setting behind it (docs/SLOTS.md, Wave 61). There is one
+ * local server now and it is Ollama; everything else is a REGISTERED CRUCIBLE,
+ * which has a token, a rank and an enabled flag, and whose shape is
+ * `CrucibleServerView` in shared/slots.ts — declared there rather than here
+ * because that file is the whole vocabulary of where work goes, and this one is
+ * the vocabulary of what work is.
  */
-export interface LlmServers {
-  server: LlmServerKind;
-  ollamaUrl: string;
-  vllmUrl: string;
-  vllmModel: string;
-}
 
 /** The NVIDIA card, if there is one. Every unknown is null, never zero. */
 export interface CudaFacts {

@@ -1,10 +1,12 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 
+import { ANY_SLOT, type ComputeSlot } from '@shared/slots';
 import type { Job } from '@shared/types';
 
 import { QueueService } from '../../core/queue.service';
 import { QueueViewService } from '../../core/queue-view.service';
-import { hosted } from '../../core/foundry';
+import { api, hosted } from '../../core/foundry';
 
 /**
  * THE QUEUE PAGE — the whole board, with room to breathe.
@@ -70,6 +72,7 @@ import { hosted } from '../../core/foundry';
  */
 @Component({
   selector: 'app-queue-page',
+  imports: [FormsModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (!hosted()) {
@@ -151,6 +154,16 @@ import { hosted } from '../../core/foundry';
                      [class.idle]="slot.occupant === null">
               <div class="slot-strip" [title]="slot.hint">
                 <span>{{ slot.lane === 'gpu' ? 'GPU' : 'CPU' }} · slot {{ slot.index }} of {{ slot.of }}</span>
+                <!--
+                  WHICH MACHINE, when there is more than one it could be. The
+                  lane above says how many things may run at once on THIS
+                  computer; this says whose GPU the run is actually on, which is
+                  a different question and only has an interesting answer once
+                  somebody has registered a Crucible (docs/SLOTS.md §3).
+                -->
+                @if (slot.occupant?.ranOn; as where) {
+                  @if (slots().length > 1) { <span class="on">on {{ where }}</span> }
+                }
                 @if (slot.occupant; as busy) {
                   <button class="btn stop" (click)="queue.cancel(busy.id)"
                           [attr.aria-label]="'Cancel ' + view.label(busy)"
@@ -281,6 +294,16 @@ import { hosted } from '../../core/foundry';
                     <div class="sub">{{ stateLine(job) }}</div>
                   </div>
                   <div class="qright">
+                    @if (picking(job)) {
+                      <select class="slotpick" [ngModel]="job.waitFor ?? anySlot"
+                              [name]="'slot' + job.id"
+                              [title]="'Which machine this runs on. A job never moves once it has started.'"
+                              (ngModelChange)="sendTo(job, $event)">
+                        @for (option of optionsFor(job); track option) {
+                          <option [value]="option">{{ optionLabel(option) }}</option>
+                        }
+                      </select>
+                    }
                     @if (job.state === 'held' || job.state === 'queued') {
                       <button class="btn stop" (click)="queue.remove(job.id)"
                               [attr.aria-label]="'Remove ' + view.label(job) + ' from the queue'"
@@ -345,6 +368,24 @@ import { hosted } from '../../core/foundry';
                       }
                     </span>
                     <span class="cright">
+                      <!--
+                        WHERE THIS ONE GOES — drawn only when there is more than
+                        one slot to choose from, which is the friend with a GPU
+                        and no Crucible never seeing it at all (docs/SLOTS.md §1).
+                        Not drawn on a running row either: a job is atomic on one
+                        slot, and a control that cannot do anything is worse than
+                        no control.
+                      -->
+                      @if (picking(job)) {
+                        <select class="slotpick xs" [ngModel]="job.waitFor ?? anySlot"
+                                [name]="'cslot' + job.id"
+                                [title]="'Which machine this runs on. A job never moves once it has started.'"
+                                (ngModelChange)="sendTo(job, $event)">
+                          @for (option of optionsFor(job); track option) {
+                            <option [value]="option">{{ optionLabel(option) }}</option>
+                          }
+                        </select>
+                      }
                       <!--
                         REMOVE, and never "Cancel": these rows have not run. Same
                         ✕ as the dropdown's, same call, and the same verb — a
@@ -678,6 +719,27 @@ import { hosted } from '../../core/foundry';
     }
     .qright { display: flex; align-items: center; gap: 6px; flex: none; }
 
+    /*
+      THE SLOT PICKER. Sized to sit beside a ✕ without becoming the thing the eye
+      lands on: which machine a job runs on matters, and it matters less than
+      what the job is.
+    */
+    .slotpick {
+      height: 22px;
+      max-width: 150px;
+      padding: 0 4px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      background: var(--bg-input);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-sm);
+    }
+    .slotpick.xs { height: 20px; font-size: 10px; max-width: 130px; }
+    .on {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-tertiary);
+    }
+
     .chain { padding: 0 14px 10px; }
 
     /*
@@ -797,6 +859,69 @@ export class QueuePageComponent {
   protected readonly hosted = hosted;
   protected readonly queue = inject(QueueService);
   protected readonly view = inject(QueueViewService);
+
+  /**
+   * ── THE SLOT PICKER — WHERE, not when ─────────────────────────────────────
+   *
+   * docs/SLOTS.md §3. A slot is a place a job's compute can go: this computer's
+   * own GPU, or a registered Crucible server. The list is read ONCE, when the
+   * page is built, because it is a settings fact rather than a live one — it
+   * changes when somebody edits the Servers card, which is a different screen,
+   * and a page that re-read it on a timer would repaint the board for nothing.
+   *
+   * EMPTY OR ONE ENTRY IS THE COMMON CASE AND DRAWS NOTHING. Owen: *"a friend
+   * with no Crucible sees ONE slot, their local GPU, and never meets the
+   * picker."* Every `@if (picking(job))` in the template above is that sentence.
+   */
+  protected readonly slots = signal<ComputeSlot[]>([]);
+  protected readonly anySlot = ANY_SLOT;
+
+  constructor() {
+    if (api === null) return;
+    void api.slots.list().then((slots) => this.slots.set(slots));
+  }
+
+  /**
+   * Is there a picker on this row at all?
+   *
+   * Three noes, each its own fact: there is nothing to choose between, this row
+   * never meets a model (an export, a mint — `waitFor` is absent and always will
+   * be), or it has started, and a started job stays where it is.
+   */
+  protected picking(job: Job): boolean {
+    if (this.slots().length < 2) return false;
+    if (job.waitFor === undefined) return false;
+    return job.state === 'held' || job.state === 'queued';
+  }
+
+  /**
+   * The names this row may be sent to, in rank order, with `any` first.
+   *
+   * A STORED NAME THAT IS NO LONGER A SLOT IS KEPT IN THE LIST, at the end, and
+   * that is deliberate: the row IS waiting for it, a select whose value is not
+   * among its options would silently show the first option instead, and the
+   * person would read the picker as saying something about their job that is not
+   * true. The Servers card is where that row gets rescued in a batch; this keeps
+   * the one-row story honest in the meantime.
+   */
+  protected optionsFor(job: Job): string[] {
+    const names = this.slots().map((slot) => slot.name);
+    const stored = job.waitFor;
+    const stale = stored !== undefined && stored !== ANY_SLOT && !names.includes(stored)
+      ? [stored]
+      : [];
+    return [ANY_SLOT, ...names, ...stale];
+  }
+
+  protected optionLabel(option: string): string {
+    if (option === ANY_SLOT) return 'Any — first one free';
+    return this.slots().some((slot) => slot.name === option) ? option : `${option} (not available)`;
+  }
+
+  protected sendTo(job: Job, waitFor: string): void {
+    if (waitFor === (job.waitFor ?? ANY_SLOT)) return;
+    void this.queue.setWaitFor(job.id, waitFor);
+  }
 
   /** How many rows are waiting, across every book — the band's own count. */
   protected waitingCount(): number {

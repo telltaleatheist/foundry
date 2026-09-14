@@ -4355,3 +4355,21 @@ clicked it.
 **Left for package E, deliberately:** the Crucible connect offer. There is a
 marked place for it beside the page-reader card, and it is a SLOT of its own
 rather than a field on that card (SLOTS.md §3).
+**Package C — landed.** docs/SLOTS.md §7 is the full account; the short form is
+that WHERE a job's compute goes became a thing with a name. A registry of
+Crucible servers in priority order (`AppSettings.crucibleServers`, array
+position IS the rank, token never leaving main), `computeSlots()` deriving the
+slot list — the local GPU unless a loopback Crucible replaces it, one slot per
+enabled server, a declared-and-unbuilt `cloud` seam, and hosted the host's own
+list through `FoundryHost.slots?()` — a per-row `waitFor` resolved at the press
+so re-ranking servers moves no queued row, and a dispatch that reads
+`GET /v1/capability`, makes the model resident, LEASES it (ruled the same night),
+spawns with `FOUNDRY_ENDPOINT_HEADERS` composed per spawn, and releases the lease
+in the settle. A row whose server is busy goes back to `queued` wearing the
+holder's name and is retried with a 3 s → 30 s backoff, so one narration on the
+Mac does not hold the GPU lane. `llmServer`, `vllmUrl` and `vllmModel` are
+retired; the app's `LlmServerKind` is the engine's own `'openai' | 'ollama'` and
+is decided by the placement rather than stored. Reads stay local behind
+`CRUCIBLE_READS = false` (Package B's reader), and the GPU lane is still one, so
+two servers do not yet run two text jobs at once — both are named as owed in
+SLOTS.md §7.

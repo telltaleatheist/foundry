@@ -506,6 +506,53 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-09-14 — SLOTS. Foundry has a Crucible registry of its own, a per-row slot
+picker, and a dispatch that reads capability, loads, LEASES and releases. Hosted,
+the slot list is YOURS and the whole feature is off until you offer one.**
+
+The plan of record is docs/SLOTS.md; §7 is what landed. Your door shapes are
+what this is built against, and the lease is now built (Owen ruled it
+2026-09-14): `POST /v1/models/{id}/lease {act, ttl_seconds}`, heartbeat at
+ttl/3, `DELETE /v1/leases/{id}` in the job's settle. Foundry takes one for the
+length of every Crucible-placed run, with `act` = the `X-Crucible-Act` word, so
+**you will see `409 model_leased` from us** and we render yours the same way.
+
+**What the re-vendor has to know:**
+
+- **ONE BREAKING IPC CHANGE.** `llm:servers` and `llm:set-servers` are GONE —
+  the "which kind of server does this machine speak to" setting went with them
+  (`AppSettings.llmServer`, `vllmUrl`, `vllmModel` are retired; a stored
+  `vllmUrl` becomes nothing, because vLLM is Crucible-only by ruling). Their
+  replacement is `llm:ollama-url` / `llm:set-ollama-url`. `llm:defaults` keeps
+  its name and NARROWS: no `server` field, nothing resolved behind it —
+  `model`, `cleanModel` and `ollama` are the LOCAL slot's answers.
+- **`TextPassRequest`/`AnalyzeRequest` lost `server?: LlmServerKind`.** Nothing
+  of yours set it (we checked), so this costs you nothing; `model` and `ollama`
+  on those requests now mean, precisely, the local Ollama's tag and URL.
+  `LlmServerKind` is the engine's own vocabulary now, `'openai' | 'ollama'`.
+- **`Job` grew two optional fields**, `waitFor` (a slot name or `any`) and
+  `ranOn` (where it started). Copy them across like `mints` and `after` if you
+  want the picker to mean anything in a hosted window; absent is fine and is
+  what a host that offers no slots produces.
+- **`FoundryHost.slots?(): readonly ComputeSlot[]`** is the new optional
+  provider, and hosted it is the WHOLE list — no local slot is ever drawn there,
+  and one you offer is dropped, on the ruling that BookForge has no Ollama
+  fallback and that one machine's GPU needs one owner. Register nothing and
+  every job takes exactly the path it takes today: no picker, no placement, no
+  capability read, no lease.
+- **The header map is composed PER SPAWN now** — `runEngine(args, onLine, env)`
+  — so two rows on two servers carry two tokens. `FOUNDRY_ENDPOINT_HEADERS`
+  carries `Authorization`, `X-Crucible-Api: 1` and `X-Crucible-Act`, which is
+  one of `clean | translate | simplify | analysis | pages`. **No token is ever
+  in argv**, so the command line `job-queue.ts` prints is still safe to paste.
+- **`argsFor(request, metadata, placement?)`** gained a third parameter that
+  DEFAULTS to the local placement, so your `cli/clean-step.js --dry-run` prints
+  the same line it printed before without a change.
+- **Reads are untouched and stay local**, behind `CRUCIBLE_READS = false`.
+- **We do not unload, ever.** We load when the capability record's `selected`
+  model is not resident, we lease it, and we release the lease. The card is
+  whoever's is next.
+
 **2026-09-13 (later) — ONE INFERENCE DOOR. The Ollama dialect is gone from
 the engine, the act names itself, and the engine never loads a model.**
 

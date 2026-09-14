@@ -232,7 +232,22 @@ const api: FoundryApi = {
     remove: (id) => ipcRenderer.invoke('queue:remove', id),
     cancel: (id) => ipcRenderer.invoke('queue:cancel', id),
     clearFinished: () => ipcRenderer.invoke('queue:clear-finished'),
+    setWaitFor: (id, waitFor) => ipcRenderer.invoke('queue:set-wait-for', id, waitFor),
     onChanged: (listener) => subscribe<Job[]>('queue:changed', listener),
+  },
+
+  slots: {
+    list: () => ipcRenderer.invoke('slots:list'),
+    rowsWaitingFor: (name) => ipcRenderer.invoke('slots:rows-waiting-for', name),
+  },
+
+  crucible: {
+    settings: () => ipcRenderer.invoke('crucible:settings'),
+    save: (servers) => ipcRenderer.invoke('crucible:save', servers),
+    test: (name) => ipcRenderer.invoke('crucible:test', name),
+    addLocal: (name) => ipcRenderer.invoke('crucible:add-local', name),
+    setWslDistro: (distro) => ipcRenderer.invoke('crucible:set-wsl-distro', distro),
+    setNewJobsWaitFor: (choice) => ipcRenderer.invoke('crucible:set-new-jobs-wait-for', choice),
   },
 
   /*
@@ -303,8 +318,8 @@ const api: FoundryApi = {
     defaults: () => ipcRenderer.invoke('llm:defaults'),
     setModel: (model) => ipcRenderer.invoke('llm:set-model', model),
     setCleanModel: (model) => ipcRenderer.invoke('llm:set-clean-model', model),
-    servers: () => ipcRenderer.invoke('llm:servers'),
-    setServers: (patch) => ipcRenderer.invoke('llm:set-servers', patch),
+    ollamaUrl: () => ipcRenderer.invoke('llm:ollama-url'),
+    setOllamaUrl: (url) => ipcRenderer.invoke('llm:set-ollama-url', url),
   },
 
   pageReader: {

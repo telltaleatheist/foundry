@@ -25,9 +25,8 @@ import {
   DEFAULT_CLEAN_TEXT_MODEL,
   DEFAULT_OLLAMA_ENDPOINT,
   DEFAULT_TRANSLATE_MODEL,
-  DEFAULT_VLLM_TEXT_ENDPOINT,
-  type LlmServerKind,
 } from '../shared/pipeline';
+import { ANY_SLOT, LOCAL_SLOT_NAME, type NewJobsWaitFor } from '../shared/slots';
 import {
   ANALYSIS_CATEGORY_IDS,
   CUSTOM_CATEGORY_DESCRIPTION_MAX,
@@ -35,6 +34,31 @@ import {
   customCategoryId,
   type CustomAnalysisCategory,
 } from '../shared/analysis-categories';
+
+/**
+ * ONE REGISTERED CRUCIBLE, AS IT IS STORED — the only shape in this app that
+ * holds a token.
+ *
+ * It is declared here rather than in `shared/` on the rule that keeps secrets
+ * out of the renderer by construction: `shared/` is compiled into the browser
+ * bundle, and a type that lives there is a type somebody can reach for on the
+ * other side of the preload without noticing. The renderer's shape is
+ * `CrucibleServerView` (shared/slots.ts), which has a boolean where this has a
+ * secret.
+ */
+export interface CrucibleServerEntry {
+  /** What the picker calls it, and what a row's `waitFor` names. Unique. */
+  name: string;
+  /** The base URL WITHOUT `/v1`, which is what the SDK wants. No trailing slash. */
+  url: string;
+  /** The bearer token `crucible token --show` prints on that host. Never logged. */
+  token: string;
+  /** Off is not a slot at all: no picker entry, no `any` candidate. */
+  enabled: boolean;
+}
+
+/** How many a person may register. A ceiling so "a list" cannot become a corpus. */
+export const CRUCIBLE_SERVER_MAX = 8;
 
 export interface AppSettings {
   /**
@@ -132,42 +156,79 @@ export interface AppSettings {
    */
   ollamaUrl: string;
   /**
-   * WHICH KIND OF SERVER the three language acts speak to — `--server`.
+   * ── THE SERVER REGISTRY — one entry per Crucible, IN PRIORITY ORDER ────────
    *
-   * Owen, 2026-09-08: *"lets build in vllm batching. ollama batching doesnt
-   * work."* A vLLM runs the requests in flight TOGETHER, which is what makes the
-   * pools in translate and the cleanup worth having; Ollama runs them one behind
-   * another on this machine. The engine takes the choice as a flag and never
-   * guesses it from a URL (src/translate/model-server.ts), and this is the app
-   * remembering which to pass.
+   * docs/SLOTS.md §3 and §6 (Package C). Each entry becomes one SLOT: a place a
+   * compute-heavy job can go, beside the machine's own GPU. A person with none
+   * of these never meets a picker at all — Owen: *"foundry should work if they
+   * have no idea what theyre doing… but if they do know what theyre doing and
+   * they want access to speed, they can use crucible."*
    *
-   * IT IS A PROPERTY OF THE MACHINE, NOT OF A BOOK, which is why it is a setting
-   * and not a field on the three dialogs. One card in Settings, one flag on
-   * every job.
+   * THE ARRAY POSITION IS THE RANK. There is no `rank` field and there must not
+   * be one; see `CrucibleServerView` (shared/slots.ts) for why two owners of one
+   * ordering is a bug rather than a redundancy. A drag rewrites the array.
+   *
+   * THE TOKEN IS STORED HERE AND NOWHERE ELSE, and it never leaves the main
+   * process: the settings card is told only whether one is set, the engine is
+   * handed it in a per-spawn environment variable, and no log line, no command
+   * line and no IPC payload carries it. The one exception to "stored here" is
+   * the LOCAL server, whose token belongs to its own `config.toml` — and even
+   * that one is copied into an entry at the moment somebody presses "Add local
+   * Crucible", because a registry with a hole in it would mean two code paths
+   * for every read below. What is not kept is a SECOND copy: the entry is the
+   * copy, it is visible, and it can be replaced by pressing the button again.
+   *
+   * ── WHAT THIS REPLACED, AND THE MIGRATION, WHICH IS A DELETION ────────────
+   *
+   * Three keys are retired with this one, and none of them is read any more:
+   *
+   *   `llmServer: 'ollama' | 'vllm'` — the machine-wide choice of which door the
+   *     three language acts spoke to. It is gone because the question moved: the
+   *     LOCAL slot is Ollama, always (docs/SLOTS.md §2 — model required, unloaded
+   *     always), and an OpenAI-compatible server is now a registry entry rather
+   *     than a mode this app can be put into.
+   *   `vllmUrl` — where that server was. A stored one becomes NOTHING. It is not
+   *     migrated into an entry, and that is Owen's ruling rather than laziness:
+   *     *"the plan is to leave VLLM to crucible only"*. An entry minted from this
+   *     key would be a bare vLLM with no token, no capability record and no
+   *     model listing — every read below would fail on it, and the failure would
+   *     look like a broken registry rather than a setting that no longer exists.
+   *   `vllmModel` — the served id that went with it. Nothing selects a model by
+   *     hand on a Crucible slot: the capability record does (docs/SLOTS.md §5).
+   *
+   * A hand-edited file may still hold all three. They are simply not read, and
+   * `writeAppSettings` preserves unknown keys, so nothing is destroyed by a
+   * build that no longer understands them — which is what makes going back to an
+   * older build a checkout rather than a restore.
    */
-  llmServer: LlmServerKind;
+  crucibleServers: CrucibleServerEntry[];
   /**
-   * Where that vLLM is. Its own default port and mount unless somebody moved it.
+   * WHAT A NEW ROW'S `waitFor` STARTS AS — Owen's *"New jobs wait for: (•)
+   * top-ranked slot ( ) any"*.
    *
-   * SEPARATE FROM `ollamaUrl` RATHER THAN REPLACING IT, so that flipping the
-   * server back and forth does not make somebody retype a URL they already gave.
-   * The two are different servers on different ports and both may be up.
+   * `top` resolves to a slot NAME at the press and writes that name on the row.
+   * It deliberately does not write the word "top": a row that said "whatever is
+   * ranked first" would change machines when somebody reorders the list while it
+   * waits, and docs/SLOTS.md §3 rules the other way — *"queued rows do NOT move
+   * when servers are re-ranked."*
    */
-  vllmUrl: string;
+  newJobsWaitFor: NewJobsWaitFor;
   /**
-   * The served id — what `vllm serve --served-model-name` was given.
+   * WHICH WSL GUEST THE LOCAL CRUCIBLE LIVES IN — Windows only, and read for
+   * exactly one thing: `cat`ting that server's own `config.toml`.
    *
-   * EMPTY IS MEANINGFUL AND IS THE DEFAULT: a vLLM process serves exactly one
-   * model, and an empty field means "whatever it is serving", which the engine
-   * resolves by asking the server and then records (the bank key, the stamp) so
-   * nothing about the run is anonymous. Typing a name here only ADDS a check
-   * that the server is serving what this machine expects.
+   * Here rather than in the engine's `settings.json` because it stopped being
+   * the engine's business. `backend.wslDistro` was the distro a vLLM was
+   * launched in, by this app, through a launcher that no longer exists
+   * (docs/SLOTS.md §6, Package B); this is the app remembering where to look for
+   * a file. Two different facts that happened to share a guest.
    *
-   * AND IT IS A DIFFERENT SHAPE FROM AN OLLAMA TAG — `Qwen/Qwen3.5-9B` rather
-   * than `qwen3.5:9b-q8_0` — which is why it cannot share `defaultLlmModel`'s
-   * key: a machine that switches server would otherwise lose the other's name.
+   * THERE IS NO DEFAULT AND AN EMPTY VALUE IS REFUSED AT THE READ, not filled
+   * in. "The default distro" is whatever `wsl --set-default` last said, and a
+   * server read out of the wrong guest is a wrong server — with a wrong token,
+   * which is a 401 nobody can explain.
    */
-  vllmModel: string;
+  wslDistro: string;
   /**
    * TRUE ONCE SOMEBODY HAS BEEN THROUGH FIRST-RUN SETUP — finished OR dismissed.
    *
@@ -345,22 +406,100 @@ export function clampModelTag(value: unknown, fallback = DEFAULT_TRANSLATE_MODEL
   return trimmed;
 }
 
-/** One of the two kinds, or ollama. A word this build does not know is not one. */
-export function clampServerKind(value: unknown): LlmServerKind {
-  return value === 'vllm' ? 'vllm' : 'ollama';
+/**
+ * One of the two answers, or `top`. A word this build does not know is not one.
+ */
+export function clampNewJobsWaitFor(value: unknown): NewJobsWaitFor {
+  return value === ANY_SLOT ? ANY_SLOT : 'top';
 }
 
 /**
- * A served model id, WHICH MAY BE EMPTY — see `AppSettings.vllmModel`.
+ * A WSL distro name, or empty. Empty is a real answer — see `AppSettings`.
  *
- * `clampModelTag` cannot serve here: it turns an empty string into a default
- * model tag, and empty is the value that means "ask the server". Whitespace is
- * still refused, because a name with a space in it is a name no server has.
+ * Whitespace inside is allowed because a distro genuinely may have it
+ * (`Ubuntu 22.04` is what `wsl -l -q` prints on plenty of machines) and it is
+ * passed as one argv element, never through a shell. What is refused is a value
+ * that would make the argument array something other than one name: a leading
+ * dash would be read by `wsl.exe` as a flag of its own.
  */
-export function clampServedModel(value: unknown): string {
+export function clampWslDistro(value: unknown): string {
   if (typeof value !== 'string') return '';
-  const trimmed = value.trim();
-  return /\s/.test(trimmed) ? '' : trimmed;
+  const trimmed = value.trim().slice(0, 120);
+  if (trimmed.length === 0 || trimmed.startsWith('-')) return '';
+  return trimmed;
+}
+
+/**
+ * THE REGISTRY, CLEANED RATHER THAN REFUSED — this file's philosophy, applied to
+ * the one list in it that can strand a job.
+ *
+ * A row is DROPPED, and every drop is a row that could otherwise be picked in a
+ * `waitFor` and then fail at the spawn with something unreadable:
+ *
+ *   * No name, no URL or no token. A Crucible has no anonymous mode, so an entry
+ *     without a token is not a server this app could ever reach; storing it
+ *     would put a dead name in the picker.
+ *   * A URL that is not http(s), or that already carries `/v1`. The SDK is
+ *     explicit that its `url` is the base WITHOUT the version prefix and refuses
+ *     one that has it — better to drop the row here, where the settings card can
+ *     say so, than to mint a client that throws a config error at dispatch.
+ *   * A name that collides with {@link LOCAL_SLOT_NAME} or {@link ANY_SLOT}.
+ *     Those two are what a row's `waitFor` says when it means "this machine" and
+ *     "the first that will take it"; a server wearing either name would make a
+ *     stored row mean something other than what the person picked.
+ *   * A name already used by an earlier entry, first writing wins — the picker
+ *     keys off the name and two rows sharing one would be one row the person
+ *     cannot choose between.
+ */
+export function clampCrucibleServers(value: unknown): CrucibleServerEntry[] {
+  if (!Array.isArray(value)) return [];
+  const reserved = new Set([LOCAL_SLOT_NAME.toLowerCase(), ANY_SLOT.toLowerCase()]);
+  const seen = new Set<string>();
+  const out: CrucibleServerEntry[] = [];
+  for (const raw of value) {
+    if (out.length >= CRUCIBLE_SERVER_MAX) break;
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
+    const entry = raw as Record<string, unknown>;
+    const name = typeof entry['name'] === 'string'
+      ? entry['name'].replace(/\s+/g, ' ').trim().slice(0, 60)
+      : '';
+    const url = clampCrucibleUrl(entry['url']);
+    const token = typeof entry['token'] === 'string' ? entry['token'].trim() : '';
+    if (name.length === 0 || url === null || token.length === 0) continue;
+    const key = name.toLowerCase();
+    if (reserved.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name, url, token, enabled: entry['enabled'] !== false });
+  }
+  return out;
+}
+
+/**
+ * A Crucible base URL, or null when it is not one.
+ *
+ * NULL RATHER THAN A FALLBACK, which is the one place this file departs from its
+ * clamping habit and has to: there is no default address for somebody else's
+ * machine. A URL that cannot be understood is an entry that cannot exist, and
+ * the caller drops the row instead of inventing a server.
+ *
+ * The trailing slash and the `/v1` suffix are both normalised away rather than
+ * refused for the suffix, because pasting the URL a person has in their
+ * clipboard — the one the CLI prints, with `/v1` on it — is the ordinary
+ * mistake, and the SDK's own refusal of it is a config error with no card to
+ * show it on.
+ */
+export function clampCrucibleUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
+  if (trimmed.length === 0) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (parsed.hostname.length === 0) return null;
+    return trimmed;
+  } catch {
+    return null;
+  }
 }
 
 /** An http(s) origin, or ollama's own. Anything unparsable is the default. */
@@ -400,9 +539,9 @@ export function readAppSettings(): AppSettings {
     defaultLlmModel: clampModelTag(raw?.['defaultLlmModel']),
     cleanTextModel: clampModelTag(raw?.['cleanTextModel'], DEFAULT_CLEAN_TEXT_MODEL),
     ollamaUrl: clampOllamaUrl(raw?.['ollamaUrl']),
-    llmServer: clampServerKind(raw?.['llmServer']),
-    vllmUrl: clampOllamaUrl(raw?.['vllmUrl'], DEFAULT_VLLM_TEXT_ENDPOINT),
-    vllmModel: clampServedModel(raw?.['vllmModel']),
+    crucibleServers: clampCrucibleServers(raw?.['crucibleServers']),
+    newJobsWaitFor: clampNewJobsWaitFor(raw?.['newJobsWaitFor']),
+    wslDistro: clampWslDistro(raw?.['wslDistro']),
     setupCompleted: raw?.['setupCompleted'] === true,
     setupSkipped: clampSkipped(raw?.['setupSkipped']),
   };
@@ -428,14 +567,14 @@ export function writeAppSettings(patch: Partial<AppSettings>): AppSettings {
   if (patch.ollamaUrl !== undefined) {
     root['ollamaUrl'] = clampOllamaUrl(patch.ollamaUrl);
   }
-  if (patch.llmServer !== undefined) {
-    root['llmServer'] = clampServerKind(patch.llmServer);
+  if (patch.crucibleServers !== undefined) {
+    root['crucibleServers'] = clampCrucibleServers(patch.crucibleServers);
   }
-  if (patch.vllmUrl !== undefined) {
-    root['vllmUrl'] = clampOllamaUrl(patch.vllmUrl, DEFAULT_VLLM_TEXT_ENDPOINT);
+  if (patch.newJobsWaitFor !== undefined) {
+    root['newJobsWaitFor'] = clampNewJobsWaitFor(patch.newJobsWaitFor);
   }
-  if (patch.vllmModel !== undefined) {
-    root['vllmModel'] = clampServedModel(patch.vllmModel);
+  if (patch.wslDistro !== undefined) {
+    root['wslDistro'] = clampWslDistro(patch.wslDistro);
   }
   if (patch.setupCompleted !== undefined) {
     root['setupCompleted'] = patch.setupCompleted === true;

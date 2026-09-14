@@ -13,13 +13,19 @@ import type { HostMintMeta, HostNodeAction, HostOffers, HostStatus } from './hos
 import type { ReadAsk } from './ledger';
 import type { BookOp, PendingOutcome, PendingStack } from './ops';
 import type { ReReadPrompt } from './reread';
-import type { LlmServerKind } from './pipeline';
+import type {
+  ComputeSlot,
+  CrucibleProbe,
+  CrucibleServerEdit,
+  CrucibleSettingsView,
+  LocalCrucibleAdd,
+  NewJobsWaitFor,
+} from './slots';
 import type {
   AnalysisPlan,
   AnalysisReading,
   AnalyzeRequest,
   AppQuestion,
-  LlmServers,
   BackendSettingsPatch,
   CaptureCreated,
   CaptureIntaken,
@@ -1084,6 +1090,16 @@ export interface FoundryApi {
     remove(id: string): Promise<void>;
     cancel(id: string): Promise<void>;
     clearFinished(): Promise<void>;
+    /**
+     * SEND A WAITING ROW TO A DIFFERENT SLOT — a slot name, or `any` (`ANY_SLOT`,
+     * shared/slots.ts).
+     *
+     * Answers nothing: the change arrives on `onChanged` like every other change
+     * to a row, and a second copy coming back from here would race the push.
+     * Refused silently on a row that has started — a job is atomic on one slot
+     * (docs/SLOTS.md §3), and the picker is not drawn on a running row.
+     */
+    setWaitFor(id: string, waitFor: string): Promise<void>;
     /** Every change, whole list. Returns its own unsubscribe. */
     onChanged(listener: (jobs: Job[]) => void): () => void;
   };
@@ -1305,25 +1321,73 @@ export interface FoundryApi {
    */
   llm: {
     /**
-     * What a language dialog OPENS with, already resolved for the server this
-     * machine is set to (electron/ipc.ts). Under vLLM `model` and `cleanModel`
-     * are the one served id — which may be empty, meaning "whatever that server
-     * is serving" — and `ollama` is the vLLM's URL.
+     * What a language dialog OPENS with — the LOCAL slot's answers, and only
+     * those.
+     *
+     * There is no `server` field any more and no resolution behind this door:
+     * the local slot is Ollama (docs/SLOTS.md §2), and a job placed on a
+     * registered Crucible takes its model from that server's own capability
+     * record and its address from the registry, decided at the spawn rather than
+     * carried from a dialog (electron/crucible-dispatch.ts).
      */
-    defaults(): Promise<{
-      model: string;
-      cleanModel: string;
-      ollama: string;
-      server: LlmServerKind;
-    }>;
+    defaults(): Promise<{ model: string; cleanModel: string; ollama: string }>;
     /** Answers with the tag AS STORED — a name main refused comes back changed. */
     setModel(model: string): Promise<string>;
     /** The Clean text model, same rule: answered with what was stored. */
     setCleanModel(model: string): Promise<string>;
-    /** What is stored for BOTH servers at once — the settings card's read. */
-    servers(): Promise<LlmServers>;
-    /** Whatever is named is written; answered with the whole stored set. */
-    setServers(patch: Partial<LlmServers>): Promise<LlmServers>;
+    /** Where Ollama is. The one server address this app still keeps by itself. */
+    ollamaUrl(): Promise<string>;
+    /** Answered with what was stored — a URL main refused comes back changed. */
+    setOllamaUrl(url: string): Promise<string>;
+  };
+
+  /**
+   * ── WHERE COMPUTE-HEAVY WORK GOES ─────────────────────────────────────────
+   *
+   * docs/SLOTS.md. A slot is a place a job's compute can go: this machine's own
+   * GPU, or a registered Crucible server. A person with neither a Crucible nor a
+   * host that offers one sees a one-entry list and no picker anywhere.
+   */
+  slots: {
+    /** Every slot, in priority order. Hosted, this is the host's own list. */
+    list(): Promise<ComputeSlot[]>;
+    /**
+     * The waiting rows that name this slot — what the Servers card shows before
+     * it offers to move any of them. Owen's rule for switching a server off:
+     * told, never moved silently. Running rows are deliberately not included.
+     */
+    rowsWaitingFor(name: string): Promise<Job[]>;
+  };
+
+  /**
+   * ── THE CRUCIBLE REGISTRY — the Servers card's own doors ──────────────────
+   *
+   * NOTHING HERE CARRIES A TOKEN IN EITHER DIRECTION. A server's token is stored
+   * in main and handed to the SDK or to a spawn's environment; the renderer is
+   * told only whether one is set (`CrucibleServerView.tokenSet`) and may send a
+   * NEW one, which is the whole of what a write-only field means.
+   */
+  crucible: {
+    /** Everything the card draws in one read — see `CrucibleSettingsView`. */
+    settings(): Promise<CrucibleSettingsView>;
+    /**
+     * REPLACE THE WHOLE REGISTRY, in order — the array position IS the rank, so
+     * a drag is a save. `token: null` on an entry keeps whatever is stored.
+     * Rejects with a sentence naming the entry when one cannot be stored.
+     */
+    save(servers: CrucibleServerEdit[]): Promise<CrucibleSettingsView>;
+    /** Test connection. A failure is a RESULT with the SDK's own sentence on it. */
+    test(name: string): Promise<CrucibleProbe>;
+    /**
+     * Register the Crucible on this machine by reading its own config.toml —
+     * the file that server reads, so no second copy of its token exists. On
+     * Windows that file is inside WSL and `wslDistro` decides which guest.
+     */
+    addLocal(name: string): Promise<LocalCrucibleAdd>;
+    /** Answered with what was stored. Empty is a real answer and means unset. */
+    setWslDistro(distro: string): Promise<string>;
+    /** What a new row's `waitFor` starts as. Answered with what was stored. */
+    setNewJobsWaitFor(choice: NewJobsWaitFor): Promise<NewJobsWaitFor>;
   };
 
   /**

@@ -122,8 +122,93 @@ store is a different file. So the rule is ownership, not sharing:
 |---|---|---|---|
 | A | Engine: `--server ollama` restored beside `openai`; unload always; `--model` required on Ollama; CTX pin for Ollama, `fitsWindow` for openai | nothing | **LANDED** (docs/PLAN.md, Wave 61) |
 | B | App: delete `vllm-server.ts`; local page reader = llama-server + dots GGUF, downloaded in setup; reading jobs ensure it | nothing | building |
-| C | App: server registry (name, url, headers), drag order, enable; slots; per-row `waitFor`; dispatch: header map per spawn, capability read for the model, `load-model` before spawn, the three 409s rendered by name | Crucible SDK shapes | next |
+| C | App: server registry (name, url, headers), drag order, enable; slots; per-row `waitFor`; dispatch: header map per spawn, capability read for the model, `load-model` before spawn, the three 409s rendered by name | Crucible SDK shapes | **LANDED** (§7) |
 | D | Catalog: generated lineup JSON, tile gating, CPU rule | BookForge's `[local]` block | after C |
 | E | Setup/settings: Crucible install offer + connect-to-existing; Ollama wizard stays; dots download; page-reader row | B, C | after C |
 | F | Cloud slots: OpenAI (the `openai` door + key), Anthropic (third dialect); per-job opt-in; 429 as the wait; cost shown | C | later |
-| — | Lease client (transport.ts) | Owen's ruling, Crucible's routes | owed |
+| — | Lease client | **RULED 2026-09-14** — built in Package C, app-side | **LANDED** (§7) |
+
+## 7. Package C — landed
+
+`@crucible/client` 0.5.0 is pinned in `app/package.json` by its release tarball
+URL, exactly as BookForge pins it. The word "crucible" appears in `app/` and in
+these docs and **nowhere under `src/`**: the engine still speaks an OpenAI
+dialect to whatever is at `--endpoint` and cannot tell one server from another.
+
+**The registry** is `AppSettings.crucibleServers` — `{name, url, token,
+enabled}[]`, in priority order, **array position IS the rank** (no rank field;
+two owners of one ordering is how a drag and a walk start disagreeing). The
+token is stored there and never leaves the main process: the renderer is told
+`tokenSet: boolean` and may send a new one, and `token: null` on a save means
+"keep what is stored". Settings → **Servers** card: drag to reorder, enable,
+rename, Test connection (`client.info()`, and every failure keeps the SDK's own
+sentence), and **Add the Crucible on this machine**, which reads that server's
+own `<CRUCIBLE_HOME>/config.toml` — through `wsl.exe -d <distro> --exec bash -c`
+on Windows, where the distro is `AppSettings.wslDistro` and there is no default.
+Pressing it again after `crucible init --force` refreshes the token in place.
+The TOML reader understands `[server] name/host/port` and `[auth] token` and
+**refuses** any line inside those two tables whose shape it cannot read, rather
+than skipping it — a skipped `token` line would report "missing" about a file
+that has one.
+
+**The slots** are `computeSlots()`: the local slot (`kind: 'local'`) unless an
+enabled entry is loopback, then one per enabled server (`kind: 'crucible'`).
+`kind: 'cloud'` is declared and never constructed — Package F's seam, excluded
+from the `any` walk by name. Hosted, the whole list comes from
+`FoundryHost.slots?()`; a host that registers none gets an empty list, which
+every job reads as "the path this took before slots existed", and a `local` slot
+offered by a host is dropped.
+
+**The rows** carry `waitFor` (a slot name or `any`, resolved at the PRESS from
+`AppSettings.newJobsWaitFor`, so re-ranking servers moves no queued row) and
+`ranOn` (where it actually started). The picker is drawn on the queue page only,
+only on a held/queued row, and only when there are two or more slots. Switching
+a server off surfaces the rows naming it in the Servers card with one press that
+sends them to `any` — told, never moved.
+
+**Dispatch** (`placeJob`, `app/electron/crucible-dispatch.ts`) runs immediately
+before the spawn, once, and the answer is `go` / `wait` / `refuse`. A `wait`
+puts the row back to `queued` wearing the sentence, with a 3 s → 30 s backoff
+(`parkedUntil`, job-queue.ts) so the GPU lane is not held by somebody else's
+narration. `any` walks the enabled slots in rank order and takes the first that
+will start; a refusal that is about the REQUEST stops the walk. The Crucible
+sequence is: `GET /v1/capability` → the class's `selected` model id → `models()`
+→ `loadModel` and watch its events if it is not resident → **lease** →
+`--model <id> --endpoint <url>/openai` with `FOUNDRY_ENDPOINT_HEADERS` composed
+per spawn (`Authorization`, `X-Crucible-Api: 1`, `X-Crucible-Act: <class>`). The
+token is in the child's environment and never in argv, so the command line the
+queue prints is safe to paste.
+
+**The lease** (Owen, 2026-09-14) is taken after the load and before the spawn:
+`POST /v1/models/{id}/lease {act, ttl_seconds: 120}`, heartbeat every 40 s,
+`DELETE /v1/leases/{id}` from the queue's SETTLE — the one place every ending
+passes through. A release that fails is logged and expires; failing a finished
+job because the tidying failed would report a loss that did not happen. The four
+routes this app calls by hand (capability plus the three lease routes) are not
+on the SDK at 0.5.0 and are **to be switched to its own methods when they land**;
+they go through one helper that maps status codes onto the SDK's error types, so
+a 409 is a 409 everywhere.
+
+**Rendered by name**, on the row: `server_busy` → the SDK's `busyLine` ("busy:
+bookforge, tts qwen3.5-9b 62% done"; a null holder is "an unnamed client", never
+a guess); `engine_in_use` → *someone is narrating on "X"*; `model_not_resident`
+from a load → *"X" is holding a different model for someone else*; `model_leased`
+→ *"X" is leased by <client> for <act> since <since>*; unreachable → *"X" is
+unreachable*; a disabled class → *"X" cannot translate: <reason> (n.n GiB
+short)*; `capability_undecided` → *"X" has not measured its card yet — run
+`crucible capability --write` there*, which is deliberately different from
+"nothing fit".
+
+**Retired**: `llmServer`, `vllmUrl`, `vllmModel` (a stored `vllmUrl` becomes
+nothing — vLLM is Crucible-only by ruling), `LlmServers`, the request field
+`server?: LlmServerKind`, and the `llm:servers` / `llm:set-servers` channels.
+`LlmServerKind` is now the engine's own vocabulary, `'openai' | 'ollama'`, and
+is decided by the placement rather than stored.
+
+**Deliberately not done.** Reads stay on their local path behind
+`CRUCIBLE_READS = false` (Package B owns that reader). The GPU lane is still one
+(`SLOTS`, shared/queue-board.ts), so two Crucible servers do not yet run two text
+jobs at once — dispatch is per-row correct, concurrency is not yet per-slot, and
+making it so means a lane capacity both programs derive from the slot list. The
+bench cards are still GPU/CPU lanes with an "on <slot>" line, not one card per
+slot.
