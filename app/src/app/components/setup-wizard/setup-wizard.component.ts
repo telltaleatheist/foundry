@@ -970,6 +970,43 @@ export class SetupWizardComponent {
       this.ui.openSetup();
     });
 
+    /*
+     * ── THE STEP LIST CAN SHRINK NOW, SO STANDING ON ONE HAS TO BE CHECKED ──
+     *
+     * Until 2026-09-15 `visible()` could only GROW: the routes step appeared
+     * when a server was registered and nothing ever took a step away. The page
+     * reader step is hidden when a connected engine serves `pages`, and that
+     * answer arrives from a network probe — so a step somebody is standing on
+     * can stop existing under them.
+     *
+     * What that looked like without this: `indexOf` answers -1, `index()`
+     * clamps it to 0, the heading and the rail say "Welcome" while `current()`
+     * still says `reading` and the body draws the page reader. A card whose
+     * title and contents disagree.
+     *
+     * FORWARD, not back. A step disappears here because it was ANSWERED — the
+     * engine reads pages, so there is nothing to download — and sending
+     * somebody backwards would re-ask them a question that has just been
+     * settled.
+     *
+     * THE POSITION COMES FROM `STEPS`, NOT FROM `index()`. `index()` is
+     * `max(0, indexOf(current))` and `indexOf` answers -1 for a step that is no
+     * longer drawn, so reading the landing out of it puts everybody on Welcome
+     * — which is the bug this effect exists to prevent, wearing a different
+     * face. The full order is the one place a vanished step still has a
+     * position, so the landing is the first VISIBLE step at or after it.
+     */
+    effect(() => {
+      const steps = this.visible();
+      const here = this.current();
+      if (steps.some((step) => step.id === here)) return;
+      const was = STEPS.findIndex((step) => step.id === here);
+      const order = new Map(STEPS.map((step, at) => [step.id, at]));
+      const landing = steps.find((step) => (order.get(step.id) ?? 0) >= was)
+        ?? steps[steps.length - 1];
+      if (landing !== undefined) this.current.set(landing.id);
+    });
+
     // Each step loads only what it can read for free. Nothing here fetches.
     effect(() => {
       if (!this.up()) return;

@@ -5624,6 +5624,18 @@ sentence, analysis showing *"via your anthropic account"*, the account offer
 shown, and the page-reader step correctly still drawn. A pre-Phase-15 row with no
 `route` key reads as local, per the document-level rule.
 
+**One hazard this wave INTRODUCED and then closed.** Until today `visible()`
+could only GROW — the routes step appeared when a server was registered and
+nothing ever took a step away. Hiding the page-reader step on a NETWORK ANSWER
+means a step somebody is standing on can stop existing under them, and without a
+reconciler that reads: `indexOf` answers -1, `index()` clamps to 0, and the
+heading and rail say "Welcome" while the body still draws the page reader. The
+effect moves FORWARD, because a step vanishes here for having been ANSWERED. The
+first version of it took the landing from `index()` and therefore put everybody
+on Welcome — the same bug wearing the fix's face — and was caught by walking
+every standing position against every shape `visible()` can take. The position
+now comes from `STEPS`, the one place a vanished step still has one.
+
 **Unexercised and named:** the unreachable-engine face (a registered row that
 will not answer), the "Add another machine" disclosure, and `connectLocalEngine`'s
 config.toml arm — this machine has a pairing file, so it takes the first branch
