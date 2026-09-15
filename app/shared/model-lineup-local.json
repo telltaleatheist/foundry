@@ -50,9 +50,9 @@
     "file": "foundry-lineup.json",
     "repo": "telltaleatheist/crucible",
     "branch": "feat/phase6-remote-render",
-    "commit": "7e63905",
-    "generated_from": "4e1784234ec92ddb41e7047434255af4d24f189a",
-    "at": "2026-09-14"
+    "commit": "3de1671",
+    "generated_from": "60f57c68a06d32e880d9f96042967499f64a54f5",
+    "at": "2026-09-15"
   },
   "models": [
     {
