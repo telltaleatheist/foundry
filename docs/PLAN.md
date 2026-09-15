@@ -5097,3 +5097,16 @@ weights (they are in the guest) — and again with `--purge-weights` flipping
 all six `weights:*` steps to remove; the reader against a hand-written plan
 with a fatal refusal, a keep step and an unknown catalog kind. **Not proved:**
 the real run (never attempted), the WSL-guest arm, posix, hosted.
+
+**Parity with BookForge, ruled 2026-09-15 and applied (d9bfb4b):** a checkbox
+change CLEARS the plan and does not re-run the dry run — a dry run spawns a
+process and the press is the consent; the `%LOCALAPPDATA%` quote/percent
+refusal is `uninstall_bad_path`, BookForge's name. **The start-up half of the
+Wave 64 walk, watched on a real launch of the built app on Owen's PC with the
+Windows host installed:** the pairing file (already registered as `local`)
+declined silently, and the start-up sweep — which now prints one line per
+engine — read `"local" at start-up: stocked`: info, catalog and capability
+read against the WSL server, nothing posted. The renderer half (pressing
+through the wizard and the doors) needs a hand on the mouse and is Owen's or
+BookForge's screenshot pass; what is vouched for is the start-up path and the
+door's dry run through the compiled invoker.
