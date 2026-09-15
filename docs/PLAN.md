@@ -5017,3 +5017,16 @@ enabled, and `/v1/info.pages_engine` carries Foundry's whole page request
 server owns the request now. The first knock 18 s after boot was refused on
 both sides (process up, port not yet bound); §4.1's 30 s readiness wait is
 right.
+
+**2026-09-15, measured on the live cards (BookForge's T6/T7):** dots under vLLM in
+WSL loads in 73.1 s and reads a page in **4.5 s** (11 blocks parsed) — the
+number nobody had recorded. And the quantised pair Foundry's lineup pointed the
+local reader at (`anthonym21/dots.ocr-GGUF`, F16 projector) does NOT load on
+upstream llama.cpp (`clip_init`: `clip.vision.projector.scale_factor` missing —
+that conversion targets a fork); the pair Foundry vendored before it,
+`ggml-org/dots.ocr-GGUF` @ 2c093a3 (`dots.ocr-Q8_0.gguf` +
+`mmproj-dots.ocr-Q8_0.gguf`), does. Crucible 3de1671 moved its manifest and
+regenerated `foundry-lineup.json`; `app/shared/model-lineup.json` is re-vendored
+byte for byte now rather than at L, so no machine on this build fetches a pair
+that cannot load. That closes the "Q8 dialect unmeasured" item: the loader
+was the problem, not the dialect.
