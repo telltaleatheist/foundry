@@ -5437,6 +5437,16 @@ Nine facts had no other home.
    `qwen3.5:9b-mlx-bf16`** — the same weights at the same precision on Ollama's
    MLX runner, which batches. Owen picked the 16-bit row that day and got the
    slow half of it.
+
+   **THE MECHANISM IS THE RUNNER, NOT THE VERSION — record it that way or the
+   fact expires wrongly.** BookForge wrote the same constraint down as *"Ollama
+   0.33.3 refuses to decode qwen35 in parallel"*, and a version number invites
+   the next reader to upgrade, see a new number and conclude it lifted. It does
+   not lift with a version: it is a property of the GGUF / llama.cpp path for
+   this architecture, and the way around it is the MLX runner rather than a
+   newer Ollama. Same failure family as BookForge's MLX batch width of one — a
+   runtime quietly defaulting to no batching, unnoticed because the work still
+   finished. Both cost a multiple of throughput and neither raised an error.
 2. **The `foundry/` id prefix rule.** Every id in the deleted file was prefixed
    so a row of ours could never collide with a Crucible manifest id: Crucible's
    `qwen3.5-9b` names the bf16 tag for cleanup, and the local file's
