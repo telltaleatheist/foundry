@@ -5008,5 +5008,12 @@ absent field is a version statement), a partial document refused by name
 (`voices_needs_reference_missing` / `_unknown`). No public type changed; gates
 green. **Not watched live:** the WSL engine was down (ECONNREFUSED on :7100)
 when the pack landed — the distro idles out when nothing holds it, which is the
-exact gap PHASE15 §4's Windows host exists to close — so the first `info()`
-against `local` through this pack is owed on its next boot.
+exact gap PHASE15 §4's Windows host exists to close. **Watched the same night
+once BookForge booted the guest at HEAD 389e2d6:** `info()` answers (the
+server now SENDS `needs_reference`, mixed true/false — the post-field case),
+`capability()` gives eleven rows with `route` on every one, all local, all
+enabled, and `/v1/info.pages_engine` carries Foundry's whole page request
+(dpi, pixel budget, token ceiling, the prompt verbatim, the dialect) — the
+server owns the request now. The first knock 18 s after boot was refused on
+both sides (process up, port not yet bound); §4.1's 30 s readiness wait is
+right.
