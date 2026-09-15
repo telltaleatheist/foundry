@@ -126,16 +126,29 @@ const STEPS: readonly StepDef[] = [
   },
   {
     /*
-     * AFTER OLLAMA AND BEFORE THE ENVIRONMENTS. After, because the Ollama step
-     * is what most people will use and a Crucible offered first would read as a
-     * requirement. Before the environments, because it is a decision rather than
+     * AFTER OLLAMA AND BEFORE THE ENVIRONMENTS. The reason for "after" was that
+     * the Ollama step *"is what most people will use and a Crucible offered first
+     * would read as a requirement"* — and since Wave 66 it IS one, so the order
+     * is now merely the gentler of two readings and is worth revisiting when the
+     * Ollama step itself is settled (that step is package L's other half and is
+     * deliberately untouched here). Before the environments, because it is a
+     * decision rather than
      * a download: somebody who connects to a Crucible here has changed what the
      * rest of setup means, and finding that out after paying for two Pythons
      * would be finding it out too late.
      */
     id: 'crucible',
-    title: 'Crucible (optional)',
-    blurb: 'Most people should skip this. It is how a second machine, or a faster path on this one, gets used.',
+    /*
+     * IT SAID *"Crucible (optional)"* AND *"Most people should skip this"*, and
+     * Owen's Wave 66 ruling retired both: *"everything goes through a crucible
+     * server now, including local… there should be no local gpu listed in the
+     * queue."* Every GPU slot in the queue is a registered engine, so a person
+     * who skips this step has no slot and cannot translate, simplify, clean,
+     * analyse or read pages at all. Telling them to walk past it would be this
+     * screen sending somebody to a dead queue.
+     */
+    title: 'A GPU engine',
+    blurb: 'Where translation, simplification, cleanup, analysis and page reading run — on this machine or another one. Without one they cannot run.',
   },
   {
     /*
@@ -349,15 +362,28 @@ const STEPS: readonly StepDef[] = [
 
           <!-- ── Crucible ────────────────────────────────────────────────── -->
           @if (current() === 'crucible') {
+            <!--
+              THIS SCREEN USED TO SAY *"Foundry does not need it"*, and Owen's
+              ruling of Wave 66 made that untrue: *"everything goes through a
+              crucible server now, including local… there should be no local gpu
+              listed in the queue."* Every act that meets a model is a Crucible's
+              work, so the step says what it actually is — the one that decides
+              whether translation, simplification, cleanup, analysis and page
+              reading can run at all — rather than offering itself as optional
+              polish.
+            -->
             <p class="lead">
               Crucible is a separate program that serves models over the network — on this
-              machine or on another one. Foundry does not need it: everything on the last
-              screen works without it, and this step can be skipped for good.
+              machine or on another one. Every GPU slot in Foundry's queue is one of these,
+              including one installed here, so this is the step that decides whether
+              translation, simplification, cleanup, analysis and page reading can run at all.
+              Compiling a book and exporting it never need one.
             </p>
             <p class="line">
-              What it buys is speed and reach. A Crucible on a machine with a bigger card runs
-              the translation there; a Crucible on this machine replaces the local GPU slot with
-              one that holds its models properly instead of loading and unloading per job.
+              A Crucible on a machine with a bigger card runs the work there; a Crucible on this
+              machine runs it here and holds its models properly instead of loading and
+              unloading per job. Registering both gives the queue two GPU slots and it will use
+              whichever is free.
             </p>
             @if (crucibleServers().length > 0) {
               <p class="ok-note">

@@ -350,10 +350,36 @@ function localTextGate(cls: ModelClass, machine: Machine): ActGate {
     };
   }
 
-  // The largest present one, because that is the one the acts will open with and
-  // the one whose name answers "why is this taking an hour".
+  /*
+   * ── AND AN INSTALLED MODEL NO LONGER LIGHTS A TILE ────────────────────────
+   *
+   * Owen, 2026-09-15: *"everything goes through a crucible server now,
+   * including local... there should be no local gpu listed in the queue."* The
+   * local slot is gone (docs/PLAN.md, the slot wave), so there is nowhere for a
+   * queued text act to run on this machine's own Ollama: `placeJob` has no slot
+   * to place it on and refuses by name. A tile lit on the strength of an
+   * installed model would therefore be a tile that fails the moment it is
+   * pressed, which is worse than a dark one — a dark tile with a reason sends
+   * somebody to Settings, and a lit one that refuses sends them to a bug
+   * report.
+   *
+   * THE SENTENCE STILL NAMES THE MODEL, because the machine having a usable
+   * model is a true and useful fact: it is exactly what makes connecting an
+   * engine on THIS machine worth doing, and a person who pulled a 27B should
+   * not be told their machine is too small. What changed is not the machine's
+   * capability, it is where the work runs.
+   *
+   * The whole of this function's machine reasoning becomes moot when the last
+   * of the local text path is deleted (the Ollama door, the local lineup); it
+   * is kept until then because every sentence above it is still the honest
+   * answer to "and could this machine have done it itself".
+   */
   const best = present[present.length - 1]!;
-  return { lit: true, why: `${best.label} is installed and fits this machine.` };
+  return {
+    lit: false,
+    why: `${best.label} is installed and fits this machine, but work runs on a GPU engine now `
+      + `and none is connected. ${OTHER_ROUTES}.`,
+  };
 }
 
 /** "Qwen 3.5 · 4B", "Qwen 3.5 · 4B or Qwen 3.5 · 9B", "A, B or C" — for a sentence. */

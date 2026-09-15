@@ -5276,3 +5276,88 @@ version. BookForge's floor is `FOUNDRY_VERSION_FOR_CLEAN_TEXT = '1.1.0'`, which
 2.0 clears, and their vendor keeper reads only the COMMIT out of
 `foundry --version` — `2.0.0 (<clean sha>)` passes and a tag is never wanted.
 Publishing the GitHub release stays Owen's, as it was for the void 1.3.0.
+
+### Wave 67 — no local GPU slot: one lane per connected engine, the CPU lane untouched (Owen, 2026-09-15) — LANDED
+
+**Owen, verbatim:** *"everything goes through a crucible server now, including
+local... there should be no local gpu listed in the queue"*, and precisely:
+*"cpu slots are always local. we dont outsource simple cpu work to crucible. one
+gpu slot in the queue per connected crucible server. including the local
+crucible, which is indistinguishable from the remote crucible server."*
+
+**And the atomicity rule that goes with it**, from the same exchange: *"loading
+the model is a cpu step technically, but steps are atomic... small preparatory
+steps inside a broader 'clean' task are sent to the crucible server to execute,
+then returned. CPU jobs, like bookforge's book assembly, come back to the local
+cpu slot because it's a long cpu job that's separate from a GPU job."* Foundry
+already worked this way and it was checked rather than assumed: `JOB_RESOURCE`
+classes a WHOLE job — `read`, `translate`, `simplify`, `clean`, `analyze` are
+`gpu`; `epub`, `txt`, `pdf` are `cpu` — a job resolves its venue ONCE at
+admission and everything inside it happens there, which is why the model load
+sits inside `placeOnCrucible` rather than being a step that could land
+elsewhere. Nothing needed changing for that clause.
+
+**What changed.** `slotsFrom` emits NO local slot: the GPU slots are exactly the
+enabled Crucible entries in registry order, plus the cloud slots. `LOCAL_SLOT_NAME`
+is deleted with every reader INCLUDING its reservation in the name rule — a name
+nothing uses is not reserved — and `'local'` is gone from `ComputeSlotKind`, so
+the compiler now refuses any slot or lane claiming to be this machine's card.
+`computeLanes([])` is `[]`; `canStart` still admits a GPU row on an empty board
+**so the placement can refuse it by name** rather than leaving it queued for
+ever. `localPlacement` is gone, `Placement.slot` is `ComputeSlot | null`, and a
+CPU job records no `ranOn` instead of recording "This computer". An entry known
+from the resolver's CACHE (never a fresh call) to be an orchestrator with no
+engine is not a slot, and a pinned row on one fails with the resolver's own
+sentence; unknown keeps its lane, so a machine that has merely not been probed
+is never hidden.
+
+**The CPU lane needed nothing, and that was checked rather than assumed:** the
+CPU side has no name in the slot namespace at all — it is the count
+`CPU_LANE_SLOTS`, its bench cards are keyed `cpu:<n>`, and the occupancy map's
+`on` is null for every CPU row. There is no string a server name could collide
+with. Recorded in the name rule's own doc.
+
+**AND THE TILE STOPPED LYING, which this wave would otherwise have introduced.**
+With no local slot there is nowhere for a queued text act to run on this
+machine's Ollama, so `localTextGate`'s "the model is installed and fits" branch
+was a tile that fails the moment it is pressed. It is dark now and still NAMES
+the model, because "this machine has a usable model" stays true and useful — it
+is exactly what makes connecting an engine here worth doing — and what changed
+is where the work runs, not what the machine can hold.
+
+**Proved on FIXTURES ONLY** (hand-written registries, every address in
+TEST-NET-1 `192.0.2.0/24`, which is never routed): three entries with one
+disabled give exactly the two enabled slots in registry order and no "This
+computer", with a card lane and a `:cloud` lane each; an empty registry gives no
+slots and no lanes, `translate` and `read` refuse by name, and `epub` still runs
+with no slot. `laneOfRun('This computer')` resolves to nothing, as intended.
+
+**Unexercised and named plainly:** the orchestrator-with-no-engine slot hiding
+(reachable only through a server; it was seen once against a stub `/v1/info` on
+loopback, not a Crucible), the hosted refusal sentences, and a pinned row
+failing on an engine-less server.
+
+**REPORTED, NOT BUILT — one for Owen.** Two enabled entries pointing at ONE
+engine now draw two GPU lanes over one card: the old local-slot suppression
+prevented that by accident and no longer does. Whether the slot list DEDUPES on
+the resolved engine or merely WARNS on the Servers card is a design call, and
+the resolve is where both the fact and the fix would live. BookForge has the
+same hazard and no ruling either; we agreed to bring Owen one description
+rather than two.
+
+**Dead while `CRUCIBLE_READS` is true**, left in place and documented: the local
+page-reader start in `executeJob` (a `read` can no longer have a null endpoint)
+and `laneAtPick`'s no-slot arm. `llm-card`/`llm-defaults` still call the Ollama
+"the local slot" — the remaining half of the local-text deletion.
+
+**A CARD INCIDENT, recorded because the mechanism matters more than the
+apology.** The subagent that built this wave ran its first proof against the
+REAL registry, and `placeOnCrucible` loads a model as part of placing a job — so
+a `qwen3.8-27b-4bit` load landed on Owen's PC card while he was using it. It was
+cancelled through the SDK within minutes and the card returned to desktop-only.
+The cause was the BRIEF: it said "verify by derivation" and then, in its
+verification section, named Owen's real settings file to describe the machine,
+which invited the live call. **The rule taken from it: verification against a
+machine anyone else may be using gets a FIXTURE — a hand-written value, an
+unroutable address — never a real registry path; and a branch reported
+unexercised beats a live call.**

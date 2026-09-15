@@ -119,16 +119,20 @@ provider entry — a second key, a second limit, a second slot, said out
 loud.
 
 - **The list is the same one the picker draws** — `computeSlots()` in
-  main, `slots:list` in the renderer. An **empty list is ONE lane**,
-  named for the local slot, which is today's single GPU lane exactly:
-  that is what makes this a no-op for a host that registers no slot
-  provider, BookForge's vendored copy included.
+  main, `slots:list` in the renderer. ~~An **empty list is ONE lane**,
+  named for the local slot.~~ **Struck — Wave 66:** Owen deleted the local
+  slot (*"there should be no local gpu listed in the queue"*), so an empty
+  list is **no GPU lane at all**. A GPU row on such a board is still
+  admitted by `canStart`, so the placement can refuse it by name (*"No GPU
+  engine is connected"*) instead of leaving it queued for ever. The CPU
+  side is untouched: *"cpu slots are always local."*
 - **A running row holds the lane of the machine it is on.** `Slot.on`
   (electron/job-queue.ts) is the slot's name — reserved at the moment the
   pump PICKS the row when the answer is already knowable (a row pinned to
-  a slot; a row that is never placed at all, which holds the LOCAL lane
-  because a page reading loads dots on this machine's card whatever the
-  registry says), and claimed by the `any` walk otherwise.
+  a slot; a row that is never placed at all, which holds this machine's
+  card lane when one of the lanes is this machine's card — a loopback
+  Crucible, there being no local slot since Wave 66 — and none when there
+  is not), and claimed by the `any` walk otherwise.
 - **`canStart` asks "is there a lane this row could take"**, which is why
   it takes the row and not just its resource: a busy local card no longer
   stops a queued row that was only ever going to run on the Mac.
@@ -137,11 +141,11 @@ loud.
   `placeJob`; the claim is synchronous against main's occupancy map, so
   two walks cannot take one machine, and a slot this app is already
   running on is stepped past with a sentence like any other busy one.
-- **The local card is one lane even when it has two names.** An enabled
-  loopback Crucible hides the local slot, and the things that still run
-  locally (a reading) hold that Crucible's lane — `localLane()`, which
-  both programs read, so the bench draws the run on the same card the
-  scheduler is holding.
+- **The local card is one lane.** This machine's card is the lane of a
+  Crucible registered at a loopback address, and the things that still run
+  locally regardless (a reading, while `CRUCIBLE_READS` is off) hold that
+  lane — `localLane()`, which both programs read, so the bench draws the
+  run on the same card the scheduler is holding.
 - **Re-ranking or disabling a server moves nothing.** A running job is
   atomic on its slot and keeps running there; the bench keeps its card,
   marked, until it ends. A queued row's `waitFor` is untouched, and a row

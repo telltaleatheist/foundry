@@ -32,10 +32,17 @@
 - *"ollama should always, always bring down the model as soon as the job is
   done. they arent chatting with it, theyre using it for a job."*
 - *"jobs never start on one slot and finish on another. its atomic."*
-- *"the friend sees a single gpu slot if theyre local — their GPU slot. if
+- ~~*"the friend sees a single gpu slot if theyre local — their GPU slot. if
   theyre using crucible on their local machine, the local GPU disappears… or
   they can add a remote crucible server, like to the mac… itll show the mac's
-  gpu slot as open and usable, plus their local GPU."*
+  gpu slot as open and usable, plus their local GPU."*~~ **SUPERSEDED, Wave 66**
+  by the ruling below.
+- **Wave 66, and it deletes the local slot** — *"everything goes through a
+  crucible server now, including local… there should be no local gpu listed in
+  the queue."* And precisely: *"cpu slots are always local. we dont outsource
+  simple cpu work to crucible. one gpu slot in the queue per connected crucible
+  server. including the local crucible, which is indistinguishable from the
+  remote crucible server."*
 - Tiles: *"if their system just isnt powerful enough for translation (smaller
   than 9b) then translation and simplify is disabled. the tiles arent lit up
   until the models are present."* And: *"if a job is going to take an
@@ -74,13 +81,21 @@ prints one line counting its requests and tokens, which the app prices.
 
 A **slot** is a place a job's compute can go. The queue lists one row per slot.
 
-- **Local** — the machine's own GPU (or CPU). Text acts go to Ollama; page
-  reading goes to a local llama-server serving dots.ocr (llama.cpp PR 17575,
-  the GGUF pair the catalog's `pages` row names), downloaded in setup, never
-  shipped. On the Mac
-  the MLX bridge remains a local reader.
-- **A Crucible server** — one per registered server, in drag order; a
-  loopback Crucible **replaces** the local slot (one card, one owner).
+- ~~**Local** — the machine's own GPU (or CPU).~~ **DELETED, Wave 66.** There is
+  no local slot. A Crucible installed on this machine is an ordinary registry
+  entry and is *"indistinguishable from the remote crucible server"*. The CPU
+  side of the board is untouched by that ruling and is not a slot at all: it is
+  a count (`CPU_LANE_SLOTS = 2`), it is always this machine, and simple CPU work
+  is never outsourced.
+- **A Crucible server** — one per ENABLED registered server, in drag order, and
+  they are the whole of the GPU side. An entry that resolves to an orchestrator
+  with no engine behind it (PHASE17 §6) is not a slot — a lane there could never
+  take a job — read from the resolver's cache only, so an unprobed entry keeps
+  its lane.
+- **No slot at all** — the ordinary state of a machine with nothing registered.
+  GPU work is REFUSED by name (*"No GPU engine is connected — add one in
+  Settings › Servers"*) rather than run here or parked for ever; CPU work runs
+  exactly as before.
 - **A cloud provider** — never busy, nothing resident, text acts only; a
   deliberate per-job choice, never something `any` falls through to. **Drawn
   hosted as well** (2026-09-14): Owen's rule is that a machine under the
@@ -96,7 +111,9 @@ Rules: a job is **atomic per slot**. `waitFor` on a row is a slot name or
 will start the job, and never includes a cloud slot. A busy slot is waited
 for, and the wait is rendered with the holder's name. Disabling a slot
 surfaces the rows that name it. The vendored (BookForge-hosted) app takes its
-slot list from the host and shows no local slot and no Ollama wizard.
+slot list from the host and shows no Ollama wizard; a host that offers no
+registry leaves that window with no GPU slot, and its GPU rows are refused with
+the host's own sentence rather than quietly run in the host's process.
 
 ## 4. The catalog
 
@@ -197,8 +214,10 @@ The TOML reader understands `[server] name/host/port` and `[auth] token` and
 than skipping it — a skipped `token` line would report "missing" about a file
 that has one.
 
-**The slots** are `computeSlots()`: the local slot (`kind: 'local'`) unless an
-enabled entry is loopback, then one per enabled server (`kind: 'crucible'`).
+**The slots** are `computeSlots()`: ~~the local slot (`kind: 'local'`) unless an
+enabled entry is loopback, then~~ one per enabled server (`kind: 'crucible'`).
+**Struck — Wave 66: there is no local slot and `kind: 'local'` is gone from the
+union, so the compiler refuses a slot that claims to be this machine's card.**
 ~~`kind: 'cloud'` is declared and never constructed — Package F's seam, excluded
 from the `any` walk by name.~~ **Struck — Package F (app), below: one cloud slot
 per enabled provider, after every Crucible, stepped past by the `any` walk with
@@ -213,8 +232,9 @@ only showed on a press nobody had made. `FoundryHost.servers?()` now answers
 `{name, url, token, enabled}[]` in priority order and the slots are DERIVED
 from it by the same code standalone uses (`readRegistry` and `slotsFrom`,
 electron/crucible-registry.ts), so the two cannot compute different slots from
-the same servers and a credential lookup cannot miss a slot that exists. No
-local slot and no cloud slot is ever drawn hosted. A host that offers no
+the same servers and a credential lookup cannot miss a slot that exists. There
+is no local slot to suppress hosted any more, and the cloud slot IS drawn
+hosted (below). A host that offers no
 registry gets no slots and a SENTENCE the board draws, not an empty list that
 reads as "you have added none".
 
@@ -284,20 +304,24 @@ distributed load."*
 **The capacity is derived, in `app/shared/queue-board.ts`**, which is the one
 place both programs already read the board from. `computeLanes(slots)` answers
 one lane per compute slot, each with the capacity its KIND carries
-(`SLOT_CAPACITY` — `local`, `crucible` and `cloud` are all 1 today; the cloud
-row exists so package F needs no edit here, and raising it is a deliberate
-change to that line with the rate limit argued beside it). The CPU lane stays
-the constant `CPU_LANE_SLOTS = 2`: a compile is this machine's disk however many
-rooms away the models are. **An empty slot list answers with exactly one lane**,
-named for the local slot — today's single GPU lane, unchanged — which is what
-makes this invisible to a host that registers no slot provider.
+(`SLOT_CAPACITY` — `crucible` and `cloud` are both 1 today; raising either is a
+deliberate change to that line with the rate limit argued beside it). The CPU
+lane stays the constant `CPU_LANE_SLOTS = 2`: a compile is this machine's disk
+however many rooms away the models are, and Wave 66 protects it by name — *"cpu
+slots are always local. we dont outsource simple cpu work to crucible."*
+~~**An empty slot list answers with exactly one lane**, named for the local
+slot.~~ **Struck — Wave 66: an empty slot list is NO GPU lane.** A GPU row on
+such a board is admitted by `canStart` anyway, so that the placement can refuse
+it by name instead of leaving it queued for ever.
 
 **The scheduler** (`electron/job-queue.ts`) keys occupancy by slot NAME:
 `Slot.on` is the machine a run holds. It is reserved when the pump PICKS the row
 wherever the answer is already knowable — a row pinned to a slot holds that one,
 and a row that is never placed at all (`placesOnASlot`, the one copy of
-`placeJob`'s early returns) holds the LOCAL lane, because a page reading loads
-dots on this machine's card whatever the registry says. `canStart` takes the ROW
+`placeJob`'s early return) holds this machine's card lane when one of the lanes
+IS this machine's card — which since Wave 66 means a loopback Crucible, there
+being no local slot. Every GPU kind has a capability class today, so that arm is
+reached only if `CRUCIBLE_READS` is ever turned back off. `canStart` takes the ROW
 now and asks *is there a lane this row could take*, so a busy local card no
 longer stops a row that was only ever going to run on the Mac. An `any` row's
 lane is claimed by the walk, inside `placeJob`, through a `LaneClaim` the queue
@@ -307,17 +331,19 @@ is already running on is stepped past with a sentence like any other busy one. A
 run nobody here scheduled (a host's, the Export dialog's) claims nothing, for
 `detachedRuns`' standing reason.
 
-**One card, one lane, even with two names.** An enabled loopback Crucible hides
-the local slot, and what still runs locally holds THAT lane — `localLane()`,
-read by both programs, so the bench draws the run on the card the scheduler is
-holding rather than inventing a second one over the same GPU.
+**One card, one lane.** This machine's card is the lane of a Crucible registered
+at a loopback address, if there is one, and whatever still runs locally holds
+THAT lane — `localLane()`, read by both programs, so the bench draws the run on
+the card the scheduler is holding rather than inventing a second one over the
+same GPU.
 
 **The bench** (`core/queue-view.service.ts`, `pages/queue`) is one card per
 compute slot — its name, whose it is, what is running there, and the parked row's
 own sentence about what it is waiting for — then the two CPU cards. A card's
 occupant comes from `Job.ranOn` through `laneOfRun`, so the GPU half is no longer
-dealt in queue order. The `on <slot>` tag stays on the CPU cards, where it still
-says something the card does not. A run on a machine that has left the list keeps
+dealt in queue order. ~~The `on <slot>` tag stays on the CPU cards.~~ **Struck — Wave 66:** it said
+the local slot's name, an unplaced run records no machine now, and the CPU lane
+is always this computer. A run on a machine that has left the list keeps
 its card, marked, until it ends: **re-ranking or disabling a server moves
 nothing** — not a running job (atomic per slot) and not a queued row's `waitFor`
 (package C's rule), and a row naming a slot that is gone is still picked so that
@@ -603,8 +629,8 @@ them. It carries **no `url`**, and that is not an oversight — `localLane`
 (shared/queue-board.ts) decides which lane is this machine's card by asking
 whether a lane's url is loopback, and an OpenAI-compatible endpoint at
 `http://localhost:8000/v1` is an ordinary thing to configure; a cloud slot
-carrying it would be adopted as the local lane, and a page reading would then
-hold the provider's lane while the GPU went unguarded. A duplicate name is
+carrying it would be adopted as this machine's card, and whatever genuinely runs
+on that card would go unguarded behind a provider's rate limit. A duplicate name is
 dropped there as the last word, and refused by name at BOTH writers, which read
 each other's list.
 
