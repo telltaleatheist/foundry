@@ -83,7 +83,16 @@ QUOTED AS A GATE IS A MEASUREMENT OR IT IS DECORATION.
   holds a mirror of — a push that only said "something moved" would make every
   window re-read the whole map on every byte of a download. Broadcast to every
   window, because coordination starts at APP START, before any window has asked
-  for anything.
+  for anything. **The payload gained `unmet` on 2026-09-14** (crucible
+  `docs/PHASE15-HOST.md` §5.3a, crucible `e342fee`): the vendored module names
+  CAPABILITY CLASSES rather than model ids now, and a class the engine has
+  disabled is neither missing nor a refusal — it is a fact about that machine,
+  and it travels on `stocked`, `preparing` and `waiting` as `{class, reason}`
+  with the capability row's own reason verbatim. `CrucibleModuleProgress.unmet`
+  carries the same thing off the finished task (`TaskStatus.unmet`), null until
+  the task is terminal, because the server is the one that resolved the classes.
+  A server with nothing missing and classes unmet is still `stocked`: the word
+  means "nothing to download", and there is nothing.
 
 **NO TOKEN CROSSES EITHER DOOR, in either direction**, which is the rule the
 whole `crucible:` family keeps: a state names a server, a phase, what is
@@ -899,7 +908,7 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `crucible:install-plan` | The hand sequence for installing a Crucible on this machine, composed for this platform: the numbered steps with every command copyable, the elevated ones listed apart, the README link and the wheel. A read — the only process it spawns is `wsl.exe -l -v`. |
 | `crucible:install` | The driven install. REJECTS on every machine today with the same sentence the disabled button wears — `@crucible/bootstrap` ships with Crucible's next release. The door refuses as well as the button, because a disabled control over an open door is a decoration. |
 | `crucible:coordination` | Where coordination stands with every server it has anything to say about, keyed by registry name. A server absent from the map has not been asked yet. A read — it starts nothing. |
-| `crucible:coordinate` | Coordinate with one named server NOW: read `/v1/info` and `/v1/catalog`, compare the vendored module, and post a `module` task ONLY when something is missing. Idempotent — a second call while one is in flight joins the first. It never rejects; every ending is a state. There is no button behind it, because coordination is automatic on every enabled server (§4a). |
+| `crucible:coordinate` | Coordinate with one named server NOW: read `/v1/info`, `/v1/catalog` and `/v1/capability`, compare the vendored module (whose `needs` are CLASSES the engine's capability record resolves, PHASE15-HOST.md §5.3a), and post a `module` task ONLY when something is missing — a class that engine has disabled is `unmet`, not missing, and posts nothing. Idempotent — a second call while one is in flight joins the first. It never rejects; every ending is a state. There is no button behind it, because coordination is automatic on every enabled server (§4a). |
 | `crucible:engine-settings` | (serverName) → `SettingsDocument` — one server's OWN settings (`GET /v1/settings`, crucible docs/PHASE15-HOST.md §3.1): the route and model of each of the four llm classes, which of the three upstreams are configured, the desktop allowance and the backend kind. A REMOTE store — nothing in it is kept in `app-settings.json`. **No key comes back**: the document carries `keyHint`, the last four characters, where the engine carries a key. |
 | `crucible:engine-settings-put` | (serverName, patch) → `SettingsDocument` — write through (`PUT /v1/settings`, §3.2). Any subset; `upstreams.<name>: null` REMOVES one. Answered with the whole document AFTER the write, so no window ever guesses what took. Rejects with a sentence naming the field for `route_not_routable` / `route_bad_model` / `route_upstream_unconfigured` / `upstream_in_use`. Runs the registry's own pass (`afterRegistryChanged`) when the patch touched a ROUTE — §2 recomputes capability on such a write and the dock's tiles are drawn from it — and not when it only saved a key, which moves no capability row. **The key crosses one way**, into main, out of a box somebody is typing in. |
 | `crucible:engine-upstream-test` | (serverName, upstream, probe?) → `UpstreamTestResult` — `POST /v1/settings/upstreams/{name}/test`, the upstream's own model listing, unbilled. `probe` is an UNSAVED `{key}` or `{url}`; absent tests the configured one. This is the ONLY list of cloud model ids anywhere in this app — §2: *"the server does not ship a cloud model list"*, and a catalog compiled into a build is wrong by the next release. A failure is a RESULT carrying the engine's own sentence and its code (`upstream_unreachable` / `upstream_rejected` / `upstream_unconfigured`), not a rejection, so a card can print it beside the box. |
@@ -950,7 +959,7 @@ quoted as a gate is a measurement or it is decoration.)
 | `models:changed` | The weights on this disk moved without this window doing it — docs/SLOTS.md §5b's automatic removal, which fires from `crucible:save` and once at startup. No payload, for `acts:gates-changed`'s reason: the inventory costs a directory walk and has one composer. |
 | `app:navigate` | Go to a route — File→Settings, and nothing else today. |
 | `capture:intake-progress` | One dropped photograph copied, hashed and decoded — one push per path asked for, plus a closing one. |
-| `crucible:coordination-changed` | Where coordination with one server got to, every time it moves — checking, stocked, preparing (with the module task's own frames), waiting on a named holder, refused, unreachable. It CARRIES the state where `acts:gates-changed` carries nothing, because this is a small value the renderer mirrors rather than a composed answer that costs a probe: a payload-free push would make every window re-read the whole map on every byte of a download. Broadcast, because coordination starts at app start, before any window has asked anything. |
+| `crucible:coordination-changed` | Where coordination with one server got to, every time it moves — checking, stocked, preparing (with the module task's own frames), waiting on a named holder, refused, unreachable. The three phases that compared carry `unmet`: the classes this engine does not serve, each with the capability row's own reason (PHASE15-HOST.md §5.3a). It CARRIES the state where `acts:gates-changed` carries nothing, because this is a small value the renderer mirrors rather than a composed answer that costs a probe: a payload-free push would make every window re-read the whole map on every byte of a download. Broadcast, because coordination starts at app start, before any window has asked anything. |
 | `document:opened` | A document was admitted and should open in a tab. |
 | `document:relocated` | An opened document moved onto the project's working copy; the tab follows. |
 | `env:install-progress` | An environment install changed phase. |

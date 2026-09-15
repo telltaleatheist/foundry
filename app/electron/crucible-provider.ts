@@ -82,8 +82,10 @@ export type ServedAnswer = 'yes' | 'no' | 'unknown';
  * Three seconds, which is generous for a loopback socket and short enough that
  * four unreachable servers cannot hold the gate read for longer than a person
  * notices. It is deliberately NOT the dispatcher's timeout (there is none there,
- * on purpose — see `crucibleRequest`): a placement is a press being answered and
- * may wait; a tooltip may not.
+ * on purpose): a placement is a press being answered and may wait; a tooltip may
+ * not. It travels as `CrucibleClientOptions.timeoutMs` through `clientFor` —
+ * the SDK's own clock since `@crucible/client` 0.6.0 — rather than as a
+ * hand-rolled `AbortSignal.timeout`.
  */
 const PROBE_TIMEOUT_MS = 3_000;
 
@@ -150,6 +152,15 @@ async function probeOne(entry: CrucibleServerEntry): Promise<ServerFacts> {
      * message is kept out of the line entirely because a refusal from an
      * authenticated route can echo request details, and nothing about a token is
      * ever worth a log line.
+     *
+     * EVERY WAY THE READ CAN FAIL LANDS HERE AND MEANS THE SAME ONE THING —
+     * `record: null`, which reads as `unknown` and authorises no deletion. That
+     * now includes the SDK's `CrucibleProtocolError` for a half-routed or
+     * unknown-routed capability document (crucible PHASE15-HOST.md §3.3), which
+     * this app used to raise itself as `capability_route_missing` /
+     * `capability_route_unknown` and which arrived here as exactly the same
+     * silence. A server whose document cannot be read has not told us where its
+     * classes run, and "did not say" is never "no".
      */
     void err;
     return { ...base, record: null };

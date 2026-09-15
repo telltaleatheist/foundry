@@ -1537,11 +1537,18 @@ export interface FoundryApi {
      *
      * crucible `docs/PHASE14-ENVPACKS.md` §4a, Owen 2026-09-14. There is NO
      * button and no consent step: whenever Foundry finds a Crucible it reads
-     * `/v1/info` and `/v1/catalog`, compares the vendored module, and posts a
-     * `module` task ONLY when something is missing. Switching the server off in
-     * Settings is the one opt-out. So the renderer's whole part in this is to
-     * READ a state and draw one sentence — `coordinationWords`,
-     * src/app/core/crucible-words.ts, which is where every word of it lives.
+     * `/v1/info`, `/v1/catalog` and `/v1/capability`, compares the vendored
+     * module, and posts a `module` task ONLY when something is missing.
+     * Switching the server off in Settings is the one opt-out. So the
+     * renderer's whole part in this is to READ a state and draw one sentence —
+     * `coordinationWords`, src/app/core/crucible-words.ts, which is where every
+     * word of it lives.
+     *
+     * The third read is crucible `docs/PHASE15-HOST.md` §5.3a's: the module's
+     * `needs` carry CAPABILITY CLASSES and the engine's own capability record is
+     * the one place a class becomes a model id. A class that engine has disabled
+     * is not missing and not a refusal — it rides on the state as `unmet`, and
+     * the sentence says "not on this engine".
      */
     /** Every server coordination has anything to say about. Absent = not asked yet. */
     coordination(): Promise<CrucibleCoordinationMap>;

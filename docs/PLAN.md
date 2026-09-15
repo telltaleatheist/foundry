@@ -4807,8 +4807,8 @@ fake `CRUCIBLE_HOME` for all three outcomes, and no token reached a log line.
 **The settings are the engine's, and Foundry draws a window.** Owen's ruling —
 Crucible is the SINGLE SOURCE OF TRUTH for AI settings — is now the shape of the
 code: `app/shared/engine-settings.ts` holds the wire types, `electron/crucible-
-settings.ts` holds the three requests (hand-rolled through `crucibleRequest`
-until the SDK carries them), and NOTHING of any of it is stored in
+settings.ts` holds the three requests (through the SDK since the same
+night's re-pack; the hand-rolled `crucibleRequest` is deleted), and NOTHING of any of it is stored in
 `app-settings.json`. Every control is one `PUT /v1/settings` and the surface
 redraws from the PUT's own answer (§3.2), so there is no Save button that writes
 an app file and syncs later (§5.2).
@@ -4967,3 +4967,35 @@ the registry until then.
 Owen's word after the Hugging Face mirror was proven to hold the same bytes;
 the WSL Crucible registered in Foundry as `local`; no Foundry-owned dots copy
 exists on the machine.
+
+#### Wave 63, second pass — readCapability is the SDK's, and coordination compares CLASSES — LANDED 2026-09-14
+
+The final 0.6.0 re-pack (crucible d6f2786, SDK e342fee, sha ed7a923e…, 347,299
+bytes — the bytes BookForge vendors) gave `capability()` a construction-time
+`timeoutMs` and the pre-Phase-15 tolerance, so `clientFor` takes a clock,
+`crucibleRequest` is DELETED (190 lines), and Foundry's copy of §3.3's route
+rule is gone rather than kept beside the SDK's; a partial or unknown route now
+arrives as `CrucibleProtocolError` and is refused by name. Coordination reads
+capability as its third read and resolves the module's `needs` CLASSES through
+it (§5.3a, `foundry.module.json` 0.6.0+66fd04e88639 re-vendored): a disabled
+class is UNMET — not missing, not a refusal — and rides the state beside the
+pulls as "Not on this engine: the page reader — <the engine's reason>";
+`followModuleTask` reads `TaskStatus.unmet` after the stream. Words: clean →
+"the narration cleanup model", the three text acts → "the text model", pages →
+"the page reader", engine/llama-cpp → "the llama.cpp engine". **Proved against
+the WSL server:** eleven rows all local with and without the clock, no throw;
+`missingForFoundry` → stocked (every selected model installed). BookForge had
+not yet made the class/unmet change when this landed; three divergences are
+recorded in the file for them to match or overrule (a `what:'class'` variant;
+`unmet` on three phases and on progress; a second `stocked` sentence when
+classes are unmet).
+
+**FOUND, not Foundry's:** with this pack, `client.info()` against Owen's WSL
+server (d32d741, pre-Phase-15) throws `CrucibleProtocolError: info.capabilities
+[6].models[0] has no field "needs_reference"` — the SDK requires a field that
+server predates, so coordination against `local` ends `unreachable` until the
+WSL guest is updated to the Phase-15 build (BookForge's list already carries
+"pull + restart"). Put to Crucible: either the SDK tolerates the absent field
+the way it now tolerates an absent `route`, or the guest is updated first.
+`app/shared/foundry.module.json` is LF on purpose — it is vendored byte for
+byte and the per-file rule keeps a file's own endings.

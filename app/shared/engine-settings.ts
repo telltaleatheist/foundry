@@ -255,19 +255,21 @@ export interface CapabilityRow {
    * one today, and reading its silence as a refusal, or as `upstream`, would dark
    * every tile on the machine this app is built on.
    *
-   * A PARTIAL DOCUMENT IS A DEFECT AND IS REFUSED, not patched. `readCapability`
-   * raises `capability_route_missing` naming the row, and
-   * `capability_route_unknown` for a value that is neither word. Filling either
-   * in with `local` would be this app inventing the one fact that decides whether
-   * a run costs GPU-minutes or money — see `readCapability`, which is the one
-   * reader and therefore the one place the rule can live.
+   * A PARTIAL DOCUMENT IS A DEFECT AND IS REFUSED, not patched:
+   * `capability_route_missing` naming the row, and `capability_route_unknown`
+   * for a value that is neither word. Filling either in with `local` would be
+   * an app inventing the one fact that decides whether a run costs GPU-minutes
+   * or money.
    *
-   * `@crucible/client` 0.6.0 ENFORCES THE SECOND AND THIRD ARMS ITSELF and not
-   * the first: its reader takes `route` through `str()` and `oneOf`, so a
-   * partial document and an unknown value are a `CrucibleProtocolError` from
-   * it, while a document with no `route` anywhere — Owen's WSL Crucible, and
-   * every other server on this network today — is unreadable by it rather than
-   * local. That is why `readCapability` is still a fetch; see its note.
+   * ALL THREE ARMS ARE `@crucible/client`'s NOW, and this app keeps none of
+   * them. 0.6.0 (re-packed from crucible `e342fee`) reads the vintage ONCE for
+   * the whole document and grants the pre-phase-15 tolerance the pack before it
+   * did not, so `capability()` answers Owen's WSL Crucible — eleven rows, no
+   * `route` on any of them — as eleven local classes, and raises the other two
+   * arms as a `CrucibleProtocolError` naming the code. `readCapability`
+   * (electron/crucible-dispatch.ts) is that call plus the copy into this
+   * mirror, and Foundry's own copy of the rule is deleted rather than kept
+   * beside the SDK's (crucible ARCHITECTURE.md R1).
    *
    * `enabled` ONE FIELD UP STILL READS A MISSING FLAG AS FALSE, and that is not
    * inconsistent: a missing `enabled` is a server declining to answer a question

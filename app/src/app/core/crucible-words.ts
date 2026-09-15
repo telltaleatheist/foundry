@@ -31,6 +31,7 @@
 import type {
   CrucibleCoordinationState,
   CrucibleMissingEntry,
+  CrucibleUnmetClass,
 } from '@shared/coordinate-wire';
 
 /** The product name, for the one place per panel that earns a first mention. */
@@ -68,11 +69,11 @@ const JOB_TYPE_WORDS: Readonly<Record<string, string>> = {
  * how a person says it; the word is still declared here, once, and
  * {@link missingWords} is where it is put after the name instead of before it.
  *
- * NOTE THE SDK'S `SubjectKind` DOES NOT LIST IT YET — 0.6.0 still types the
- * five (`model voice rvc rvc-base denoise`). This table is keyed by `string`
- * and `CrucibleMissingEntry.kind` is a `string` (shared/coordinate-wire.ts),
- * so nothing had to widen; the day the SDK's union grows the word, nothing
- * here changes either.
+ * THE SDK'S `SubjectKind` LISTS IT NOW — the 0.6.0 re-pack from crucible
+ * `e342fee` added `'engine'` to the union for §3.10's llama.cpp binaries. This
+ * table was keyed by `string` before that and stays so, because
+ * `CrucibleMissingEntry.kind` is the catalog's own word and a screen must be
+ * able to say an unfamiliar one rather than fall through a union.
  */
 const SUBJECT_KIND_WORDS: Readonly<Record<string, string>> = {
   model: 'the text model',
@@ -82,6 +83,38 @@ const SUBJECT_KIND_WORDS: Readonly<Record<string, string>> = {
   denoise: 'the noise remover',
   engine: 'engine',
 };
+
+/**
+ * WHAT FOUNDRY ASKS EACH CAPABILITY CLASS FOR, in a person's words.
+ *
+ * crucible `docs/PHASE15-HOST.md` §5.3a: the module names CLASSES and the engine
+ * resolves each one, so a class is what this app asked for and the model id is
+ * that machine's answer. These are the five in `shared/foundry.module.json`.
+ *
+ * `translate`, `simplify` and `analysis` all read "the text model" and that is
+ * not a collision to fix: every card anyone has selects the same 27B for the
+ * three of them, the classes are separate on Crucible's side so a bench cannot
+ * say a translate job is running when a simplify job is (Owen, 2026-09-13), and
+ * a person looking at a download does not need that distinction spelled at them.
+ * `clean` is its own sentence because it really is a different, smaller model.
+ */
+const CLASS_WORDS: Readonly<Record<string, string>> = {
+  clean: 'the narration cleanup model',
+  translate: 'the text model',
+  simplify: 'the text model',
+  analysis: 'the text model',
+  pages: 'the page reader',
+};
+
+/**
+ * A class this build has no words for is NAMED rather than hidden, on
+ * {@link jobTypeWords}'s argument: reaching it means the module asked for
+ * something newer than this copy of the words, and a gap where a thing should be
+ * is worse than an unfamiliar word.
+ */
+function classWords(cls: string): string {
+  return CLASS_WORDS[cls] ?? `the ${cls} model`;
+}
 
 function jobTypeWords(jobType: string): string {
   const known = JOB_TYPE_WORDS[jobType];
@@ -110,12 +143,42 @@ export function missingWords(entry: CrucibleMissingEntry): string {
   // An ENGINE is named first and classed second — "the llama.cpp engine" — for
   // the reason SUBJECT_KIND_WORDS gives. Every other kind reads kind-then-name.
   if (entry.kind === 'engine') return `the ${subjectWords(entry)} ${subjectKindWords('engine')}`;
+  /*
+   * A CLASS SAYS WHAT FOUNDRY ASKED FOR, then what that engine picked: "the page
+   * reader dots.ocr". The CLASS is the half a person understands and the id is
+   * the machine's — §5.3a is exactly the ruling that those are two different
+   * facts with two different owners, so the sentence carries both rather than
+   * reaching for `kind`, which would say "the text model" for `pages` on a
+   * Windows engine and "the text model" three times over on any other.
+   */
+  if (entry.what === 'class') return `${classWords(entry.class)} ${subjectWords(entry)}`;
   return `${subjectKindWords(entry.kind)} ${subjectWords(entry)}`;
 }
 
 /** A subject's own name: the manifest's, or its id when the manifest has none. */
-export function subjectWords(entry: Extract<CrucibleMissingEntry, { what: 'subject' }>): string {
+export function subjectWords(
+  entry: Extract<CrucibleMissingEntry, { what: 'subject' | 'class' }>,
+): string {
   return entry.name === null ? entry.id : entry.name;
+}
+
+/**
+ * "Not on this engine: the page reader — no mlx-darwin block for dots-ocr."
+ *
+ * crucible `docs/PHASE15-HOST.md` §5.3a, which is the whole reason this sentence
+ * exists: a class the engine has disabled *"is not a refusal"*, so it must not
+ * be drawn as one. It is a fact about that machine, said plainly, with the
+ * engine's OWN reason after the dash — the row said why, and putting a word of
+ * ours there is how a fixable shortfall becomes a mystery.
+ *
+ * `null` WHEN NOTHING IS UNMET, because a row that said "Not on this engine:
+ * nothing" would be announcing the absence of news — the same rule the
+ * coordination map keeps about a server it has not asked.
+ */
+export function unmetWords(unmet: readonly CrucibleUnmetClass[]): string | null {
+  if (unmet.length === 0) return null;
+  const parts = unmet.map((entry) => `${classWords(entry.class)} — ${entry.reason}`);
+  return `Not on this engine: ${joinWords(parts)}`;
 }
 
 /** "8.5 GB", or "size not declared" — never "0 GB", which nobody measured. */
@@ -137,14 +200,53 @@ export function joinWords(parts: readonly string[]): string {
  * This is the whole of what a person is ever shown about coordination: the row
  * says what is happening instead of offering a thing to press (crucible
  * `docs/PHASE14-ENVPACKS.md` §4a — presence of the app is the request).
+ *
+ * THE UNMET SENTENCE IS APPENDED TO WHATEVER THE PHASE SAID, once, here. The
+ * classes an engine does not serve are true of it while it downloads, while it
+ * waits half an hour on somebody else's chat, and when it is ready — so hanging
+ * the sentence off the state rather than writing it into three phase sentences
+ * is what stops the three from drifting apart (crucible ARCHITECTURE.md R1).
  */
 export function coordinationWords(state: CrucibleCoordinationState): string {
+  const head = phaseWords(state);
+  const unmet = unmetOf(state);
+  return unmet === null ? head : `${head} ${unmet}`;
+}
+
+/**
+ * THE ENGINE'S OWN ANSWER WHERE THERE IS ONE, this app's prediction until then.
+ *
+ * Both are read off the same capability record, a second apart, so they should
+ * agree — and where they do not, the engine is right, because it is the thing
+ * that resolved the classes (crucible PHASE9: the capability record is the one
+ * place a class is resolved). `progress.unmet` is null for the whole of a
+ * running task, which is why the prediction is what a person reads while the
+ * download is happening rather than nothing at all.
+ */
+function unmetOf(state: CrucibleCoordinationState): string | null {
+  if (state.phase === 'preparing' && state.progress.unmet !== null) {
+    return unmetWords(state.progress.unmet);
+  }
+  return 'unmet' in state ? unmetWords(state.unmet) : null;
+}
+
+function phaseWords(state: CrucibleCoordinationState): string {
   switch (state.phase) {
     case 'checking':
       return 'Checking what this engine has…';
 
     case 'stocked':
-      return 'Ready — this engine has everything Foundry needs.';
+      /*
+       * TWO SENTENCES FOR ONE PHASE, because `stocked` means "nothing is
+       * missing" and that is not the same claim as "this engine can do
+       * everything". An engine with a class unmet has nothing left to download —
+       * which is why coordination posts no task and the phase is this one — and
+       * telling somebody it has everything Foundry needs, a clause before naming
+       * a class it cannot serve, would be the row arguing with itself.
+       */
+      return state.unmet.length === 0
+        ? 'Ready — this engine has everything Foundry needs.'
+        : 'Ready — there is nothing left to download for this engine.';
 
     case 'preparing':
       return preparingWords(state);

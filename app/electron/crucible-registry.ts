@@ -490,12 +490,29 @@ export function waitForOfNewJob(): string | undefined {
 // Talking to one, for a settings row
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** What a caller may say about the client it wants. One field, and it is a clock. */
+export interface ClientOptions {
+  /**
+   * A DEADLINE ON EVERY CALL THIS CLIENT MAKES, in milliseconds.
+   *
+   * `CrucibleClientOptions.timeoutMs`, new in `@crucible/client` 0.6.0 (packed
+   * from crucible `e342fee`). There is no default and none is invented here: a
+   * dispatch is a person's press being answered and may wait as long as the
+   * platform waits, and a number chosen in this function would cancel somebody's
+   * slow-but-working load. The one caller that says a number is
+   * `crucible-provider.ts`'s gate probe (`PROBE_TIMEOUT_MS`), because a Mac that
+   * is asleep must not put a network timeout behind a tooltip.
+   */
+  readonly timeoutMs?: number;
+}
+
 /** A client for one entry. The only place a token meets the SDK. */
-export function clientFor(entry: CrucibleServerEntry): CrucibleClient {
+export function clientFor(entry: CrucibleServerEntry, options: ClientOptions = {}): CrucibleClient {
   return new CrucibleClient({
     url: entry.url,
     token: entry.token,
     clientName: CRUCIBLE_CLIENT_NAME,
+    timeoutMs: options.timeoutMs,
   });
 }
 

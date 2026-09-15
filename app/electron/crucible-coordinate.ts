@@ -16,11 +16,17 @@
  * The amendment Foundry's own review produced (crucible `cecfdd0`) and the
  * reason it is not merely tidier:
  *
- *   1. READ `GET /v1/info` and `GET /v1/catalog`. Both are cheap, read-only,
- *      and touch neither the lane nor the card.
+ *   1. READ `GET /v1/info`, `GET /v1/catalog` and `GET /v1/capability`. All
+ *      three are cheap, read-only, and touch neither the lane nor the card.
  *   2. Compare the vendored module (`shared/foundry.module.json`) against them.
  *   3. Nothing missing → STOP. No task is posted at all.
  *   4. Something missing → post the module and follow its events.
+ *
+ * The third read is crucible `docs/PHASE15-HOST.md` §5.3a's (crucible
+ * `e342fee`): the module's `needs` carry CAPABILITY CLASSES, unresolved, and the
+ * engine's own capability record is the one place a class becomes an id. A class
+ * that engine has disabled is NOT missing and NOT a refusal — it is UNMET, the
+ * task still finishes `done`, and the row says "not on this engine".
  *
  * A module is idempotent (installed entries come back `skipped`), so posting
  * one on every connect would have been *correct* and still wrong: a Crucible
@@ -87,8 +93,10 @@
  */
 import {
   CrucibleAuthError,
+  CrucibleCapabilityUndecided,
   CrucibleCardHeld,
   CrucibleNotACrucible,
+  CrucibleProtocolError,
   CrucibleRefused,
   CrucibleUnreachable,
   CrucibleVersionError,
@@ -97,12 +105,15 @@ import {
 } from '@crucible/client';
 
 import { clientFor, crucibleServerNamed, crucibleServers } from './crucible-registry';
+import { readCapability } from './crucible-dispatch';
+import type { CapabilityRecord } from '../shared/engine-settings';
 import { isLoopbackUrl } from '../shared/slots';
 import type {
   CrucibleCoordinationMap,
   CrucibleCoordinationState,
   CrucibleMissingEntry,
   CrucibleModuleProgress,
+  CrucibleUnmetClass,
 } from '../shared/coordinate-wire';
 
 /*
@@ -189,11 +200,52 @@ function publish(state: CrucibleCoordinationState): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * What the module asks for that this server has not got.
+ * What the module asks for that this server has not got, and what it will never
+ * have.
  *
- * PURE, over the two reads, so that the thing that decides whether to post a
+ * PURE, over the three reads, so that the thing that decides whether to post a
  * task and the thing that says what is being prepared are one function rather
  * than two that can come to disagree.
+ *
+ * ── THE MODULE NAMES CLASSES NOW, AND THE CLASSES ARE RESOLVED HERE ────────
+ *
+ * crucible `docs/PHASE15-HOST.md` §5.3a (crucible `e342fee`; the ruling was
+ * found by this app's own measurement against the Mac). `foundry.module.json`
+ * used to carry `qwen3.8-27b-4bit` and `dots-ocr` as resolved ids, because
+ * `gen-modules.py` turned a class into ONE id at generation time — the
+ * cuda-linux answer — and then said `dots-ocr` to a Mac that has no block for it
+ * and `qwen3.8-27b-4bit` to a Mac whose capability had selected `qwen3.8-27b`.
+ * The generator was a second owner of a decision that is the SERVER's. So the
+ * module now carries `needs: [{class}]` unresolved, and this function asks the
+ * engine's own capability record what each class means ON THAT MACHINE before it
+ * looks in that machine's catalog.
+ *
+ * Per class, and each arm is a different kind of news:
+ *
+ *   * **No row for it at all** — that engine's capability record has never heard
+ *     of the class. UNMET, with the absence itself as the reason: it is the only
+ *     one of these sentences this app composes, because there is no row to quote.
+ *   * **`enabled: false`** — UNMET, carrying the row's own `reason` verbatim.
+ *     *"A class this backend has DISABLED is not a refusal"* (§5.3a): the module
+ *     is still posted for everything else, the task still finishes `done`, and
+ *     the row says "not on this engine".
+ *   * **Enabled, routed UPSTREAM** — nothing to pull and nothing missing. The
+ *     work runs on the operator's account at Anthropic, OpenAI or an Ollama
+ *     (§3.3), and there are no weights on that machine to be short of. `route`
+ *     is the field that says so and `selected` carrying a slash is the same fact
+ *     said twice (§1: *"a local model id never contains `/`"*); both are read,
+ *     because a pre-phase-15 document has no `route` and a routed one always
+ *     has the slash, and the cost of agreeing with ourselves is one `includes`.
+ *   * **Enabled, local, nothing selected** — the engine decided it can serve the
+ *     class and then found nothing that fits. UNMET: there is no id to look up,
+ *     and a catalog search for `""` would report the empty string as a missing
+ *     download.
+ *   * **Enabled, local, with a selection** — `selected` IS the subject id, and
+ *     the class is missing exactly when that machine's catalog says it is not
+ *     installed. The catalog row's `name`, `kind` and `expectedBytes` travel
+ *     with it, as they always have; `kind` is the catalog's word, `model` on
+ *     every backend but a `llama-windows` one, where `pages` resolves to the
+ *     llama.cpp binaries as `{kind: "engine", id: "llama-cpp"}` (§3.10, fact 1).
  *
  * **Job types are compared on the TYPE alone**, not on the narrator engine, and
  * that is the server's own rule rather than a shortcut: a `module`'s install
@@ -201,12 +253,21 @@ function publish(state: CrucibleCoordinationState): void {
  * `/v1/info`'s `capabilities[].jobType` is the list PHASE13 §3.2 names as the
  * one a client compares against. A second opinion here — "installed, but with
  * the wrong engine" — would be this app deciding something the server decides.
+ *
+ * **Explicit `subjects` keep the comparison they always had.** §5.3a keeps them
+ * for *"genuine app choices"* — a voice, a whisper size — and the asymmetry is
+ * the point: a class is "give me whatever serves this", which a machine may
+ * answer "nothing here does"; an id is "give me this one", which it may not, so
+ * an explicit id a backend cannot hold is still `unknown_subject` and still
+ * refuses the whole module. Foundry's module lists none today.
  */
 export function missingForFoundry(
   installedJobTypes: readonly string[],
   catalog: readonly CatalogRow[],
-): CrucibleMissingEntry[] {
+  capability: CapabilityRecord,
+): { missing: CrucibleMissingEntry[]; unmet: CrucibleUnmetClass[] } {
   const missing: CrucibleMissingEntry[] = [];
+  const unmet: CrucibleUnmetClass[] = [];
 
   for (const entry of FOUNDRY_MODULE.job_types) {
     if (installedJobTypes.includes(entry.type)) continue;
@@ -214,6 +275,47 @@ export function missingForFoundry(
       what: 'job-type',
       jobType: entry.type,
       narratorEngine: entry.narrator_engine === undefined ? null : entry.narrator_engine,
+    });
+  }
+
+  for (const need of FOUNDRY_MODULE.needs) {
+    const row = capability.classes.find((item) => item.capability === need.class);
+    if (row === undefined) {
+      unmet.push({
+        class: need.class,
+        /*
+         * NO FULL STOP, because every other reason on this type is a capability
+         * row's own `reason` and those are clauses rather than sentences — the
+         * words join several of them into one line, and one of them ending early
+         * would read as the line ending early.
+         */
+        reason: 'this engine\'s capability record does not mention it, so nothing there has '
+          + 'decided whether it can serve it',
+      });
+      continue;
+    }
+    if (!row.enabled) {
+      unmet.push({ class: need.class, reason: row.reason });
+      continue;
+    }
+    if (row.route === 'upstream' || row.selected.includes('/')) continue;
+    if (row.selected.length === 0) {
+      unmet.push({ class: need.class, reason: row.reason });
+      continue;
+    }
+    const subject = catalog.find(
+      (item) => item.id === row.selected && (item.kind === 'model' || item.kind === 'engine'),
+    );
+    if (subject !== undefined && subject.installed) continue;
+    missing.push({
+      what: 'class',
+      class: need.class,
+      id: row.selected,
+      kind: subject === undefined ? null : subject.kind,
+      name: subject === undefined ? null : subject.name,
+      jobType: subject === undefined ? null : subject.jobType,
+      expectedBytes: subject === undefined ? null : subject.expectedBytes,
+      inCatalog: subject !== undefined,
     });
   }
 
@@ -231,7 +333,7 @@ export function missingForFoundry(
     });
   }
 
-  return missing;
+  return { missing, unmet };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -317,18 +419,50 @@ async function runCoordination(server: string): Promise<CrucibleCoordinationStat
 
   let installedJobTypes: readonly string[];
   let catalog: readonly CatalogRow[];
+  let capability: CapabilityRecord;
   try {
     const client = clientFor(entry);
-    const [info, rows] = await Promise.all([client.info(), client.catalog()]);
-    installedJobTypes = info.capabilities.map((capability) => capability.jobType);
+    /*
+     * THREE READS, AND THE THIRD IS §5.3a's.
+     *
+     * `GET /v1/capability` is read here because the module names CLASSES and the
+     * engine's capability record is the one place a class becomes an id
+     * (PHASE9; PHASE15-HOST.md §5.3a). Without it there is no question to ask
+     * the catalog: "is the translate model installed" has a different answer on
+     * every machine, and the id is that machine's to name.
+     *
+     * IT IS `readCapability`, THE DISPATCHER'S OWN READER, and not a fourth
+     * `client.capability()` call written here. One reader of that route, one
+     * mapping of its record, one place a route rule could ever have lived —
+     * the dispatcher's header says why, and the placement path and this one
+     * must not be able to disagree about what a server selected.
+     *
+     * A capability read that fails is the same `unreachable` as the other two:
+     * a server that cannot answer one of these three is not answering.
+     */
+    const [info, rows, record] = await Promise.all([
+      client.info(),
+      client.catalog(),
+      readCapability(entry),
+    ]);
+    installedJobTypes = info.capabilities.map((item) => item.jobType);
     catalog = rows;
+    capability = record;
   } catch (err) {
     return report({ server, phase: 'unreachable', message: describeRead(err, server) });
   }
 
-  const missing = missingForFoundry(installedJobTypes, catalog);
+  const { missing, unmet } = missingForFoundry(installedJobTypes, catalog, capability);
   if (missing.length === 0) {
-    return report({ server, phase: 'stocked', checkedAt: new Date().toISOString() });
+    /*
+     * STOCKED STILL MEANS "NOTHING IS MISSING", and an engine with unmet classes
+     * and nothing to download is exactly that. There is no task that could make
+     * it serve `pages`, so posting one would be asking a machine to download its
+     * way out of being a different machine; the classes it does not serve travel
+     * on the state instead, and the row names them (§5.3a: *"the app shows 'not
+     * on this engine'"*).
+     */
+    return report({ server, phase: 'stocked', checkedAt: new Date().toISOString(), unmet });
   }
 
   if (remembered !== undefined) {
@@ -338,13 +472,14 @@ async function runCoordination(server: string): Promise<CrucibleCoordinationStat
     return report({ server, phase: 'refused', code: remembered.code, message: remembered.message });
   }
 
-  return prepare(server, missing);
+  return prepare(server, missing, unmet);
 }
 
 /** Post the module (or join the task already running) and follow it to the end. */
 async function prepare(
   server: string,
   missing: readonly CrucibleMissingEntry[],
+  unmet: readonly CrucibleUnmetClass[],
 ): Promise<CrucibleCoordinationState> {
   let attempts = 0;
 
@@ -360,7 +495,9 @@ async function prepare(
         attempts += 1;
         const holder = { fact: err.fact, who: err.who };
         const stopped = attempts >= SETTLE_POLL_ATTEMPTS;
-        const waiting = report({ server, phase: 'waiting', missing, holder, attempts, stopped });
+        const waiting = report({
+          server, phase: 'waiting', missing, unmet, holder, attempts, stopped,
+        });
         if (stopped) return waiting;
         await waitForSettle(server);
         continue;
@@ -392,14 +529,14 @@ async function prepare(
 
     const progress0: CrucibleModuleProgress = {
       server, taskId, state: 'running',
-      step: null, line: null, bytes: null, skipped: null, jobTypes: null, error: null,
+      step: null, line: null, bytes: null, skipped: null, jobTypes: null, error: null, unmet: null,
     };
-    report({ server, phase: 'preparing', missing, progress: progress0, followed });
+    report({ server, phase: 'preparing', missing, unmet, progress: progress0, followed });
 
     const last = await followModuleTask(server, taskId, (progress) => {
-      report({ server, phase: 'preparing', missing, progress, followed });
+      report({ server, phase: 'preparing', missing, unmet, progress, followed });
     });
-    return report({ server, phase: 'preparing', missing, progress: last, followed });
+    return report({ server, phase: 'preparing', missing, unmet, progress: last, followed });
   }
 }
 
@@ -460,6 +597,18 @@ function describeRead(err: unknown, server: string): string {
   if (err instanceof CrucibleAuthError) return `"${server}" refused this machine's token: ${err.message}`;
   if (err instanceof CrucibleVersionError) return `"${server}" speaks a different API version: ${err.message}`;
   if (err instanceof CrucibleRefused) return `"${server}" refused ${err.code}: ${err.message}`;
+  /*
+   * THE TWO THE CAPABILITY READ ADDED, each named rather than flattened into the
+   * sentence below. `capability_undecided` is a thing somebody can go and fix
+   * with one command, and a protocol error is a document defect on that machine
+   * — neither is "it did not answer", and neither is a fault of Foundry's.
+   */
+  if (err instanceof CrucibleCapabilityUndecided) {
+    return `"${server}" has not measured its card yet — run \`crucible capability --write\` there.`;
+  }
+  if (err instanceof CrucibleProtocolError) {
+    return `"${server}" answered with a document this build cannot read: ${err.detail}`;
+  }
   return err instanceof Error ? err.message : String(err);
 }
 
@@ -499,6 +648,20 @@ async function postFoundryModule(server: string): Promise<string> {
  * time, so the module we would have posted and the task already running are
  * competing for the same slot, and joining the stream of the one in progress is
  * strictly better than queueing a second (PHASE13 §3.3 has no queue for tasks).
+ *
+ * ── AND ONE READ AFTER THE STREAM, FOR `unmet` ─────────────────────────────
+ *
+ * crucible `docs/PHASE15-HOST.md` §5.3a puts the classes this engine does not
+ * serve on the TASK DOCUMENT (`TaskStatus.unmet`) and on no frame of its stream,
+ * so it cannot be taken off the terminal event — `done`'s data is an open record
+ * and the SDK types it as one. `GET /v1/tasks/{id}` once, after the last frame,
+ * is the whole cost, and it is the server's own answer rather than the
+ * prediction this app made from the same capability record a moment earlier.
+ *
+ * IT DOES NOT FAIL THE FOLLOW. A task that ran to `done` and then could not be
+ * re-read is a task that ran to `done`; turning that into a failure would report
+ * a successful install as broken because a laptop lid closed a second later.
+ * `unmet` stays null in that case, which is exactly what it means — nobody said.
  */
 async function followModuleTask(
   server: string,
@@ -515,6 +678,7 @@ async function followModuleTask(
     skipped: null,
     jobTypes: null,
     error: null,
+    unmet: null,
   };
   onProgress(last);
 
@@ -581,6 +745,24 @@ async function followModuleTask(
         break;
     }
     onProgress(last);
+  }
+
+  try {
+    const status = await clientFor(entry).task(taskId);
+    last = {
+      ...last,
+      unmet: status.unmet.map((need) => ({ class: need.class, reason: need.reason })),
+    };
+    onProgress(last);
+  } catch (err) {
+    /*
+     * SWALLOWED, AND `unmet` STAYS NULL. See the note above: the stream already
+     * said what happened to the work, and a re-read that did not land is a
+     * question nobody answered rather than a task that went wrong. Nothing is
+     * logged with the error's message in it, for this file's own rule about what
+     * an authenticated route may echo.
+     */
+    void err;
   }
   return last;
 }

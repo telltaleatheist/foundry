@@ -39,12 +39,11 @@
  * can be drawn while it waits and where a person can take it away.
  */
 import {
-  CrucibleAuthError,
   CrucibleBusy,
+  CrucibleCapabilityUndecided,
+  CrucibleProtocolError,
   CrucibleRefused,
-  CrucibleServerError,
   CrucibleUnreachable,
-  CrucibleVersionError,
   isServerSpecificRefusal,
 } from '@crucible/client';
 
@@ -1040,7 +1039,7 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
       ? { verdict: 'wait', reason: `"${slotName}" refused ${capability} work: ${err.serverMessage}` }
       : { verdict: 'refuse', reason: `"${slotName}" refused ${capability} work: ${err.serverMessage}` };
   }
-  if (err instanceof CapabilityUndecided) {
+  if (err instanceof CrucibleCapabilityUndecided) {
     /*
      * 503 `capability_undecided` — nothing has probed that card yet. ABSENT AND
      * "NOTHING FIT" ARE OPPOSITE NEWS and are rendered as opposites: this one
@@ -1050,6 +1049,29 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
      */
     return { verdict: 'wait', reason: `"${slotName}" has not measured its card yet — run \`crucible capability --write\` there` };
   }
+  if (err instanceof CrucibleProtocolError) {
+    /*
+     * THE SERVER ANSWERED AND THE DOCUMENT IS WRONG — which, on this path, is
+     * `capability_route_missing` or `capability_route_unknown` out of the SDK's
+     * own reader (crucible PHASE15-HOST.md §3.3; the two codes are in the
+     * detail, which is why the sentence carries it verbatim).
+     *
+     * REFUSED BY NAME, not waited on, and that is the behaviour this app had
+     * when it raised the two codes itself as `CrucibleRefused`: a half-routed
+     * capability document says nothing trustworthy about where a class runs, it
+     * will say the same thing on the next pass, and a `local` guessed into the
+     * gap is this app deciding — silently — whether an hour of somebody's book
+     * runs on a card they own or an account they are billed for. It names the
+     * server rather than the class for the same reason `any` steps past a
+     * server-specific refusal and stops at this one: the defect is THAT
+     * machine's document, and every class on it is equally unreadable.
+     */
+    return {
+      verdict: 'refuse',
+      reason: `"${slotName}" answered about ${capability} work with a document this build cannot `
+        + `read: ${err.detail}`,
+    };
+  }
   return {
     verdict: 'wait',
     reason: `"${slotName}" could not be asked about ${capability} work: `
@@ -1058,7 +1080,7 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /v1/capability — the one route on this wire that is still a fetch
+// GET /v1/capability — the last route on this wire to become the SDK's
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -1075,250 +1097,72 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
  */
 export type { CapabilityRecord, CapabilityRow } from '../shared/engine-settings';
 
-/** 503 `capability_undecided` — its own type, because it is its own news. */
-export class CapabilityUndecided extends Error {}
-
-/**
- * ── THE ONE ROUTE STILL CALLED BY HAND, AND THE TWO REASONS IT IS ──────────
- *
- * This used to serve four routes the vendored SDK had no method for, plus the
- * three settings routes electron/crucible-settings.ts called through it, under
- * a standing note to switch the moment the tarball carried them. 0.6.0 (packed
- * from crucible `762484f`) carries all six, and all six have switched: the
- * lease trio in {@link takeLease}, the settings trio in crucible-settings.ts.
- * The export went with them — {@link readCapability} is the only caller left.
- *
- * `GET /v1/capability` DID NOT SWITCH, and the two reasons are both about what
- * `client.capability()` cannot do rather than about preferring a fetch:
- *
- *   1. **It has no clock.** `CrucibleClientOptions` is url/token/clientName and
- *      `capability()` passes no `signal`, so `readCapability(entry, timeoutMs)`
- *      cannot be expressed through it. crucible-provider.ts's gate read passes
- *      `PROBE_TIMEOUT_MS` on every tooltip, and a Mac that is asleep must not
- *      put a network timeout behind one.
- *   2. **It refuses a pre-PHASE-15 document outright.** The SDK's reader takes
- *      `route` through `str()`, so a row without one is a
- *      `CrucibleProtocolError` and the whole record is unreadable. Measured on
- *      2026-09-14 against the WSL Crucible at 127.0.0.1:7100, which sends
- *      eleven rows and no `route` on any of them: `capability()` throws,
- *      `readCapability` answers. §3.3's document-level rule — *no row carries
- *      `route` → every class is local, a fact the document states* — is a
- *      TOLERANCE the SDK does not grant, and it is the state of every Crucible
- *      on this network today.
- *
- * **Switch it the moment `capability()` takes a signal and either grants that
- * tolerance or the servers are all past it** — whichever lands second. Until
- * then this stays, and it stays for the ERROR MAPPING as much as the fetch:
- * everything else on this path throws the SDK's error types and
- * `interpretFailure` switches on them, so a route called by hand that threw a
- * bare `Error` would be a 409 `model_leased` arriving as "could not be asked",
- * losing the one distinction that decides whether the row waits or fails. The
- * two headers are exactly the ones the SDK sends on every authenticated route.
+/*
+ * 503 `capability_undecided` USED TO BE A CLASS OF THIS APP'S. It is the SDK's
+ * `CrucibleCapabilityUndecided` now (0.6.0, crucible `e342fee`), raised by
+ * `capability()` itself, and the local declaration is gone rather than kept
+ * beside it: two types for one 503 is two things to catch, and the one that was
+ * never thrown is the one a later edit forgets.
  */
-async function crucibleRequest(
-  entry: CrucibleServerEntry,
-  route: string,
-  options: { method: string; body?: unknown; timeoutMs?: number } = { method: 'GET' },
-): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetch(`${entry.url}${route}`, {
-      method: options.method,
-      headers: {
-        Authorization: `Bearer ${entry.token}`,
-        'X-Crucible-Api': '1',
-        ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      },
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      /*
-       * NO TIMEOUT BY DEFAULT, and the placement path passes none. A dispatch is
-       * a person's press being answered and there is a row on screen wearing the
-       * word "placing"; cutting that off at three seconds would fail a job
-       * because a load was slow. The one caller that DOES pass one is the
-       * settings-side probe (`crucible-provider.ts`), which runs on every gate
-       * read: a Mac that is asleep must not put a network timeout behind a
-       * tooltip, so that path asks with a clock on it and reads a cut-off answer
-       * as `unknown`.
-       */
-      ...(options.timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(options.timeoutMs) }),
-    });
-  } catch (err) {
-    throw new CrucibleUnreachable(entry.url, err instanceof Error ? err.message : String(err), err);
-  }
-  if (response.status === 204) return null;
-  const text = await response.text().catch(() => '');
-  let parsed: unknown = null;
-  try {
-    parsed = text.length > 0 ? JSON.parse(text) : null;
-  } catch {
-    parsed = null;
-  }
-  if (response.ok) return parsed;
-  /*
-   * `{"error": {"code", "message", "details"?}}` is the documented envelope for
-   * every refusal on this wire (crucible docs/DESIGN.md §4). A body that is not
-   * one is not dressed up as a code: the excerpt is what there is to show, and a
-   * made-up code would be switched on by `interpretFailure` as though a server
-   * had said it.
-   */
-  const envelope = (parsed as { error?: { code?: unknown; message?: unknown; details?: unknown } } | null)?.error;
-  const code = typeof envelope?.code === 'string' ? envelope.code : 'unreadable_refusal';
-  const message = typeof envelope?.message === 'string' ? envelope.message : text.slice(0, 300);
-  const details = envelope?.details ?? null;
-  if (response.status === 401) throw new CrucibleAuthError(code, message);
-  if (response.status === 426) {
-    const served = typeof (parsed as { api_version?: unknown } | null)?.api_version === 'number'
-      ? (parsed as { api_version: number }).api_version
-      : null;
-    throw new CrucibleVersionError(code, message, served, 1);
-  }
-  if (response.status === 503 && code === 'capability_undecided') {
-    throw new CapabilityUndecided(message);
-  }
-  if (response.status >= 500) throw new CrucibleServerError(response.status, code, message);
-  if (response.status === 409 && code === 'server_busy') {
-    /*
-     * THE BUSY FIELDS ARE READ HERE BECAUSE `CrucibleBusy.busyLine` IS WHAT THE
-     * ROW SHOWS. Leaving this as a plain `CrucibleRefused` would mean a queue row
-     * saying "refused the request (409 server_busy)" where it could say "busy:
-     * bookforge, tts qwen3.5-9b 62% done". `holder` NULL MEANS THE CLIENT DID NOT
-     * SAY and is never filled in — the server refuses to invent a name there, for
-     * the reason a bench must never be confidently wrong about whose render is on
-     * the card, and the SDK renders it as "an unnamed client".
-     */
-    const busy = (details ?? {}) as Record<string, unknown>;
-    throw new CrucibleBusy(409, code, message, details, {
-      holder: typeof busy['holder'] === 'string' ? busy['holder'] : null,
-      jobId: typeof busy['job_id'] === 'string' ? busy['job_id'] : '',
-      jobType: typeof busy['type'] === 'string' ? busy['type'] : 'a job',
-      model: typeof busy['model'] === 'string' ? busy['model'] : null,
-      jobStatus: typeof busy['status'] === 'string' ? busy['status'] : 'running',
-      since: typeof busy['since'] === 'string' ? busy['since'] : '',
-      progress: typeof busy['progress'] === 'number' ? busy['progress'] : 0,
-      jobMessage: typeof busy['message'] === 'string' ? busy['message'] : null,
-    });
-  }
-  throw new CrucibleRefused(response.status, code, message, details);
-}
 
 /**
- * `GET /v1/capability` — see {@link crucibleRequest} for why this one route is
- * still a fetch when every other call on this wire is the SDK's.
+ * `GET /v1/capability` THROUGH THE SDK — and the two reasons it could not be,
+ * until this pack.
  *
- * EXPORTED FOR THE SETTINGS SIDE (`crucible-provider.ts`, Wave 61 package E),
- * which asks the same question for a different reason: not "may this job start"
- * but "does a Crucible on this machine own this class of weights", which is what
- * decides whether Foundry deletes its own copy of the page reader (SLOTS.md
- * §5b). ONE READER OF THIS ROUTE, because the shape of a capability record and
- * the mapping of its refusals onto the SDK's error types is exactly the kind of
- * thing that is written twice and then only fixed once.
+ * This route was the last one on this wire still called by hand. A private
+ * `crucibleRequest` fetch served it, under a standing note to switch the moment
+ * the tarball could answer both of these, and `@crucible/client` 0.6.0 re-packed
+ * from crucible `e342fee` answers both:
+ *
+ *   1. **It had no clock.** `CrucibleClientOptions` was url/token/clientName, so
+ *      `readCapability(entry, timeoutMs)` could not be expressed through it.
+ *      `timeoutMs` is now a CONSTRUCTION option, which is why {@link clientFor}
+ *      takes one and this function passes its own straight through — the gate
+ *      probe (`crucible-provider.ts`) still asks with `PROBE_TIMEOUT_MS` on it,
+ *      and a Mac that is asleep still must not put a network timeout behind a
+ *      tooltip.
+ *   2. **It refused a pre-PHASE-15 document outright.** The old reader took
+ *      `route` through `str()`, so a row without one was a
+ *      `CrucibleProtocolError` and the whole record was unreadable — measured
+ *      against the WSL Crucible at 127.0.0.1:7100, which sends eleven rows and
+ *      no `route` on any of them. 0.6.0 reads the VINTAGE ONCE FOR THE WHOLE
+ *      DOCUMENT, exactly as §3.3's last bullet states it: no row carries
+ *      `route` → the server predates phase 15 and every class on it IS local;
+ *      some rows carry it and one does not → `capability_route_missing`, naming
+ *      the row; a value that is neither word → `capability_route_unknown`. The
+ *      document-level rule this app used to keep is now the SDK's entire, so
+ *      Foundry's copy of it is GONE rather than kept beside it (R1).
+ *
+ * WHAT IS LEFT HERE IS THE MIRROR, and it stays on purpose. `CapabilityRow` and
+ * `CapabilityRecord` live in shared/engine-settings.ts because the setup
+ * wizard's routes step draws a row's `reason` and a RENDERER cannot import from
+ * `electron/` — nor should a renderer bundle pull a main-process SDK in to read
+ * two numbers and a word. So this is the one place the SDK's record is copied
+ * into the app's, field for field, and the copy is a rename of nothing: every
+ * field means what the SDK's means. `desktopAllowanceBytes` is deliberately not
+ * carried, because nothing in this app draws it.
+ *
+ * EXPORTED FOR THE SETTINGS SIDE (`crucible-provider.ts`, Wave 61 package E) and
+ * for coordination (`crucible-coordinate.ts`, which resolves the module's
+ * CLASSES through it — crucible PHASE15-HOST.md §5.3a). ONE READER OF THIS
+ * ROUTE, because the shape of a capability record is exactly the kind of thing
+ * that is written twice and then only fixed once.
  */
 export async function readCapability(
   entry: CrucibleServerEntry,
   timeoutMs?: number,
 ): Promise<CapabilityRecord> {
-  const body = await crucibleRequest(entry, '/v1/capability', { method: 'GET', timeoutMs });
-  if (typeof body !== 'object' || body === null) {
-    throw new CrucibleRefused(200, 'capability_unreadable', 'the capability record was not an object', null);
-  }
-  const record = body as Record<string, unknown>;
-  const rows = Array.isArray(record['classes']) ? record['classes'] : [];
-
-  /*
-   * ── THE ROUTE RULE IS ABOUT THE WHOLE DOCUMENT, AND IS READ FIRST ─────────
-   *
-   * PHASE15 §3.3, pinned with both apps (crucible eb59f7b): a document in which
-   * NO row carries `route` is a PRE-PHASE-15 server and every class on it is
-   * local — a fact it states by its own version, not a hole this app fills. A
-   * document in which SOME rows carry it and one does not is a DEFECT, refused by
-   * name, because the absence there is not a version statement: it is one class
-   * whose route nobody can know, on a server that plainly knows about routes. A
-   * `local` guessed into that gap is this app deciding, silently, whether an hour
-   * of somebody's book runs on a card they own or on an account they are billed
-   * for.
-   *
-   * SO THE PASS IS TAKEN BEFORE ANY ROW IS BUILT. One question about the
-   * document, then the rows; the alternative — deciding per row and discovering
-   * the inconsistency halfway — would refuse some documents and not others
-   * depending on which class came first in a list nothing orders.
-   *
-   * THE SDK IS STRICTER AND THAT IS WHY THIS RULE IS STILL HERE. 0.6.0's own
-   * reader (crucible `762484f`) takes `route` through its `str()` helper and
-   * `oneOf(…, ['local','upstream'])`, so it enforces two of these three arms
-   * already — a partial document and an unknown value are both a
-   * `CrucibleProtocolError` from it, under names the contract owns. What it
-   * does NOT grant is the FIRST arm, the pre-PHASE-15 tolerance, and a document
-   * with no `route` anywhere is the state of every Crucible on this network
-   * today. The day that stops being true, this whole pass is deletable and the
-   * route rule moves to the SDK entire.
-   *
-   * REFUSED AS `CrucibleRefused`, WHICH IS WHAT MAKES IT BEHAVE. That is the type
-   * every other refusal on this path throws, so `interpretFailure` gives it the
-   * server-specific test (neither code is one, so a placement REFUSES by name
-   * rather than walking to the next machine and reporting the third one's), and
-   * `crucible-provider`'s probe records it as a server that did not answer —
-   * `unknown`, which darks the tile and authorises no deletion. A 200 is used for
-   * the status because the server's HTTP answer WAS fine; what is wrong is the
-   * document, and inventing a 4xx would be attributing a refusal to a server that
-   * did not make one.
-   */
-  const declared = rows.filter(
-    (raw) => typeof raw === 'object' && raw !== null && 'route' in (raw as Record<string, unknown>),
-  );
-  if (declared.length > 0) {
-    for (const raw of rows) {
-      if (typeof raw !== 'object' || raw === null) continue;
-      const row = raw as Record<string, unknown>;
-      const named = typeof row['capability'] === 'string' ? row['capability'] : 'an unnamed class';
-      if (!('route' in row)) {
-        throw new CrucibleRefused(
-          200,
-          'capability_route_missing',
-          `its capability record says where some classes run and not "${named}". Nothing here can `
-          + 'tell whether that class is on its card or on an upstream account, and guessing is not '
-          + 'this app\'s to do.',
-          null,
-        );
-      }
-      if (row['route'] !== 'local' && row['route'] !== 'upstream') {
-        throw new CrucibleRefused(
-          200,
-          'capability_route_unknown',
-          `it says "${named}" runs by a route this build has never heard of `
-          + `(${JSON.stringify(row['route'])}) — a newer Crucible than this Foundry, most likely.`,
-          null,
-        );
-      }
-    }
-  }
-
+  const record = await clientFor(entry, { timeoutMs }).capability();
   return {
-    backendKind: typeof record['backend_kind'] === 'string' ? record['backend_kind'] : '',
-    totalBytes: typeof record['total_bytes'] === 'number' ? record['total_bytes'] : 0,
-    classes: rows.flatMap((raw): CapabilityRow[] => {
-      if (typeof raw !== 'object' || raw === null) return [];
-      const row = raw as Record<string, unknown>;
-      if (typeof row['capability'] !== 'string') return [];
-      return [{
-        capability: row['capability'],
-        /*
-         * `enabled` IS ONLY TRUE WHEN IT IS TRUE. A row whose flag is missing or
-         * is not a boolean reads as disabled, which is the conservative
-         * direction: the cost of getting it wrong that way is one wasted hop to
-         * the next server, and the cost of getting it wrong the other way is an
-         * hour of somebody's book spent against a class a machine cannot serve.
-         */
-        enabled: row['enabled'] === true,
-        selected: typeof row['selected'] === 'string' ? row['selected'] : '',
-        reason: typeof row['reason'] === 'string' ? row['reason'] : '',
-        shortfallBytes: typeof row['shortfall_bytes'] === 'number' ? row['shortfall_bytes'] : 0,
-        /*
-         * BY HERE THE DOCUMENT HAS ALREADY BEEN JUDGED — the pass above refused
-         * anything partial or unknown — so absence can only be the pre-PHASE15
-         * document, whose every class IS local. One word, one meaning.
-         */
-        route: row['route'] === 'upstream' ? 'upstream' : 'local',
-      }];
-    }),
+    backendKind: record.backendKind,
+    totalBytes: record.totalBytes,
+    classes: record.classes.map((row): CapabilityRow => ({
+      capability: row.capability,
+      enabled: row.enabled,
+      selected: row.selected,
+      reason: row.reason,
+      shortfallBytes: row.shortfallBytes,
+      route: row.route,
+    })),
   };
 }
