@@ -6,9 +6,15 @@
  *
  * *"foundry should work if they have no idea what theyre doing and they just
  * want to convert PDFs to EPUB. but if they do know what theyre doing and they
- * want access to speed, they can use crucible."* So a person who never opens
- * this card has one slot — their own GPU — and never meets a picker anywhere in
- * the app. Everything below is the opt-in half.
+ * want access to speed, they can use crucible."* It was the opt-in half of the
+ * app, and a person who never opened it still had one slot — their own GPU.
+ *
+ * THAT IS NO LONGER TRUE AND THE CARD SAYS SO. Owen, Wave 66: *"everything goes
+ * through a crucible server now, including local… there should be no local gpu
+ * listed in the queue"*, and 2026-09-15: *"if theres no connected crucible server
+ * then tiles should be disabled."* A person who never opens this card has NO GPU
+ * slot, and the empty state below tells them what cannot run rather than
+ * promising it will run here.
  *
  * ── THE ORDER IS THE SETTING, which is why a drag is a save ────────────────
  *

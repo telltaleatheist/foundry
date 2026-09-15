@@ -1,5 +1,50 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
+**TWELVE DOORS AND ONE PUSH REMOVED ON 2026-09-15 — FOUNDRY KEEPS NO MODEL.
+COUNTED BY SCRIPT OVER `app/electron/ipc.ts`: 133 `ipcMain.handle` call sites,
+133 distinct channel names, zero `ipcMain.on`.** Nothing was added, nothing was
+renamed, and no surviving shape narrowed. The figure was 145 before this change
+and 145 − 12 = 133, which is the whole of the arithmetic.
+
+**Owen, verbatim:** *"we dont have any local models. crucible handles all model
+orchestration. if theres no connected crucible server then tiles should be
+disabled. crucible is a service that foundry installs locally and connects to."*
+And, sharpening it: *"crucible should handle model orchestration right? so
+crucible is where which models to use is decided. but foundry does pass through
+settings to crucible."*
+
+**REMOVED — the `ollama:` family, entire (six doors and one push).**
+`ollama:facts`, `ollama:choices`, `ollama:install`, `ollama:install-cancel`,
+`ollama:pull`, `ollama:pull-cancel`, and the `ollama:progress` push. Foundry
+pulls no models, so it has no standing to install the thing that pulls them; the
+first-run wizard step these served is deleted with them. Ollama is still PROBED
+in main, by one caller that is not a door — `machine-models.ts`, the "Models on
+this machine" inventory (docs/SLOTS.md §5b), which counts weights already on the
+disk and says nothing about where work runs.
+
+**REMOVED — the `llm:` family, entire (six doors).** `llm:defaults`,
+`llm:stored`, `llm:set-model`, `llm:set-clean-model`, `llm:ollama-url`,
+`llm:set-ollama-url`. The model a request names is the ENGINE's capability
+record's `selected` (crucible docs/PHASE15-HOST.md §3.3), applied over the
+request at the spawn by the placement (`doorArgs`, electron/job-queue.ts) — so a
+model chosen in Foundry was a choice that was then ignored, which is the defect
+rather than the feature. `AppSettings.defaultLlmModel`, `cleanTextModel` and
+`ollamaUrl` went with them; the engine's own `upstreams.ollama.url`
+(PHASE15-HOST.md §3.2) is the surviving owner of that last fact.
+
+**THE PASS-THROUGH IS UNTOUCHED, and it is the other half of Owen's ruling.**
+`crucible:engine-settings`, `crucible:engine-settings-save` and
+`crucible:engine-capability` write the ENGINE's own settings through
+`PUT /v1/settings` — the route per llm class (`local` or `<upstream>/<model>`)
+and the upstream keys. A route row legitimately contains a model NAME chosen by
+a person; that is Foundry drawing the engine's store, not keeping one. No door,
+shape or field of that family changed.
+
+**FOR BOOKFORGE:** every name above is gone from the preload bridge and from
+`FoundryApi` (`app/shared/api.ts`), whose `ollama` and `llm` namespaces are
+deleted outright. A vendored bridge entry for any of the twelve should be
+removed; there is no successor to point it at.
+
 **THREE DOORS ON 2026-09-15 — WAVE 64 POINT 3, THE UNINSTALL DOOR. COUNTED BY
 SCRIPT OVER `app/electron/ipc.ts`: 145 `ipcMain.handle` call sites, 145 distinct
 channel names, zero `ipcMain.on`.** Nothing was removed, nothing was renamed, and
@@ -902,14 +947,14 @@ reopening asks again.
 
 ## Doors the renderer knocks on
 
-All 145 are `ipcMain.handle` — there is not one `ipcMain.on` in the app, on
+All 133 are `ipcMain.handle` — there is not one `ipcMain.on` in the app, on
 purpose: a renderer that cannot tell whether main heard it is a renderer that
 cannot report a failure. They are registered in one function, `registerIpc`
 (`app/electron/ipc.ts`), which `mountFoundry` calls.
 
 | Channel | What it does |
 | --- | --- |
-| `acts:gates` | May each of the five acts run on THIS MACHINE, and the sentence either way — translate, simplify, analysis, clean, read. What is installed, what fits, what is serving. Not the stage gate: whether an act applies where somebody is standing is `shared/stages.ts`, in the renderer, and a tile needs both. |
+| `acts:gates` | Is anything SERVING each of the five acts, and the sentence either way — translate, simplify, analysis, clean, read. An enabled engine whose capability row says so, a connected cloud provider, or (for `read` alone) the page reader on this disk. It measured this machine — the card, the catalogue floor, Ollama's library — until 2026-09-15, and does not any more: Foundry runs no model. Not the stage gate: whether an act applies where somebody is standing is `shared/stages.ts`, in the renderer, and a tile needs both. |
 | `analysis:read-categories` | The analysis categories this user wrote themselves, from `app-settings.json`. App-level: they are the reader's, not one project's. |
 | `analysis:write-categories` | Replace that list, and answer with it as stored — ids re-derived from names, fields capped, collisions with a built-in or with each other dropped. |
 | `app:hosted` | Whether another app mounted Foundry, so the renderer can drop the controls the host already answers. |
@@ -968,12 +1013,6 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `library:choose` | Native directory picker for the library. Refuses while hosted. |
 | `library:dir` | The effective library directory — the host's, when hosted. |
 | `library:set` | Move the library. Refuses while hosted. |
-| `llm:defaults` | Takes a MODEL CLASS and answers what a dialog for that act should open with, resolved against the machine now: the stored tag when it can still serve the class, else the largest installed model that can (`openingModelFor`). Was a bare read of the stored tags until 2026-09-14, which let a tile light on a 27B while the job ran a stored 9B. |
-| `llm:stored` | The stored tags themselves, for the Settings card that EDITS them. Deliberately separate from `llm:defaults`: an editor seeded from a resolved answer would write the resolution back as the person's choice on the first Save. |
-| `llm:ollama-url` | Where Ollama is. The one server address this app still keeps by itself. |
-| `llm:set-ollama-url` | Write it. Answers with what was STORED, never with what was sent. |
-| `llm:set-clean-model` | Set the Clean text model. Answers with the tag AS STORED, same rule. |
-| `llm:set-model` | Set the default model. Answers with the tag AS STORED — a name main clamped comes back changed. |
 | `meta:mint-host` | The HOST's record of who this book is (`FoundryHost.mintMetaFor`), or null — the hosted mint modal's seed. Null standalone; a host that throws REJECTS in its own words so the form can say so. |
 | `meta:mint-read` | The project's mint metadata block (shared/mint-meta.ts), or null for a project that has never confirmed one. |
 | `meta:mint-stamp` | The whole block onto ONE finished export, in place — the metadata tile's Save over an EPUB. Tray-gated like the flat writer. |
@@ -984,18 +1023,12 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `meta:write-pdf` | Write it to the project's working copy, and record the metadata step. |
 | `models:inventory` | Every store of weights on this machine, with sizes — Foundry's own downloads, Ollama's list, a local Crucible's residency (docs/SLOTS.md §5b). Measured, never cached. Carries `pageReader`, §5b's offer: what has been or would be removed, the bytes, and the remote server page reading would then need. |
 | `models:remove-page-reader` | Delete the page reader Foundry downloaded — that directory and nothing else — stopping the server first if this app started it, and answer with the gigabytes freed. The one door in this app that deletes model files. A refusal is a result with a sentence, not a rejection. |
-| `ollama:choices` | This machine, ollama's state, the Qwen lineup with one row badged, and today's model — the setup wizard's model step in one answer. |
 | `page-reader:install` | Fetch whatever the local page reader is missing — a llama.cpp build for this machine and the two dots.ocr GGUF files — verify each against its published sha256, and unpack. Streams over `page-reader:progress`. A failure is a result, not a rejection. |
 | `page-reader:install-cancel` | Stop that. What has already been fetched is KEPT: the next attempt resumes from it. |
 | `page-reader:set-keep-warm` | Minutes an app-started page reader outlives a drained queue, clamped; answers with the value as stored. The read is on `page-reader:state`. |
 | `page-reader:start` | Start it now, or adopt whatever is already answering on the port. Pre-warming, so the first book of an evening does not pay the load. Rejects with the server's own log tail. |
 | `page-reader:state` | EVERYTHING THE SETTINGS ROW AND THE SETUP STEP NEED, IN ONE READ: supported on this platform, installed, which llama.cpp release and accelerator, both model files by name and size, what a download would cost right now, the server's status, and the keep-warm minutes. One call because every one of those is measured off the same directory at the same moment. |
 | `page-reader:stop` | Stop it, if this app started it. A server it merely found is left alone and says so. |
-| `ollama:facts` | Is ollama running, and is its binary here at all. Two different questions; never cached. |
-| `ollama:install` | Fetch ollama's own installer and hand it to the OS. `ok` means it was OPENED, never that ollama is installed. |
-| `ollama:install-cancel` | Abort that download. |
-| `ollama:pull` | `POST /api/pull`, streamed. A failure is a result, not a rejection. Never routed to a queue. |
-| `ollama:pull-cancel` | Abort that pull. |
 | `projects:delete` | Delete a project directory, for real. |
 | `projects:describe` | What that project delete would destroy, in words and bytes. |
 | `projects:list` | Home's listing: one row per book, with what is in it. |
@@ -1065,9 +1098,10 @@ push, payload `{projectDir, done, total, file}`.
 
 ## Pushes main makes at the renderer
 
-Nineteen, and every one of them is a state change the renderer holds a mirror of
-or a question it has to answer. Thirteen go to every window through `broadcast`
+Eighteen, and every one of them is a state change the renderer holds a mirror of
+or a question it has to answer. Twelve go to every window through `broadcast`
 (`app/electron/window.ts`); the other six are sent to one window's `webContents`.
+(It was nineteen until `ollama:progress` went with the model pull on 2026-09-15.)
 
 (The head of this section said "Seventeen … Eleven … six", which does not add up
 and did not match the table below it before `crucible:coordination-changed` was
@@ -1077,7 +1111,7 @@ quoted as a gate is a measurement or it is decoration.)
 
 | Channel | What it says |
 | --- | --- |
-| `acts:gates-changed` | Something that decides a tile moved — a model pulled, the page reader installed or removed, the language server repointed. No payload: the renderer asks again on `acts:gates`, so the shape has one composer and no pushed copy to go stale. |
+| `acts:gates-changed` | Something that decides a tile moved — a server registered, enabled, renamed or removed, or the page reader installed or removed. (It also fired on a model pull until 2026-09-15, when Foundry stopped pulling models.) No payload: the renderer asks again on `acts:gates`, so the shape has one composer and no pushed copy to go stale. |
 | `models:changed` | The weights on this disk moved without this window doing it — docs/SLOTS.md §5b's automatic removal, which fires from `crucible:save` and once at startup. No payload, for `acts:gates-changed`'s reason: the inventory costs a directory walk and has one composer. |
 | `app:navigate` | Go to a route — File→Settings, and nothing else today. |
 | `capture:intake-progress` | One dropped photograph copied, hashed and decoded — one push per path asked for, plus a closing one. |
@@ -1089,8 +1123,7 @@ quoted as a gate is a measurement or it is decoration.)
 | `host-ops:offers-changed` | The host revised what it OFFERS — the whole `{operations, nodeActions}` answer again, replacing what `host-ops:offers` said. |
 | `host-ops:status-changed` | The host pushed what it is doing at all — the whole value, every time. Null clears the chrome's chip. |
 | `menu:action` | A menu item the renderer has to carry out, because it acts on a tab. |
-| `ollama:progress` | The ollama installer download AND a model pull, on one channel — the wizard is the only thing that draws either, and one shape means one bar. |
-| `page-reader:progress` | One file of the page reader's install, phase by phase — the llama.cpp archive, the CUDA runtime beside it on Windows, and each GGUF. Same five-phase shape as `ollama:progress`, deliberately: the wizard draws both and one shape means one bar. |
+| `page-reader:progress` | One file of the page reader's install, phase by phase — the llama.cpp archive, the CUDA runtime beside it on Windows, and each GGUF. It was cut to the same five-phase shape as `ollama:progress`, deliberately, so the wizard could draw both with one bar; it is the half that survived, and the shape is kept as it is. |
 | `page-reader:status-changed` | The local page reader's status changed — coming up, serving, stopped, or failed with its own log tail on it. |
 | `project:open` | Stand in this project — the hosted deep link, sent once as the window loads. |
 | `projects:changed` | Something in the library moved. No payload: the renderer asks for the list. |

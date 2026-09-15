@@ -5361,3 +5361,136 @@ which invited the live call. **The rule taken from it: verification against a
 machine anyone else may be using gets a FIXTURE — a hand-written value, an
 unroutable address — never a real registry path; and a branch reported
 unexercised beats a live call.**
+
+### Wave 68 — Foundry keeps no models: the local text path is deleted (Owen, 2026-09-15) — LANDED
+
+**Owen, verbatim:** *"we dont have any local models. crucible handles all model
+orchestration. if theres no connected crucible server then tiles should be
+disabled. crucible is a service that foundry installs locally and connects to.
+if windows is an orchestrator, it means there's a WSL engine installed and
+windows crucible acts as a pass-through to the WSL engine."* And, on the half
+that STAYS: *"crucible should handle model orchestration right? so crucible is
+where which models to use is decided. but foundry does pass through settings to
+crucible."*
+
+**Checked with BookForge first, on Owen's instruction** (*"bookforge vendors
+foundry and i assume bookforge has already worked this logic out, so make sure
+you discuss it with them"*). Their answer, from their code: nothing LIVE reads
+any door or settings key deleted here. `narration-clean-text.ts` names
+`cleanTextModel` / `ollamaUrl` / `llm:defaults`, but only inside a branch that
+became unreachable when they deleted their own local venue, and they are
+removing that branch themselves. Their docs of record for this shape:
+`CRUCIBLE_ROLLOUT_PLAN.md` (the cross-app queue), `LEGACY-REMOVAL.md` (the
+deletion order and the carry-the-facts rule), `SETUP-AND-SETTINGS-AROUND-CRUCIBLE.md`.
+
+**Deleted:** `model-lineup-local.json` (Foundry's own rows and its local floor);
+`llm-catalog.ts`'s local merge with `eligibleFor` / `fitsOn` / `heldBy` /
+`lineupFor` / `suggestedTag` / `openingModelFor` / `OVERHEAD_GB`;
+`act-gates.ts`'s entire machine reasoning; `setup.ts`'s `llmChoices` and
+`translateFloorMiss`; `ollama.ts`'s installer and pull; the model and Ollama
+fields in all four dialogs; `llm-card.component.ts` (reduced to a new
+`setup-card` carrying the one surviving control) and `llm-defaults.ts`; the
+wizard's whole Ollama step; `AppSettings.defaultLlmModel` / `cleanTextModel` /
+`ollamaUrl`. **Twelve doors and one push go, 145 → 133**, measured by script.
+
+**KEPT, and this is the other half of Owen's ruling:** the engine-settings
+pass-through is untouched, not narrowed and not renamed —
+`crucible-settings.ts`, the `crucible:engine-settings*` doors,
+`shared/engine-settings.ts`, the "Where the text work runs" card, the shared
+upstream child and the wizard's `routes` step. A route row naming
+`anthropic/claude-sonnet-5` IS a person choosing a model; it lives in the
+ENGINE's `/v1/settings`, which Foundry draws and writes through. The test
+applied throughout: **does the value live in Foundry's `app-settings.json` or in
+the engine's `/v1/settings`?** Foundry's own store went; the window onto the
+engine's store stayed.
+
+**HELD, deliberately:** `page-reader.ts` and its card, untouched to the byte —
+it is the only path to an EPUB on a machine that cannot install WSL and the
+agreed gate (a Windows engine reading a page) has not been met. `readGate`
+needed no stripping: none of its clauses ever asked about the card, the floor,
+Ollama or system memory. Also held: the root `src/` engine's own doors, and
+`cloud-providers.ts` / the Cloud card (PHASE15 §5.3 moves keys into the engine,
+which is its own change).
+
+**THE SENTENCE SWEEP, which is BookForge's lesson and not a tidy-up.** Theirs:
+*"we deleted a switch and seven user-facing refusals kept telling operators to
+flip it… 'install Ollama' surviving in a string is the same bug."* Ten sentences
+rewritten and a page of wizard prose deleted. The dark text tile's four
+competing sentences collapse to one true one: *"No connected GPU engine serves
+this act. Add a GPU engine in Settings › Servers, and its 'Where the text work
+runs' card will send this class to Anthropic, OpenAI or an Ollama server for
+you."* The welcome step now NAMES its steps rather than counting them, so the
+count cannot drift again. `"Settings › Language model"` appears nowhere in the
+source.
+
+#### Facts carried out of the deleted code — recorded HERE because they lived nowhere else
+
+BookForge's rule, learned at the cost of a 7x regression: *"A deletion that
+loses the reason a number is what it is costs more than the code it removed."*
+Nine facts had no other home.
+
+1. **MLX vs GGUF on the cleanup, measured 2026-09-08.** `qwen3.5:9b-bf16` is a
+   GGUF, so Ollama runs it on llama.cpp, which pins that architecture to a
+   SINGLE slot (*"model architecture does not currently support parallel
+   requests"*, qwen35). The cleanup sends blocks in parallel, so one slot is the
+   whole cost: **32 blocks/min on the M1 Ultra against 61 for
+   `qwen3.5:9b-mlx-bf16`** — the same weights at the same precision on Ollama's
+   MLX runner, which batches. Owen picked the 16-bit row that day and got the
+   slow half of it.
+2. **The `foundry/` id prefix rule.** Every id in the deleted file was prefixed
+   so a row of ours could never collide with a Crucible manifest id: Crucible's
+   `qwen3.5-9b` names the bf16 tag for cleanup, and the local file's
+   `foundry/qwen3.5-9b` named the ordinary `qwen3.5:9b` for prose. **Two
+   different models, one obvious name**, and the prefix is what kept them apart.
+   Live hazard if Foundry ever adds rows again.
+3. **Why a hand-edited generated file is never the answer.** The local rows were
+   kept in their own file rather than merged into the vendored one because *"a
+   hand-edited copy of a generated file is a copy that silently loses the hand
+   edits on the next re-vendor."* It is also why the byte-for-byte keeper works.
+4. **The `needsGB.value` sort, with its worked counter-example.** Sorting by
+   DOWNLOAD size would put the bf16 9B (19.3 GB down, 20.8 resident) below the
+   4-bit 27B (17.7 down, 19.2 resident) while the fit test ordered them the
+   other way — and "the largest that fits" could then pick a row a LARGER
+   machine is not offered.
+5. **`openingModelFor`'s defect story.** A 24 GB card runs setup, pulls the 9B,
+   the tag is stored; later the person pulls the 27B; the Translate tile lights
+   because a model at or above the floor is installed — **and the job still runs
+   the 9B, because that is what the tag says.** The same shape recurs the moment
+   any surface stores a model name again.
+6. **Two facts about Ollama's pull API.** It reports `completed`/`total` PER
+   LAYER and the totals arrive as each layer starts, so summing them gives a
+   denominator that grows and a bar that goes backwards. And: *"Eighty-one
+   gigabytes on a domestic line is most of a day and is not a failure. Five
+   minutes with nothing on the socket is"* — the deadline was on SILENCE,
+   re-armed per line.
+7. **The Ollama installer URLs and their verification date.**
+   `ollama.com/download/OllamaSetup.exe` and `.../Ollama.dmg` are the hrefs
+   behind the site's own buttons — stable aliases that redirect to the current
+   release, which is why they were never version-pinned. Verified 2026-08-26.
+8. **The three pool words**, which any future memory sentence should reuse:
+   `vram` → "video memory", `unified` → "unified memory a model can reach",
+   `ram` → "system RAM". Three pools, three sentences.
+9. **The 8 GB arithmetic**, stated as a consequence rather than a bug: an 8 GB
+   card was offered `qwen3.5:4b`, not `qwen3.5:9b`, because 6.6 + 1.5 is 8.1 and
+   8.1 does not fit in 8.0.
+
+#### Two consequences named rather than hidden
+
+- **One fact that had two owners, now one.** `AppSettings.ollamaUrl` and the
+  engine's `upstreams.ollama.url` (PHASE15 §3.2) were the same address stored
+  twice; Foundry's copy is deleted on BookForge's clearance that nothing reads
+  it. **Residue:** the "Models on this machine" inventory now probes
+  `DEFAULT_OLLAMA_ENDPOINT` rather than a configured address, so an Ollama on a
+  moved port is invisible to the disk count. A smaller wrong answer than a stale
+  address, documented at the call site.
+- **Unexercised and named:** every arm of `act-gates` (lit, dark, cloud,
+  hosted), `readGate`, and the reworded provider sentences. They sit behind a
+  live registry, and a live registry call loads a model on somebody's card —
+  the mistake this wave's sibling already made once. Reported unexercised rather
+  than proved at that price.
+
+**Still in-app and still meeting a model, named so it is not discovered later:**
+the analysis NLI worker (a prebuilt Python running on the card inside the
+analysis act). By Owen's ruling it belongs in Crucible as its own class. It is
+BookForge's `B7` one repo over — they hold the same shape for `align-longform`
+pending a ruling — and it is a follow-on, not a gap.

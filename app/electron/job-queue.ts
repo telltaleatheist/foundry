@@ -2778,12 +2778,14 @@ function languageOf(request: TranslateRequest | SimplifyRequest): string {
  *
  * ── Where each value comes from ────────────────────────────────────────────
  *
- * The placement wins where it says anything, and null means "the request's own"
- * — which is the LOCAL slot's whole answer. `request.ollama` is the Ollama URL
- * the dialog showed and `request.model` is the tag the person could edit; both
- * are per-run choices this file must not second-guess. A Crucible placement
- * carries the server's `<url>/openai` and the model its own capability record
- * selected, because neither of those is anybody's preference (docs/SLOTS.md §5).
+ * The placement wins where it says anything, and null means "the request's own".
+ * A Crucible placement carries the server's `<url>/openai` and the model its own
+ * capability record selected, and that is now the ONLY thing that ever reaches a
+ * real run: `request.model` and `request.ollama` are the declared defaults every
+ * dialog fills in, and with no engine connected a text act is refused rather than
+ * placed (Owen, 2026-09-15: *"if theres no connected crucible server then tiles
+ * should be disabled"*). The null branch survives for the DRY RUN, which has no
+ * server to ask — see `argsFor`.
  *
  * ── Why the model can be missing ────────────────────────────────────────────
  *
@@ -2791,9 +2793,9 @@ function languageOf(request: TranslateRequest | SimplifyRequest): string {
  * resident model, and an empty `--model` tells the engine to ask the server, use
  * what it is serving and record that name (src/translate/vllm.ts). Passing
  * `--model ""` would be this file inventing an empty name; leaving the flag off
- * says what is meant. On the Ollama door it is never blank — the dialogs fall
- * back to a declared default, because an Ollama holds a library and the engine
- * refuses a run that does not say which model it means.
+ * says what is meant. On the Ollama door it is never blank — the request carries
+ * a declared default, because an Ollama holds a library and the engine refuses a
+ * run that does not say which model it means.
  *
  * ── And `--server` only when it is not the engine's default ─────────────────
  *

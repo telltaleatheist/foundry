@@ -95,6 +95,18 @@ screen.
 
 ## 4. Ollama
 
+> **SUPERSEDED 2026-09-15 — FOUNDRY KEEPS NO MODEL.** Owen: *"we dont have any
+> local models. crucible handles all model orchestration. if theres no connected
+> crucible server then tiles should be disabled. crucible is a service that
+> foundry installs locally and connects to."*
+>
+> **This whole section is history.** The wizard step, the installer handoff and
+> the model pull are deleted, with the doors behind them (`ollama:install`,
+> `ollama:install-cancel`, `ollama:pull`, `ollama:pull-cancel`, `ollama:facts`,
+> `ollama:choices` and the `ollama:progress` push). `probeOllama` survives with
+> ONE caller — the "Models on this machine" disk inventory (§5b), which counts
+> weights already on this disk and says nothing about where work runs.
+
 `app/electron/ollama.ts`. **Foundry does not manage ollama and this does not
 change that** — nothing here starts it, stops it, or configures it. What is new
 is first-run help.
@@ -139,6 +151,23 @@ row; an ollama pull is neither, it happens in ollama's process, and it finishes
 whether or not this app is looking.
 
 ## 5. The model lineup
+
+> **SUPERSEDED 2026-09-15 — FOUNDRY KEEPS NO MODEL.** Owen: *"we dont have any
+> local models. crucible handles all model orchestration. if theres no connected
+> crucible server then tiles should be disabled. crucible is a service that
+> foundry installs locally and connects to."*
+>
+> **Half of this section is history.** `app/shared/model-lineup-local.json` is
+> DELETED: it existed to give the wizard smaller Ollama tags to offer, and there
+> is no wizard step to offer them to. `app/shared/model-lineup.json` — Crucible's
+> own vendored file — STAYS, with two readers: `pagesForm()` (the page reader's
+> GGUF pair, the one weights Foundry still fetches itself) and
+> `LINEUP_PROVENANCE` (the "Catalog:" line on the Models card). The `vendoredWith`
+> block that lived in the deleted file is now the `VENDORED_WITH` const in
+> `app/electron/llm-catalog.ts`, and is still updated by hand at each re-vendor.
+> `eligibleFor`, `fitsOn`, `heldBy`, `heldSet`, `lineupFor`, `suggestedTag`,
+> `openingModelFor`, `OVERHEAD_GB` and `LineupRow.crucible` are all deleted with
+> their readers.
 
 **THE TABLE IS TWO VENDORED FILES SINCE WAVE 61 PACKAGE E**, and neither is a
 const. `app/electron/llm-catalog.ts` reads both and merges them.
@@ -344,6 +373,20 @@ telling somebody which of seven steps did not finish is the difference between
 resuming and starting again.
 
 ## 6. The default model setting
+
+> **SUPERSEDED 2026-09-15 — FOUNDRY KEEPS NO MODEL.** Owen: *"we dont have any
+> local models. crucible handles all model orchestration. if theres no connected
+> crucible server then tiles should be disabled. crucible is a service that
+> foundry installs locally and connects to."*
+>
+> **This whole section is history.** `AppSettings.defaultLlmModel`,
+> `AppSettings.cleanTextModel` and `AppSettings.ollamaUrl` are deleted, with the
+> `llm:*` doors that read and wrote them and the four dialog fields they seeded.
+> The model a run uses is the ENGINE's capability record's `selected`, applied
+> over the request at the spawn (`doorArgs`, electron/job-queue.ts). What Foundry
+> may still do — and does, unchanged — is DRAW the engine's own settings: the
+> route per class and the upstream keys, through `crucible:engine-settings*`.
+> Owen, the same day: *"foundry does pass through settings to crucible."*
 
 `AppSettings.defaultLlmModel` and `AppSettings.ollamaUrl`
 (`app/electron/app-settings.ts`), reached over `llm:defaults` / `llm:set-model`.

@@ -809,8 +809,8 @@ export class QueueViewService {
    * ── Empty is the ordinary case and means "nothing counted" ────────────────
    *
    * `Job.usage` is set only when the engine printed its usage line, which it does
-   * only when the server counted. Ollama does not, so a run on this machine's own
-   * GPU has no usage at all — and an empty string is what every surface here
+   * only when the server counted. An Ollama door does not count, so a run routed
+   * through one has no usage at all — and an empty string is what every surface here
    * already draws for a fact a row does not have. The request count rides in the
    * tooltip rather than the line: three numbers in a row on a card is a table,
    * and the two that answer "what did this cost" are the tokens.

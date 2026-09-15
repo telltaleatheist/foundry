@@ -528,7 +528,16 @@ The Ollama wizard will not pull for a class a local Crucible serves and says so
 IN THE ROWS (`LlmChoices.crucible`), rather than hiding them. Ollama's own models
 are never removed by this app.
 
-**THE LINEUP IS CRUCIBLE'S FILE, PLUS OURS, MERGED.**
+**SUPERSEDED 2026-09-15 — THE LINEUP IS CRUCIBLE'S FILE ALONE.**
+`app/shared/model-lineup-local.json` is deleted (Owen: *"we dont have any local
+models. crucible handles all model orchestration"*), and with it the merge, the
+`crucible: true|false` derivation and every fit/floor/recommendation function
+`llm-catalog.ts` exported. Two readers of the vendored file are left:
+`pagesForm()` and `LINEUP_PROVENANCE`. The sort by `needsGB.value` survives only
+as a tie-break, so `pagesForm` cannot pick differently between two re-vendors.
+The paragraph below is kept as the record of what the two files were and why.
+
+**THE LINEUP WAS CRUCIBLE'S FILE, PLUS OURS, MERGED.**
 `app/shared/model-lineup.json` is `foundry-lineup.json` vendored byte for byte
 from crucible `7e63905`; nothing here edits it, so a keeper can compare it by
 content. `app/shared/model-lineup-local.json` is Foundry's own additions — the

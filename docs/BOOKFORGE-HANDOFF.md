@@ -506,6 +506,58 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-09-15 — FOUNDRY KEEPS NO MODEL. TWELVE DOORS AND ONE PUSH REMOVED, AND
+THIS ONE IS BREAKING FOR ANY VENDORED BRIDGE ENTRY.**
+
+Owen, verbatim: *"we dont have any local models. crucible handles all model
+orchestration. if theres no connected crucible server then tiles should be
+disabled. crucible is a service that foundry installs locally and connects to."*
+And, sharpening what stays: *"crucible should handle model orchestration right?
+so crucible is where which models to use is decided. but foundry does pass
+through settings to crucible."* Plan of record: docs/IPC-CHANNELS.md (the head),
+docs/SLOTS.md.
+
+**Removed — the `ollama:` family, entire.** `ollama:facts`, `ollama:choices`,
+`ollama:install`, `ollama:install-cancel`, `ollama:pull`, `ollama:pull-cancel`,
+and the push `ollama:progress`. Delete any bridge entry; there is no successor.
+
+**Removed — the `llm:` family, entire.** `llm:defaults`, `llm:stored`,
+`llm:set-model`, `llm:set-clean-model`, `llm:ollama-url`, `llm:set-ollama-url`.
+Same: delete the entries, no successor. The `FoundryApi.ollama` and
+`FoundryApi.llm` namespaces are gone from `app/shared/api.ts` outright, and so
+is `FoundryApi.arch` (its one reader was the Clean text picker).
+
+**Settings keys retired.** `AppSettings.defaultLlmModel`, `cleanTextModel` and
+`ollamaUrl`. **This SUPERSEDES the line in the package-C/D/E note below** that
+named `cleanTextModel` and `ollamaUrl` as the pair your own Clean text press
+reads out of `userData/app-settings.json`: Foundry no longer writes either key,
+so an existing file keeps whatever it had and a fresh install has neither. You
+confirmed (2026-09-15) that the only file naming them, `narration-clean-text.ts`,
+reads them inside a branch that became unreachable when you deleted your local
+venue, and that you are removing that branch.
+
+**Types removed from `app/shared/types.ts`:** `LlmChoices`, `LlmModelOption`,
+`TranslateFloorMiss`, `OllamaPhase`, `OllamaPullProgress`, `OllamaInstallResult`.
+`OllamaFacts` and `OllamaHolding` SURVIVE — their one reader is the "Models on
+this machine" disk inventory, which counts weights already here.
+
+**Removed from `app/shared/pipeline.ts`:** `cleanTextModelsFor`,
+`CLEAN_TEXT_MODELS`, `CleanTextModelChoice`. The three constants
+`DEFAULT_TRANSLATE_MODEL`, `DEFAULT_CLEAN_TEXT_MODEL` and
+`DEFAULT_OLLAMA_ENDPOINT` all STAY: every text request still carries a `model`
+and an `ollama`, the dialogs fill them from those constants without asking, and
+a placement overwrites both immediately before the spawn. **argsFor's `UNPLACED`
+default is unchanged**, so `cli/clean-step.js --dry-run` prints the same shape of
+line it always did.
+
+**Nothing in the engine-settings pass-through changed.**
+`crucible:engine-settings`, `crucible:engine-settings-save` and
+`crucible:engine-capability` are untouched, as is `app/shared/engine-settings.ts`.
+That family writes the ENGINE's own settings (`PUT /v1/settings`): the route per
+llm class and the upstream keys. A route row legitimately holds a model name
+chosen by a person — that is Foundry drawing somebody else's store, which is the
+half of the ruling that stays.
+
 **2026-09-14 (later still) — PACKAGE F's APP HALF IS IN: CLOUD SLOTS.** Appended
 to the note below rather than replacing it; nothing in it is superseded.
 
