@@ -44,6 +44,9 @@ import {
   CrucibleNotACrucible,
   CrucibleUnreachable,
   CrucibleVersionError,
+  engineOf,
+  type EngineOwner,
+  type EngineRef,
 } from '@crucible/client';
 
 import {
@@ -535,7 +538,20 @@ export interface ClientOptions {
   readonly timeoutMs?: number;
 }
 
-/** A client for one entry. The only place a token meets the SDK. */
+/**
+ * A client for one entry, AT THE ADDRESS THE ENTRY HOLDS. The only place a token
+ * meets the SDK.
+ *
+ * ── AND IT IS NOT THE ONE MOST CALLERS WANT ANY MORE ───────────────────────
+ *
+ * A registered address may be an ORCHESTRATOR (crucible
+ * docs/PHASE17-ORCHESTRATOR.md §1), which serves no job types at all. Anything
+ * that talks to the ENGINE — a capability read, a placement, a settings write,
+ * coordination — goes through {@link engineClientFor} instead, which follows
+ * §6's one hop. This function is what that one is built out of, and what the
+ * two callers who genuinely mean *this* address use: the hop resolution itself,
+ * and nothing else.
+ */
 export function clientFor(entry: CrucibleServerEntry, options: ClientOptions = {}): CrucibleClient {
   return new CrucibleClient({
     url: entry.url,
@@ -543,6 +559,269 @@ export function clientFor(entry: CrucibleServerEntry, options: ClientOptions = {
     clientName: CRUCIBLE_CLIENT_NAME,
     timeoutMs: options.timeoutMs,
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// An orchestrator is not an engine — crucible docs/PHASE17-ORCHESTRATOR.md §6
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * WHAT A REGISTERED ADDRESS TURNED OUT TO BE, once the relation was read.
+ *
+ * `entry` is the entry as the ENGINE is addressed: the same name and the SAME
+ * TOKEN (§6: *"follow `engine.url` ONCE, with the SAME token"*), with the
+ * engine's url in place of the registered one. `hop` is null when the
+ * registered address IS the engine, which is every machine that predates Phase
+ * 17 and every machine that never grew a tray.
+ */
+export interface EngineTarget {
+  readonly entry: CrucibleServerEntry;
+  readonly hop: EngineHop | null;
+}
+
+/** The orchestrator that was in front of the engine, for a sentence. */
+export interface EngineHop {
+  /** What the person actually registered. `crucible:open` still opens THIS. */
+  readonly orchestratorUrl: string;
+  /** `info().server.name` of the orchestrator — `crucible-orchestrator@owens-pc`. */
+  readonly orchestratorName: string;
+  /** PHASE17 §3.2's `engine` ref, as it arrived. `name` is null when it could not be read. */
+  readonly engineName: string | null;
+  readonly engineUrl: string;
+  readonly engineBackend: string | null;
+  readonly engineOwner: EngineOwner;
+}
+
+/**
+ * THE TWO WAYS A HOP CANNOT BE FOLLOWED, each with the relation's own name on it.
+ *
+ * Neither is a fault of this app's and neither is a server that is merely busy,
+ * so neither may wear the SDK's sentence for something else. They are refusals
+ * a PERSON fixes — install an engine on that machine, or point the entry at one
+ * — which is why `crucible-dispatch.ts` reads them as STANDING waits: nothing
+ * the queue does on a timer will change either answer.
+ *
+ *   `orchestrator_has_no_engine` — §6, verbatim: *"A machine whose orchestrator
+ *     has no engine has nothing to ask; that is a fact to show a person, next to
+ *     the button that installs one."* The SDK's `engineOf` throws a
+ *     `CrucibleProtocolError` for this; it is caught and re-thrown here, because
+ *     a protocol error means "the document is malformed" everywhere else in this
+ *     app and this document is not — it is a correct document about an empty
+ *     machine.
+ *   `orchestrator_engine_is_not_an_engine` — §6's *"Once, and never a chain."*
+ *     The second document's `role` is CHECKED and anything but `engine` is
+ *     refused rather than followed. A client that followed it would loop.
+ */
+export class CrucibleOrchestratorError extends Error {
+  readonly code: 'orchestrator_has_no_engine' | 'orchestrator_engine_is_not_an_engine';
+
+  constructor(
+    code: 'orchestrator_has_no_engine' | 'orchestrator_engine_is_not_an_engine',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CrucibleOrchestratorError';
+    this.code = code;
+  }
+}
+
+/**
+ * How long a resolved hop is believed. `crucible-provider.ts`'s clock and its
+ * argument, one question along: the fact moves — a tray is installed, an engine
+ * is moved into WSL, `crucible install` finishes — but a window this short
+ * cannot be the thing that makes a placement wrong for long, and a resolution
+ * per capability read would put an extra round trip in front of every one.
+ */
+const HOP_CACHE_MS = 60_000;
+
+interface HopEntry {
+  at: number;
+  target: EngineTarget;
+}
+
+/**
+ * ONE RESOLUTION PER REGISTRY ENTRY, keyed by the two fields that decide it.
+ *
+ * The NAME is not enough — a person who re-points an entry at a different
+ * machine has changed the answer and kept the name — and the TOKEN is not in
+ * the key, because a token that changed cannot change which of two processes
+ * answers an address, and a secret is not a map key in this process on the rule
+ * this module's header states.
+ */
+const hops = new Map<string, HopEntry>();
+
+/** In flight, so two placements racing on one server make one round of requests. */
+const hopsInFlight = new Map<string, Promise<EngineTarget>>();
+
+function hopKey(entry: CrucibleServerEntry): string {
+  return `${entry.name.toLowerCase()}\u0000${entry.url}`;
+}
+
+/**
+ * FORGET EVERY RESOLVED HOP — called from `afterRegistryChanged()` (ipc.ts),
+ * beside `forgetCrucibleFacts()` and for the same reason it is called there.
+ *
+ * A deliberate registry change is the one moment a stale answer reads as the app
+ * ignoring somebody: re-pointing an entry from the orchestrator to the engine,
+ * or the other way, must take effect on the next press and not a minute later.
+ * There is no synchronous reader of this cache to mislead — every caller is
+ * already inside an `await` — which is the one way it is simpler than the
+ * capability cache it is modelled on.
+ */
+export function forgetEngineTargets(): void {
+  hops.clear();
+}
+
+/**
+ * FOLLOW THE RELATION, ONCE — crucible docs/PHASE17-ORCHESTRATOR.md §6.
+ *
+ * ── Why this exists at all ─────────────────────────────────────────────────
+ *
+ * Because on Owen's own PC there are two Crucible processes and only one of them
+ * can do any work: the tray ORCHESTRATOR answers `127.0.0.1:7101` and the WSL
+ * ENGINE answers `127.0.0.1:7100`. A person who pastes the orchestrator's
+ * connect code, or whose pairing file names it, would otherwise have this app
+ * talking to a process with `job_types: []` — every capability class reading as
+ * unavailable and every placement failing or parking, on a machine with a
+ * working 4090 in it.
+ *
+ * ── The rule, which is `engineOf`'s and is not re-derived here ─────────────
+ *
+ *   * `role: 'engine'` — and a pre-Phase-17 document, which the SDK reads as
+ *     one by its VINTAGE (§3.3's all-or-nothing rule, the same one `route`
+ *     gets) — resolves to the entry unchanged. You are already there.
+ *   * `role: 'orchestrator'` with an engine → the engine's url, the SAME token,
+ *     and the second document's `role` checked before anything is sent to it.
+ *   * `role: 'orchestrator'` with no engine → refused by name.
+ *
+ * ── ONCE, AND NEVER A CHAIN ────────────────────────────────────────────────
+ *
+ * The second `info()` is the whole of the chain check and is not an extra cost
+ * anybody pays twice: it is made only on the orchestrator branch, and the
+ * answer is cached for {@link HOP_CACHE_MS}. An orchestrator whose `engine.url`
+ * names another orchestrator is a misconfigured machine, and a client that
+ * followed it would loop.
+ *
+ * NOTHING HERE IS LOGGED. The address of a hop is not a secret but the token
+ * carried across it is, and a line that names one server "through" another is a
+ * line that gets pasted into a bug report beside the rest of the console.
+ */
+export async function resolveEngine(
+  entry: CrucibleServerEntry,
+  options: ClientOptions = {},
+): Promise<EngineTarget> {
+  const key = hopKey(entry);
+  const cached = hops.get(key);
+  if (cached !== undefined && Date.now() - cached.at < HOP_CACHE_MS) {
+    /*
+     * THE TOKEN IS TAKEN FROM THE ENTRY IN HAND, never from the cached copy. A
+     * registry save that only rotated a token does not move the hop (see
+     * `hopKey`), so the cached url is still right and the cached secret is the
+     * old one — and a stale token is exactly the 401 nobody can explain.
+     */
+    return withToken(cached.target, entry.token);
+  }
+  const running = hopsInFlight.get(key);
+  if (running !== undefined) return withToken(await running, entry.token);
+  const attempt = resolveOnce(entry, options).finally(() => { hopsInFlight.delete(key); });
+  hopsInFlight.set(key, attempt);
+  const target = await attempt;
+  hops.set(key, { at: Date.now(), target });
+  return target;
+}
+
+function withToken(target: EngineTarget, token: string): EngineTarget {
+  return target.entry.token === token
+    ? target
+    : { ...target, entry: { ...target.entry, token } };
+}
+
+async function resolveOnce(
+  entry: CrucibleServerEntry,
+  options: ClientOptions,
+): Promise<EngineTarget> {
+  const here = await clientFor(entry, options).info();
+  /*
+   * `engineOf` IS THE RULE AND IS THE SDK'S. Foundry does not re-implement it,
+   * for the reason the contract states in §6: *"the SDK's rule, written once so
+   * both apps read it the same way."* A second reading here is how Foundry and
+   * BookForge start disagreeing about which of two processes on one machine is
+   * the one that does the work.
+   */
+  let ref: EngineRef | null;
+  try {
+    ref = engineOf(here);
+  } catch (err) {
+    /*
+     * THE SDK'S OWN SENTENCE IS DELIBERATELY NOT APPENDED. `engineOf` raises a
+     * `CrucibleProtocolError`, whose wrapper reads *"crucible sent something API
+     * v1 does not describe"* — and this document describes itself perfectly. It
+     * is a correct answer about an empty machine, and printing that wrapper
+     * beside it would send somebody looking for a malformed document.
+     */
+    void err;
+    throw new CrucibleOrchestratorError(
+      'orchestrator_has_no_engine',
+      `${entry.url} is an orchestrator (${here.server.name}) and manages no engine, so there is `
+      + 'nothing there to send work to — install one from its console, or point this entry at a '
+      + 'machine that has one.',
+    );
+  }
+  if (ref === null) return { entry, hop: null };
+
+  const url = clampCrucibleUrl(ref.url);
+  if (url === null) {
+    throw new CrucibleOrchestratorError(
+      'orchestrator_engine_is_not_an_engine',
+      `${entry.url} is an orchestrator and named its engine as "${ref.url}", which is not an `
+      + 'address this app can reach.',
+    );
+  }
+  const engine: CrucibleServerEntry = { ...entry, url };
+  /*
+   * §6: *"the second document's `role` is checked and anything but `engine` is
+   * refused rather than followed."* Read BEFORE anything else is asked of it,
+   * so that a machine chained to a second orchestrator is refused rather than
+   * having a capability read made against a process that serves none.
+   */
+  const there = await clientFor(engine, options).info();
+  if (there.role !== 'engine') {
+    throw new CrucibleOrchestratorError(
+      'orchestrator_engine_is_not_an_engine',
+      `${entry.url} is an orchestrator whose engine address (${url}) is itself an orchestrator `
+      + `(${there.server.name}). An app follows one hop and no more — point this entry at the `
+      + 'engine directly.',
+    );
+  }
+  return {
+    entry: engine,
+    hop: {
+      orchestratorUrl: entry.url,
+      orchestratorName: here.server.name,
+      engineName: ref.name ?? there.server.name,
+      engineUrl: url,
+      engineBackend: ref.backend ?? there.host.backend,
+      engineOwner: ref.owner,
+    },
+  };
+}
+
+/**
+ * A CLIENT FOR THE ENGINE BEHIND ONE REGISTRY ENTRY — what everything that does
+ * work asks for.
+ *
+ * {@link clientFor} plus {@link resolveEngine}, in the one function, so that no
+ * caller has to remember the pair. Callers that also need the engine's ADDRESS
+ * (the placement composes `<url>/openai`, and the header map carries the token
+ * for it) take {@link resolveEngine} directly and build the client from
+ * `target.entry` — one resolution, one address, no chance of a request going to
+ * the engine and a URL being composed from the orchestrator.
+ */
+export async function engineClientFor(
+  entry: CrucibleServerEntry,
+  options: ClientOptions = {},
+): Promise<CrucibleClient> {
+  return clientFor((await resolveEngine(entry, options)).entry, options);
 }
 
 /**
@@ -599,16 +878,38 @@ export async function probeCrucibleAt(url: string, token: string): Promise<Cruci
   return probeEntry({ name: clamped, url: clamped, token: token.trim(), enabled: true });
 }
 
-/** The probe itself. Both doors above are this function plus a way of naming the server. */
+/**
+ * The probe itself. Both doors above are this function plus a way of naming the
+ * server.
+ *
+ * ── AN ORCHESTRATOR IN FRONT OF AN ENGINE IS A SUCCESS ─────────────────────
+ *
+ * And it has to be, because it is the shape of Owen's own PC (PHASE17 §5, first
+ * row): the tray on `:7101`, the WSL engine on `:7100`, and an address that is
+ * perfectly usable through one hop. Reporting it as a failure would tell
+ * somebody to fix a machine that is working. So the probe RESOLVES first and
+ * then reads the ENGINE's document — the name, the version, the backend and the
+ * card are all the engine's, which is the machine the work will run on — and
+ * `via` carries the orchestrator so the card can say both.
+ *
+ * WHAT STAYS A FAILURE is an orchestrator with nothing behind it, and a chain.
+ * Both arrive as {@link CrucibleOrchestratorError}, whose sentences name what to
+ * do, and both fall through the named catch below like every other refusal.
+ */
 async function probeEntry(entry: CrucibleServerEntry): Promise<CrucibleProbe> {
   try {
-    const info = await clientFor(entry).info();
+    const target = await resolveEngine(entry);
+    const info = await clientFor(target.entry).info();
     return {
       outcome: 'ok',
       serverName: info.server.name,
       version: info.server.version,
       backend: info.host.backend,
       gpu: `${info.host.gpu.vendor} ${info.host.gpu.name}`.trim(),
+      via: target.hop === null
+        ? null
+        : `through the orchestrator ${target.hop.orchestratorName} at ${target.hop.orchestratorUrl} `
+          + `(${target.hop.engineOwner})`,
     };
   } catch (err) {
     if (
@@ -616,6 +917,9 @@ async function probeEntry(entry: CrucibleServerEntry): Promise<CrucibleProbe> {
       || err instanceof CrucibleNotACrucible
       || err instanceof CrucibleAuthError
       || err instanceof CrucibleVersionError
+      // The relation's own two, whose sentences already say what to install or
+      // what to re-point — see CrucibleOrchestratorError.
+      || err instanceof CrucibleOrchestratorError
     ) {
       return { outcome: 'failed', message: err.message };
     }

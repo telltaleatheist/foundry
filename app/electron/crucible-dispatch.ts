@@ -32,6 +32,16 @@
  * `isServerSpecificRefusal` (the SDK) is what decides which, because the fact
  * has exactly one honest owner: the server that emitted the code.
  *
+ * ── AND A WAIT NOW SAYS WHETHER TIME WILL EVER END IT ──────────────────────
+ *
+ * A `wait` carries `standing` ({@link PlacementWait}). Transient is everything
+ * above and parks for ever, exactly as it always has; STANDING is "that server's
+ * record says this class cannot run there", which no backoff will change. The
+ * walk steps past both alike — the next machine is a different question — but a
+ * PINNED row whose one slot answers standing, and an `any` row where every slot
+ * did, now FAIL by name instead of parking. BookForge found the row that neither
+ * failed nor finished and Owen ruled it a defect.
+ *
  * ── Never a tight poll ────────────────────────────────────────────────────
  *
  * Nothing in here loops. One pass is one answer, and the BACKOFF lives on the
@@ -48,7 +58,14 @@ import {
 } from '@crucible/client';
 
 import { cloudEndpointOf, cloudHeaderMapFor, cloudProviderNamed } from './cloud-providers';
-import { clientFor, computeSlots, crucibleServerNamed } from './crucible-registry';
+import {
+  CrucibleOrchestratorError,
+  clientFor,
+  computeSlots,
+  crucibleServerNamed,
+  engineClientFor,
+  resolveEngine,
+} from './crucible-registry';
 import type { CrucibleServerEntry } from './app-settings';
 import type { CapabilityRecord, CapabilityRow } from '../shared/engine-settings';
 import { upstreamLaneName } from '../shared/queue-board';
@@ -259,9 +276,64 @@ export const UNPLACED: Placement = {
 export type PlacementOutcome =
   | { verdict: 'go'; placement: Placement }
   /** Try again later — the server's state, not the request. See the module note. */
-  | { verdict: 'wait'; reason: string }
+  | PlacementWait
   /** This will be refused the same way everywhere. Fail the row and say so once. */
   | { verdict: 'refuse'; reason: string };
+
+/**
+ * A WAIT, AND WHETHER TIME ALONE WILL EVER FIX IT.
+ *
+ * ── The defect this field closes, in BookForge's words ─────────────────────
+ *
+ * *"A row that neither fails nor finishes is worse than either."* `placeRun`
+ * (electron/job-queue.ts) parks a `wait` and retries with a backoff capped at
+ * thirty seconds, FOR EVER — which is exactly right for a busy card and exactly
+ * wrong for a capability record that says this machine cannot do this act. A row
+ * pinned to such a server, or an `any` row where no slot can, used to sit in the
+ * queue until somebody noticed.
+ *
+ * ── The distinction, and it is about WHO can change the answer ─────────────
+ *
+ *   `standing: false` — TRANSIENT. `server_busy`, `engine_in_use`, a load in
+ *     flight, a machine that is unreachable right now, a slot that is switched
+ *     off, a card nobody has measured yet. **Time alone fixes these**, so the row
+ *     parks exactly as it always has and `parkDelay`/`forgetPark` are untouched.
+ *   `standing: true` — STANDING. The server's own record says this class cannot
+ *     run there. Nothing the queue does on a timer will change it; only a PERSON
+ *     can — route the class upstream in that engine's settings, put a bigger card
+ *     in the machine, or send the job somewhere else.
+ *
+ * ── IT IS STILL A WAIT FOR THE WALK, AND THAT HALF DOES NOT CHANGE ─────────
+ *
+ * A standing refusal is a fact about ONE machine: the same job on the next one
+ * in the ranking is a different question, so `any` steps past it exactly as
+ * before. What changes is the ENDING — {@link placeJob} answers `refuse` when
+ * the PINNED slot gave a standing wait, or when every slot in the walk did,
+ * because at that point there is nothing left for time to do.
+ */
+export interface PlacementWait {
+  verdict: 'wait';
+  reason: string;
+  standing: boolean;
+}
+
+/**
+ * A wait that time may fix. The default shape, and the one the queue parks.
+ *
+ * Spelled as a constructor rather than an object literal at each of the fifteen
+ * sites so that `standing` is REQUIRED and every one of them says which kind it
+ * is out loud. An optional field would have made "nobody thought about it" and
+ * "this is transient" the same value, which is the distinction this type exists
+ * to draw.
+ */
+function transientWait(reason: string): PlacementWait {
+  return { verdict: 'wait', reason, standing: false };
+}
+
+/** A wait only a person can end. See {@link PlacementWait}. */
+function standingWait(reason: string): PlacementWait {
+  return { verdict: 'wait', reason, standing: true };
+}
 
 /** What a placement pass may say while it is working — one line, onto the row. */
 export type PlacementProgress = (line: string) => void;
@@ -395,31 +467,74 @@ export async function placeJob(
        * "any") at the moment the switch is flipped, so nobody has to find this
        * sentence to learn what happened.
        */
-      return {
-        verdict: 'wait',
-        reason: `waiting for "${pinned}", which is switched off or no longer registered`,
-      };
+      return transientWait(
+        `waiting for "${pinned}", which is switched off or no longer registered`,
+      );
     }
-    return placeOn(slot, capability, say, claim);
+    /*
+     * A PINNED ROW HAS NO WALK LEFT, so a standing refusal from its one slot is
+     * the end of the line: there is no next machine to be a different question,
+     * and parking would be this queue asking the same server the same thing
+     * twice a minute until somebody noticed the row. It FAILS, with the server's
+     * own reason and the two things a person can do about it.
+     */
+    const outcome = await placeOn(slot, capability, say, claim);
+    return outcome.verdict === 'wait' && outcome.standing
+      ? { verdict: 'refuse', reason: `${outcome.reason}. ${whatToDoAbout(capability)}` }
+      : outcome;
   }
 
   const reasons: string[] = [];
+  /*
+   * DID EVERY CANDIDATE ANSWER WITH SOMETHING ONLY A PERSON CAN CHANGE? Starts
+   * true and is falsified by the first transient wait, so a walk that found
+   * nothing at all (no candidates) stays true and is still reported as the
+   * `no slot is available` wait below — `reasons.length === 0` is tested first.
+   */
+  let allStanding = true;
   for (const slot of slots) {
     if (slot.kind === 'cloud') {
+      /*
+       * STEPPED PAST, AND IT IS A STANDING ANSWER. docs/SLOTS.md §3's ruling —
+       * a cloud slot is *"a deliberate per-job choice, never something `any`
+       * falls through to"* — is permanent, so this walk will answer identically
+       * on every pass until a PERSON puts the provider's name on the row. That
+       * is the definition one type up, and it is why a board whose only slot is
+       * a provider now fails its `any` rows with a sentence naming the picker
+       * instead of parking them for ever.
+       */
       reasons.push(`"${slot.name}" is a cloud provider, and cloud slots are chosen on purpose`);
       continue;
     }
     const outcome = await placeOn(slot, capability, say, claim);
     if (outcome.verdict === 'go') return outcome;
     if (outcome.verdict === 'refuse') return outcome;
+    if (!outcome.standing) allStanding = false;
     reasons.push(outcome.reason);
   }
-  return {
-    verdict: 'wait',
-    reason: reasons.length === 0
-      ? 'no slot is available'
-      : `no slot is free — ${reasons.join('; ')}`,
-  };
+  if (reasons.length === 0) return transientWait('no slot is available');
+  return allStanding
+    ? {
+      verdict: 'refuse',
+      reason: `no slot can ${capability} — ${reasons.join('; ')}. ${whatToDoAbout(capability)}`,
+    }
+    : transientWait(`no slot is free — ${reasons.join('; ')}`);
+}
+
+/**
+ * THE OTHER HALF OF A STANDING REFUSAL: what a person does about it.
+ *
+ * The server's own `reason` already travels on the wait (the shortfall it
+ * measured, the sentence a host-mode engine gives for a class that needs WSL),
+ * and that half names the FACT. This names the ROUTES out of it, and there are
+ * exactly two: send the class to an upstream from that engine's own settings —
+ * the same card `UPSTREAM_SETTINGS` names for a missing credential, because it
+ * is the same card — or put the job on a different server with the picker on the
+ * row. A third, "buy a bigger card", is real and is not something an app says.
+ */
+function whatToDoAbout(capability: CapabilityClass): string {
+  return `Nothing here will change that on its own: ${UPSTREAM_SETTINGS} to route ${capability} `
+    + 'work to an upstream, or choose a different server for this job.';
 }
 
 /**
@@ -438,14 +553,17 @@ async function placeOn(
   claim: LaneClaim,
 ): Promise<PlacementOutcome> {
   if (slot.kind === 'local' || slot.kind === 'cloud') {
-    if (!claim(slot.name)) return { verdict: 'wait', reason: busyWithOurs(slot.name) };
+    if (!claim(slot.name)) return transientWait(busyWithOurs(slot.name));
     return slot.kind === 'local'
       ? { verdict: 'go', placement: localPlacement(slot) }
       : placeOnCloud(slot, capability);
   }
   const entry = crucibleServerNamed(slot.name);
   if (entry === null) {
-    return { verdict: 'wait', reason: `"${slot.name}" is no longer registered` };
+    // TRANSIENT, on the same argument as a pinned slot that is switched off: the
+    // registry moved under this walk, and re-registering is a gesture somebody
+    // is about to make.
+    return transientWait(`"${slot.name}" is no longer registered`);
   }
   try {
     return await placeOnCrucible(entry, slot, capability, say, claim);
@@ -499,7 +617,7 @@ function busyWithOurs(lane: string): string {
 function placeOnCloud(slot: ComputeSlot, capability: CapabilityClass): PlacementOutcome {
   const entry = cloudProviderNamed(slot.name);
   if (entry === null) {
-    return { verdict: 'wait', reason: `"${slot.name}" is no longer configured` };
+    return transientWait(`"${slot.name}" is no longer configured`);
   }
   if (capability === 'pages') {
     return {
@@ -549,7 +667,26 @@ async function placeOnCrucible(
   say: PlacementProgress,
   claim: LaneClaim,
 ): Promise<PlacementOutcome> {
-  const client = clientFor(entry);
+  /*
+   * ── THE ADDRESS IN THE REGISTRY MAY NOT BE THE ENGINE'S ───────────────────
+   *
+   * crucible docs/PHASE17-ORCHESTRATOR.md §6. A registered address can be an
+   * ORCHESTRATOR — the Windows tray on `:7101`, which manages the WSL engine on
+   * `:7100` and serves no job types of its own — and everything below this line
+   * is engine work: the residency listing, the load, the lease, and the
+   * `<url>/openai` door the spawn is pointed at. So the hop is followed ONCE,
+   * here, and `engine` is what the rest of this function uses. It carries the
+   * SAME TOKEN, which is the contract's own rule and the reason nothing else
+   * about the entry changes.
+   *
+   * IT IS RESOLVED ONCE AND THE ADDRESS IS TAKEN FROM THE RESOLUTION, rather
+   * than a client being fetched here and a url composed from `entry` further
+   * down — that pairing is how a request goes to one process and a spawn is
+   * pointed at another. `resolveEngine` caches, so `readCapability` below costs
+   * no second round trip.
+   */
+  const engine = (await resolveEngine(entry)).entry;
+  const client = clientFor(engine);
 
   /*
    * ── WHICH MODEL, WHICH IS THE SERVER'S ANSWER AND NOT A SETTING ───────────
@@ -577,14 +714,23 @@ async function placeOnCrucible(
      * a different question, and `any` steps past it. A pinned row holds with the
      * server's own reason on it, which is what SLOTS.md §6 asks for — *"disabled
      * → the row holds/skips with the reason"*.
+     *
+     * ── AND IT IS A **STANDING** WAIT, WHICH IS THE HALF THAT WAS WRONG ──────
+     *
+     * The walk above is right and is unchanged. What was wrong is what happened
+     * afterwards: `placeRun` parked this for ever, so a row pinned to a machine
+     * whose record says it cannot do this act never finished and never failed.
+     * BookForge found it and named it — *"a row that neither fails nor finishes
+     * is worse than either."* Nothing the queue does on a timer moves a card's
+     * measurement; a person does, from that engine's own settings. See
+     * {@link PlacementWait}.
      */
     const shortfall = row.shortfallBytes > 0
       ? ` (${(row.shortfallBytes / 1024 ** 3).toFixed(1)} GiB short)`
       : '';
-    return {
-      verdict: 'wait',
-      reason: `"${slot.name}" cannot ${capability}: ${row.reason || 'no model fits its card'}${shortfall}`,
-    };
+    return standingWait(
+      `"${slot.name}" cannot ${capability}: ${row.reason || 'no model fits its card'}${shortfall}`,
+    );
   }
 
   /*
@@ -620,10 +766,9 @@ async function placeOnCrucible(
   if (via !== null) {
     const lane = upstreamLaneName(slot.name);
     if (!claim(lane)) {
-      return {
-        verdict: 'wait',
-        reason: `"${slot.name}" is already forwarding as many jobs of yours to ${via} as it will at once`,
-      };
+      return transientWait(
+        `"${slot.name}" is already forwarding as many jobs of yours to ${via} as it will at once`,
+      );
     }
     say(`Sending ${capability} to ${slot.name} via ${via} (${row.selected})`);
     return {
@@ -633,9 +778,12 @@ async function placeOnCrucible(
         lease: null,
         via,
         door: 'openai',
-        endpoint: `${entry.url}/openai`,
+        // THE ENGINE'S ADDRESS, not the registered one — see the hop at the top
+        // of this function. A `<orchestrator>/openai` would be a spawn pointed
+        // at a process with no route to serve it.
+        endpoint: `${engine.url}/openai`,
         model: row.selected,
-        env: { FOUNDRY_ENDPOINT_HEADERS: headerMapFor(entry, capability) },
+        env: { FOUNDRY_ENDPOINT_HEADERS: headerMapFor(engine, capability) },
       },
     };
   }
@@ -646,7 +794,7 @@ async function placeOnCrucible(
    * — and none of it may be done on a card another run of ours is holding.
    */
   if (!claim(slot.name)) {
-    return { verdict: 'wait', reason: busyWithOurs(slot.name) };
+    return transientWait(busyWithOurs(slot.name));
   }
 
   /*
@@ -681,10 +829,10 @@ async function placeOnCrucible(
          * the model and would fail the same way everywhere.
          */
         return isServerSpecificRefusal(code)
-          ? { verdict: 'wait', reason: `"${slot.name}" could not load ${row.selected}: ${event.data.error.message}` }
+          ? transientWait(`"${slot.name}" could not load ${row.selected}: ${event.data.error.message}`)
           : { verdict: 'refuse', reason: `"${slot.name}" could not load ${row.selected}: ${event.data.error.message}` };
       } else if (event.event === 'cancelled') {
-        return { verdict: 'wait', reason: `the load of ${row.selected} on "${slot.name}" was cancelled` };
+        return transientWait(`the load of ${row.selected} on "${slot.name}" was cancelled`);
       }
     }
   }
@@ -700,7 +848,7 @@ async function placeOnCrucible(
    * spawn would leave a window in which another client's load evicts the model
    * this run is three blocks into using.
    */
-  const lease = await takeLease(entry, row.selected, capability);
+  const lease = await takeLease(engine, row.selected, capability);
 
   return {
     verdict: 'go',
@@ -717,13 +865,14 @@ async function placeOnCrucible(
       /*
        * THE OPENAI DOOR IS MOUNTED AT `<url>/openai`, and the engine appends
        * `/v1` itself. Composed here rather than stored on the entry: the entry's
-       * URL is the SERVER's address, which is what the SDK wants and what a
-       * person pastes, and a stored `/openai` would be this app's routing
-       * decision written into somebody's settings file.
+       * URL is the address a person pasted, which after PHASE17 may be the
+       * ORCHESTRATOR's, and a stored `/openai` would be this app's routing
+       * decision written into somebody's settings file. `engine.url` is the
+       * resolved one — see the hop at the top of this function.
        */
-      endpoint: `${entry.url}/openai`,
+      endpoint: `${engine.url}/openai`,
       model: row.selected,
-      env: { FOUNDRY_ENDPOINT_HEADERS: headerMapFor(entry, capability) },
+      env: { FOUNDRY_ENDPOINT_HEADERS: headerMapFor(engine, capability) },
       /** A resident model on that machine's card. Nothing was forwarded. */
       via: null,
     },
@@ -850,6 +999,13 @@ const LEASE_HEARTBEAT_MS = (LEASE_TTL_SECONDS / 3) * 1000;
  * it between the two calls; it is server-specific, so it waits, and the next
  * pass loads again.
  */
+/*
+ * `entry` HERE IS THE ENGINE-ADDRESSED ONE, resolved by `placeOnCrucible` — a
+ * lease is a claim on a CARD and an orchestrator has none (PHASE17 §1). Taking
+ * one from the resolver rather than resolving again is deliberate: the lease and
+ * the load must be on the same process, and two resolutions is two chances for
+ * them not to be.
+ */
 async function takeLease(
   entry: CrucibleServerEntry,
   model: string,
@@ -940,8 +1096,19 @@ async function takeLease(
 const UPSTREAM_SETTINGS = 'Open Settings › Servers and its "Where the text work runs" card';
 
 function interpretFailure(err: unknown, slotName: string, capability: CapabilityClass): PlacementOutcome {
+  if (err instanceof CrucibleOrchestratorError) {
+    /*
+     * PHASE17 §6's two, and both are STANDING. An orchestrator with no engine
+     * has nothing to install its way out of on a timer, and a chained pair is a
+     * misconfiguration nobody's queue can unpick; each is a thing a PERSON fixes
+     * on that machine, and the SDK-adjacent sentence already says which. Still a
+     * WAIT for the walk, because the next machine in the ranking is a different
+     * question — see {@link PlacementWait}.
+     */
+    return standingWait(`"${slotName}": ${err.message}`);
+  }
   if (err instanceof CrucibleUnreachable) {
-    return { verdict: 'wait', reason: `"${slotName}" is unreachable` };
+    return transientWait(`"${slotName}" is unreachable`);
   }
   if (err instanceof CrucibleBusy) {
     /*
@@ -951,7 +1118,7 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
      * rather than a guess. That is the rule the server itself keeps: a bench
      * must never be confidently wrong about whose render is on the card.
      */
-    return { verdict: 'wait', reason: `"${slotName}" is ${err.busyLine}` };
+    return transientWait(`"${slotName}" is ${err.busyLine}`);
   }
   if (err instanceof CrucibleRefused) {
     if (err.code === 'engine_in_use') {
@@ -961,7 +1128,7 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
        * read as an idle machine while the browser extension was reading from it.
        * On a load it means, in plain words, that somebody is narrating there.
        */
-      return { verdict: 'wait', reason: `someone is narrating on "${slotName}"` };
+      return transientWait(`someone is narrating on "${slotName}"`);
     }
     if (err.code === 'model_leased') {
       /*
@@ -975,7 +1142,7 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
       const who = typeof held['client'] === 'string' ? held['client'] : 'another client';
       const act = typeof held['act'] === 'string' ? ` for ${held['act']}` : '';
       const since = typeof held['since'] === 'string' ? ` since ${held['since']}` : '';
-      return { verdict: 'wait', reason: `"${slotName}" is leased by ${who}${act}${since}` };
+      return transientWait(`"${slotName}" is leased by ${who}${act}${since}`);
     }
     /*
      * ── THE THREE PHASE15 REFUSALS, BY NAME (crucible §3.4) ─────────────────
@@ -991,14 +1158,20 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
        * 409. The route names an upstream the server has no key or url for —
        * §3.2 promises that cannot be STORED, so reaching it means the operator
        * removed the key after the route was set, or the config was hand-edited.
-       * A REFUSAL and not a wait: every attempt on that server will say the same
-       * thing until somebody opens its settings, and the sentence says where.
+       *
+       * A **STANDING** WAIT, AND IT USED TO BE A FLAT REFUSAL. The refusal had
+       * the right ending and the wrong scope: every attempt on THAT server says
+       * the same thing until somebody opens its settings, which is exactly what
+       * standing means — but a flat `refuse` stopped the WALK, so an `any` row
+       * failed on the first machine with a missing key while the second machine
+       * sat there able to do the work. Standing keeps the ending for a pinned
+       * row (and for a walk where every machine says this) and gives `any` the
+       * step-past it should always have had.
        */
-      return {
-        verdict: 'refuse',
-        reason: `"${slotName}" routes ${capability} to an upstream it has no credential for: `
-          + `${err.serverMessage} ${UPSTREAM_SETTINGS}.`,
-      };
+      return standingWait(
+        `"${slotName}" routes ${capability} to an upstream it has no credential for: `
+        + err.serverMessage,
+      );
     }
     if (err.code === 'upstream_rejected' || err.code === 'upstream_unreachable') {
       /*
@@ -1009,7 +1182,8 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
        * kept verbatim: they name what to fix, and a word of ours in their place
        * is how a fixable problem becomes an unfixable one.
        */
-      return { verdict: 'wait', reason: `"${slotName}" could not reach its upstream: ${err.serverMessage}` };
+      // TRANSIENT, exactly as built: a network and an account both come back.
+      return transientWait(`"${slotName}" could not reach its upstream: ${err.serverMessage}`);
     }
     if (err.code === 'lease_not_needed') {
       /*
@@ -1033,10 +1207,17 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
        * SLOTS.md §5's pair: the model is not resident and the engine will not be
        * given up, because a stream is holding it. Waited on, not failed.
        */
-      return { verdict: 'wait', reason: `"${slotName}" is holding a different model for someone else` };
+      return transientWait(`"${slotName}" is holding a different model for someone else`);
     }
+    /*
+     * `isServerSpecificRefusal` IS THE SDK'S AND STAYS THE ARBITER, and every
+     * code it calls server-specific is about a machine's state RIGHT NOW — which
+     * is the transient half by definition. The standing ones are named above,
+     * one branch each, because "only a person can change this" is a judgement
+     * about a code and not something a list of server-specific names encodes.
+     */
     return isServerSpecificRefusal(err.code)
-      ? { verdict: 'wait', reason: `"${slotName}" refused ${capability} work: ${err.serverMessage}` }
+      ? transientWait(`"${slotName}" refused ${capability} work: ${err.serverMessage}`)
       : { verdict: 'refuse', reason: `"${slotName}" refused ${capability} work: ${err.serverMessage}` };
   }
   if (err instanceof CrucibleCapabilityUndecided) {
@@ -1046,8 +1227,16 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
      * names the command that decides it, where a disabled class names the
      * shortfall. It waits, because running `crucible capability --write` there is
      * a thing somebody can go and do.
+     *
+     * TRANSIENT, and deliberately so even though a person is involved: a server
+     * that has not measured its card YET is one that will — `crucible install`
+     * and the operator console both write the record, and the machine is
+     * otherwise working. Reading it as standing would fail a row on a server
+     * that is minutes from being able to run it.
      */
-    return { verdict: 'wait', reason: `"${slotName}" has not measured its card yet — run \`crucible capability --write\` there` };
+    return transientWait(
+      `"${slotName}" has not measured its card yet — run \`crucible capability --write\` there`,
+    );
   }
   if (err instanceof CrucibleProtocolError) {
     /*
@@ -1072,11 +1261,16 @@ function interpretFailure(err: unknown, slotName: string, capability: Capability
         + `read: ${err.detail}`,
     };
   }
-  return {
-    verdict: 'wait',
-    reason: `"${slotName}" could not be asked about ${capability} work: `
-      + `${err instanceof Error ? err.message : String(err)}`,
-  };
+  /*
+   * A THROW THIS FUNCTION HAS NOT ANTICIPATED. Transient, which is the safe
+   * direction: an unrecognised failure that turns out to be permanent costs a
+   * parked row somebody can cancel, and one read as permanent would fail a run
+   * over a blip nobody named.
+   */
+  return transientWait(
+    `"${slotName}" could not be asked about ${capability} work: `
+    + `${err instanceof Error ? err.message : String(err)}`,
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1152,7 +1346,15 @@ export async function readCapability(
   entry: CrucibleServerEntry,
   timeoutMs?: number,
 ): Promise<CapabilityRecord> {
-  const record = await clientFor(entry, { timeoutMs }).capability();
+  /*
+   * THROUGH THE ENGINE, NEVER THE ORCHESTRATOR. An orchestrator READS its
+   * engine's capability block through onto its own `/v1/info` (PHASE17 §3.2) but
+   * has no `/v1/capability` of its own, and this is the route every gate, every
+   * tile and every placement in this app decides on. `engineClientFor` follows
+   * §6's one hop; the clock travels with it, so the gate probe's
+   * `PROBE_TIMEOUT_MS` still bounds BOTH reads rather than only the second.
+   */
+  const record = await (await engineClientFor(entry, { timeoutMs })).capability();
   return {
     backendKind: record.backendKind,
     totalBytes: record.totalBytes,

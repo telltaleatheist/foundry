@@ -5109,4 +5109,86 @@ engine — read `"local" at start-up: stocked`: info, catalog and capability
 read against the WSL server, nothing posted. The renderer half (pressing
 through the wizard and the doors) needs a hand on the mouse and is Owen's or
 BookForge's screenshot pass; what is vouched for is the start-up path and the
-door's dry run through the compiled invoker.
+door's dry run through the compiled invoker.
+
+### Wave 65 — an orchestrator is not an engine, and a standing refusal stops parking (2026-09-15) — LANDED
+
+Owen, on the re-vendor target: *"the latest. if the latest doesnt use the new
+crucible functionality we just built in then tell foundry agent to build it out
+and commit/push so we can vendor a fully functional and up to date version in."*
+Foundry's HEAD said `engineOf not yet adopted`, so this is that, plus a defect
+BookForge found in this app's own placement.
+
+**`engineOf` adopted (crucible `docs/PHASE17-ORCHESTRATOR.md` §2, §3, §6).** A
+Crucible declares a `role`. An ENGINE serves job types on a backend; an
+ORCHESTRATOR (backend kind `orchestrator`, zero job types) manages exactly one
+engine and reads capability through to it. `resolveEngine(entry)` in
+`crucible-registry.ts` is the ONE owner of the hop: `info()` once, the SDK's
+`engineOf` for the rule (never re-derived), and for an orchestrator a client at
+`engine.url` with the SAME token — after reading that document and refusing
+`orchestrator_engine_is_not_an_engine` if its role is anything but `engine`,
+because §6 says once and never a chain. An orchestrator with no engine is
+`orchestrator_has_no_engine`, which is a fact to show a person beside the button
+that installs one, not a protocol error — the SDK's "API v1 does not describe
+this" wrapper is deliberately NOT appended, because that document is correct and
+merely describes an empty machine. Cached on name+url (never the token: a
+rotated token cannot change which process answers an address, and the token is
+taken from the entry in hand on every hit so a rotation cannot serve a stale
+secret), 60 s, in-flight deduped, forgotten by `afterRegistryChanged()` BEFORE
+the capability cache because capability now reads through a hop. Every engine
+caller goes through it: `readCapability`, `placeOnCrucible` (resolved once, so a
+request and the spawn it composes cannot end at two processes), `takeLease`,
+all of coordination, all three settings doors. **Test connection reports the
+ENGINE** and says so — `CrucibleProbe.via` names the orchestrator and its owner,
+drawn on both cards. **`crucible:open` deliberately does NOT follow the hop**: a
+placement asks a machine to work and only an engine can, but a console is a
+person going to look at the process they named, and after Phase 17 the
+orchestrator's console is the one carrying install, restart and quit. Why this
+matters here rather than in theory: on Owen's PC the tray orchestrator answers
+:7101 and fronts the WSL engine on :7100, so a pasted orchestrator connect code
+would otherwise have put every class out of reach.
+
+**A STANDING REFUSAL NO LONGER PARKS FOR EVER — BookForge's finding, and it was
+Foundry's defect.** `placeOnCrucible` answered `wait` when a capability row said
+the class cannot run there. That is right for the WALK, so `any` steps past; it
+was wrong afterwards, because `placeRun` parks a wait on a 30 s-capped backoff
+and retries for ever. Their words: *"a row that neither fails nor finishes is
+worse than either."* The wait arm now carries `standing`, REQUIRED at all
+sixteen sites through `transientWait()` / `standingWait()` constructors, because
+an optional flag would make "nobody thought about it" and "this is transient"
+the same value. STANDING: a disabled or empty capability row,
+`upstream_unconfigured` (a missing key is not something waiting fixes — and it
+moved from a flat `refuse`, whose ending was right and whose scope was wrong,
+since it failed an `any` row on the first machine with no key while the second
+could work), both orchestrator refusals, and a cloud slot stepped past by `any`
+(SLOTS.md §3's ruling is permanent, so that walk answers identically for ever).
+TRANSIENT and untouched: busy, `engine_in_use`, `model_leased`,
+`model_not_resident`, unreachable, `capability_undecided`, both upstream network
+refusals, a cancelled load, and a slot switched off. The walk steps past both
+alike; `placeJob` answers `refuse` when the PINNED slot gave a standing wait or
+when EVERY slot did, carrying the server's own reason plus where to fix it.
+`job-queue.ts` needed no change at all — `placeRun` already fails on `refuse`,
+so the park machinery is literally untouched.
+
+**Proved live against both processes on Owen's PC, 15 checks:** `:7100` reads
+`role: engine` and `engineOf` answers null; `:7101` reads `role: orchestrator`
+with zero job types and `engineOf` names the WSL engine; the resolver lands on
+:7100 with the same token and `capability()` through the hop answers the same
+eleven classes as the direct read; a fake orchestrator pointing at the real
+orchestrator is refused by name, so the second document's role really is read;
+a fake orchestrator with no engine is refused by name; Test connection on :7101
+succeeds naming both; and the standing/transient split behaves — pinned to a
+disabled class refuses, `any` with one able slot still goes, a real busy server
+still parks. **Not proved:** a queue-level run through a launched app (the new
+`refuse` is the pre-existing branch, read not watched), the renderer's `via`
+line on screen, and any hosted path.
+
+**Also this session:** the `--mamba-ssm-cache-dtype` claim in docs/VLLM.md §7
+and docs/BOOKFORGE-HANDOFF.md was WRONG and is corrected — BookForge read the
+pinned vLLM 0.29.0 source: `auto` resolves to the model's dtype, both
+checkpoints are bfloat16, so the state is already 16-bit, `float16` is the same
+two bytes, and `MambaDType` has no fp8. The mechanism survives in their sharper
+form (a Mamba page does not scale with `block_size`, so the ATTENTION pages are
+scaled up to match); the lever does not. The "tens to hundreds of megabytes"
+figure both repos quoted was the fp32 hypothetical. The SDK pack needed no
+refresh: packing from their tip reproduces the bytes Foundry already vendors.

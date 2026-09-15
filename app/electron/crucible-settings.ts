@@ -40,9 +40,18 @@
  * These were hand-rolled fetches while `@crucible/client` had no `settings()`,
  * `putSettings()` or `testUpstream()`, with a standing note to switch the
  * moment the tarball carried them. It does: **0.6.0, packed from crucible
- * `762484f`**, and all three now go through `clientFor(entry)` — the same
+ * `762484f`**, and all three now go through `engineClientFor(entry)` — the same
  * client every other Crucible call in this app goes through, with the same
  * error types, the same `User-Agent` and the same `X-Crucible-Api` header.
+ *
+ * ── AND THE ENGINE IS WHOSE SETTINGS THESE ARE ─────────────────────────────
+ *
+ * `engineClientFor` rather than `clientFor`, following crucible
+ * docs/PHASE17-ORCHESTRATOR.md §6's one hop, because a settings document is the
+ * ENGINE's: it holds the upstream keys and the route rows for the classes that
+ * run on that card, and an orchestrator (§3.2 — `job_types: []`, no settings
+ * route) has none of it. The card is named "Where the text work runs", and an
+ * orchestrator is where no text work runs.
  *
  * WHAT WENT WITH THE SWITCH is the snake_case translation this file used to
  * carry. The SDK reads `key_hint`, `desktop_allowance_bytes` and
@@ -58,7 +67,7 @@ import {
   type UpstreamName as EngineUpstreamName,
 } from '@crucible/client';
 
-import { clientFor } from './crucible-registry';
+import { engineClientFor } from './crucible-registry';
 import type { CrucibleServerEntry } from './app-settings';
 import {
   LLM_CLASSES,
@@ -88,7 +97,7 @@ import {
 export async function readEngineSettings(
   entry: CrucibleServerEntry,
 ): Promise<SettingsDocument> {
-  return documentFrom(await clientFor(entry).settings());
+  return documentFrom(await (await engineClientFor(entry)).settings());
 }
 
 /**
@@ -113,7 +122,7 @@ export async function writeEngineSettings(
   patch: SettingsPatch,
 ): Promise<SettingsDocument> {
   try {
-    return documentFrom(await clientFor(entry).putSettings(patchFor(patch)));
+    return documentFrom(await (await engineClientFor(entry)).putSettings(patchFor(patch)));
   } catch (err) {
     if (err instanceof CrucibleRefused) throw new Error(refusalSentence(err));
     throw err;
@@ -155,7 +164,7 @@ export async function testUpstream(
   name: UpstreamName,
   probe?: UpstreamProbe,
 ): Promise<UpstreamTestResult> {
-  const result = await clientFor(entry).testUpstream(name as EngineUpstreamName, probe);
+  const result = await (await engineClientFor(entry)).testUpstream(name as EngineUpstreamName, probe);
   return result.ok
     ? { outcome: 'ok', models: [...result.models] }
     : { outcome: 'failed', code: result.code, message: result.message };

@@ -214,6 +214,21 @@ export type CrucibleProbe =
     backend: string;
     /** The card, in the server's own words. */
     gpu: string;
+    /**
+     * THE ORCHESTRATOR THIS ANSWER CAME THROUGH, or null for an address that is
+     * the engine itself.
+     *
+     * crucible docs/PHASE17-ORCHESTRATOR.md §6: a registered address may be an
+     * orchestrator, which serves no job types and manages exactly one engine.
+     * Every other field above is the ENGINE's — that is the machine the work
+     * runs on and the card whose name a person wants — so this is the half of
+     * the sentence they would otherwise not be told, and it names both.
+     *
+     * A PRESENT NULL RATHER THAN AN ABSENT KEY, on this wire's standing rule:
+     * "there is no orchestrator" is a statement about the machine, and the card
+     * draws a line for it or does not.
+     */
+    via: string | null;
   }
   | {
     /**

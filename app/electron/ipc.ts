@@ -42,6 +42,7 @@ import {
   crucibleServerNamed,
   crucibleSettingsView,
   computeSlots,
+  forgetEngineTargets,
   probeCrucible,
   slotAvailability,
   probeCrucibleAt,
@@ -617,6 +618,15 @@ function namedServerOr(serverName: string): CrucibleServerEntry {
 }
 
 async function afterRegistryChanged(): Promise<void> {
+  /*
+   * THE RESOLVED HOPS GO FIRST, AND BEFORE THE CAPABILITY ANSWERS, because the
+   * capability read is made THROUGH one (crucible docs/PHASE17-ORCHESTRATOR.md
+   * §6, `engineClientFor`). Re-pointing an entry from a tray to its engine — or
+   * the other way — changes which process every later read reaches, and a
+   * refresh that ran against a remembered hop would fill the capability cache
+   * from the machine the person has just stopped naming.
+   */
+  forgetEngineTargets();
   forgetCrucibleFacts();
   await refreshCrucibleFacts();
   const removed = await applyPageReaderRemoval();
@@ -727,6 +737,18 @@ function serversConnectedBySave(
  * Refused at the door as well as skipped at the call, because `addCrucibleServer`
  * throws hosted (`refuseHostedRegistryChange`) and an unguarded startup call
  * would put that throw in a console every time BookForge opened the window.
+ *
+ * ── WHAT THE FILE NAMES IS WHAT IS REGISTERED, EVEN IF IT IS A TRAY ─────────
+ *
+ * crucible docs/PHASE17-ORCHESTRATOR.md §6: *"the pairing line an app reads is
+ * the ENGINE's"* — on Windows the orchestrator writes the guest's line verbatim
+ * — so this ordinarily registers an engine and the hop below never fires. When
+ * a line names an ORCHESTRATOR anyway, registering it is still CORRECT and is
+ * left alone: `resolveEngine` (crucible-registry.ts) follows the hop for every
+ * call that does work, and the one door that does not is the console button,
+ * which should open the process the person's machine actually named (see
+ * `openCrucibleUi`, which argues it). Rewriting the address here would be this
+ * app storing a fact it derived over the fact the machine stated.
  */
 export async function adoptPairingFile(): Promise<LocalCrucibleAdd> {
   if (hosted()) {

@@ -1573,13 +1573,21 @@ decided the same things.
 sessions guessed it wrong twice before your session read the config. Qwen 3.5 9B
 and 3.8 27B are hybrid: three of four layers are linear attention with a
 fixed-size recurrent state per sequence, one in four is full attention with KV.
-Per-token KV is tens of kilobytes; the per-sequence state is tens to hundreds of
-megabytes, and vLLM's hybrid allocator pads the attention page to match it — so a
-sequence costs pages of ~1,600 tokens rather than 16. That is why a 3.3 GB pool
-reported 22,420 tokens and admitted seven. Consequently `--kv-cache-dtype fp8`
-and prefix caching buy little DEPTH (prefix caching still buys the prefill
-compute, at a measured 95% hit rate), and `--mamba-ssm-cache-dtype float16` is
-the knob that roughly doubles admission.
+Per-token KV is tens of kilobytes; the per-sequence state sets the pool's
+granularity, and vLLM's hybrid allocator unifies every layer's page to the
+largest — a Mamba page does not scale with `block_size`, so the ATTENTION pages
+are scaled up to match — so a sequence costs pages of ~1,600 tokens rather than
+16. That is why a 3.3 GB pool reported 22,420 tokens and admitted seven.
+Consequently `--kv-cache-dtype fp8` and prefix caching buy little DEPTH (prefix
+caching still buys the prefill compute, at a measured 95% hit rate).
+**CORRECTED 2026-09-15, and the correction is BookForge's:** this paragraph used
+to end by naming `--mamba-ssm-cache-dtype float16` as the knob that doubles
+admission. It is not. `auto` resolves to the MODEL's dtype, both checkpoints are
+`bfloat16`, so the state is already 16-bit and `float16` is the same two bytes;
+`MambaDType` has no fp8, so 16-bit is the floor and `auto` already sits on it.
+The "tens to hundreds of megabytes" figure was the fp32 hypothetical (~50 MB on
+the 9B at fp32 is ~25 MiB at bf16). The depth comes from not loading a vision
+tower on the text lane, not from a dtype. Full chain in docs/VLLM.md §7.
 
 None of it reaches foundry — `--concurrency` asks and vLLM admits what it can,
 queueing the rest, which is the harmless direction. Written into docs/VLLM.md §7

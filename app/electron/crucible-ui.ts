@@ -72,6 +72,24 @@ function sameOrigin(a: string, b: string): boolean {
  * Throws by name when there is no such entry — the button is drawn from the
  * same list, so this is the state where somebody removed a server in another
  * window between the draw and the press.
+ *
+ * ── IT OPENS THE REGISTERED ADDRESS, NEVER THE RESOLVED ENGINE — RULED HERE ─
+ *
+ * crucible docs/PHASE17-ORCHESTRATOR.md §6 makes every WORKING call in this app
+ * follow one hop to the engine (`engineClientFor`, crucible-registry.ts). This
+ * door deliberately does NOT, and the difference is what the two are for. A
+ * placement is asking a machine to do work, and only an engine can; a console
+ * is a person going to LOOK at the process they named, and after Phase 17 the
+ * orchestrator's console is the one that has the buttons this hop exists
+ * because of — install an engine, restart it, quit the tray (§4). Opening the
+ * engine's page from a row that says `:7101` would take somebody to a different
+ * port than the one they typed, with none of the controls they pressed the
+ * button for, and no sentence anywhere saying why.
+ *
+ * Test connection says the other half out loud: an orchestrator fronting an
+ * engine probes as a SUCCESS naming both (`probeEntry`), so the row already
+ * tells a person that the address here is a tray and the work is happening
+ * behind it. The button under that sentence opens the tray.
  */
 export function openCrucibleUi(name: string): void {
   const existing = open.get(name.toLowerCase());

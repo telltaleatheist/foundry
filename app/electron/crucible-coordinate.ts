@@ -85,7 +85,7 @@
  *
  * ── AND NOT ONE LOG LINE CARRIES A TOKEN ───────────────────────────────────
  *
- * Nothing in this file reads `entry.token` except {@link clientFor}, which is
+ * Nothing in this file reads `entry.token` except `engineClientFor`, which is
  * where the registry already says the token meets the SDK. Every sentence
  * composed here names a server, a code or the server's own message, and a
  * server's own message is the SDK's — see `crucible-registry.ts`'s header for
@@ -104,7 +104,12 @@ import {
   type CrucibleModule,
 } from '@crucible/client';
 
-import { clientFor, crucibleServerNamed, crucibleServers } from './crucible-registry';
+import {
+  CrucibleOrchestratorError,
+  crucibleServerNamed,
+  crucibleServers,
+  engineClientFor,
+} from './crucible-registry';
 import { readCapability } from './crucible-dispatch';
 import type { CapabilityRecord } from '../shared/engine-settings';
 import { isLoopbackUrl } from '../shared/slots';
@@ -421,7 +426,16 @@ async function runCoordination(server: string): Promise<CrucibleCoordinationStat
   let catalog: readonly CatalogRow[];
   let capability: CapabilityRecord;
   try {
-    const client = clientFor(entry);
+    /*
+     * THROUGH THE ENGINE, NOT WHATEVER ADDRESS IS REGISTERED. crucible
+     * docs/PHASE17-ORCHESTRATOR.md §6: a registered address may be an
+     * orchestrator, and every one of the three reads below is an engine
+     * question — an orchestrator's `job_types` is `[]` by definition (§3.2), it
+     * has no catalog and no `/v1/capability`, and the module this file posts
+     * installs weights onto a CARD. Coordinating with the orchestrator would
+     * report every class as missing on a machine that serves all of them.
+     */
+    const client = await engineClientFor(entry);
     /*
      * THREE READS, AND THE THIRD IS §5.3a's.
      *
@@ -554,7 +568,7 @@ async function waitForSettle(server: string): Promise<void> {
   try {
     const entry = crucibleServerNamed(server);
     if (entry === null) return;
-    const client = clientFor(entry);
+    const client = await engineClientFor(entry);
     for (;;) {
       const activity = await client.activity();
       if (activity.slots.accelerated.acceptsWork) return;
@@ -579,7 +593,7 @@ function sleep(ms: number): Promise<void> {
 async function runningTaskId(server: string): Promise<string | null> {
   const entry = crucibleServerNamed(server);
   if (entry === null) return null;
-  const tasks = await clientFor(entry).tasks();
+  const tasks = await (await engineClientFor(entry)).tasks();
   const running = tasks.find((task) => task.state === 'running');
   return running === undefined ? null : running.taskId;
 }
@@ -609,6 +623,14 @@ function describeRead(err: unknown, server: string): string {
   if (err instanceof CrucibleProtocolError) {
     return `"${server}" answered with a document this build cannot read: ${err.detail}`;
   }
+  /*
+   * PHASE17 §6's two, named rather than flattened for this function's own
+   * reason: an orchestrator with no engine is not "it did not answer" — it
+   * answered perfectly, about a machine with nothing on it — and the fix is a
+   * button on that machine's console rather than anything to do with a token or
+   * a network.
+   */
+  if (err instanceof CrucibleOrchestratorError) return `"${server}": ${err.message}`;
   return err instanceof Error ? err.message : String(err);
 }
 
@@ -633,7 +655,7 @@ function report(state: CrucibleCoordinationState): CrucibleCoordinationState {
 async function postFoundryModule(server: string): Promise<string> {
   const entry = crucibleServerNamed(server);
   if (entry === null) throw new Error(`There is no server called "${server}".`);
-  return clientFor(entry).submitTask({ type: 'module', module: FOUNDRY_MODULE });
+  return (await engineClientFor(entry)).submitTask({ type: 'module', module: FOUNDRY_MODULE });
 }
 
 /**
@@ -685,7 +707,7 @@ async function followModuleTask(
   const entry = crucibleServerNamed(server);
   if (entry === null) return last;
 
-  for await (const event of clientFor(entry).taskEvents(taskId)) {
+  for await (const event of (await engineClientFor(entry)).taskEvents(taskId)) {
     switch (event.event) {
       case 'started':
         last = { ...last, state: 'running' };
@@ -748,7 +770,7 @@ async function followModuleTask(
   }
 
   try {
-    const status = await clientFor(entry).task(taskId);
+    const status = await (await engineClientFor(entry)).task(taskId);
     last = {
       ...last,
       unmet: status.unmet.map((need) => ({ class: need.class, reason: need.reason })),

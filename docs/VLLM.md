@@ -427,20 +427,37 @@ layers are linear attention (Gated DeltaNet) carrying a fixed-size recurrent
 state per sequence, and only one in four is full attention with a KV cache.
 
 The consequence is that the ordinary reasoning about KV does not apply. Per-token
-KV is tiny — tens of kilobytes — but the per-sequence recurrent state is tens to
-hundreds of megabytes, and vLLM's hybrid allocator pads the attention page to
-match that state. A sequence therefore costs pages of roughly 1,600 tokens
-rather than 16. That is why a 3.3 GB pool on the 9B reported 22,420 tokens and
-admitted **7** concurrent: page granularity, not bytes.
+KV is tiny — tens of kilobytes — but the per-sequence recurrent state is large
+enough to set the granularity of the whole pool, and vLLM's hybrid allocator
+unifies every layer's page to the largest: a Mamba page comes from the state's
+shapes and does not scale with `block_size`, so it is the ATTENTION layers that
+get scaled UP to match (`new_block_size = layer_spec.block_size * ratio`,
+`v1/core/kv_cache_utils.py`). A sequence therefore costs pages of roughly 1,600
+tokens rather than 16. That is why a 3.3 GB pool on the 9B reported 22,420
+tokens and admitted **7** concurrent: page granularity, not bytes.
 
 So on these models:
 
 - **`--kv-cache-dtype fp8` buys little.** KV is already the small half.
 - **Prefix caching buys little DEPTH** (pages are too coarse to share much),
   though it still buys the prefill compute above.
-- **`--mamba-ssm-cache-dtype float16` is the knob that matters** — it halves the
-  state and therefore the page, and therefore roughly doubles how many sequences
-  are admitted.
+- **`--mamba-ssm-cache-dtype` IS ALREADY AT ITS FLOOR, and this file said
+  otherwise until 2026-09-15.** It claimed `float16` "halves the state and
+  therefore roughly doubles admission". It does not, and the correction is
+  BookForge's, read out of the pinned vLLM 0.29.0 source rather than reasoned:
+  `MambaSpec.page_size_bytes` ← `state_content_size_bytes` ← `qwen3_5.py`'s
+  `get_mamba_state_dtype_from_config` → `gated_delta_net_state_dtype` →
+  `_mamba_state_dtype`, where **`auto` resolves to the MODEL's dtype** and
+  `mamba_ssm_cache_dtype: auto` copies it. Both checkpoints declare
+  `dtype: bfloat16`, so the state is already 16-bit; `float16` is two bytes
+  against `bfloat16`'s two. There is nothing smaller to reach for either —
+  `MambaDType` is `auto | float32 | float16 | bfloat16` and there is no fp8.
+  **The "tens to hundreds of megabytes" figure this file used to quote is the
+  fp32 HYPOTHETICAL**, not what ran: ~50 MB on the 9B at fp32 is ~25 MiB at
+  bf16. fp32 is real for other architectures (`kda_state_dtype` pins its
+  temporal state to float32) but Qwen3.5/3.8 take the gated-delta-net path, and
+  nobody ever set a non-`auto` value on either side. Recorded at this length so
+  that nobody spends a card run on the knob later.
 
 None of this reaches foundry: `--concurrency` asks for a number in flight and
 vLLM admits what it can, queueing the rest. Twelve against an admission of seven

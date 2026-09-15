@@ -173,6 +173,17 @@ interface EditableServer extends CrucibleServerView {
                 <p class="small ok">
                   {{ probe.serverName }} {{ probe.version }} — {{ probe.backend }}, {{ probe.gpu }}
                 </p>
+                <!--
+                  Reached through an orchestrator (crucible
+                  PHASE17-ORCHESTRATOR.md §6), which is a SUCCESS and is the
+                  shape of a Windows machine with WSL: the tray answers the
+                  address in this row and the engine that did the answering
+                  above is behind it. "Open engine console" still opens the
+                  address in the row — see openCrucibleUi, which says why.
+                -->
+                @if (probe.via; as via) {
+                  <p class="small">{{ via }}</p>
+                }
               } @else {
                 <p class="small warn">{{ probe.message }}</p>
               }

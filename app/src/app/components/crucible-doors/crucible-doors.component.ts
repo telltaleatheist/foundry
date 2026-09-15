@@ -189,6 +189,17 @@ type DoorId = 'connect' | 'local' | 'install' | 'uninstall';
               <p class="small ok">
                 {{ result.serverName }} {{ result.version }} — {{ result.backend }}, {{ result.gpu }}
               </p>
+              <!--
+                The engine was reached through an orchestrator (crucible
+                PHASE17-ORCHESTRATOR.md §6). That is a SUCCESS and the ordinary
+                shape of a Windows machine with WSL — the line above is the
+                engine's, and this names the process in front of it so nobody
+                has to work out why the address they typed and the server that
+                answered are two different ports.
+              -->
+              @if (result.via; as via) {
+                <p class="small">{{ via }}</p>
+              }
             } @else {
               <p class="small warn">{{ result.message }}</p>
             }
