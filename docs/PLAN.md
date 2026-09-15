@@ -5069,3 +5069,31 @@ BookForge's equivalent is being built and its shape will be sent so the two apps
 read the same. The walk is done as a real run of the app, not a reading of it,
 once INSTALL-UNINSTALL.md and BookForge's shape have landed — an agent built
 against a guess tonight would be rebuilt tomorrow.
+
+#### Wave 64 point 3 — the Uninstall door — LANDED 2026-09-15
+
+Built to crucible `docs/INSTALL-UNINSTALL.md` §6 (6.1–6.4), with BookForge's
+door shape matched word for word: a FOURTH door inside `app-crucible-doors`
+behind a `canUninstall` input the Servers card passes and the first-run wizard
+does not — "Remove the engine from this computer", "Show me what would go",
+"Remove it"; both boxes off by default, and changing either clears the plan
+and re-asks so the kept figure moves. Main owns §6.1's proof in ONE function —
+`proof` (pairing-file / windows-host / wsl-guest) and `via` (which of §6.2's
+three commands runs) are SEPARATE answers, because Owen's PC is proved by its
+pairing file and run through the host pack. Never a registry entry; hosted
+refuses `uninstall_not_local`; the install-this-session proof is
+unimplementable until `@crucible/bootstrap` ships. The nine app-side refusal
+names are BookForge's. After a real run that stopped the engine, the proved
+row leaves the registry (its token is dead) and the registry's own pass runs.
+Three doors: `crucible:uninstall-availability`, `-dry-run`, `crucible:uninstall`
+(145 handlers, measured). **Measured:** a `.cmd` cannot be spawned without a
+shell on Electron 33's Node (EINVAL, CVE-2024-27980), so win32 runs
+`cmd.exe /d /s /c` with every token quoted; a `%LOCALAPPDATA%` holding a quote
+or a percent sign is refused by name. **Proved live on Owen's PC:**
+availability `true / pairing-file / windows-host / local`; a real `--dry-run`
+through the compiled invoker — 21 steps, `mechanism: startup`, `pack:host`
+196,621,196 bytes, `kept.weightsBytes: 0` because this Windows home holds no
+weights (they are in the guest) — and again with `--purge-weights` flipping
+all six `weights:*` steps to remove; the reader against a hand-written plan
+with a fatal refusal, a keep step and an unknown catalog kind. **Not proved:**
+the real run (never attempted), the WSL-guest arm, posix, hosted.

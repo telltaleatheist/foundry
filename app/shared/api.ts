@@ -37,6 +37,12 @@ import type {
   SlotAvailability,
 } from './slots';
 import type {
+  CrucibleUninstallAvailability,
+  CrucibleUninstallFlags,
+  CrucibleUninstallPlan,
+  CrucibleUninstallRun,
+} from './uninstall-wire';
+import type {
   ModelClass,
   ActGates,
   AnalysisPlan,
@@ -1531,6 +1537,48 @@ export interface FoundryApi {
      * for. The caller's shape is the same either way — `await`, and catch.
      */
     install(): Promise<void>;
+    /**
+     * MAY THE UNINSTALL DOOR BE DRAWN AT ALL — crucible
+     * `docs/INSTALL-UNINSTALL.md` §6.1, and Owen's ruling with it: *the door
+     * only for a server the app can prove is this machine's; never a registry
+     * entry.*
+     *
+     * A READ, and it is the FIRST thing the card asks — a button drawn on
+     * anything less than a proof would eventually offer to delete a colleague's
+     * engine, because a loopback-looking address proves nothing (a tailnet, a
+     * port-forward and an SSH tunnel all put 127.0.0.1:7100 in front of somebody
+     * else's card). `available: false` carries the sentence the card prints
+     * instead of the button, and hosted it is always false.
+     */
+    uninstallAvailability(): Promise<CrucibleUninstallAvailability>;
+    /**
+     * THE PLAN, UNPERFORMED — `crucible uninstall --json --dry-run` (§6.2, §6.4
+     * step 1). Nothing is touched.
+     *
+     * Called again on every change of the two checkboxes, which is the
+     * contract's own instruction: the kept-weights headline has to move when
+     * "Also delete the weights" is ticked, and the dry run is the only thing
+     * that knows the new number. Refuses by name when this app cannot prove the
+     * server is local (`uninstall_not_local`), when the verb did not recognise
+     * the request (`uninstall_usage`), and when what came back is not a plan
+     * (`uninstall_not_json`). A step that FAILED is not a rejection: it is a row
+     * in the plan with `refused.fatal` and the document's `ok` is false.
+     */
+    uninstallDryRun(flags: CrucibleUninstallFlags): Promise<CrucibleUninstallPlan>;
+    /**
+     * THE SAME FLAGS, PERFORMED — §6.4 step 2. The same rows come back with
+     * `done` filling in.
+     *
+     * AND ONE THING MAIN DOES AFTERWARDS: every uninstall takes `config.toml`
+     * with it (§2's box — *"an uninstall that left a bearer token on disk would
+     * be an uninstall that left a credential behind"*), so a run that stopped
+     * the engine leaves the registry row pointing at it holding a dead token,
+     * and that row is removed. `CrucibleUninstallRun.unregistered` names it, or
+     * is null — the renderer cannot see a registry write, and a list that
+     * changed under somebody without a sentence would be the app editing their
+     * settings behind their back.
+     */
+    uninstall(flags: CrucibleUninstallFlags): Promise<CrucibleUninstallRun>;
 
     /**
      * ── COORDINATION: WHAT EACH SERVER IS MISSING, AND WHAT IS BEING DONE ────

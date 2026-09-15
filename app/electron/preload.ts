@@ -258,6 +258,15 @@ const api: FoundryApi = {
     setNewJobsWaitFor: (choice) => ipcRenderer.invoke('crucible:set-new-jobs-wait-for', choice),
     installPlan: () => ipcRenderer.invoke('crucible:install-plan'),
     install: () => ipcRenderer.invoke('crucible:install'),
+    /*
+     * The uninstall door's three. The FIRST one is what decides whether the
+     * other two are ever drawn — crucible docs/INSTALL-UNINSTALL.md §6.1: the
+     * door is for a server this app can prove is this machine's, and never for
+     * a registry entry as such. Main refuses on the same answer.
+     */
+    uninstallAvailability: () => ipcRenderer.invoke('crucible:uninstall-availability'),
+    uninstallDryRun: (flags) => ipcRenderer.invoke('crucible:uninstall-dry-run', flags),
+    uninstall: (flags) => ipcRenderer.invoke('crucible:uninstall', flags),
     coordination: () => ipcRenderer.invoke('crucible:coordination'),
     coordinate: (name) => ipcRenderer.invoke('crucible:coordinate', name),
     onCoordination: (listener) =>

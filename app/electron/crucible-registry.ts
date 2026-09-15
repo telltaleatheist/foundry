@@ -316,6 +316,35 @@ export function addCrucibleServer(name: string, url: string, token: string): Cru
 }
 
 /**
+ * DROP ONE SERVER BY NAME, for a caller that is not editing the list.
+ *
+ * {@link addCrucibleServer}'s twin and written the same way, for the same
+ * reason: read, change, hand the whole thing to the ONE writer, so that every
+ * refusal and every clamp still applies and there is no second path into the
+ * settings file. A name that is not there is not an error — the answer is the
+ * list, which is what the caller wanted to know.
+ *
+ * THE ONE CALLER TODAY is the uninstall door (electron/crucible-uninstall.ts,
+ * crucible `docs/INSTALL-UNINSTALL.md` §6.4): a real uninstall takes
+ * `config.toml` with it, so the entry pointing at that engine is an entry
+ * holding a token that no longer opens anything. Leaving it would leave a slot
+ * in the picker that fails every job placed on it.
+ */
+export function removeCrucibleServer(name: string): CrucibleServerView[] {
+  const key = name.replace(/\s+/g, ' ').trim().toLowerCase();
+  const kept = crucibleServers()
+    .filter((entry) => entry.name.toLowerCase() !== key)
+    .map((entry): CrucibleServerEdit => ({
+      name: entry.name,
+      url: entry.url,
+      enabled: entry.enabled,
+      // Null, so the stored token is carried forward — see addCrucibleServer.
+      token: null,
+    }));
+  return writeCrucibleServers(kept);
+}
+
+/**
  * HOSTED, THE REGISTRY IS SOMEBODY ELSE'S — `library:set`'s refusal, for the
  * same reason (docs/SLOTS.md §3: *"The vendored (BookForge-hosted) app takes its
  * slot list from the host"*).

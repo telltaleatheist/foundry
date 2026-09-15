@@ -45,6 +45,7 @@ import {
   probeCrucible,
   slotAvailability,
   probeCrucibleAt,
+  removeCrucibleServer,
   writeCrucibleServers,
 } from './crucible-registry';
 import { readCapability } from './crucible-dispatch';
@@ -56,6 +57,17 @@ import type {
   UpstreamProbe,
 } from '../shared/engine-settings';
 import { crucibleInstallPlan, driveCrucibleInstall } from './crucible-install';
+import {
+  crucibleUninstallAvailability,
+  crucibleUninstallDryRun,
+  crucibleUninstallPerform,
+  uninstallStoppedTheEngine,
+} from './crucible-uninstall';
+import type {
+  CrucibleUninstallFlags,
+  CrucibleUninstallPlan,
+  CrucibleUninstallRun,
+} from '../shared/uninstall-wire';
 import { pairingFileRead, readConnectCode } from './crucible-pairing';
 import { forgetCrucibleFacts, refreshCrucibleFacts } from './crucible-provider';
 import {
@@ -3777,6 +3789,71 @@ export function registerIpc(): void {
     wheel: CRUCIBLE_WHEEL,
     onLine: () => { /* nothing to relay while the door refuses. */ },
   }));
+  /*
+   * ── UNINSTALL: THREE DOORS, AND THE FIRST ONE DECIDES THE OTHER TWO ───────
+   *
+   * crucible `docs/INSTALL-UNINSTALL.md` §6.1, and Owen's ruling with it: the
+   * door is drawn only for a server this app can PROVE is this machine's, and
+   * never for a registry entry as such. `crucible:uninstall-availability` is
+   * that one proof — the card asks it before it draws a button and both doors
+   * below refuse on it as well, because a control that is hidden over a door
+   * that is open has been decorated rather than locked.
+   *
+   * Everything about what is invoked, and why win32 needs `cmd.exe` to run a
+   * `.cmd`, is in electron/crucible-uninstall.ts. Nothing about it is composed
+   * here; these three are a read and two runs.
+   */
+  ipcMain.handle('crucible:uninstall-availability', () => crucibleUninstallAvailability());
+  /**
+   * THE PLAN, UNPERFORMED — §6.4 step 1, and the card re-asks it every time a
+   * checkbox moves so the kept-weights headline moves with it.
+   *
+   * An exit code of 1 is still a plan (§6.2): the JSON's `ok: false` names the
+   * one step that failed and the others happened. Only a usage error and a
+   * document that is not a document are rejections — see the module.
+   */
+  ipcMain.handle('crucible:uninstall-dry-run', (
+    _event,
+    flags: CrucibleUninstallFlags,
+  ): Promise<CrucibleUninstallPlan> => crucibleUninstallDryRun(flags));
+  /**
+   * THE REAL RUN, and the one thing Foundry does afterwards that the verb cannot.
+   *
+   * §2's box: *"THE TOKEN ALWAYS GOES, on every uninstall, including the default
+   * one."* So a run that stopped the engine has left the registry row pointing at
+   * it holding a dead credential, and the row goes — through the registry's one
+   * writer, followed by `afterRegistryChanged`, which is what every other write
+   * in this file does and what keeps the dock's gates and the slot list honest.
+   *
+   * ONLY WHEN THE PROOF NAMED A ROW. A `windows-host` proof says a host is
+   * installed on this computer and says nothing about which entry, if any, points
+   * at the engine it drives; removing a row on that basis would be the app
+   * guessing at exactly the thing §6.1 forbids guessing at.
+   *
+   * COORDINATION STATE IS LEFT TO THE NEXT CONNECT, deliberately. The map in
+   * crucible-coordinate.ts is keyed by registry name, the Servers card looks a
+   * row's state up BY the row's name, and there is no row any more — so the
+   * stale entry draws nothing anywhere. Registering a server under that name
+   * again coordinates afresh and overwrites it. Clearing it would mean a new
+   * export from that module for an entry nobody can see.
+   */
+  ipcMain.handle('crucible:uninstall', async (
+    _event,
+    flags: CrucibleUninstallFlags,
+  ): Promise<CrucibleUninstallRun> => {
+    const availability = await crucibleUninstallAvailability();
+    const plan = await crucibleUninstallPerform(flags);
+    if (availability.server === null || !uninstallStoppedTheEngine(plan)) {
+      return { plan, unregistered: null };
+    }
+    removeCrucibleServer(availability.server);
+    await afterRegistryChanged();
+    console.log(
+      `[crucible] "${availability.server}" was removed from the registry: its engine was `
+      + 'uninstalled from this computer and the token went with config.toml.',
+    );
+    return { plan, unregistered: availability.server };
+  });
   ipcMain.handle('crucible:set-wsl-distro', (_event, distro: string) =>
     writeAppSettings({ wslDistro: distro }).wslDistro);
   ipcMain.handle('crucible:set-new-jobs-wait-for', (_event, choice: NewJobsWaitFor) =>

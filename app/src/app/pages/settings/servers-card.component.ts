@@ -212,7 +212,15 @@ interface EditableServer extends CrucibleServerView {
           screens offer one set of choices — see the module note. The WSL distro
           field lives inside door 2, beside the button that needs it.
         -->
-        <app-crucible-doors (changed)="load()" />
+        <!--
+          AND THE FOURTH DOOR, THE WAY OUT, drawn only here. The child takes an
+          input for it and the first-run wizard does not pass one: offering to
+          remove Crucible to somebody who has not installed it yet is a screen
+          teaching the wrong thing. crucible docs/INSTALL-UNINSTALL.md section
+          6.1 decides the rest — the door appears only for a server main can
+          PROVE is this machine's, and never for a registry row.
+        -->
+        <app-crucible-doors [canUninstall]="true" (changed)="load()" />
 
         <!--
           WHAT A NEW ROW STARTS AS. It is resolved to a slot NAME at the press,

@@ -1,5 +1,68 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
+**THREE DOORS ON 2026-09-15 — WAVE 64 POINT 3, THE UNINSTALL DOOR. COUNTED BY
+SCRIPT OVER `app/electron/ipc.ts`: 145 `ipcMain.handle` call sites, 145 distinct
+channel names, zero `ipcMain.on`.** Nothing was removed, nothing was renamed, and
+no existing shape narrowed. One shared file is new — `app/shared/uninstall-wire.ts`,
+crucible `docs/INSTALL-UNINSTALL.md` §6.3 mirrored field for field.
+
+**AND THE STANDING FAILURE, A FOURTH TIME.** The head below said **138** and the
+source measured **142** before this change — four doors added under a stale
+figure, which every dated paragraph in this file has now had to record. The
+figure above is a measurement, taken by the script it names over the source in
+this worktree.
+
+- **`crucible:uninstall-availability` → `CrucibleUninstallAvailability`** — may
+  the door be drawn at all. §6.1, and Owen's ruling with it: *the door only for a
+  server the app can prove is this machine's; never a registry entry.* ONE
+  function in main answers it and both doors below refuse on the same answer,
+  because a hidden control over an open door is a decoration. It answers TWO
+  questions, because on one machine they have different answers: what PROVED the
+  server is this machine's (`pairing-file` — this machine's pairing file, read
+  through the SDK, matching a registry entry on BOTH url and token, the name
+  deliberately not having to match, since this PC's file says
+  `crucible@owens-pc-wsl` and the same engine is registered as `local`;
+  `windows-host` — `%LOCALAPPDATA%\Crucible\host\crucible.cmd` exists, which is
+  what "the host is installed" MEANS; `wsl-guest` — win32 with no host pack and a
+  Crucible in the distro door 2 names), and what would RUN (`via`, §6.2's three
+  lines). Owen's PC is proved by its pairing file and run through the host pack.
+  §6.1's remaining proof — a server this app installed this session — is NOT
+  implemented and cannot be: `crucible:install` refuses on every machine until
+  `@crucible/bootstrap` ships. `:7101` is never knocked on: §6.2 says the host's
+  loopback door was never extended with an uninstall, so there is no route there
+  and asserting one would be inventing an endpoint. Hosted: always false. A READ.
+- **`crucible:uninstall-dry-run` ({purgeWeights, wslToo}) → `CrucibleUninstallPlan`**
+  — `crucible uninstall --json --dry-run`, §6.4 step 1. Touches nothing. The door
+  asks it again whenever a checkbox moves, which is the contract's own
+  instruction: the kept-models figure has to move, and the dry run is the only
+  thing that knows the new number. Exit **1 is still a plan** — `ok: false` names
+  the one step that failed and the others happened.
+- **`crucible:uninstall` ({purgeWeights, wslToo}) → `CrucibleUninstallRun`** — the
+  same flags, performed, §6.4 step 2: the same rows with `done` filling in. AND
+  the one act that is Foundry's rather than the verb's — §2's box, *"THE TOKEN
+  ALWAYS GOES, on every uninstall"* — so a run that stopped the engine removes the
+  registry row the proof named, through the registry's one writer
+  (`removeCrucibleServer`, new, `addCrucibleServer`'s twin), followed by
+  `afterRegistryChanged`. `unregistered` names the row that went, or null when the
+  proof named none (a `windows-host` proof names no row) or the engine was not
+  stopped. Coordination state for that name is LEFT to the next connect: the map
+  is keyed by registry name, the Servers card looks a row's state up by the row's
+  name, and there is no row any more — so the stale entry draws nothing anywhere,
+  and registering that name again coordinates afresh over it.
+
+**THE APP-SIDE REFUSAL NAMES ARE AGREED WITH BOOKFORGE** (2026-09-15) so two apps
+name one situation one way: `uninstall_not_local`, `uninstall_not_available`,
+`uninstall_no_localappdata`, `uninstall_no_distro`, `uninstall_home_unreadable`,
+`uninstall_wsl_too_needs_host`, `uninstall_unrun`, `uninstall_unreadable`,
+`uninstall_failed`. They are facts about THIS APP's reach and are a different
+layer from the CLI's own refusals, which arrive per step inside the plan in the
+engine's words (§6.3's table) and are never translated.
+
+**No token is in any of the three answers or in any line they log.** The plan's
+paths — `home`, `kept.paths`, each step's `target` — are directories, which is
+what a person reading a plan needs to see; the verb prints no credential, because
+`remove-config` deletes the file holding the bearer token and never echoes it.
+
 **FOUR DOORS ON 2026-09-14 — WAVE 62 PACKAGE J, CONNECT THREE WAYS. COUNTED BY
 SCRIPT OVER `app/electron/ipc.ts` AFTER THE MERGE WITH PACKAGE H BELOW: 138
 `ipcMain.handle` call sites, 138 distinct channel names, zero `ipcMain.on`.** Nothing was removed, nothing was renamed, and
@@ -781,9 +844,53 @@ resolving `ok` means the installer was OPENED**, never that ollama is
 installed — that happens minutes later in a window this app does not own, so
 `ollama:facts` is the only thing that ever says so.
 
+### Three names added on 2026-09-15 — the Uninstall door (Wave 64 point 3)
+
+`crucible:uninstall-availability`, `crucible:uninstall-dry-run`,
+`crucible:uninstall`. Built to crucible `docs/INSTALL-UNINSTALL.md` §6 (6.1–6.4),
+which is the contract. The renderer is a FOURTH DOOR inside
+`app-crucible-doors`, behind a `canUninstall` input the Servers card passes and
+the first-run wizard does not: the child is mounted by both screens, and offering
+to remove Crucible to somebody who has not installed it is a wizard arguing with
+itself. Its words are BookForge's verbatim (agreed 2026-09-15) — two apps that
+remove one engine off one machine must not describe it two ways.
+
+Four things worth naming rather than leaving in the table.
+
+**A `.cmd` cannot be spawned without a shell on this Node, and that is measured.**
+Node 20.19.5 and Electron 33's Node both carry the CVE-2024-27980 fix, so
+`spawn('…\\crucible.cmd', argv)` throws `EINVAL` outright — verified on this
+machine before the module was written. So the win32 host arm takes §6.2's
+documented fallback: `cmd.exe /d /s /c "<every token quoted>"` with
+`windowsVerbatimArguments`, assembled from an argv array so nothing a person typed
+can reach it, and a `%LOCALAPPDATA%` carrying a quote or a percent sign is refused
+by name rather than escaped by guesswork. The WSL arm goes through `bash -c` with
+a fixed script, for the reason `addLocalCrucible` already does: only the guest can
+expand its own `CRUCIBLE_HOME`.
+
+**Strict about fields, open about values.** A field §6.3 says is always there and
+is not there is `uninstall_unreadable` — a plan with an invented `ok` is a plan
+that says the wrong thing about a machine somebody is about to change. An OPTIONAL
+field arrives as null and means what §6.3 says: an absent `bytes` is *"the target
+is not a path"*, which is not zero. An unknown STEP NAME or action word is carried
+through as a string and drawn, because two of §6.3's name shapes are open-ended
+(`weights:<catalog kind>` is the server's list, `keep-unknown:<name>` is a file
+Crucible did not write) and nothing in this app switches on one.
+
+**`ok: false` is never "uninstall failed".** §6.3 is explicit that a fatal step does
+not stop the run, so the door marks one row and says *a step refused, above, by
+name; everything that DID finish is gone; nothing is half-removed silently* — and
+there is no arrangement of that component that produces the other sentence.
+
+**Both checkboxes default off, and changing either clears the plan before asking
+for a new one.** Both halves matter: clearing is what stops a Remove button
+sitting over rows priced for other flags, and the re-ask is §6.4's own instruction
+so the kept figure moves with the box. Closing the door clears it too, and
+reopening asks again.
+
 ## Doors the renderer knocks on
 
-All 130 are `ipcMain.handle` — there is not one `ipcMain.on` in the app, on
+All 145 are `ipcMain.handle` — there is not one `ipcMain.on` in the app, on
 purpose: a renderer that cannot tell whether main heard it is a renderer that
 cannot report a failure. They are registered in one function, `registerIpc`
 (`app/electron/ipc.ts`), which `mountFoundry` calls.
@@ -907,6 +1014,9 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `crucible:set-new-jobs-wait-for` | `top` or `any` — what a new row's `waitFor` starts as. Answers with what was stored. |
 | `crucible:install-plan` | The hand sequence for installing a Crucible on this machine, composed for this platform: the numbered steps with every command copyable, the elevated ones listed apart, the README link and the wheel. A read — the only process it spawns is `wsl.exe -l -v`. |
 | `crucible:install` | The driven install. REJECTS on every machine today with the same sentence the disabled button wears — `@crucible/bootstrap` ships with Crucible's next release. The door refuses as well as the button, because a disabled control over an open door is a decoration. |
+| `crucible:uninstall-availability` | May the Uninstall door be drawn at all — crucible `docs/INSTALL-UNINSTALL.md` §6.1, and Owen's ruling with it: **the door only for a server the app can prove is this machine's; never a registry entry.** A registry row says where a server is and what its token is, not whose machine it is on, and a loopback-looking address proves nothing (a tailnet, a port-forward or an SSH tunnel all put 127.0.0.1:7100 in front of somebody else's card). Answers what PROVED it (`pairing-file` / `windows-host` / `wsl-guest`) and, separately, what would RUN (`via`, §6.2's three lines) — two questions with different answers on one machine: Owen's PC is proved by its pairing file and run through the host pack. Also carries the registry name the proof named, or null, and whether `--wsl-too` may be offered (only the host drives the guest). Hosted: always false. A READ — a file test, and one `wsl.exe` call on the guest arm alone. |
+| `crucible:uninstall-dry-run` | ({purgeWeights, wslToo}) → `CrucibleUninstallPlan` — `crucible uninstall --json --dry-run` (§6.2's verbatim argv). Touches nothing. Asked again whenever a checkbox moves, because the kept-models figure has to move and the dry run is the only thing that knows the new number. Exit **1 is still a plan** — `ok: false` names the one step that failed, the others happened, and a rejection there would tell somebody nothing happened when most of it did; exit **2 is `uninstall_not_available`**, an older Crucible that has no uninstall verb. |
+| `crucible:uninstall` | ({purgeWeights, wslToo}) → `CrucibleUninstallRun` — the same flags, performed (§6.4 step 2): the same rows with `done` filling in. Then the one act that is Foundry's and not the verb's — §2's box, *"THE TOKEN ALWAYS GOES, on every uninstall"* — so a run that stopped the engine removes the registry row the proof named, through the registry's one writer, followed by `afterRegistryChanged`. `unregistered` names it or is null. The WRAPPER (`install.ps1 -Uninstall` / `install.sh --uninstall`) is never called from here: §6.2 — the verb is the machine-readable surface, and the door says in its own last line that the pack and the home stay, quoting the plan's `pack:server` / `pack:host` row. |
 | `crucible:coordination` | Where coordination stands with every server it has anything to say about, keyed by registry name. A server absent from the map has not been asked yet. A read — it starts nothing. |
 | `crucible:coordinate` | Coordinate with one named server NOW: read `/v1/info`, `/v1/catalog` and `/v1/capability`, compare the vendored module (whose `needs` are CLASSES the engine's capability record resolves, PHASE15-HOST.md §5.3a), and post a `module` task ONLY when something is missing — a class that engine has disabled is `unmet`, not missing, and posts nothing. Idempotent — a second call while one is in flight joins the first. It never rejects; every ending is a state. There is no button behind it, because coordination is automatic on every enabled server (§4a). |
 | `crucible:engine-settings` | (serverName) → `SettingsDocument` — one server's OWN settings (`GET /v1/settings`, crucible docs/PHASE15-HOST.md §3.1): the route and model of each of the four llm classes, which of the three upstreams are configured, the desktop allowance and the backend kind. A REMOTE store — nothing in it is kept in `app-settings.json`. **No key comes back**: the document carries `keyHint`, the last four characters, where the engine carries a key. |

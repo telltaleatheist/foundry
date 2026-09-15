@@ -187,6 +187,33 @@ export function sizeWords(bytes: number | null): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
+/**
+ * "190.6 MB", "95 bytes" — a size at whatever scale it actually is.
+ *
+ * BESIDE {@link sizeWords} RATHER THAN REPLACING IT, because the two answer
+ * different questions. `sizeWords` prices WEIGHTS, which are always gigabytes,
+ * and a fixed unit there means two engines' stock can be compared at a glance.
+ * An uninstall plan's rows (crucible `docs/INSTALL-UNINSTALL.md` §6.3's
+ * `steps[].bytes`) run from a 95-byte pairing file to a 190 MB interpreter, and
+ * "0.0 GB" beside a file is a row that looks like a measurement failure.
+ *
+ * Zero is drawn as "empty" rather than "0 bytes": the plan says so about a
+ * directory that is there and holds nothing, which is a fact a person can act
+ * on, and "0 bytes" reads as the sum that was never taken.
+ */
+export function diskWords(bytes: number): string {
+  if (bytes <= 0) return 'empty';
+  if (bytes < 1024) return `${bytes} bytes`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
+}
+
 /** A list, with an "and" where a person would put one. */
 export function joinWords(parts: readonly string[]): string {
   if (parts.length === 0) return '';
