@@ -4749,7 +4749,7 @@ version — still his.
 no per-server question — the enable switch in Settings is the one opt-out.**
 
 crucible docs/PHASE14-ENVPACKS.md §4a, Owen 2026-09-14: *"lets make it as simple
-as possible."* On app start (every enabled server, loopback first), on an add,
+as possible."* On app start (every enabled server, in the registry's own order), on an add,
 and on any entry a save named or switched back on, Foundry READS `/v1/info` and
 `/v1/catalog`, compares `app/shared/foundry.module.json`, and posts
 `{type:'module'}` ONLY when something is missing. Nothing missing is a read and
@@ -5192,3 +5192,87 @@ form (a Mamba page does not scale with `block_size`, so the ATTENTION pages are
 scaled up to match); the lever does not. The "tens to hundreds of megabytes"
 figure both repos quoted was the fp32 hypothetical. The SDK pack needed no
 refresh: packing from their tip reproduces the bytes Foundry already vendors.
+
+### Wave 66 — a local server is not a special server, and a name is a label a person types (Owen, 2026-09-15) — LANDED
+
+**Owen, verbatim:** *"it shouldnt be named 'local' anywhere. it might not be
+local. a local crucible server shouldnt be treated any differently than a remote
+crucible server. it should all be entered the exact same way. if we have to
+change how the code works then we should do that. bookforge shouldnt even know
+if it's local because it doesnt mater."* BookForge deleted its reserved `local`
+identity at `24b7bf67` and flagged Foundry as the holdout.
+
+**The reserved name is gone, and what replaced it is not another constant.** A
+pairing line ALREADY CARRIES the server's own name, and the pairing file is a
+connect code the machine left on disk — so `registerPairing()` is now the ONE
+writer both pairing doors share, and the file is registered exactly the way a
+pasted code is: same `addCrucibleServer`, same refusals, same clamp, the name
+from the line unless a person typed one. A consequence worth stating: the
+connect-code door now COORDINATES, which it never did — it was the one road
+into the registry that skipped PHASE14 §4a's moment while `crucible:add` beside
+it took it.
+
+**Two more "local is special" assumptions went with it.** `adoptPairingFile`
+declined whenever ANY loopback entry was registered, so a person with a tailnet
+Crucible AND a pairing file got neither; the test is now "is the URL this file
+names already registered", compared against the clamped URL because that is how
+the registry stored its own rows. And `coordinateEveryServer` no longer puts
+loopback entries first: the drag rank is the only ordering this app is entitled
+to, an address is not a ranking, and `127.0.0.1` is as likely to be a tunnel as
+this machine. The doors card also stopped sending `'This machine'` as a name —
+it sends nothing, and `addLocalCrucible` resolves that to the `[server] name`
+in that config.toml, the server naming itself like the other two doors.
+
+**LEFT ON PURPOSE, each for a stated reason:** `LOCAL_SLOT_NAME` and the local
+compute slot (the no-Crucible Ollama fallback, package L's); the Uninstall
+door's proof of locality, which was checked and is clean — it proves on url +
+token, a file's existence, or a named distro, and never on a name (Owen ruled
+that door is only for a server the app can PROVE is this machine's);
+`localCrucibleServes` / act-gates clause 2, which ask "are the weights on this
+machine" rather than naming a server; and `route: 'local' | 'upstream'`, which
+is Crucible's own vocabulary for a class's route.
+
+**THE DEFECT THE RULING EXPOSED — names are free text a person types now.**
+Foundry had both hazards BookForge's rules exist for and guarded neither. `:`
+is the dangerous one: `upstreamLaneName` composes `<slot>:cloud` and three
+readers compare that string (the scheduler's occupancy map, the walk's claim,
+the bench's card), so a server named `3090:cloud` produces a CARD lane whose
+name equals server `3090`'s UPSTREAM lane — two lanes, one string. `/` and `\`
+go into an Electron session partition (`crucible:<name>`). Underneath both sat a
+two-owners bug: the refusing writer checked NO length while the storing clamp
+silently `.slice(0, 60)`d, so a long name was refused by nobody and quietly
+altered on the way to disk, where it could then collide or stop matching its own
+card. Fixed with ONE owner — `SLOT_NAME_MAX`, `tidySlotName`, `slotNameRefusal`
+in `shared/slots.ts` — consulted by all four callers, preserving the division of
+labour (the writer refuses by name, the clamp drops what it cannot store) over
+one rule instead of two. **Applied to the CLOUD list as well**, because both
+lists feed one picker and one lane string, and a name legal on one card and not
+the other is a rule learned twice. The truncation is deleted outright: a
+truncated name is a name nobody chose. Limits match BookForge's (1–48, the same
+forbidden set) so one name is legal in both apps; each character is argued from
+FOUNDRY's own reason, never "because BookForge does".
+
+**Proved:** the real pairing file yields `crucible@owens-pc-wsl`; against a COPY
+of Owen's settings the old any-loopback test declined the defect case (a tailnet
+row at `127.0.0.1:7200`) where the new URL test registers, and re-reading the
+same file twice declines; the clamp refuses `a:b`, `a/b`, `a\b`, 49 characters,
+a control character, `any` and `This computer` in either case, and accepts
+`3090 Ti`, `M1 Ultra` and `crucible@owens-pc-wsl`.
+
+**Owen's own registry still holds that row under the old name `local`, and
+nothing migrates it** — `local` is not reserved, the app must not rename
+somebody's row, and the URL already matches so the pairing door correctly
+declines. Removing the row and pressing "Look again" adopts the line's name.
+
+**Recorded, not fixed:** `addLocalCrucible` writes through `writeAppSettings`
+directly rather than `writeCrucibleServers`, so it skips the writer's refusals
+and leans on the clamp to drop. A pre-existing two-writers seam, out of this
+wave's scope.
+
+**Version: 2.0.0.** Owen, relayed 2026-09-15: *"Next version can be 2.0. Go
+ahead."* Checked before bumping, because a major bump is exactly what a
+compatibility test would trip on: NOTHING in this repo compares or pins a
+version. BookForge's floor is `FOUNDRY_VERSION_FOR_CLEAN_TEXT = '1.1.0'`, which
+2.0 clears, and their vendor keeper reads only the COMMIT out of
+`foundry --version` — `2.0.0 (<clean sha>)` passes and a tag is never wanted.
+Publishing the GitHub release stays Owen's, as it was for the void 1.3.0.
