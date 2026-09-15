@@ -5504,3 +5504,128 @@ the analysis NLI worker (a prebuilt Python running on the card inside the
 analysis act). By Owen's ruling it belongs in Crucible as its own class. It is
 BookForge's `B7` one repo over — they hold the same shape for `align-longform`
 pending a ruling — and it is a follow-on, not a gap.
+
+### Wave 69 — setup stops describing this machine and starts describing the engine (Owen, 2026-09-15) — LANDED
+
+**Owen, verbatim**, opening `electron:dev` on a machine with a working Crucible
+on it: *"first setup page listed my gpu. i think that should be in the crucible
+setup stuff… since crucible is already set up on our machine, it should just
+connect to the server and then show what gpu is registered with the existing
+crucible server."* And on what he was shown instead: *"i tried to connect to the
+crucible server but it gave me an error. this should be idiot proof… it shouldnt
+talk about crucible unless it needs to, or to ask the user to add a crucible
+server."* And on the Python cards: *"not sure what all this stuff is for… but it
+should all be automatic."* And the list of what a person DOES need: *"the GPU
+it's connected to and how powerful it is, the functions that will be available
+and the functions that wont be available because it isnt powerful enough, what
+might need an API key to run."*
+
+**WHAT HE ACTUALLY HIT, measured on his own machine before anything was
+changed.** The registry held one enabled row, `local` at `127.0.0.1:7100`, and
+that server was up and healthy — `crucible@owens-pc-wsl`, 0.6.0, an RTX 3090 Ti,
+every class enabled. Nothing was broken. The wizard simply never asked it
+anything: it ran `nvidia-smi` on Windows for the welcome line, and drew three
+doors over a connection that already existed. Pressing one gave *"is already
+registered as \"local\". Rename or remove that entry first"* — a true sentence
+about the registry, and an instruction to dismantle a working setup.
+
+**Everything this wave draws was already on the wire.** `GET /v1/capability`
+answers all three of Owen's questions per class, in the server's OWN sentences
+(*"qwen3.8-27b-4bit fits: it needs 20.1 GiB and there is 21.0 GiB available
+(24.0 GiB card less a 3.0 GiB desktop allowance)"*), and `GET /v1/info` carries
+the card and its size. No new IPC door was added and nothing re-derives a fit:
+what was missing was a screen that asked.
+
+**1. `connectLocalEngine` — the engine here is connected without being asked.**
+Startup read the pairing file only; now it reads the pairing file and then, when
+there is none, that server's own `config.toml` — the two doors' own sources, in
+PHASE15 §5.1's order, behind no button. The key line is that
+`already_registered` is READ AS SUCCESS: the question is *"is the engine on this
+machine connected"*, and a door refusing because the row is already there
+answers yes. Two file reads, at most one registry write, no model and no job.
+
+**2. The welcome step stops naming this computer's card.** Since Wave 67 this
+computer's card is not where anything runs. `probeSystem` keeps its two honest
+callers — `crucible-install.ts`, describing a machine that would HOST a server,
+and the held local page reader — and the card a person sees is the engine's.
+
+**3. The engine step has two faces, and the connected one is the common case.**
+Connected: the card and its size, the backend and version, then one row per act
+— **`pages clean translate simplify analysis` only**. A current Crucible reports
+eleven classes; `tts`, `asr`, `align`, `rvc`, `denoise` and `echo` are
+BookForge's work and drawing them here would be the same defect Owen was
+complaining about. A class the server never mentions is DROPPED rather than
+drawn as a refusal: absent means the server is older than that class, not that
+the card is too small, and sending somebody to buy a GPU for a problem an
+upgrade fixes is the worst sentence on the screen. A refused class carries the
+server's own reason and, when there is a figure, what it would take. An
+upstream-routed class names the ACCOUNT, not `anthropic/claude-sonnet-5`. The
+doors are still reachable behind **Add another machine** and never in the way.
+The word "Crucible" appears in the SECOND face only — a person with a working
+engine never needs it, and a person about to run an installer with that name on
+it needs exactly it.
+
+**4. The API-key offer is Owen's own example and it POINTS rather than asks.**
+*"if the crucible server isnt powerful enough to run translate… it can prompt
+them for claude or chatgpt api key for that."* One line, shown only when a TEXT
+act is refused (`pages` cannot route upstream, PHASE15 §1), naming the next
+step. No key box: the routes step is §5.2's panel and already holds the
+write-through, and a second key field two screens earlier would be a second
+owner of the one fact this app is forbidden to store twice.
+
+**5. The Python environments step is deleted from the wizard.**
+`env-provision.ts` has provisioned these at startup since it was written — *"the
+app provisions ITSELF. A user who installs foundry and opens a PDF should not
+first have to read a settings screen and press a button labelled with a word
+('rasteriser') they have no reason to know"* — so the step asked permission for
+a download that had already been decided, in that exact word. The one pack
+startup does not queue (the analysis worker, 528 MB) keeps its row in Settings.
+Nothing was deleted from `env-catalog.ts` and no download changed.
+
+**6. The page-reader step is hidden when a connected engine serves `pages`.**
+That step's own prose calls it the fallback for *"a machine that has no engine of
+its own"*. HIDDEN, NOT DELETED: Wave 68 held the local page reader deliberately,
+on a gate that has not been met, because it is the only road to an EPUB on a
+machine that cannot install WSL — and a machine like that has no engine serving
+`pages`, so it still sees the step.
+
+**7. The refusal itself, fixed at its source.** `addLocalCrucible` still refuses
+and still does not rename anybody's row (Wave 66) — a second row on one address
+would draw two GPU lanes over one card. What changed is that it says what is
+true: *"The Crucible on this machine is already connected, as \"local\". There is
+nothing to do."* The door stops painting that one code red; every other code is
+a genuine refusal and keeps the colour.
+
+**8. Two defects found while reading the probe, fixed at the source.**
+`probeEntry` composed the card as vendor-then-name, which on every NVIDIA machine
+there is reads *"nvidia NVIDIA GeForce RTX 3090 Ti"* — the vendor twice, once in
+lower case, invisible to whoever wrote the join precisely because the two fields
+disagree on case by convention. The prefix is not useless (a Mac answers `apple`
+/ `M1 Ultra`), so it is applied only when the name does not already carry it.
+And the probe never carried the card's SIZE, which is half of Owen's question;
+`vramBytes` now crosses the wire as a NUMBER, with `cardWords` in
+`core/crucible-words.ts` the one owner of the phrase for all three screens that
+print it.
+
+**Also fixed, a consequence of §5 rather than a request:** a stored skip list
+naming a step this build no longer has would have printed the raw id `envs` at
+somebody on the Ready screen. Unknown ids are dropped on read, by the rule the
+routes step is already hidden under — a wizard must not say somebody skipped a
+step that was never offered.
+
+**Proved against the live engine for the enabled face** (reads only —
+`/v1/info`, `/v1/capability`; no job placed, no model loaded, and Owen had the PC
+card): five acts drawn in order, all enabled, `dots-ocr` / `qwen3.5-9b` /
+`qwen3.8-27b-4bit`, the six BookForge classes correctly absent, no account offer,
+page-reader step hidden. **And on a HAND-WRITTEN 8 GB FIXTURE for the face this
+machine cannot produce** — Owen's own example — translate and simplify refused
+with *"needs 15.1 GB more video memory than this card has"* above the server's
+sentence, analysis showing *"via your anthropic account"*, the account offer
+shown, and the page-reader step correctly still drawn. A pre-Phase-15 row with no
+`route` key reads as local, per the document-level rule.
+
+**Unexercised and named:** the unreachable-engine face (a registered row that
+will not answer), the "Add another machine" disclosure, and `connectLocalEngine`'s
+config.toml arm — this machine has a pairing file, so it takes the first branch
+and returns on `already_registered`, which was verified by reading that file's
+address rather than by deleting it.
