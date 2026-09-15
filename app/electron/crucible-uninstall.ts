@@ -472,13 +472,12 @@ function runWindowsHost(argv: string[], timeoutMs: number): Promise<CommandOutpu
    * says — so it is refused by name instead of escaped by guesswork.
    */
   if (exe.includes('"') || exe.includes('%')) {
-    return Promise.resolve({
-      code: null,
-      stdout: '',
-      stderr: '',
-      failure: 'cannot be run: this computer\'s %LOCALAPPDATA% contains a quote or a percent '
-        + 'sign, which Windows\'s command interpreter reads as syntax',
-    });
+    // BookForge's name for the same refusal, so the two apps say one thing.
+    throw refuse(
+      'uninstall_bad_path',
+      'this computer\'s %LOCALAPPDATA% contains a quote or a percent sign, which Windows\'s '
+      + 'command interpreter reads as syntax, so Crucible\'s uninstall cannot be run from it',
+    );
   }
   const line = [exe, ...argv].map((token) => `"${token}"`).join(' ');
   return runProcess('cmd.exe', ['/d', '/s', '/c', `"${line}"`], timeoutMs, true);

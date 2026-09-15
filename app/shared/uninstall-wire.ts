@@ -150,6 +150,8 @@ export type CrucibleUninstallCode =
   | 'uninstall_home_unreadable'
   | 'uninstall_wsl_too_needs_host'
   | 'uninstall_unrun'
+  /** win32: `%LOCALAPPDATA%` holds a quote or a percent sign — cmd.exe would read it as syntax. BookForge's name. */
+  | 'uninstall_bad_path'
   | 'uninstall_unreadable'
   | 'uninstall_failed';
 

@@ -920,29 +920,25 @@ export class CrucibleDoorsComponent {
 
   protected setPurgeWeights(on: boolean): void {
     this.purgeWeights.set(on);
-    void this.repriceIfShown();
+    this.uninstallPlan.set(null);
   }
 
   protected setWslToo(on: boolean): void {
     this.wslToo.set(on);
-    void this.repriceIfShown();
+    this.uninstallPlan.set(null);
   }
 
-  /**
-   * A BOX MOVED: the plan on screen is thrown away FIRST, then asked for again.
+  /*
+   * A BOX MOVED: the plan on screen is thrown away, and NOT asked for again.
    *
-   * Both halves are the point. Clearing is what stops a Remove button sitting
-   * over rows that were priced for other flags; asking again is section 6.4's
-   * own instruction, *"a checkbox for --purge-weights that re-runs the dry run
-   * so the number moves"* — the kept figure is the server's and this component
-   * has no business recomputing it. A box moved before anything was asked for
-   * asks for nothing, because the door has not been opened yet in that sense.
+   * Clearing is what stops a Remove button sitting over rows that were priced
+   * for other flags. The re-ask is deliberately the person's next press of
+   * "Show me what would go" — RULED with BookForge, 2026-09-15: a dry run spawns
+   * a process on this machine, and the press is the consent to that; a checkbox
+   * that spawned one on its own would be a control doing work nobody asked for.
+   * Section 6.4's "re-runs the dry run so the number moves" is satisfied by the
+   * press, and the kept figure is still the server's, never recomputed here.
    */
-  private async repriceIfShown(): Promise<void> {
-    if (this.uninstallPlan() === null) return;
-    this.uninstallPlan.set(null);
-    await this.readPlan();
-  }
 
   private async readPlan(): Promise<void> {
     if (!api || this.busy() !== null) return;

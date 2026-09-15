@@ -4106,12 +4106,29 @@ export function registerIpc(): void {
    * screen is waiting for it. A failure is a STATE, drawn in the row; the
    * console line here is for the case where the sweep itself could not start.
    */
-  void coordinateEveryServer().catch((err: unknown) => {
-    console.error(
-      '[crucible] the start-up coordination sweep did not finish: '
-      + `${err instanceof Error ? err.message : String(err)}`,
-    );
-  });
+  void coordinateEveryServer()
+    .then((states) => {
+      /*
+       * ONE LINE PER SERVER, once the sweep has settled. The states are already
+       * pushed to every window as they move; this is for the console a person
+       * reads when a window is not what they are looking at — a launch that
+       * found an engine and asked it for nothing should say so, and one that
+       * could not reach it should say which. No token, no address: the name
+       * and the phase are the whole of the news.
+       */
+      for (const state of states) {
+        const detail = state.phase === 'unreachable' || state.phase === 'refused'
+          ? `: ${state.message}`
+          : '';
+        console.log(`[crucible] "${state.server}" at start-up: ${state.phase}${detail}`);
+      }
+    })
+    .catch((err: unknown) => {
+      console.error(
+        '[crucible] the start-up coordination sweep did not finish: '
+        + `${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
 
   void refreshCrucibleFacts()
     .then(() => applyPageReaderRemoval())
