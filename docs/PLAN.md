@@ -5051,7 +5051,15 @@ walk, the way a person does it, checked against four points:
    per class, upstream keys write-only with the hint, Test, refusals by name;
    "Open engine console"; the servers panel. Built (package I, H).
 3. **An "Uninstall Crucible…" door**: the CLI's dry-run shown first, then the
-   real run with keep / purge weights. NOT built — waits for the CLI and its doc.
+   real run with keep / purge weights. BUILDING to crucible
+   `docs/INSTALL-UNINSTALL.md` §6 (3184860): drawn only for a server this app
+   can PROVE is this machine's (the pairing file names it, or the Windows host
+   pack is installed), never for a registry entry — a loopback address proves
+   nothing behind a tunnel; the surface is the CLI verb with `--json`, never the
+   host's loopback door; the dry run is the same plan unperformed; a fatal step
+   does not stop the run and is drawn red, never as "uninstall failed"; the
+   token goes with the config, so every app re-pairs; weights kept unless
+   purged.
 4. **Any Anthropic/OpenAI key entered in Foundry passes THROUGH to Crucible and
    is stored nowhere in Foundry.** Built (package I) — and the old cloud card
    that DID store keys is package L's to delete; until L the two cards sit side
