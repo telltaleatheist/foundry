@@ -5109,388 +5109,388 @@ engine — read `"local" at start-up: stocked`: info, catalog and capability
 read against the WSL server, nothing posted. The renderer half (pressing
 through the wizard and the doors) needs a hand on the mouse and is Owen's or
 BookForge's screenshot pass; what is vouched for is the start-up path and the
-door's dry run through the compiled invoker.
-
-### Wave 65 — an orchestrator is not an engine, and a standing refusal stops parking (2026-09-15) — LANDED
-
-Owen, on the re-vendor target: *"the latest. if the latest doesnt use the new
-crucible functionality we just built in then tell foundry agent to build it out
-and commit/push so we can vendor a fully functional and up to date version in."*
-Foundry's HEAD said `engineOf not yet adopted`, so this is that, plus a defect
-BookForge found in this app's own placement.
-
-**`engineOf` adopted (crucible `docs/PHASE17-ORCHESTRATOR.md` §2, §3, §6).** A
-Crucible declares a `role`. An ENGINE serves job types on a backend; an
-ORCHESTRATOR (backend kind `orchestrator`, zero job types) manages exactly one
-engine and reads capability through to it. `resolveEngine(entry)` in
-`crucible-registry.ts` is the ONE owner of the hop: `info()` once, the SDK's
-`engineOf` for the rule (never re-derived), and for an orchestrator a client at
-`engine.url` with the SAME token — after reading that document and refusing
-`orchestrator_engine_is_not_an_engine` if its role is anything but `engine`,
-because §6 says once and never a chain. An orchestrator with no engine is
-`orchestrator_has_no_engine`, which is a fact to show a person beside the button
-that installs one, not a protocol error — the SDK's "API v1 does not describe
-this" wrapper is deliberately NOT appended, because that document is correct and
-merely describes an empty machine. Cached on name+url (never the token: a
-rotated token cannot change which process answers an address, and the token is
-taken from the entry in hand on every hit so a rotation cannot serve a stale
-secret), 60 s, in-flight deduped, forgotten by `afterRegistryChanged()` BEFORE
-the capability cache because capability now reads through a hop. Every engine
-caller goes through it: `readCapability`, `placeOnCrucible` (resolved once, so a
-request and the spawn it composes cannot end at two processes), `takeLease`,
-all of coordination, all three settings doors. **Test connection reports the
-ENGINE** and says so — `CrucibleProbe.via` names the orchestrator and its owner,
-drawn on both cards. **`crucible:open` deliberately does NOT follow the hop**: a
-placement asks a machine to work and only an engine can, but a console is a
-person going to look at the process they named, and after Phase 17 the
-orchestrator's console is the one carrying install, restart and quit. Why this
-matters here rather than in theory: on Owen's PC the tray orchestrator answers
-:7101 and fronts the WSL engine on :7100, so a pasted orchestrator connect code
-would otherwise have put every class out of reach.
-
-**A STANDING REFUSAL NO LONGER PARKS FOR EVER — BookForge's finding, and it was
-Foundry's defect.** `placeOnCrucible` answered `wait` when a capability row said
-the class cannot run there. That is right for the WALK, so `any` steps past; it
-was wrong afterwards, because `placeRun` parks a wait on a 30 s-capped backoff
-and retries for ever. Their words: *"a row that neither fails nor finishes is
-worse than either."* The wait arm now carries `standing`, REQUIRED at all
-sixteen sites through `transientWait()` / `standingWait()` constructors, because
-an optional flag would make "nobody thought about it" and "this is transient"
-the same value. STANDING: a disabled or empty capability row,
-`upstream_unconfigured` (a missing key is not something waiting fixes — and it
-moved from a flat `refuse`, whose ending was right and whose scope was wrong,
-since it failed an `any` row on the first machine with no key while the second
-could work), both orchestrator refusals, and a cloud slot stepped past by `any`
-(SLOTS.md §3's ruling is permanent, so that walk answers identically for ever).
-TRANSIENT and untouched: busy, `engine_in_use`, `model_leased`,
-`model_not_resident`, unreachable, `capability_undecided`, both upstream network
-refusals, a cancelled load, and a slot switched off. The walk steps past both
-alike; `placeJob` answers `refuse` when the PINNED slot gave a standing wait or
-when EVERY slot did, carrying the server's own reason plus where to fix it.
-`job-queue.ts` needed no change at all — `placeRun` already fails on `refuse`,
-so the park machinery is literally untouched.
-
-**Proved live against both processes on Owen's PC, 15 checks:** `:7100` reads
-`role: engine` and `engineOf` answers null; `:7101` reads `role: orchestrator`
-with zero job types and `engineOf` names the WSL engine; the resolver lands on
-:7100 with the same token and `capability()` through the hop answers the same
-eleven classes as the direct read; a fake orchestrator pointing at the real
-orchestrator is refused by name, so the second document's role really is read;
-a fake orchestrator with no engine is refused by name; Test connection on :7101
-succeeds naming both; and the standing/transient split behaves — pinned to a
-disabled class refuses, `any` with one able slot still goes, a real busy server
-still parks. **Not proved:** a queue-level run through a launched app (the new
-`refuse` is the pre-existing branch, read not watched), the renderer's `via`
-line on screen, and any hosted path.
-
-**Also this session:** the `--mamba-ssm-cache-dtype` claim in docs/VLLM.md §7
-and docs/BOOKFORGE-HANDOFF.md was WRONG and is corrected — BookForge read the
-pinned vLLM 0.29.0 source: `auto` resolves to the model's dtype, both
-checkpoints are bfloat16, so the state is already 16-bit, `float16` is the same
-two bytes, and `MambaDType` has no fp8. The mechanism survives in their sharper
-form (a Mamba page does not scale with `block_size`, so the ATTENTION pages are
-scaled up to match); the lever does not. The "tens to hundreds of megabytes"
-figure both repos quoted was the fp32 hypothetical. The SDK pack needed no
-refresh: packing from their tip reproduces the bytes Foundry already vendors.
-
-### Wave 66 — a local server is not a special server, and a name is a label a person types (Owen, 2026-09-15) — LANDED
-
-**Owen, verbatim:** *"it shouldnt be named 'local' anywhere. it might not be
-local. a local crucible server shouldnt be treated any differently than a remote
-crucible server. it should all be entered the exact same way. if we have to
-change how the code works then we should do that. bookforge shouldnt even know
-if it's local because it doesnt mater."* BookForge deleted its reserved `local`
-identity at `24b7bf67` and flagged Foundry as the holdout.
-
-**The reserved name is gone, and what replaced it is not another constant.** A
-pairing line ALREADY CARRIES the server's own name, and the pairing file is a
-connect code the machine left on disk — so `registerPairing()` is now the ONE
-writer both pairing doors share, and the file is registered exactly the way a
-pasted code is: same `addCrucibleServer`, same refusals, same clamp, the name
-from the line unless a person typed one. A consequence worth stating: the
-connect-code door now COORDINATES, which it never did — it was the one road
-into the registry that skipped PHASE14 §4a's moment while `crucible:add` beside
-it took it.
-
-**Two more "local is special" assumptions went with it.** `adoptPairingFile`
-declined whenever ANY loopback entry was registered, so a person with a tailnet
-Crucible AND a pairing file got neither; the test is now "is the URL this file
-names already registered", compared against the clamped URL because that is how
-the registry stored its own rows. And `coordinateEveryServer` no longer puts
-loopback entries first: the drag rank is the only ordering this app is entitled
-to, an address is not a ranking, and `127.0.0.1` is as likely to be a tunnel as
-this machine. The doors card also stopped sending `'This machine'` as a name —
-it sends nothing, and `addLocalCrucible` resolves that to the `[server] name`
-in that config.toml, the server naming itself like the other two doors.
-
-**LEFT ON PURPOSE, each for a stated reason:** `LOCAL_SLOT_NAME` and the local
-compute slot (the no-Crucible Ollama fallback, package L's); the Uninstall
-door's proof of locality, which was checked and is clean — it proves on url +
-token, a file's existence, or a named distro, and never on a name (Owen ruled
-that door is only for a server the app can PROVE is this machine's);
-`localCrucibleServes` / act-gates clause 2, which ask "are the weights on this
-machine" rather than naming a server; and `route: 'local' | 'upstream'`, which
-is Crucible's own vocabulary for a class's route.
-
-**THE DEFECT THE RULING EXPOSED — names are free text a person types now.**
-Foundry had both hazards BookForge's rules exist for and guarded neither. `:`
-is the dangerous one: `upstreamLaneName` composes `<slot>:cloud` and three
-readers compare that string (the scheduler's occupancy map, the walk's claim,
-the bench's card), so a server named `3090:cloud` produces a CARD lane whose
-name equals server `3090`'s UPSTREAM lane — two lanes, one string. `/` and `\`
-go into an Electron session partition (`crucible:<name>`). Underneath both sat a
-two-owners bug: the refusing writer checked NO length while the storing clamp
-silently `.slice(0, 60)`d, so a long name was refused by nobody and quietly
-altered on the way to disk, where it could then collide or stop matching its own
-card. Fixed with ONE owner — `SLOT_NAME_MAX`, `tidySlotName`, `slotNameRefusal`
-in `shared/slots.ts` — consulted by all four callers, preserving the division of
-labour (the writer refuses by name, the clamp drops what it cannot store) over
-one rule instead of two. **Applied to the CLOUD list as well**, because both
-lists feed one picker and one lane string, and a name legal on one card and not
-the other is a rule learned twice. The truncation is deleted outright: a
-truncated name is a name nobody chose. Limits match BookForge's (1–48, the same
-forbidden set) so one name is legal in both apps; each character is argued from
-FOUNDRY's own reason, never "because BookForge does".
-
-**Proved:** the real pairing file yields `crucible@owens-pc-wsl`; against a COPY
-of Owen's settings the old any-loopback test declined the defect case (a tailnet
-row at `127.0.0.1:7200`) where the new URL test registers, and re-reading the
-same file twice declines; the clamp refuses `a:b`, `a/b`, `a\b`, 49 characters,
-a control character, `any` and `This computer` in either case, and accepts
-`3090 Ti`, `M1 Ultra` and `crucible@owens-pc-wsl`.
-
-**Owen's own registry still holds that row under the old name `local`, and
-nothing migrates it** — `local` is not reserved, the app must not rename
-somebody's row, and the URL already matches so the pairing door correctly
-declines. Removing the row and pressing "Look again" adopts the line's name.
-
-**Recorded, not fixed:** `addLocalCrucible` writes through `writeAppSettings`
-directly rather than `writeCrucibleServers`, so it skips the writer's refusals
-and leans on the clamp to drop. A pre-existing two-writers seam, out of this
-wave's scope.
-
-**Version: 2.0.0.** Owen, relayed 2026-09-15: *"Next version can be 2.0. Go
-ahead."* Checked before bumping, because a major bump is exactly what a
-compatibility test would trip on: NOTHING in this repo compares or pins a
-version. BookForge's floor is `FOUNDRY_VERSION_FOR_CLEAN_TEXT = '1.1.0'`, which
-2.0 clears, and their vendor keeper reads only the COMMIT out of
-`foundry --version` — `2.0.0 (<clean sha>)` passes and a tag is never wanted.
-Publishing the GitHub release stays Owen's, as it was for the void 1.3.0.
-
-### Wave 67 — no local GPU slot: one lane per connected engine, the CPU lane untouched (Owen, 2026-09-15) — LANDED
-
-**Owen, verbatim:** *"everything goes through a crucible server now, including
-local... there should be no local gpu listed in the queue"*, and precisely:
-*"cpu slots are always local. we dont outsource simple cpu work to crucible. one
-gpu slot in the queue per connected crucible server. including the local
-crucible, which is indistinguishable from the remote crucible server."*
-
-**And the atomicity rule that goes with it**, from the same exchange: *"loading
-the model is a cpu step technically, but steps are atomic... small preparatory
-steps inside a broader 'clean' task are sent to the crucible server to execute,
-then returned. CPU jobs, like bookforge's book assembly, come back to the local
-cpu slot because it's a long cpu job that's separate from a GPU job."* Foundry
-already worked this way and it was checked rather than assumed: `JOB_RESOURCE`
-classes a WHOLE job — `read`, `translate`, `simplify`, `clean`, `analyze` are
-`gpu`; `epub`, `txt`, `pdf` are `cpu` — a job resolves its venue ONCE at
-admission and everything inside it happens there, which is why the model load
-sits inside `placeOnCrucible` rather than being a step that could land
-elsewhere. Nothing needed changing for that clause.
-
-**What changed.** `slotsFrom` emits NO local slot: the GPU slots are exactly the
-enabled Crucible entries in registry order, plus the cloud slots. `LOCAL_SLOT_NAME`
-is deleted with every reader INCLUDING its reservation in the name rule — a name
-nothing uses is not reserved — and `'local'` is gone from `ComputeSlotKind`, so
-the compiler now refuses any slot or lane claiming to be this machine's card.
-`computeLanes([])` is `[]`; `canStart` still admits a GPU row on an empty board
-**so the placement can refuse it by name** rather than leaving it queued for
-ever. `localPlacement` is gone, `Placement.slot` is `ComputeSlot | null`, and a
-CPU job records no `ranOn` instead of recording "This computer". An entry known
-from the resolver's CACHE (never a fresh call) to be an orchestrator with no
-engine is not a slot, and a pinned row on one fails with the resolver's own
-sentence; unknown keeps its lane, so a machine that has merely not been probed
-is never hidden.
-
-**The CPU lane needed nothing, and that was checked rather than assumed:** the
-CPU side has no name in the slot namespace at all — it is the count
-`CPU_LANE_SLOTS`, its bench cards are keyed `cpu:<n>`, and the occupancy map's
-`on` is null for every CPU row. There is no string a server name could collide
-with. Recorded in the name rule's own doc.
-
-**AND THE TILE STOPPED LYING, which this wave would otherwise have introduced.**
-With no local slot there is nowhere for a queued text act to run on this
-machine's Ollama, so `localTextGate`'s "the model is installed and fits" branch
-was a tile that fails the moment it is pressed. It is dark now and still NAMES
-the model, because "this machine has a usable model" stays true and useful — it
-is exactly what makes connecting an engine here worth doing — and what changed
-is where the work runs, not what the machine can hold.
-
-**Proved on FIXTURES ONLY** (hand-written registries, every address in
-TEST-NET-1 `192.0.2.0/24`, which is never routed): three entries with one
-disabled give exactly the two enabled slots in registry order and no "This
-computer", with a card lane and a `:cloud` lane each; an empty registry gives no
-slots and no lanes, `translate` and `read` refuse by name, and `epub` still runs
-with no slot. `laneOfRun('This computer')` resolves to nothing, as intended.
-
-**Unexercised and named plainly:** the orchestrator-with-no-engine slot hiding
-(reachable only through a server; it was seen once against a stub `/v1/info` on
-loopback, not a Crucible), the hosted refusal sentences, and a pinned row
-failing on an engine-less server.
-
-**REPORTED, NOT BUILT — one for Owen.** Two enabled entries pointing at ONE
-engine now draw two GPU lanes over one card: the old local-slot suppression
-prevented that by accident and no longer does. Whether the slot list DEDUPES on
-the resolved engine or merely WARNS on the Servers card is a design call, and
-the resolve is where both the fact and the fix would live. BookForge has the
-same hazard and no ruling either; we agreed to bring Owen one description
-rather than two.
-
-**Dead while `CRUCIBLE_READS` is true**, left in place and documented: the local
-page-reader start in `executeJob` (a `read` can no longer have a null endpoint)
-and `laneAtPick`'s no-slot arm. `llm-card`/`llm-defaults` still call the Ollama
-"the local slot" — the remaining half of the local-text deletion.
-
-**A CARD INCIDENT, recorded because the mechanism matters more than the
-apology.** The subagent that built this wave ran its first proof against the
-REAL registry, and `placeOnCrucible` loads a model as part of placing a job — so
-a `qwen3.8-27b-4bit` load landed on Owen's PC card while he was using it. It was
-cancelled through the SDK within minutes and the card returned to desktop-only.
-The cause was the BRIEF: it said "verify by derivation" and then, in its
-verification section, named Owen's real settings file to describe the machine,
-which invited the live call. **The rule taken from it: verification against a
-machine anyone else may be using gets a FIXTURE — a hand-written value, an
-unroutable address — never a real registry path; and a branch reported
-unexercised beats a live call.**
-
-### Wave 68 — Foundry keeps no models: the local text path is deleted (Owen, 2026-09-15) — LANDED
-
-**Owen, verbatim:** *"we dont have any local models. crucible handles all model
-orchestration. if theres no connected crucible server then tiles should be
-disabled. crucible is a service that foundry installs locally and connects to.
-if windows is an orchestrator, it means there's a WSL engine installed and
-windows crucible acts as a pass-through to the WSL engine."* And, on the half
-that STAYS: *"crucible should handle model orchestration right? so crucible is
-where which models to use is decided. but foundry does pass through settings to
-crucible."*
-
-**Checked with BookForge first, on Owen's instruction** (*"bookforge vendors
-foundry and i assume bookforge has already worked this logic out, so make sure
-you discuss it with them"*). Their answer, from their code: nothing LIVE reads
-any door or settings key deleted here. `narration-clean-text.ts` names
-`cleanTextModel` / `ollamaUrl` / `llm:defaults`, but only inside a branch that
-became unreachable when they deleted their own local venue, and they are
-removing that branch themselves. Their docs of record for this shape:
-`CRUCIBLE_ROLLOUT_PLAN.md` (the cross-app queue), `LEGACY-REMOVAL.md` (the
-deletion order and the carry-the-facts rule), `SETUP-AND-SETTINGS-AROUND-CRUCIBLE.md`.
-
-**Deleted:** `model-lineup-local.json` (Foundry's own rows and its local floor);
-`llm-catalog.ts`'s local merge with `eligibleFor` / `fitsOn` / `heldBy` /
-`lineupFor` / `suggestedTag` / `openingModelFor` / `OVERHEAD_GB`;
-`act-gates.ts`'s entire machine reasoning; `setup.ts`'s `llmChoices` and
-`translateFloorMiss`; `ollama.ts`'s installer and pull; the model and Ollama
-fields in all four dialogs; `llm-card.component.ts` (reduced to a new
-`setup-card` carrying the one surviving control) and `llm-defaults.ts`; the
-wizard's whole Ollama step; `AppSettings.defaultLlmModel` / `cleanTextModel` /
-`ollamaUrl`. **Twelve doors and one push go, 145 → 133**, measured by script.
-
-**KEPT, and this is the other half of Owen's ruling:** the engine-settings
-pass-through is untouched, not narrowed and not renamed —
-`crucible-settings.ts`, the `crucible:engine-settings*` doors,
-`shared/engine-settings.ts`, the "Where the text work runs" card, the shared
-upstream child and the wizard's `routes` step. A route row naming
-`anthropic/claude-sonnet-5` IS a person choosing a model; it lives in the
-ENGINE's `/v1/settings`, which Foundry draws and writes through. The test
-applied throughout: **does the value live in Foundry's `app-settings.json` or in
-the engine's `/v1/settings`?** Foundry's own store went; the window onto the
-engine's store stayed.
-
-**HELD, deliberately:** `page-reader.ts` and its card, untouched to the byte —
-it is the only path to an EPUB on a machine that cannot install WSL and the
-agreed gate (a Windows engine reading a page) has not been met. `readGate`
-needed no stripping: none of its clauses ever asked about the card, the floor,
-Ollama or system memory. Also held: the root `src/` engine's own doors, and
-`cloud-providers.ts` / the Cloud card (PHASE15 §5.3 moves keys into the engine,
-which is its own change).
-
-**THE SENTENCE SWEEP, which is BookForge's lesson and not a tidy-up.** Theirs:
-*"we deleted a switch and seven user-facing refusals kept telling operators to
-flip it… 'install Ollama' surviving in a string is the same bug."* Ten sentences
-rewritten and a page of wizard prose deleted. The dark text tile's four
-competing sentences collapse to one true one: *"No connected GPU engine serves
-this act. Add a GPU engine in Settings › Servers, and its 'Where the text work
-runs' card will send this class to Anthropic, OpenAI or an Ollama server for
-you."* The welcome step now NAMES its steps rather than counting them, so the
-count cannot drift again. `"Settings › Language model"` appears nowhere in the
-source.
-
-#### Facts carried out of the deleted code — recorded HERE because they lived nowhere else
-
-BookForge's rule, learned at the cost of a 7x regression: *"A deletion that
-loses the reason a number is what it is costs more than the code it removed."*
-Nine facts had no other home.
-
-1. **MLX vs GGUF on the cleanup, measured 2026-09-08.** `qwen3.5:9b-bf16` is a
-   GGUF, so Ollama runs it on llama.cpp, which pins that architecture to a
-   SINGLE slot (*"model architecture does not currently support parallel
-   requests"*, qwen35). The cleanup sends blocks in parallel, so one slot is the
-   whole cost: **32 blocks/min on the M1 Ultra against 61 for
-   `qwen3.5:9b-mlx-bf16`** — the same weights at the same precision on Ollama's
-   MLX runner, which batches. Owen picked the 16-bit row that day and got the
-   slow half of it.
-2. **The `foundry/` id prefix rule.** Every id in the deleted file was prefixed
-   so a row of ours could never collide with a Crucible manifest id: Crucible's
-   `qwen3.5-9b` names the bf16 tag for cleanup, and the local file's
-   `foundry/qwen3.5-9b` named the ordinary `qwen3.5:9b` for prose. **Two
-   different models, one obvious name**, and the prefix is what kept them apart.
-   Live hazard if Foundry ever adds rows again.
-3. **Why a hand-edited generated file is never the answer.** The local rows were
-   kept in their own file rather than merged into the vendored one because *"a
-   hand-edited copy of a generated file is a copy that silently loses the hand
-   edits on the next re-vendor."* It is also why the byte-for-byte keeper works.
-4. **The `needsGB.value` sort, with its worked counter-example.** Sorting by
-   DOWNLOAD size would put the bf16 9B (19.3 GB down, 20.8 resident) below the
-   4-bit 27B (17.7 down, 19.2 resident) while the fit test ordered them the
-   other way — and "the largest that fits" could then pick a row a LARGER
-   machine is not offered.
-5. **`openingModelFor`'s defect story.** A 24 GB card runs setup, pulls the 9B,
-   the tag is stored; later the person pulls the 27B; the Translate tile lights
-   because a model at or above the floor is installed — **and the job still runs
-   the 9B, because that is what the tag says.** The same shape recurs the moment
-   any surface stores a model name again.
-6. **Two facts about Ollama's pull API.** It reports `completed`/`total` PER
-   LAYER and the totals arrive as each layer starts, so summing them gives a
-   denominator that grows and a bar that goes backwards. And: *"Eighty-one
-   gigabytes on a domestic line is most of a day and is not a failure. Five
-   minutes with nothing on the socket is"* — the deadline was on SILENCE,
-   re-armed per line.
-7. **The Ollama installer URLs and their verification date.**
-   `ollama.com/download/OllamaSetup.exe` and `.../Ollama.dmg` are the hrefs
-   behind the site's own buttons — stable aliases that redirect to the current
-   release, which is why they were never version-pinned. Verified 2026-08-26.
-8. **The three pool words**, which any future memory sentence should reuse:
-   `vram` → "video memory", `unified` → "unified memory a model can reach",
-   `ram` → "system RAM". Three pools, three sentences.
-9. **The 8 GB arithmetic**, stated as a consequence rather than a bug: an 8 GB
-   card was offered `qwen3.5:4b`, not `qwen3.5:9b`, because 6.6 + 1.5 is 8.1 and
-   8.1 does not fit in 8.0.
-
-#### Two consequences named rather than hidden
-
-- **One fact that had two owners, now one.** `AppSettings.ollamaUrl` and the
-  engine's `upstreams.ollama.url` (PHASE15 §3.2) were the same address stored
-  twice; Foundry's copy is deleted on BookForge's clearance that nothing reads
-  it. **Residue:** the "Models on this machine" inventory now probes
-  `DEFAULT_OLLAMA_ENDPOINT` rather than a configured address, so an Ollama on a
-  moved port is invisible to the disk count. A smaller wrong answer than a stale
-  address, documented at the call site.
-- **Unexercised and named:** every arm of `act-gates` (lit, dark, cloud,
-  hosted), `readGate`, and the reworded provider sentences. They sit behind a
-  live registry, and a live registry call loads a model on somebody's card —
-  the mistake this wave's sibling already made once. Reported unexercised rather
-  than proved at that price.
-
-**Still in-app and still meeting a model, named so it is not discovered later:**
-the analysis NLI worker (a prebuilt Python running on the card inside the
-analysis act). By Owen's ruling it belongs in Crucible as its own class. It is
-BookForge's `B7` one repo over — they hold the same shape for `align-longform`
-pending a ruling — and it is a follow-on, not a gap.
+door's dry run through the compiled invoker.
+
+### Wave 65 — an orchestrator is not an engine, and a standing refusal stops parking (2026-09-15) — LANDED
+
+Owen, on the re-vendor target: *"the latest. if the latest doesnt use the new
+crucible functionality we just built in then tell foundry agent to build it out
+and commit/push so we can vendor a fully functional and up to date version in."*
+Foundry's HEAD said `engineOf not yet adopted`, so this is that, plus a defect
+BookForge found in this app's own placement.
+
+**`engineOf` adopted (crucible `docs/PHASE17-ORCHESTRATOR.md` §2, §3, §6).** A
+Crucible declares a `role`. An ENGINE serves job types on a backend; an
+ORCHESTRATOR (backend kind `orchestrator`, zero job types) manages exactly one
+engine and reads capability through to it. `resolveEngine(entry)` in
+`crucible-registry.ts` is the ONE owner of the hop: `info()` once, the SDK's
+`engineOf` for the rule (never re-derived), and for an orchestrator a client at
+`engine.url` with the SAME token — after reading that document and refusing
+`orchestrator_engine_is_not_an_engine` if its role is anything but `engine`,
+because §6 says once and never a chain. An orchestrator with no engine is
+`orchestrator_has_no_engine`, which is a fact to show a person beside the button
+that installs one, not a protocol error — the SDK's "API v1 does not describe
+this" wrapper is deliberately NOT appended, because that document is correct and
+merely describes an empty machine. Cached on name+url (never the token: a
+rotated token cannot change which process answers an address, and the token is
+taken from the entry in hand on every hit so a rotation cannot serve a stale
+secret), 60 s, in-flight deduped, forgotten by `afterRegistryChanged()` BEFORE
+the capability cache because capability now reads through a hop. Every engine
+caller goes through it: `readCapability`, `placeOnCrucible` (resolved once, so a
+request and the spawn it composes cannot end at two processes), `takeLease`,
+all of coordination, all three settings doors. **Test connection reports the
+ENGINE** and says so — `CrucibleProbe.via` names the orchestrator and its owner,
+drawn on both cards. **`crucible:open` deliberately does NOT follow the hop**: a
+placement asks a machine to work and only an engine can, but a console is a
+person going to look at the process they named, and after Phase 17 the
+orchestrator's console is the one carrying install, restart and quit. Why this
+matters here rather than in theory: on Owen's PC the tray orchestrator answers
+:7101 and fronts the WSL engine on :7100, so a pasted orchestrator connect code
+would otherwise have put every class out of reach.
+
+**A STANDING REFUSAL NO LONGER PARKS FOR EVER — BookForge's finding, and it was
+Foundry's defect.** `placeOnCrucible` answered `wait` when a capability row said
+the class cannot run there. That is right for the WALK, so `any` steps past; it
+was wrong afterwards, because `placeRun` parks a wait on a 30 s-capped backoff
+and retries for ever. Their words: *"a row that neither fails nor finishes is
+worse than either."* The wait arm now carries `standing`, REQUIRED at all
+sixteen sites through `transientWait()` / `standingWait()` constructors, because
+an optional flag would make "nobody thought about it" and "this is transient"
+the same value. STANDING: a disabled or empty capability row,
+`upstream_unconfigured` (a missing key is not something waiting fixes — and it
+moved from a flat `refuse`, whose ending was right and whose scope was wrong,
+since it failed an `any` row on the first machine with no key while the second
+could work), both orchestrator refusals, and a cloud slot stepped past by `any`
+(SLOTS.md §3's ruling is permanent, so that walk answers identically for ever).
+TRANSIENT and untouched: busy, `engine_in_use`, `model_leased`,
+`model_not_resident`, unreachable, `capability_undecided`, both upstream network
+refusals, a cancelled load, and a slot switched off. The walk steps past both
+alike; `placeJob` answers `refuse` when the PINNED slot gave a standing wait or
+when EVERY slot did, carrying the server's own reason plus where to fix it.
+`job-queue.ts` needed no change at all — `placeRun` already fails on `refuse`,
+so the park machinery is literally untouched.
+
+**Proved live against both processes on Owen's PC, 15 checks:** `:7100` reads
+`role: engine` and `engineOf` answers null; `:7101` reads `role: orchestrator`
+with zero job types and `engineOf` names the WSL engine; the resolver lands on
+:7100 with the same token and `capability()` through the hop answers the same
+eleven classes as the direct read; a fake orchestrator pointing at the real
+orchestrator is refused by name, so the second document's role really is read;
+a fake orchestrator with no engine is refused by name; Test connection on :7101
+succeeds naming both; and the standing/transient split behaves — pinned to a
+disabled class refuses, `any` with one able slot still goes, a real busy server
+still parks. **Not proved:** a queue-level run through a launched app (the new
+`refuse` is the pre-existing branch, read not watched), the renderer's `via`
+line on screen, and any hosted path.
+
+**Also this session:** the `--mamba-ssm-cache-dtype` claim in docs/VLLM.md §7
+and docs/BOOKFORGE-HANDOFF.md was WRONG and is corrected — BookForge read the
+pinned vLLM 0.29.0 source: `auto` resolves to the model's dtype, both
+checkpoints are bfloat16, so the state is already 16-bit, `float16` is the same
+two bytes, and `MambaDType` has no fp8. The mechanism survives in their sharper
+form (a Mamba page does not scale with `block_size`, so the ATTENTION pages are
+scaled up to match); the lever does not. The "tens to hundreds of megabytes"
+figure both repos quoted was the fp32 hypothetical. The SDK pack needed no
+refresh: packing from their tip reproduces the bytes Foundry already vendors.
+
+### Wave 66 — a local server is not a special server, and a name is a label a person types (Owen, 2026-09-15) — LANDED
+
+**Owen, verbatim:** *"it shouldnt be named 'local' anywhere. it might not be
+local. a local crucible server shouldnt be treated any differently than a remote
+crucible server. it should all be entered the exact same way. if we have to
+change how the code works then we should do that. bookforge shouldnt even know
+if it's local because it doesnt mater."* BookForge deleted its reserved `local`
+identity at `24b7bf67` and flagged Foundry as the holdout.
+
+**The reserved name is gone, and what replaced it is not another constant.** A
+pairing line ALREADY CARRIES the server's own name, and the pairing file is a
+connect code the machine left on disk — so `registerPairing()` is now the ONE
+writer both pairing doors share, and the file is registered exactly the way a
+pasted code is: same `addCrucibleServer`, same refusals, same clamp, the name
+from the line unless a person typed one. A consequence worth stating: the
+connect-code door now COORDINATES, which it never did — it was the one road
+into the registry that skipped PHASE14 §4a's moment while `crucible:add` beside
+it took it.
+
+**Two more "local is special" assumptions went with it.** `adoptPairingFile`
+declined whenever ANY loopback entry was registered, so a person with a tailnet
+Crucible AND a pairing file got neither; the test is now "is the URL this file
+names already registered", compared against the clamped URL because that is how
+the registry stored its own rows. And `coordinateEveryServer` no longer puts
+loopback entries first: the drag rank is the only ordering this app is entitled
+to, an address is not a ranking, and `127.0.0.1` is as likely to be a tunnel as
+this machine. The doors card also stopped sending `'This machine'` as a name —
+it sends nothing, and `addLocalCrucible` resolves that to the `[server] name`
+in that config.toml, the server naming itself like the other two doors.
+
+**LEFT ON PURPOSE, each for a stated reason:** `LOCAL_SLOT_NAME` and the local
+compute slot (the no-Crucible Ollama fallback, package L's); the Uninstall
+door's proof of locality, which was checked and is clean — it proves on url +
+token, a file's existence, or a named distro, and never on a name (Owen ruled
+that door is only for a server the app can PROVE is this machine's);
+`localCrucibleServes` / act-gates clause 2, which ask "are the weights on this
+machine" rather than naming a server; and `route: 'local' | 'upstream'`, which
+is Crucible's own vocabulary for a class's route.
+
+**THE DEFECT THE RULING EXPOSED — names are free text a person types now.**
+Foundry had both hazards BookForge's rules exist for and guarded neither. `:`
+is the dangerous one: `upstreamLaneName` composes `<slot>:cloud` and three
+readers compare that string (the scheduler's occupancy map, the walk's claim,
+the bench's card), so a server named `3090:cloud` produces a CARD lane whose
+name equals server `3090`'s UPSTREAM lane — two lanes, one string. `/` and `\`
+go into an Electron session partition (`crucible:<name>`). Underneath both sat a
+two-owners bug: the refusing writer checked NO length while the storing clamp
+silently `.slice(0, 60)`d, so a long name was refused by nobody and quietly
+altered on the way to disk, where it could then collide or stop matching its own
+card. Fixed with ONE owner — `SLOT_NAME_MAX`, `tidySlotName`, `slotNameRefusal`
+in `shared/slots.ts` — consulted by all four callers, preserving the division of
+labour (the writer refuses by name, the clamp drops what it cannot store) over
+one rule instead of two. **Applied to the CLOUD list as well**, because both
+lists feed one picker and one lane string, and a name legal on one card and not
+the other is a rule learned twice. The truncation is deleted outright: a
+truncated name is a name nobody chose. Limits match BookForge's (1–48, the same
+forbidden set) so one name is legal in both apps; each character is argued from
+FOUNDRY's own reason, never "because BookForge does".
+
+**Proved:** the real pairing file yields `crucible@owens-pc-wsl`; against a COPY
+of Owen's settings the old any-loopback test declined the defect case (a tailnet
+row at `127.0.0.1:7200`) where the new URL test registers, and re-reading the
+same file twice declines; the clamp refuses `a:b`, `a/b`, `a\b`, 49 characters,
+a control character, `any` and `This computer` in either case, and accepts
+`3090 Ti`, `M1 Ultra` and `crucible@owens-pc-wsl`.
+
+**Owen's own registry still holds that row under the old name `local`, and
+nothing migrates it** — `local` is not reserved, the app must not rename
+somebody's row, and the URL already matches so the pairing door correctly
+declines. Removing the row and pressing "Look again" adopts the line's name.
+
+**Recorded, not fixed:** `addLocalCrucible` writes through `writeAppSettings`
+directly rather than `writeCrucibleServers`, so it skips the writer's refusals
+and leans on the clamp to drop. A pre-existing two-writers seam, out of this
+wave's scope.
+
+**Version: 2.0.0.** Owen, relayed 2026-09-15: *"Next version can be 2.0. Go
+ahead."* Checked before bumping, because a major bump is exactly what a
+compatibility test would trip on: NOTHING in this repo compares or pins a
+version. BookForge's floor is `FOUNDRY_VERSION_FOR_CLEAN_TEXT = '1.1.0'`, which
+2.0 clears, and their vendor keeper reads only the COMMIT out of
+`foundry --version` — `2.0.0 (<clean sha>)` passes and a tag is never wanted.
+Publishing the GitHub release stays Owen's, as it was for the void 1.3.0.
+
+### Wave 67 — no local GPU slot: one lane per connected engine, the CPU lane untouched (Owen, 2026-09-15) — LANDED
+
+**Owen, verbatim:** *"everything goes through a crucible server now, including
+local... there should be no local gpu listed in the queue"*, and precisely:
+*"cpu slots are always local. we dont outsource simple cpu work to crucible. one
+gpu slot in the queue per connected crucible server. including the local
+crucible, which is indistinguishable from the remote crucible server."*
+
+**And the atomicity rule that goes with it**, from the same exchange: *"loading
+the model is a cpu step technically, but steps are atomic... small preparatory
+steps inside a broader 'clean' task are sent to the crucible server to execute,
+then returned. CPU jobs, like bookforge's book assembly, come back to the local
+cpu slot because it's a long cpu job that's separate from a GPU job."* Foundry
+already worked this way and it was checked rather than assumed: `JOB_RESOURCE`
+classes a WHOLE job — `read`, `translate`, `simplify`, `clean`, `analyze` are
+`gpu`; `epub`, `txt`, `pdf` are `cpu` — a job resolves its venue ONCE at
+admission and everything inside it happens there, which is why the model load
+sits inside `placeOnCrucible` rather than being a step that could land
+elsewhere. Nothing needed changing for that clause.
+
+**What changed.** `slotsFrom` emits NO local slot: the GPU slots are exactly the
+enabled Crucible entries in registry order, plus the cloud slots. `LOCAL_SLOT_NAME`
+is deleted with every reader INCLUDING its reservation in the name rule — a name
+nothing uses is not reserved — and `'local'` is gone from `ComputeSlotKind`, so
+the compiler now refuses any slot or lane claiming to be this machine's card.
+`computeLanes([])` is `[]`; `canStart` still admits a GPU row on an empty board
+**so the placement can refuse it by name** rather than leaving it queued for
+ever. `localPlacement` is gone, `Placement.slot` is `ComputeSlot | null`, and a
+CPU job records no `ranOn` instead of recording "This computer". An entry known
+from the resolver's CACHE (never a fresh call) to be an orchestrator with no
+engine is not a slot, and a pinned row on one fails with the resolver's own
+sentence; unknown keeps its lane, so a machine that has merely not been probed
+is never hidden.
+
+**The CPU lane needed nothing, and that was checked rather than assumed:** the
+CPU side has no name in the slot namespace at all — it is the count
+`CPU_LANE_SLOTS`, its bench cards are keyed `cpu:<n>`, and the occupancy map's
+`on` is null for every CPU row. There is no string a server name could collide
+with. Recorded in the name rule's own doc.
+
+**AND THE TILE STOPPED LYING, which this wave would otherwise have introduced.**
+With no local slot there is nowhere for a queued text act to run on this
+machine's Ollama, so `localTextGate`'s "the model is installed and fits" branch
+was a tile that fails the moment it is pressed. It is dark now and still NAMES
+the model, because "this machine has a usable model" stays true and useful — it
+is exactly what makes connecting an engine here worth doing — and what changed
+is where the work runs, not what the machine can hold.
+
+**Proved on FIXTURES ONLY** (hand-written registries, every address in
+TEST-NET-1 `192.0.2.0/24`, which is never routed): three entries with one
+disabled give exactly the two enabled slots in registry order and no "This
+computer", with a card lane and a `:cloud` lane each; an empty registry gives no
+slots and no lanes, `translate` and `read` refuse by name, and `epub` still runs
+with no slot. `laneOfRun('This computer')` resolves to nothing, as intended.
+
+**Unexercised and named plainly:** the orchestrator-with-no-engine slot hiding
+(reachable only through a server; it was seen once against a stub `/v1/info` on
+loopback, not a Crucible), the hosted refusal sentences, and a pinned row
+failing on an engine-less server.
+
+**REPORTED, NOT BUILT — one for Owen.** Two enabled entries pointing at ONE
+engine now draw two GPU lanes over one card: the old local-slot suppression
+prevented that by accident and no longer does. Whether the slot list DEDUPES on
+the resolved engine or merely WARNS on the Servers card is a design call, and
+the resolve is where both the fact and the fix would live. BookForge has the
+same hazard and no ruling either; we agreed to bring Owen one description
+rather than two.
+
+**Dead while `CRUCIBLE_READS` is true**, left in place and documented: the local
+page-reader start in `executeJob` (a `read` can no longer have a null endpoint)
+and `laneAtPick`'s no-slot arm. `llm-card`/`llm-defaults` still call the Ollama
+"the local slot" — the remaining half of the local-text deletion.
+
+**A CARD INCIDENT, recorded because the mechanism matters more than the
+apology.** The subagent that built this wave ran its first proof against the
+REAL registry, and `placeOnCrucible` loads a model as part of placing a job — so
+a `qwen3.8-27b-4bit` load landed on Owen's PC card while he was using it. It was
+cancelled through the SDK within minutes and the card returned to desktop-only.
+The cause was the BRIEF: it said "verify by derivation" and then, in its
+verification section, named Owen's real settings file to describe the machine,
+which invited the live call. **The rule taken from it: verification against a
+machine anyone else may be using gets a FIXTURE — a hand-written value, an
+unroutable address — never a real registry path; and a branch reported
+unexercised beats a live call.**
+
+### Wave 68 — Foundry keeps no models: the local text path is deleted (Owen, 2026-09-15) — LANDED
+
+**Owen, verbatim:** *"we dont have any local models. crucible handles all model
+orchestration. if theres no connected crucible server then tiles should be
+disabled. crucible is a service that foundry installs locally and connects to.
+if windows is an orchestrator, it means there's a WSL engine installed and
+windows crucible acts as a pass-through to the WSL engine."* And, on the half
+that STAYS: *"crucible should handle model orchestration right? so crucible is
+where which models to use is decided. but foundry does pass through settings to
+crucible."*
+
+**Checked with BookForge first, on Owen's instruction** (*"bookforge vendors
+foundry and i assume bookforge has already worked this logic out, so make sure
+you discuss it with them"*). Their answer, from their code: nothing LIVE reads
+any door or settings key deleted here. `narration-clean-text.ts` names
+`cleanTextModel` / `ollamaUrl` / `llm:defaults`, but only inside a branch that
+became unreachable when they deleted their own local venue, and they are
+removing that branch themselves. Their docs of record for this shape:
+`CRUCIBLE_ROLLOUT_PLAN.md` (the cross-app queue), `LEGACY-REMOVAL.md` (the
+deletion order and the carry-the-facts rule), `SETUP-AND-SETTINGS-AROUND-CRUCIBLE.md`.
+
+**Deleted:** `model-lineup-local.json` (Foundry's own rows and its local floor);
+`llm-catalog.ts`'s local merge with `eligibleFor` / `fitsOn` / `heldBy` /
+`lineupFor` / `suggestedTag` / `openingModelFor` / `OVERHEAD_GB`;
+`act-gates.ts`'s entire machine reasoning; `setup.ts`'s `llmChoices` and
+`translateFloorMiss`; `ollama.ts`'s installer and pull; the model and Ollama
+fields in all four dialogs; `llm-card.component.ts` (reduced to a new
+`setup-card` carrying the one surviving control) and `llm-defaults.ts`; the
+wizard's whole Ollama step; `AppSettings.defaultLlmModel` / `cleanTextModel` /
+`ollamaUrl`. **Twelve doors and one push go, 145 → 133**, measured by script.
+
+**KEPT, and this is the other half of Owen's ruling:** the engine-settings
+pass-through is untouched, not narrowed and not renamed —
+`crucible-settings.ts`, the `crucible:engine-settings*` doors,
+`shared/engine-settings.ts`, the "Where the text work runs" card, the shared
+upstream child and the wizard's `routes` step. A route row naming
+`anthropic/claude-sonnet-5` IS a person choosing a model; it lives in the
+ENGINE's `/v1/settings`, which Foundry draws and writes through. The test
+applied throughout: **does the value live in Foundry's `app-settings.json` or in
+the engine's `/v1/settings`?** Foundry's own store went; the window onto the
+engine's store stayed.
+
+**HELD, deliberately:** `page-reader.ts` and its card, untouched to the byte —
+it is the only path to an EPUB on a machine that cannot install WSL and the
+agreed gate (a Windows engine reading a page) has not been met. `readGate`
+needed no stripping: none of its clauses ever asked about the card, the floor,
+Ollama or system memory. Also held: the root `src/` engine's own doors, and
+`cloud-providers.ts` / the Cloud card (PHASE15 §5.3 moves keys into the engine,
+which is its own change).
+
+**THE SENTENCE SWEEP, which is BookForge's lesson and not a tidy-up.** Theirs:
+*"we deleted a switch and seven user-facing refusals kept telling operators to
+flip it… 'install Ollama' surviving in a string is the same bug."* Ten sentences
+rewritten and a page of wizard prose deleted. The dark text tile's four
+competing sentences collapse to one true one: *"No connected GPU engine serves
+this act. Add a GPU engine in Settings › Servers, and its 'Where the text work
+runs' card will send this class to Anthropic, OpenAI or an Ollama server for
+you."* The welcome step now NAMES its steps rather than counting them, so the
+count cannot drift again. `"Settings › Language model"` appears nowhere in the
+source.
+
+#### Facts carried out of the deleted code — recorded HERE because they lived nowhere else
+
+BookForge's rule, learned at the cost of a 7x regression: *"A deletion that
+loses the reason a number is what it is costs more than the code it removed."*
+Nine facts had no other home.
+
+1. **MLX vs GGUF on the cleanup, measured 2026-09-08.** `qwen3.5:9b-bf16` is a
+   GGUF, so Ollama runs it on llama.cpp, which pins that architecture to a
+   SINGLE slot (*"model architecture does not currently support parallel
+   requests"*, qwen35). The cleanup sends blocks in parallel, so one slot is the
+   whole cost: **32 blocks/min on the M1 Ultra against 61 for
+   `qwen3.5:9b-mlx-bf16`** — the same weights at the same precision on Ollama's
+   MLX runner, which batches. Owen picked the 16-bit row that day and got the
+   slow half of it.
+2. **The `foundry/` id prefix rule.** Every id in the deleted file was prefixed
+   so a row of ours could never collide with a Crucible manifest id: Crucible's
+   `qwen3.5-9b` names the bf16 tag for cleanup, and the local file's
+   `foundry/qwen3.5-9b` named the ordinary `qwen3.5:9b` for prose. **Two
+   different models, one obvious name**, and the prefix is what kept them apart.
+   Live hazard if Foundry ever adds rows again.
+3. **Why a hand-edited generated file is never the answer.** The local rows were
+   kept in their own file rather than merged into the vendored one because *"a
+   hand-edited copy of a generated file is a copy that silently loses the hand
+   edits on the next re-vendor."* It is also why the byte-for-byte keeper works.
+4. **The `needsGB.value` sort, with its worked counter-example.** Sorting by
+   DOWNLOAD size would put the bf16 9B (19.3 GB down, 20.8 resident) below the
+   4-bit 27B (17.7 down, 19.2 resident) while the fit test ordered them the
+   other way — and "the largest that fits" could then pick a row a LARGER
+   machine is not offered.
+5. **`openingModelFor`'s defect story.** A 24 GB card runs setup, pulls the 9B,
+   the tag is stored; later the person pulls the 27B; the Translate tile lights
+   because a model at or above the floor is installed — **and the job still runs
+   the 9B, because that is what the tag says.** The same shape recurs the moment
+   any surface stores a model name again.
+6. **Two facts about Ollama's pull API.** It reports `completed`/`total` PER
+   LAYER and the totals arrive as each layer starts, so summing them gives a
+   denominator that grows and a bar that goes backwards. And: *"Eighty-one
+   gigabytes on a domestic line is most of a day and is not a failure. Five
+   minutes with nothing on the socket is"* — the deadline was on SILENCE,
+   re-armed per line.
+7. **The Ollama installer URLs and their verification date.**
+   `ollama.com/download/OllamaSetup.exe` and `.../Ollama.dmg` are the hrefs
+   behind the site's own buttons — stable aliases that redirect to the current
+   release, which is why they were never version-pinned. Verified 2026-08-26.
+8. **The three pool words**, which any future memory sentence should reuse:
+   `vram` → "video memory", `unified` → "unified memory a model can reach",
+   `ram` → "system RAM". Three pools, three sentences.
+9. **The 8 GB arithmetic**, stated as a consequence rather than a bug: an 8 GB
+   card was offered `qwen3.5:4b`, not `qwen3.5:9b`, because 6.6 + 1.5 is 8.1 and
+   8.1 does not fit in 8.0.
+
+#### Two consequences named rather than hidden
+
+- **One fact that had two owners, now one.** `AppSettings.ollamaUrl` and the
+  engine's `upstreams.ollama.url` (PHASE15 §3.2) were the same address stored
+  twice; Foundry's copy is deleted on BookForge's clearance that nothing reads
+  it. **Residue:** the "Models on this machine" inventory now probes
+  `DEFAULT_OLLAMA_ENDPOINT` rather than a configured address, so an Ollama on a
+  moved port is invisible to the disk count. A smaller wrong answer than a stale
+  address, documented at the call site.
+- **Unexercised and named:** every arm of `act-gates` (lit, dark, cloud,
+  hosted), `readGate`, and the reworded provider sentences. They sit behind a
+  live registry, and a live registry call loads a model on somebody's card —
+  the mistake this wave's sibling already made once. Reported unexercised rather
+  than proved at that price.
+
+**Still in-app and still meeting a model, named so it is not discovered later:**
+the analysis NLI worker (a prebuilt Python running on the card inside the
+analysis act). By Owen's ruling it belongs in Crucible as its own class. It is
+BookForge's `B7` one repo over — they hold the same shape for `align-longform`
+pending a ruling — and it is a follow-on, not a gap.
