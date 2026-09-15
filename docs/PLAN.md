@@ -5030,3 +5030,34 @@ regenerated `foundry-lineup.json`; `app/shared/model-lineup.json` is re-vendored
 byte for byte now rather than at L, so no machine on this build fetches a pair
 that cannot load. That closes the "Q8 dialect unmeasured" item: the loader
 was the problem, not the dialect.
+
+### Wave 64 — the first-run and settings walk: install, configure, uninstall (Owen, 2026-09-15 for the morning) — QUEUED
+
+Owen, via BookForge: *"Let's make sure bookforge's and foundry's settings and
+setup pages are capable of installing and configuring it."* Crucible is
+building the same night: `crucible uninstall` (stops the server → removes the
+service / Startup shortcut / host → envs → pairing → config; weights KEPT unless
+`--purge-weights`; `--dry-run`, `--json`) and a bare-Linux CLI install for a
+rented GPU box, documented as crucible `docs/INSTALL-UNINSTALL.md`. Foundry's
+walk, the way a person does it, checked against four points:
+
+1. **No local server** → the pairing file, then `/v1/ping`; else "I have a
+   server elsewhere" (a connect code) or "Install Crucible on this computer"
+   through `@crucible/bootstrap` — on Windows that installs the HOST, which
+   drives the WSL engine through the page's engine control (§4.7); the app never
+   runs a WSL step itself. Built (package J) except the driven install, which
+   still refuses by name until the bootstrap package ships.
+2. **Settings → Engine** as a write-through window onto `/v1/settings`: routes
+   per class, upstream keys write-only with the hint, Test, refusals by name;
+   "Open engine console"; the servers panel. Built (package I, H).
+3. **An "Uninstall Crucible…" door**: the CLI's dry-run shown first, then the
+   real run with keep / purge weights. NOT built — waits for the CLI and its doc.
+4. **Any Anthropic/OpenAI key entered in Foundry passes THROUGH to Crucible and
+   is stored nowhere in Foundry.** Built (package I) — and the old cloud card
+   that DID store keys is package L's to delete; until L the two cards sit side
+   by side, which the walk must call out.
+
+BookForge's equivalent is being built and its shape will be sent so the two apps
+read the same. The walk is done as a real run of the app, not a reading of it,
+once INSTALL-UNINSTALL.md and BookForge's shape have landed — an agent built
+against a guess tonight would be rebuilt tomorrow.
