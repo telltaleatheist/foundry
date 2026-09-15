@@ -68,7 +68,7 @@
       "icon": "build/icon.png"
     }
   },
-  "_crucibleClientNote": "STOPGAP, 2026-09-14. @crucible/client 0.6.0 is not published yet; this is vendor/crucible-client-0.6.0.tgz, packed with `npm pack` from the crucible checkout at feat/phase6-remote-render d6f2786 (SDK e342fee; sha256 ed7a923e02f9cb299a541a4a86197ec88f3c78ee8ee3ca183410daf64528fce8, 347,299 bytes — the same bytes BookForge vendors). Replace with the release URL the day Owen publishes. NEVER a file: DIRECTORY: npm junctions a directory dependency into the crucible checkout, so an edit there would silently change this app. On every re-pack under the same version, drop the lock entry's integrity line first or npm keeps the old cached tarball.",
+  "_crucibleClientNote": "STOPGAP, 2026-09-14. @crucible/client 0.6.0 is not published yet; this is vendor/crucible-client-0.6.0.tgz, packed with `npm pack` from the crucible checkout at feat/phase6-remote-render 389e2d6 (sha256 b770c897e9a3c96608eb443fc8c804d153b5487b671357d36e4e8e3efe755556, 353,351 bytes — the same bytes BookForge vendors at 00a59b16). Replace with the release URL the day Owen publishes. NEVER a file: DIRECTORY: npm junctions a directory dependency into the crucible checkout, so an edit there would silently change this app. On every re-pack under the same version, write the tarball's sha512 into the lock entry first or npm keeps the old cached tarball.",
   "dependencies": {
     "@angular/common": "^21.0.0",
     "@angular/compiler": "^21.0.0",

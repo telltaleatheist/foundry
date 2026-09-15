@@ -4999,3 +4999,14 @@ WSL guest is updated to the Phase-15 build (BookForge's list already carries
 the way it now tolerates an absent `route`, or the guest is updated first.
 `app/shared/foundry.module.json` is LF on purpose — it is vendored byte for
 byte and the per-file rule keeps a file's own endings.
+
+**Third 0.6.0 re-pack vendored the same night** (crucible 389e2d6, sha
+b770c897…, 353,351 bytes — the bytes BookForge vendors at 00a59b16): `info()`
+and `voices()` now read a document whose voice rows carry no
+`needs_reference` as all `false` (the route rule's twin — all-or-nothing, an
+absent field is a version statement), a partial document refused by name
+(`voices_needs_reference_missing` / `_unknown`). No public type changed; gates
+green. **Not watched live:** the WSL engine was down (ECONNREFUSED on :7100)
+when the pack landed — the distro idles out when nothing holds it, which is the
+exact gap PHASE15 §4's Windows host exists to close — so the first `info()`
+against `local` through this pack is owed on its next boot.
