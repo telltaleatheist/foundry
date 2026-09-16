@@ -41,3 +41,13 @@ Standalone Foundry already adopts Crucible's published local pairing on launch. 
 The CLI and desktop now share version 2.0.1. Removing the unused `foundry: file:..` desktop dependency eliminates an accidental recursive repository payload and the embedded lockfile rewrite. Release automation requires both desktop artifacts plus all four CLI archives before promotion. macOS public packaging requires signing and notarization.
 
 Validation: 857 Foundry CPU tests pass (ten new first-run/pairing/upgrade regressions), and the Electron/Angular production build passes. Client SDK bytes are pinned to Crucible source 407886b and the release staging SHA512. Windows/macOS packaging and clean installation are separate release acceptance gates; no local GPU/service restart was performed for these tests.
+
+## Native Windows and model-choice ordering follow-up
+
+Foundry's existing five model operations are PDF/OCR page reading, cleanup, translation, simplification and analysis. They all use the resolved Crucible engine and its selected model, including native `llama-windows`; no new audio transcription feature is implied. Crucible PHASE15-HOST section 7.3 records a real Sep 15 native dots.ocr run (11 parsed blocks, byte-identical to the WSL fixture) and Qwen cleanup. This audit adds routing regressions for all five operations; it does not repeat GPU inference during the user's training run.
+
+A confirmed reinstall bug is fixed: catalog model weights could survive while the native llama.cpp executable was absent, and Foundry previously called that stocked. Coordination now includes engine subjects required by selected local models. Upstream-only text routes request neither local model weights nor an unused engine.
+
+Fresh setup now collects the existing model/upstream choices before model preparation. The current text-work step always offers existing Ollama, OpenAI and Anthropic connections, including on a machine whose GPU could otherwise run all classes. Skipping that choice defers preparation until configured later; discovery and read-only probes still work. Hosted Foundry honors the host's readiness callback and resumes from the host's Finish action.
+
+Validation: 866 Foundry CPU tests pass, including nine new native routing/setup regressions; standalone Electron/Angular build passes. Crucible's native backend/engine suites pass 57 tests, plus three task-install predicate regressions. These changes postdate the public 2.0.1 prerelease and are not in its binaries; release promotion remains paused pending the coordinated next build.

@@ -1816,3 +1816,12 @@ the accent stays this app's own work on the words, amber is the host's work on
 the audio, and a branch that changes hands is legible without reading a title.
 
 Gates green: both `tsc` configs, `ng build`, 384 bun tests.
+
+
+### First-run model preparation ordering (2026-09-16)
+
+A host collecting model/upstream choices supplies `modelPreparationReady(): boolean`
+on the Foundry mount contract. While false, Foundry discovers engines but does not
+post preparation modules. After persisting those choices, the host calls the mount
+export `resumeModelPreparation()`; the usual idempotent coordination resumes. Hosts
+that omit the optional callback retain their established preparation behavior.
