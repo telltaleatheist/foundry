@@ -5958,6 +5958,43 @@ two agreeing runs as `row` and matches case-insensitively; both open falls to th
 walk. `source` is read only where `pinned` is non-null, so the both-open case —
 where `row` would be the wrong tail — never renders one.
 
+**CORROBORATED INDEPENDENTLY.** BookForge's `decideWaitFor` holds rather than
+redirects on the same disagreement, reached separately and for the same reason —
+*"which is the most reassurance either of us is going to get on a precedence
+table."* Their pending band is also one list partitioned by status rather than a
+band ahead of the queue, which is Owen's ruling read the same way twice.
+
+**THE SOURCE IS FUSED TO THE VENUE, and that is BookForge's lesson rather than
+mine.** The first cut was `let pinned` beside `let source: VenueSource = 'row'`,
+which was correct only by an argument about a path: `source` is read where
+`pinned` is non-null, and the both-open case leaves `pinned` null, so the `'row'`
+initialiser — the WRONG tail there, since the book already says Any — was never
+reached. Their module has no such initialiser and they said exactly why: *"if I
+had written a default it would have been 'row' and it would have had exactly your
+bug. The thing that saved it was making the parameter required, not foresight
+about that path."* So it is now ONE nullable value, `{name, source} | null` —
+there is no source without the machine it describes, and the default that could
+be wrong has nowhere to live. Behaviour is unchanged across all eight cases;
+what changed is that the safety is structural.
+
+**`waitForResolved` IS STILL NOT WANTED, and the trigger for wanting it is now
+written down.** BookForge's field is an ASSIGNMENT (written at admission, and its
+presence IS the row's immutability lock); Foundry's `ranOn` is a RECORD (written
+at the spawn, per run). Theirs also enforces one-book-one-GPU across a MULTI-STEP
+run, so a render on the Mac cannot have its next pass land here. Foundry's jobs
+are atomic — `JOB_RESOURCE` classes a whole job and the venue resolves once at
+admission — so there is no second step to scatter, and folding the result back
+into the choice would quietly pin a row that asked for Any. **The day Foundry
+grows a run whose second step must follow the first's machine, the assignment is
+needed beside the record.** Not before.
+
+**Recorded as a known divergence, not an accident:** BookForge refuses an unknown
+server at the dial's door; Foundry keeps it and tells switched-off / renamed /
+never-existed apart at the placement. They read both and judged Foundry's the
+more honest place to draw it — *"a settings writer genuinely cannot tell them
+apart"* — and will move to it if that door is ever revisited. Theirs is shipped
+and its refusal is at least loud, so neither is changing tonight.
+
 **Unexercised and named:** every path through a real placement. Exercising the
 park needs a scheduler race against a live server, which loads a model on
 somebody's card.

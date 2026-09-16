@@ -523,30 +523,50 @@ export async function placeJob(
    * book named the machine, `dial` when the book said Any and the dial chose —
    * see {@link VenueSource}, and `orAnyWords`, which is the only reason the
    * distinction is carried at all.
+   *
+   * ── AND IT IS ONE VALUE, NOT TWO, SO A SOURCE CANNOT OUTLIVE ITS VENUE ────
+   *
+   * This was `let pinned` beside `let source: VenueSource = 'row'`, which was
+   * correct only by an argument: `source` is read where `pinned` is non-null,
+   * and in the both-open case (the book says Any and so does the dial) `pinned`
+   * is null, so the `'row'` initialiser — the WRONG tail for that case, since
+   * the book already says Any — was never reached. Safe, and safe by reasoning
+   * about a path rather than by construction.
+   *
+   * BookForge's module has no such initialiser and said plainly why: their
+   * `source` is a REQUIRED parameter, so *"if I had written a default it would
+   * have been 'row' and it would have had exactly your bug. The thing that saved
+   * it was making the parameter required."* The same shape here is one nullable
+   * object: there is no source without the machine it describes, so the default
+   * that could be wrong has nowhere to live.
    */
   const dial = readAppSettings().queueGpuDial;
   const asked = waitFor !== undefined && waitFor !== ANY_SLOT ? waitFor : null;
-  let source: VenueSource = 'row';
-  let pinned = asked;
-  if (dial !== GPU_DIAL_ANY) {
-    if (asked !== null && asked.toLowerCase() !== dial.toLowerCase()) {
-      /*
-       * THE DISAGREEMENT, and it is a TRANSIENT wait rather than a refusal: the
-       * dial is one control away from agreeing, and failing the row would throw
-       * its queue position away for a gesture somebody is about to make. It is
-       * `dial`-sourced, so the tail says to turn the dial — telling somebody to
-       * set this book to Any would be telling them to abandon the machine they
-       * deliberately chose.
-       */
-      return transientWait(
-        `waiting for "${asked}", and the queue's GPU dial is set to "${dial}"`
-        + `${orAnyWords('dial')}`,
-      );
-    }
-    pinned = dial;
-    if (asked === null) source = 'dial';
+  if (dial !== GPU_DIAL_ANY && asked !== null && asked.toLowerCase() !== dial.toLowerCase()) {
+    /*
+     * THE DISAGREEMENT, and it is a TRANSIENT wait rather than a refusal: the
+     * dial is one control away from agreeing, and failing the row would throw
+     * its queue position away for a gesture somebody is about to make. It is
+     * `dial`-sourced, so the tail says to turn the dial — telling somebody to
+     * set this book to Any would be telling them to abandon the machine they
+     * deliberately chose.
+     */
+    return transientWait(
+      `waiting for "${asked}", and the queue's GPU dial is set to "${dial}"`
+      + `${orAnyWords('dial')}`,
+    );
   }
-  if (pinned !== null) {
+  /*
+   * Past the disagreement there are exactly three shapes, and each carries its
+   * own source: the dial chose (the book asked for nothing), the book chose
+   * (with the dial open, or agreeing), or nobody chose and the walk decides.
+   */
+  const venue: { name: string; source: VenueSource } | null = dial !== GPU_DIAL_ANY
+    ? { name: dial, source: asked === null ? 'dial' : 'row' }
+    : asked === null ? null : { name: asked, source: 'row' };
+
+  if (venue !== null) {
+    const pinned = venue.name;
     const slot = slotNamed(slots, pinned);
     if (slot === null) {
       /*
@@ -580,7 +600,7 @@ export async function placeJob(
        */
       return transientWait(
         `waiting for "${pinned}", which is switched off or no longer registered`
-        + `${orAnyWords(source)}`,
+        + `${orAnyWords(venue.source)}`,
       );
     }
     /*
