@@ -6120,8 +6120,29 @@ real machine is worse than oversubscribing a card. Folding only when both
 addresses are loopback was considered and fails the same way: the IPv6-only bind
 the ruling names is exactly two loopback literals that are not one service.
 
+**AND THE ONE PARTIAL FIX EITHER OF US FOUND HAS BEEN WITHDRAWN.** BookForge
+offered Owen a narrower version — fold the loopback LITERALS (`127.x`, `::1`,
+`0.0.0.0`) while leaving the NAME `localhost` alone, on the argument that a
+literal involves no name resolution so the guess objection cannot reach it. It
+does reach it. The ruling's reason has two halves and the split only dodges one:
+the hosts-file half IS about the name, but **the IPv6-only bind is two loopback
+LITERALS that are not one service**, which the split folds. They checked it
+against their own test's stated wording and told Owen it was wrong.
+
+**So there is no partial fix, and the decision is the whole rule or nothing** —
+which makes it a smaller question than it looked, not a larger one.
+
 **So the price is stated rather than paid quietly:** the two apps agree on the
 rule, agree on what it costs, and neither will overturn it alone.
+
+**WHICH WAY EACH APP FAILS, AND WHY THEY DIFFER ON PURPOSE** (BookForge's
+framing, kept because it decides where future readers may sit). Their orchestrator
+check refuses LOUDLY when `/v1/info` has not been read, and can afford to because
+the role read happens on CONNECT, where a refusal has somewhere to be seen. Ours
+degrades to a spurious lane, and has to, because the slot list runs behind every
+picker and on every pump pass — **a refusal there is a refusal nobody reads.**
+Same principle as the address one, one level up: the right posture depends on who
+is reading and when, and neither choice would be right in the other's seat.
 
 **And it is the same principle as the false-merge case above, in the other
 direction** (BookForge's observation, and it is the right generalisation): a
