@@ -6091,6 +6091,47 @@ tray; two genuinely different machines stay two; **one resolved beside one never
 probed stays two, and two unprobed stay two**; host case and an explicit default
 port collapse; a disabled duplicate was never in the running. Six for six.
 
+#### THE RESIDUAL DOUBLE LANE, confirmed symmetric with BookForge — OWEN'S CALL
+
+**One engine registered under two spellings still draws two lanes.**
+`http://localhost:7100` and `http://127.0.0.1:7100` are one engine on this
+machine, and BOTH guards miss it: the Wave 70 add-doors do not refuse the second,
+and this wave's merge does not collapse them, because both consult
+`sameCrucibleAddress` and that rule **deliberately does not fold a hostname into
+an address** — *"they can genuinely differ (a hosts-file entry, an IPv6-only
+bind), and treating a name as an address is a guess about somebody's machine."*
+
+**Measured, not assumed:** both answers are `false`, two lanes over one 3090 Ti.
+
+**BookForge has the identical residual from the identical ruling.** They wrote
+the fold, then found their own test asserting the opposite ON PURPOSE with that
+reason, and reverted it — *"a ruling with a stated reason, and the residual
+double lane is the price it knowingly pays; overturning it is Owen's call."*
+Agreed, and the same holds here, so **one decision covers both apps.**
+
+**Why no fix was substituted.** Keying the merge on the engine's SELF-REPORTED
+NAME instead would catch this at no network cost (`resolveOnce` already holds
+`server.name` for both the direct and the hopped path, and discards it) and would
+not touch the ruling at all, since asking a server who it is is not a guess about
+addresses. It was rejected because it trades this failure for a worse one: two
+genuinely different machines whose hostnames collide — two boxes both called
+`ubuntu`, so both engines called `crucible@ubuntu` — would MERGE, and hiding a
+real machine is worse than oversubscribing a card. Folding only when both
+addresses are loopback was considered and fails the same way: the IPv6-only bind
+the ruling names is exactly two loopback literals that are not one service.
+
+**So the price is stated rather than paid quietly:** the two apps agree on the
+rule, agree on what it costs, and neither will overturn it alone.
+
+**And it is the same principle as the false-merge case above, in the other
+direction** (BookForge's observation, and it is the right generalisation): a
+remote orchestrator advertising `127.0.0.1:7100` is a loopback literal read as
+though it meant one machine everywhere; `localhost` vs `127.0.0.1` is a name read
+as though it meant one address everywhere. **An address is only meaningful
+relative to who is reading it**, and neither app guesses in either direction.
+Both registries are clean today — Owen's holds one row — so nothing is biting on
+either side.
+
 **Unexercised and named:** the merge against a live orchestrator hop. Reaching it
 needs a Windows tray claiming a WSL engine and both registered, and the resolve
 runs through a real server.
