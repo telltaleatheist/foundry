@@ -5713,6 +5713,35 @@ pairing file on this machine resolves to that same row's origin, so
 `adoptPairingFile` returns `already_registered` before `registerPairing` and the
 new throw is never reached at startup.
 
+**EVERY WRITER OF THE REGISTRY AUDITED, prompted by BookForge finding the
+silent twin of this bug in their own tree** (`e875c9a5`: a startup pre-check
+comparing only a trailing slash let a case-different hostname through to a path
+that writes DIRECTLY rather than through the door, so it did not throw — it
+created the duplicate). Foundry has exactly two writers of `crucibleServers`:
+`writeCrucibleServers` (the one writer, with the refusals) and
+`addLocalCrucible`, which writes through `writeAppSettings` directly and is the
+two-writers seam Wave 66 recorded. **Both add-doors carry the address rule, so
+neither can create a duplicate**, and every startup path ends in one of them —
+`connectLocalEngine` in `addLocalCrucible`, `adoptPairingFile` in
+`addCrucibleServer`.
+
+The one path with NO address rule is the Servers card's whole-list save
+(`crucible:save` → `writeCrucibleServers`). That is deliberate and it is the
+lane half's, not an oversight: it is somebody deliberately typing two rows, on
+an existing list that may already hold a duplicate, and refusing there would be
+validate-on-rewrite — the migration this wave's rule is careful not to be.
+
+**THE RED/GREEN, run because BookForge's own first test of this was VACUOUS and
+they said so.** They described host case and then wrote the case with a trailing
+slash on `127.0.0.1` — an address with no letters to differ in case — which the
+narrow check already handled, so it passed against the bug. Foundry's check was
+re-run against the OLD pre-check's behaviour with a real hostname:
+`http://owens-pc:7100` stored against `http://OWENS-PC:7100/` discovered is
+MISSED by the old rule and caught by the new one, and so is a default port made
+explicit. The loopback case answers true under both and proves nothing. **The
+lesson is the address, not the assertion: `127.0.0.1` is the one address that
+cannot express this bug**, and it is the first one anybody reaches for.
+
 #### STILL OPEN FOR OWEN — the lane half
 
 The door and the lanes solve different halves and are **not alternatives**
