@@ -58,6 +58,7 @@ import {
 } from './crucible-registry';
 import { readCapability } from './crucible-dispatch';
 import { readEngineSettings, testUpstream, writeEngineSettings } from './crucible-settings';
+import { crucibleRunState, startCrucible } from './crucible-start';
 import type {
   SettingsDocument,
   SettingsPatch,
@@ -3960,6 +3961,62 @@ export function registerIpc(): void {
    * may have unparked something, and a board that has gone quiet would otherwise
    * sit on that row until somebody pressed something else.
    */
+  /**
+   * IS THERE A CRUCIBLE HERE THAT IS NOT RUNNING, AND SHALL WE START IT?
+   *
+   * Owen, 2026-09-15 (relayed): *"the foundry app should ask if they want to
+   * start crucible."* Standalone only — `crucibleRunState` answers `not-ours`
+   * hosted, and that becomes `answered: 'later'` below, so the vendored copy
+   * inside BookForge draws no card. BookForge has already offered by the time
+   * anybody reaches Foundry there.
+   *
+   * ANSWERED RATHER THAN ASKED IS THE ORDINARY CASE, and it is why this is a
+   * question door rather than a state read the renderer branches on: running,
+   * absent and hosted all resolve without a card, so nothing flickers on the
+   * three startups out of four where there is nothing to say. Only
+   * `installed && not running` composes one.
+   *
+   * THE CARD NAMES THE TRAY, NOT THE ENGINE, because that is what will be
+   * started (electron/crucible-start.ts argues why at length) and because the
+   * thing a person is agreeing to is a program that stays running and keeps the
+   * engine up — which is a different promise from "run this once".
+   */
+  ipcMain.handle('crucible:offer-start', async (): Promise<Asked<'start' | 'later'>> => {
+    const state = await crucibleRunState();
+    if (state.kind !== 'stopped') return { kind: 'answered', answer: 'later' };
+    const where = state.via === 'wsl-guest'
+      ? 'Crucible is installed inside WSL on this computer'
+      : 'Crucible is installed on this computer';
+    return {
+      kind: 'ask',
+      question: {
+        title: 'Start Crucible?',
+        message: `${where}, and nothing is answering at ${state.url}.`,
+        detail: [
+          'Crucible is the GPU engine. Translation, simplification, cleanup, analysis and page '
+          + 'reading all run on it, and none of them can run while it is stopped. Opening a book, '
+          + 'compiling one and exporting one are unaffected.',
+          'Starting it launches the small program that keeps it running and watches it — not a '
+          + 'one-off run. It stays up after Foundry is closed, and it is the thing that brings the '
+          + 'engine back if it stops.',
+        ],
+        choices: [
+          { key: 'start', label: 'Start Crucible' },
+          { key: 'later', label: 'Not now' },
+        ],
+        preferred: 'start',
+        dismissed: 'later',
+        checkbox: null,
+      },
+    };
+  });
+  /**
+   * THE PRESS. Answered with a SENTENCE and never with a throw: every way this
+   * can end — started, launched-but-still-coming-up, nothing here to start — is
+   * a fact somebody should read, and a rejected invoke would arrive at the
+   * renderer as an unhandled error with the interesting half missing.
+   */
+  ipcMain.handle('crucible:start', () => startCrucible());
   ipcMain.handle('crucible:set-queue-gpu-dial', (_event, dial: string) => {
     const stored = writeAppSettings({ queueGpuDial: dial }).queueGpuDial;
     queue.venueRulesChanged();

@@ -478,6 +478,24 @@ export type CrucibleProbe =
   };
 
 /**
+ * WHAT PRESSING "Start Crucible" CAME TO.
+ *
+ * ── Why there is no `failed` arm, and a sentence instead ──────────────────
+ *
+ * Because the interesting outcome is neither started nor failed. Launching the
+ * tray SUCCEEDS long before the engine answers — on Windows the tray has to
+ * claim its engine and wait for a systemd unit inside a WSL guest that may be
+ * cold — so a run that timed out waiting has still done the thing it was asked
+ * to do, and calling that a failure would send somebody to fix a machine that is
+ * two seconds from working. `started` is "an engine is answering NOW"; `detail`
+ * is what to tell them either way, already a whole sentence.
+ */
+export interface CrucibleStartResult {
+  started: boolean;
+  detail: string;
+}
+
+/**
  * What "Add local Crucible" answered — the entry it made, or why it could not.
  *
  * THE TOKEN IS NOT IN HERE. The whole point of reading the local server's own

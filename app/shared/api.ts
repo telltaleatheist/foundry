@@ -32,6 +32,7 @@ import type {
   CrucibleProbe,
   CrucibleServerEdit,
   CrucibleSettingsView,
+  CrucibleStartResult,
   LocalCrucibleAdd,
   NewJobsWaitFor,
   SlotAvailability,
@@ -1464,6 +1465,17 @@ export interface FoundryApi {
      * sent would show a dial the queue is not actually using.
      */
     setQueueGpuDial(dial: string): Promise<string>;
+    /**
+     * IS THERE A STOPPED CRUCIBLE HERE — and does the person want it started?
+     *
+     * `'later'` covers every case that is not a yes, INCLUDING the three where
+     * no card is drawn at all: it is running, there is none installed, or this
+     * window is hosted and the engines are somebody else's. A caller only ever
+     * has to branch on `'start'`.
+     */
+    offerStart(): Promise<'start' | 'later'>;
+    /** Launch the tray and wait for the engine. Never throws; see the handler. */
+    startCrucible(): Promise<CrucibleStartResult>;
     /**
      * THE HAND SEQUENCE FOR INSTALLING A CRUCIBLE ON THIS MACHINE — every
      * command, in order, with the elevated ones listed apart.

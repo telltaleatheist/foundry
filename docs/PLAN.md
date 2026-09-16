@@ -6156,3 +6156,97 @@ either side.
 **Unexercised and named:** the merge against a live orchestrator hop. Reaching it
 needs a Windows tray claiming a WSL engine and both registered, and the resolve
 runs through a real server.
+
+### Wave 74 — Crucible is here and stopped: standalone Foundry offers to start it (Owen, 2026-09-15, relayed) — LANDED
+
+**Owen, through BookForge:** *"foundry is a standalone independent app. im
+talking about the standalone independent foundry app, not the vendored copy. by
+the time the user reaches foundry in bookforge they will have already been
+presented with the option to start it. the foundry app should ask if they want to
+start crucible."*
+
+**Relayed rather than typed here, and acted on as a ruling** on this session's
+standing practice for BookForge relays (the 2.0 version ruling took the same
+road). It is specific about which app, which is what makes it safe to act on:
+the vendored copy draws nothing, and `hosted()` is the whole of that rule.
+
+#### AN APP NEVER STARTS AN ENGINE. IT STARTS THE TRAY.
+
+Agreed with BookForge the same day and it is why this module is small. On Windows
+the engine lives in WSL and bringing it up means a user-scoped systemd unit
+inside the guest:
+
+    wsl.exe -d <distro> --exec env XDG_RUNTIME_DIR=/run/user/<uid> \
+            systemctl --user start crucible.service
+
+— and `XDG_RUNTIME_DIR` is **not optional**, because a `--exec` session gets no
+logind seat, so `systemctl --user` cannot find the bus without it, and **a
+missing variable and a missing socket print the identical error**. Crucible's
+tray already owns that path, measured (`crucible/host/presence.py`). Re-deriving
+it in Foundry would be a second owner of a mechanism that is easy to get wrong
+and silent when it is. So: `crucible orchestrator` on Windows — its own help
+calls it *"win32 only: the tray that manages this machine's engine"*, confirmed
+by running it — and `crucible service start` on macOS, where the engine runs
+under launchd and there is no tray yet.
+
+#### Installed-and-stopped is told from not-installed, and neither is guessed
+
+They want opposite offers — a Start button and an Install document — so confusing
+them offers somebody a button that cannot work.
+
+- **Installed** is `locateCrucible`, **the uninstall door's own locator,
+  exported** so there is one answer to "is there a Crucible on this machine". Two
+  locators would eventually disagree about a box with both the Windows host pack
+  and a WSL guest, where the ORDER they are tested in *is* the answer.
+- **Running** is `GET /v1/ping`, and the load-bearing discovery is that it is
+  **unauthenticated** — verified against this machine, which answers
+  `{"crucible":true,"name":"crucible@owens-pc-wsl","api_version":1}` with no
+  `Authorization` header. That matters more than it looks: the offer has to work
+  for somebody who installed Crucible and never registered it, so a liveness
+  check needing a token could not run in the case this module exists for. **No
+  `X-Crucible-Api` either** — a server whose API version this build cannot speak
+  is still a server that is RUNNING, and sending it would make a version mismatch
+  read as "stopped" and offer to start something already up.
+
+#### Three decisions worth keeping
+
+- **The offer is composed in MAIN and usually answers itself.** Running, absent
+  and hosted all resolve to `{kind:'answered', answer:'later'}` with no card, so
+  three startups out of four draw nothing and cost one ping. Only
+  `installed && !running` composes a question.
+- **Not on a first run, and not queued behind one.** The wizard is not in
+  `UiService.dialogs` (it is a flow, not a question), so a confirm card would
+  open on top of it — asking somebody about a program they have not been
+  introduced to, over the screen about to introduce it. The wizard's own engine
+  step serves that person BETTER than a yes/no card, so a run that opens the
+  wizard skips this entirely. The guard asks `setup.state()` rather than reading
+  `ui.setupOpen()`, because that signal is set by a promise racing the shell's
+  constructor and would answer "closed" on exactly the run where the wizard is
+  about to open.
+- **A timeout is not a failure and does not say one.** Launching the tray
+  succeeds long before the engine answers; a cold WSL guest genuinely takes
+  longer than thirty seconds. So the arm reads *"asked to start and has not
+  answered yet… it is still coming up"*, which is true, and `CrucibleStartResult`
+  has no `failed` member for it to be mis-filed under.
+
+#### The one arm that refuses rather than tries
+
+`wsl-guest` — Crucible inside the distro with **no Windows host pack** — throws
+rather than starting anything. That arm is precisely the case where the thing
+that owns the engine is not installed, and starting the guest's unit from here is
+the `XDG_RUNTIME_DIR` mechanism this wave refuses to re-derive. The sentence says
+so and names the fix.
+
+**Proved without stopping anything, because Owen's engine is up and this session
+does not take it down.** The exact Windows argument vector was run with
+`--version` instead of `orchestrator`:
+`cmd.exe /d /s /c ""%LOCALAPPDATA%\Crucible\host\crucible.cmd" --version"` →
+exit 0, `crucible 0.6.0`. So the quoting form, the `.cmd` shim and the
+CVE-2024-27980 workaround are all confirmed on the real binary. (BookForge warns
+that `Scripts\crucible.exe` is broken on these machines and `crucible` is on no
+PATH; the host pack's own `crucible.cmd` is neither, and is what this uses.) The
+run-state derivation against this machine answers RUNNING, so no card is drawn
+here today — correct.
+
+**Unexercised and named:** the branch that actually draws the card, and the
+launch itself. Reaching either means stopping the engine Owen is using.

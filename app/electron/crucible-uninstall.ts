@@ -271,6 +271,25 @@ function refused(code: CrucibleUninstallCode, why: string): CrucibleUninstallAva
  * first, and the guest is the arm for a machine that has Crucible in WSL and no
  * host yet — which is the machine Foundry's door 2 exists for.
  */
+/**
+ * WHERE CRUCIBLE IS ON THIS COMPUTER, and how this app would invoke it.
+ *
+ * Exported since 2026-09-15 because the START door needs the same answer the
+ * uninstall door needs, and the question *"is there a Crucible on this machine
+ * and where"* must have ONE answer. Two locators would eventually disagree
+ * about a machine that has the Windows host pack AND a WSL guest — and the
+ * order they are tested in IS the answer (the host pack wins, because on such a
+ * machine the tray is what owns the engine).
+ *
+ * IT THROWS FOR "THERE IS NONE", which reads oddly beside a boolean but is the
+ * shape both callers want: the refusal carries the SENTENCE naming which of the
+ * four silences it was — no %LOCALAPPDATA%, no distro named, no Crucible in the
+ * named guest, no server pack — and a caller that offered to install one would
+ * otherwise have to re-derive which.
+ */
+export { resolveInvocation as locateCrucible };
+export type { Invocation as CrucibleInvocation };
+
 async function resolveInvocation(): Promise<Invocation> {
   if (process.platform !== 'win32') {
     const exe = posixServerCommand();
@@ -442,12 +461,12 @@ function runVia(
 }
 
 /** `%LOCALAPPDATA%\Crucible\host\crucible.cmd` — §6.2's win32 line. */
-function windowsHostCommand(localAppData: string): string {
+export function windowsHostCommand(localAppData: string): string {
   return path.join(localAppData, 'Crucible', 'host', 'crucible.cmd');
 }
 
 /** `${CRUCIBLE_HOME:-$HOME/.crucible}/server/bin/crucible` — §6.2's posix line. */
-function posixServerCommand(): string {
+export function posixServerCommand(): string {
   const home = process.env['CRUCIBLE_HOME'];
   const root = home !== undefined && home.trim().length > 0
     ? home.trim()
