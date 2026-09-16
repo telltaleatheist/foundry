@@ -3945,6 +3945,26 @@ export function registerIpc(): void {
   });
   ipcMain.handle('crucible:set-wsl-distro', (_event, distro: string) =>
     writeAppSettings({ wslDistro: distro }).wslDistro);
+  /**
+   * THE LIVE QUEUE'S DIAL — Owen's *"global crucible server option"*.
+   *
+   * ANY NAME IS ACCEPTED, including one no server currently answers to, and the
+   * clamp is the only thing between the argument and the file. That is the same
+   * decision BookForge took and for the reason they gave: a dial pointing at a
+   * machine somebody has switched off must KEEP its value, or turning a server
+   * off would silently re-point the queue at a different one. "Switched off",
+   * "renamed" and "never existed" are one state to a settings writer, and the
+   * PLACEMENT is where they are told apart and said out loud.
+   *
+   * The pump is woken because a dial that has just been widened is a dial that
+   * may have unparked something, and a board that has gone quiet would otherwise
+   * sit on that row until somebody pressed something else.
+   */
+  ipcMain.handle('crucible:set-queue-gpu-dial', (_event, dial: string) => {
+    const stored = writeAppSettings({ queueGpuDial: dial }).queueGpuDial;
+    queue.venueRulesChanged();
+    return stored;
+  });
   ipcMain.handle('crucible:set-new-jobs-wait-for', (_event, choice: NewJobsWaitFor) =>
     writeAppSettings({ newJobsWaitFor: choice }).newJobsWaitFor);
   /*

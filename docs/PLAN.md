@@ -5849,3 +5849,115 @@ state BookForge has already named — the mistake avoided twice tonight.
 the two codes. The race itself is UNEXERCISED and named as such: reproducing it
 means winning a scheduler race against a real placement, which loads a model on
 somebody's card.
+
+### Wave 72 — the live queue's GPU dial, and the two controls that decide a venue (Owen, 2026-09-15) — LANDED
+
+**Owen settled the shape** when asked whether Foundry's existing `held` state was
+his pending band: *"foundry has a held state? sounds like that would be the
+'pending' state. a queue item is in pending, then the crucible server is chosen
+(even if thats 'any'), and it's sent to the live queue. the live queue
+distributes it to the correct crucible server depending on what the live queue is
+set to — any, or a specific crucible server, from the list."* With the gate from
+his earlier ruling: *"if the queue has 'm1 ultra' set as the crucible server, but
+the job item is set to 3090 ti, and it's added to the queue, the queue doesnt
+process it until the global queue unlocks the 3090 ti."*
+
+**So `held` IS the pending band and nothing about it changed.** The band, the
+per-row picker (`setWaitFor`), and `start()` as the "send it to the live queue"
+door were all already here and all already right. What was missing was the second
+control.
+
+#### THE DIAL RESTRICTS; IT DOES NOT REDIRECT
+
+The one decision the whole wave turns on. A row that named a machine and
+disagrees with the dial **waits**. It is not quietly sent to the dial's machine
+instead — somebody named that card on purpose, and moving the work would be the
+app overruling them silently and finishing the book on a machine they did not
+pick. Owen's *"doesnt process it until the global queue unlocks"* says wait, and
+wait is what it does.
+
+It is a TRANSIENT wait, not a refusal: the dial is one control away from
+agreeing, and failing the row would throw its queue position away for a gesture
+somebody is about to make.
+
+#### Where it lives, and why not in the pump
+
+The gate is in `placeJob` (`crucible-dispatch.ts`), which already owns *"which
+machine does this row want"* and every sentence about not getting one. A second
+gate in `canStart` would be a second answer to that question — and `canStart`
+returns a BOOLEAN, so a row it turned away would sit queued wearing nothing, the
+state docs/SLOTS.md calls out: *"a row that neither fails nor finishes is worse
+than either."* The dial computes an effective venue and the existing pinned path
+does the rest, so every refusal already written for a named machine applies
+unchanged to a dialled one.
+
+#### `VenueSource`, which BookForge said to copy hardest
+
+*"If Foundry only mirrors one thing from this message, make it VenueSource."*
+Taken verbatim, and the reason is a failure that is invisible without it: every
+cause a row can park for — switched off, unreachable, no longer registered —
+arises under BOTH sources, and the cause does not say which. `orAnyWords(source)`
+renders the tail: **"Turn the queue's GPU dial to Any"** when the dial chose, and
+**"Set this job to Any"** when the book did. Telling somebody whose book already
+says Any to set it to Any is telling them to do what they have already done, and
+a person who follows that, sees nothing change, and reads the same sentence again
+has been sent to the wrong control by an app that sounded certain.
+
+The pre-existing "switched off or no longer registered" wait now carries the tail
+too. Before the dial there was one source and the tail could be assumed; it
+cannot be now.
+
+#### Stored in app-settings, unlike BookForge's own file
+
+`AppSettings.queueGpuDial`, beside `newJobsWaitFor`, which is the same KIND of
+fact — a standing choice about where work goes, made once, read by the queue.
+BookForge keeps theirs in `queue-gpu-dial.json`; this app has one settings file
+with one clamping reader, and a second file would be a second place to look, a
+second corrupt-file story and a second migration, for one string.
+
+**An unknown name is KEPT, not dropped,** and that is the hard part.
+`clampQueueGpuDial` cannot ask the registry — that module IS the registry's
+storage, so a clamp that read the server list would be a cycle. More importantly
+it SHOULD not: a dial naming a server somebody has switched off must keep its
+value, or switching a server off would silently re-point the whole queue at a
+different machine. BookForge accepts a disabled server for the same reason —
+refusing would force somebody to resolve two controls in one particular order.
+"Switched off", "renamed" and "never existed" are one state to a settings writer
+and are told apart in the placement, out loud.
+
+`GPU_DIAL_ANY` is the SAME LITERAL as `ANY_SLOT`, aliased on BookForge's warning:
+two controls that both mean "whatever is free" and spell it differently are two
+spellings that drift, and then one screen's Any stops matching the other's.
+
+#### `venueRulesChanged()` — the whole board, not one row
+
+`setWaitFor` forgets one row's park because one row was re-pointed. The dial
+applies to every row, so moving it forgets EVERY park and deletes every parked
+row's message. Two reasons, both already this codebase's: a backoff timer is now
+counting down against a question that has changed, and making somebody wait
+thirty seconds for a decision they made with a click is the app arguing with the
+gesture; and a row still wearing *"the queue's GPU dial is set to X"* after the
+dial moved is the shelf reporting a wait that has been resolved.
+
+#### The control
+
+On the bench band, because that band IS the machines — a dial about where work
+goes, drawn over the cards it sends work to. Its options come from the REGISTRY
+view, not from `view.slots()`, which is wider: the slot list carries a `[cloud]`
+lane per server, and a dial offering "Anthropic" would park every GPU row on a
+lane no card belongs to. Enabled rows only, plus the stored value appended when
+it is not among them — the select has to show what the queue is actually using in
+order for somebody to leave it. Hidden entirely when there is nothing to choose,
+and hosted, where the registry is the host's.
+
+**Proved on the gate as transcribed, across all eight combinations of book
+(a name / `any` / never asked) and dial (a name / `any`):** Owen's own case parks
+with the tail naming THE DIAL; a book naming a machine under an open dial runs
+there as `row`; `any` under a set dial runs on the dial's machine as `dial`; the
+two agreeing runs as `row` and matches case-insensitively; both open falls to the
+walk. `source` is read only where `pinned` is non-null, so the both-open case —
+where `row` would be the wrong tail — never renders one.
+
+**Unexercised and named:** every path through a real placement. Exercising the
+park needs a scheduler race against a live server, which loads a model on
+somebody's card.

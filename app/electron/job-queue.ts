@@ -1576,6 +1576,41 @@ export function seedHostQueueRows(projectDir: string): void {
  * start already says so from inside `executeJob`, through `runJob` as much as
  * through `pump`, and a busy signal always beats a pending idle timer.
  */
+/**
+ * THE RULES ABOUT WHERE WORK MAY GO HAVE CHANGED — the live queue's dial moved.
+ *
+ * ── Why every park is forgotten and not just one ──────────────────────────
+ *
+ * `setWaitFor` forgets ONE row's park, because one row was re-pointed. The dial
+ * is the other control (`GPU_DIAL_ANY`, shared/slots.ts) and it applies to the
+ * whole board: turning it from "3090 Ti" to Any can free every row that was
+ * parked for disagreeing with it, and turning it TO a machine can park rows that
+ * were about to run. So the backoff every parked row is sitting out is now a
+ * timer counting down against a question that has changed, and making somebody
+ * wait thirty seconds for a decision they made with a click is the app arguing
+ * with the gesture — `setWaitFor`'s own reasoning, one control along.
+ *
+ * ── AND THE STALE SENTENCE GOES WITH IT ───────────────────────────────────
+ *
+ * A parked row wears the reason it was turned away ("the queue's GPU dial is set
+ * to X"). Leaving that on a row after the dial moved would be the shelf
+ * reporting a wait that has been resolved — the defect `setWaitFor` deletes
+ * `job.message` to avoid. The next pass writes a true one, or starts the row.
+ */
+export function venueRulesChanged(): void {
+  let woke = false;
+  for (const job of jobs) {
+    if (job.state !== 'queued') continue;
+    forgetPark(job.id);
+    if (job.message !== undefined) {
+      delete job.message;
+      woke = true;
+    }
+  }
+  if (woke) changed();
+  if (jobs.some((job) => job.state === 'queued')) void pump();
+}
+
 export function hostQueueDrained(): void {
   noteQueueIdle(readAppSettings().keepServerWarmMinutes);
   // AND IT IS NEWS TOO, on `setHostQueueRows`' reasoning and more sharply: the
