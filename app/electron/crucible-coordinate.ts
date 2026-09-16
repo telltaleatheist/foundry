@@ -133,7 +133,23 @@ import { modelPreparationReady } from './setup';
 import foundryModule from '../shared/foundry.module.json';
 
 /** What Foundry asks a Crucible for. The generated file, unedited. */
-export const FOUNDRY_MODULE: CrucibleModule = foundryModule as CrucibleModule;
+type ScopedModule = Omit<CrucibleModule, 'job_types' | 'subjects'> & {
+  job_types: readonly (CrucibleModule['job_types'][number] & { backends?: readonly string[] })[];
+  subjects: readonly (CrucibleModule['subjects'][number] & { backends?: readonly string[] })[];
+};
+export const FOUNDRY_MODULE: ScopedModule = foundryModule as ScopedModule;
+
+/** Generated backend annotations are app metadata, not fields in the task API. */
+export function foundryModuleForBackend(backend: string, source: ScopedModule = FOUNDRY_MODULE): CrucibleModule {
+  const supported = (entry: { backends?: readonly string[] }) => entry.backends === undefined || entry.backends.includes(backend);
+  return {
+    name: source.name, version: source.version, needs: source.needs,
+    job_types: source.job_types.filter(supported).map(entry => ({
+      type: entry.type, ...(entry.narrator_engine === undefined ? {} : { narrator_engine: entry.narrator_engine }),
+    })),
+    subjects: source.subjects.filter(supported).map(entry => ({ kind: entry.kind, id: entry.id })),
+  };
+}
 
 /**
  * How long between two asks about a held card, and how many asks.
@@ -275,8 +291,9 @@ export function missingForFoundry(
   const missing: CrucibleMissingEntry[] = [];
   const unmet: CrucibleUnmetClass[] = [];
   const localJobTypes = new Set<string>();
+  const module = foundryModuleForBackend(capability.backendKind);
 
-  for (const entry of FOUNDRY_MODULE.job_types) {
+  for (const entry of module.job_types) {
     if (installedJobTypes.includes(entry.type)) continue;
     missing.push({
       what: 'job-type',
@@ -285,7 +302,7 @@ export function missingForFoundry(
     });
   }
 
-  for (const need of FOUNDRY_MODULE.needs) {
+  for (const need of module.needs) {
     const row = capability.classes.find((item) => item.capability === need.class);
     if (row === undefined) {
       unmet.push({
@@ -338,7 +355,7 @@ export function missingForFoundry(
     });
   }
 
-  for (const subject of FOUNDRY_MODULE.subjects) {
+  for (const subject of module.subjects) {
     const row = catalog.find((item) => item.kind === subject.kind && item.id === subject.id);
     if (row !== undefined && row.installed) continue;
     if (missing.some(item => item.what === 'subject' && item.kind === subject.kind && item.id === subject.id)) continue;
@@ -680,7 +697,9 @@ function report(state: CrucibleCoordinationState): CrucibleCoordinationState {
 async function postFoundryModule(server: string): Promise<string> {
   const entry = crucibleServerNamed(server);
   if (entry === null) throw new Error(`There is no server called "${server}".`);
-  return (await engineClientFor(entry)).submitTask({ type: 'module', module: FOUNDRY_MODULE });
+  const client = await engineClientFor(entry);
+  const capability = await client.capability();
+  return client.submitTask({ type: 'module', module: foundryModuleForBackend(capability.backendKind) });
 }
 
 /**

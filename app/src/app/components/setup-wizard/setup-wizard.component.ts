@@ -1158,11 +1158,10 @@ export class SetupWizardComponent {
    * applies nothing"*. Two requests would leave a key stored against routes that
    * were refused — a half-configured engine nobody asked for.
    *
-   * IT ROUTES EVERY CLASS THE ENGINE SAID IT CANNOT SERVE, not the one the
-   * person happened to be looking at. That is the step's whole offer: the rows
-   * above it are the classes with no local answer, and a press that fixed one of
-   * four would leave three rows saying the same thing with the same button under
-   * them.
+   * This setup action applies the selected provider/model to all four text
+   * classes. It remains available when local models fit, so an existing Ollama
+   * model can be reused before any separate Crucible weights are downloaded.
+   * Per-class choices remain available in the engine settings card.
    */
   protected async applyRoutes(event: UpstreamApply): Promise<void> {
     const server = this.routeServer();

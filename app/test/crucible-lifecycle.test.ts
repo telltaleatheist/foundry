@@ -201,3 +201,18 @@ test('hosted Foundry honors the host first-run choices before preparing models',
   ready = true;
   expect(setup.modelPreparationReady()).toBe(true);
 });
+
+
+test('generated backend annotations filter preparation and never reach the module task API', async () => {
+  const { foundryModuleForBackend } = await import('../electron/crucible-coordinate');
+  const module = { name: 'fixture', version: '1', needs: [{ class: 'pages' }], subjects: [], job_types: [
+    { type: 'llm', backends: ['llama-windows', 'cuda-linux'] },
+    { type: 'asr', backends: ['cuda-linux'] },
+    { type: 'tts', narrator_engine: 'higgs-v3', backends: ['cuda-linux'] },
+  ] };
+  expect(foundryModuleForBackend('llama-windows', module).job_types).toEqual([{ type: 'llm' }]);
+  expect(foundryModuleForBackend('cuda-linux', module).job_types).toEqual([
+    { type: 'llm' }, { type: 'asr' }, { type: 'tts', narrator_engine: 'higgs-v3' },
+  ]);
+  expect(JSON.stringify(foundryModuleForBackend('cuda-linux', module))).not.toContain('backends');
+});
