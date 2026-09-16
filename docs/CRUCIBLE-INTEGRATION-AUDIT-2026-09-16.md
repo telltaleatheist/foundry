@@ -51,3 +51,23 @@ A confirmed reinstall bug is fixed: catalog model weights could survive while th
 Fresh setup now collects the existing model/upstream choices before model preparation. The current text-work step always offers existing Ollama, OpenAI and Anthropic connections, including on a machine whose GPU could otherwise run all classes. Skipping that choice defers preparation until configured later; discovery and read-only probes still work. Hosted Foundry honors the host's readiness callback and resumes from the host's Finish action.
 
 Validation: 866 Foundry CPU tests pass, including nine new native routing/setup regressions; standalone Electron/Angular build passes. Crucible's native backend/engine suites pass 57 tests, plus three task-install predicate regressions. These changes postdate the public 2.0.1 prerelease and are not in its binaries; release promotion remains paused pending the coordinated next build.
+
+
+## Corrected 2.0.2 candidate
+
+Foundry 2.0.2 vendors the exact Crucible 0.6.2 client/bootstrap archives built from
+source d363eaf27cefe26e1487813a7528ce332d23dde5 and generated module
+0.6.2+92b04d4bd398. The 2.0.1 prerelease remains immutable. POSIX first installation
+requests only the lightweight echo runtime; selected model environments are prepared
+after existing local/upstream choices. Finish now displays coordination progress,
+awaits task completion and fresh stock verification without a second POST, and writes
+the completed marker only after success. A failure keeps an actionable retry in setup.
+Hosted Foundry exposes the same readiness contract to BookForge. Unsupported or
+deliberately disabled classes remain visible as unmet rather than impossible downloads.
+
+Validation: 870 CPU tests pass; standalone Electron and Angular production builds pass
+with the existing 1.02 MB initial-bundle warning. Fixtures cover delayed completion,
+failed preparation, lightweight install, and stock disappearing between initial check
+and completion. Windows and four CLI artifacts will be published as a prerelease with
+latest=false; macOS desktop signing and clean-machine end-to-end acceptance remain
+separate gates. No GPU or local service changes were made during this work.

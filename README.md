@@ -213,3 +213,6 @@ A release asset is one binary in a tarball. Beyond it, a run needs a Python
 with **PyMuPDF** (and **mlx-vlm**, on Apple silicon reading locally), and — off
 Apple silicon — a VLM server to point `--vlm-endpoint` at. Weights are pulled
 by the runtime into the HuggingFace cache on first use; foundry hosts none.
+
+
+Crucible integration follows the shared [product intent](https://github.com/telltaleatheist/crucible/blob/main/docs/INTENT.md): native Windows page reading works without WSL, applications select model routes before preparing models, and existing Ollama models are reused through its API.
