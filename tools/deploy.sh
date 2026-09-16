@@ -94,7 +94,7 @@ fi
 # from package.json: the releases are what BookForge orders itself against, and
 # a package.json that drifted from them would silently publish a version that
 # every installed app considers older than what it already has.
-latest="$(gh release list -R "$REPO" --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)"
+latest="$(gh api "repos/$REPO/releases/latest" --jq '.tag_name' 2>/dev/null || true)"
 latest="${latest#v}"
 if [ -z "$latest" ]; then
   echo "deploy: could not read the latest release from $REPO (gh auth?)." >&2
@@ -116,6 +116,26 @@ if gh release view "v$VERSION" -R "$REPO" >/dev/null 2>&1; then
   exit 1
 fi
 
+# A tag must never claim a version different from the compiled CLI or desktop.
+# Versions are committed before this script runs, not invented after compilation.
+cli_version="$(node -p "require('./package.json').version")"
+app_version="$(node -p "require('./app/package.json').version")"
+if [ "$cli_version" != "$VERSION" ] || [ "$app_version" != "$VERSION" ]; then
+  echo "deploy: requested $VERSION, CLI is $cli_version and desktop is $app_version. Update both package versions/locks, commit and push before publishing." >&2
+  exit 1
+fi
+
+DESKTOP_ASSETS=(
+  "app/release/Foundry-$VERSION-windows-x64.exe"
+  "app/release/Foundry-$VERSION-macos-arm64.dmg"
+)
+for asset in "${DESKTOP_ASSETS[@]}"; do
+  if [ ! -s "$asset" ]; then
+    echo "deploy: missing desktop artifact $asset. Build Windows and Apple Silicon installers from this source first." >&2
+    exit 1
+  fi
+done
+
 [ -n "$NOTES" ] || NOTES="$(git log -1 --pretty=%s)"
 
 echo "==> deploying v$VERSION (was v$latest) — $(git rev-parse --short HEAD)"
@@ -125,9 +145,10 @@ echo "==> 2/4 package"
 tools/release-package.sh
 echo "==> 3/4 publish"
 gh release create "v$VERSION" -R "$REPO" \
+  --target "$(git rev-parse HEAD)" --prerelease --latest=false \
   --title "v$VERSION — $NOTES" \
   --notes "$(printf '%s\n\nCommit: %s' "$NOTES" "$(git rev-parse HEAD)")" \
-  dist/release/*.tar.gz dist/release/checksums.txt
+  dist/release/*.tar.gz dist/release/checksums.txt "${DESKTOP_ASSETS[@]}"
 
 # Belt and braces: every asset BookForge can ask for must be in the release it
 # just became. A release missing a platform is a platform of users whose install
@@ -136,15 +157,17 @@ echo "==> 4/4 verify"
 published="$(gh release view "v$VERSION" -R "$REPO" --json assets --jq '.assets[].name')"
 missing=0
 for want in foundry-darwin-arm64.tar.gz foundry-darwin-x64.tar.gz \
-            foundry-linux-x64.tar.gz foundry-windows-x64.tar.gz checksums.txt; do
+            foundry-linux-x64.tar.gz foundry-windows-x64.tar.gz checksums.txt \
+            "Foundry-$VERSION-windows-x64.exe" "Foundry-$VERSION-macos-arm64.dmg"; do
   if ! grep -qx "$want" <<<"$published"; then
     echo "   MISSING: $want" >&2
     missing=1
   fi
 done
 [ "$missing" -eq 0 ] || { echo "deploy: release is incomplete — fix and re-upload." >&2; exit 1; }
+gh release edit "v$VERSION" -R "$REPO" --prerelease=false --latest=true
 
 echo
-echo "deploy: v$VERSION is published with all five assets."
+echo "deploy: v$VERSION is published with all seven assets."
 echo "deploy: every BookForge takes it at its next startup check. No pin to edit."
 echo "deploy: this machine points at dist/ directly — restart the app to pick up the rebuild."

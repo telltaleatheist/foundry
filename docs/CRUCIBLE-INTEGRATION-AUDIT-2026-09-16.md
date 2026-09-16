@@ -33,3 +33,11 @@ Working calls resolve an orchestrator to its verified engine through `engineClie
 ## Limits and remaining acceptance work
 
 Unit tests simulate the remote engine and installer; they do not prove CUDA/Metal inference or a complete book conversion. The parent audit coordinates live engine checks. Clean-machine Windows install/reboot/upgrade/uninstall and macOS menu bar/service behavior still need acceptance on those machines. **0.6.1 is an unpublished source candidate.** Fresh installs explicitly request 0.6.1; they fail until its corrected installer/runtime packs are published, rather than downloading the older 0.6.0 runtime. Release gating/reuse instructions live in Crucible's `docs/PATCH-RELEASE-READINESS-2026-09-16.md`. If the remote cancellation request itself cannot reach Crucible, the row remains cancelled but its completion waits for the remote event stream to end; the failed cancellation is logged. Long-running network operations still depend on the SDK's stream behavior.
+
+## Release 2.0.1 follow-up
+
+Standalone Foundry already adopts Crucible's published local pairing on launch. The setup wizard now refreshes after that asynchronous adoption, so its first empty-registry read cannot leave a false "no server" screen. Remote connection accepts an address and displays an approval code; exchange credentials remain in Electron main, and approval is available inside Settings for registered engines. Approval resolves controller registrations to the actual engine API. Optional Windows WSL setup now submits an authenticated engine task and verifies the replacement backend after its connection changes.
+
+The CLI and desktop now share version 2.0.1. Removing the unused `foundry: file:..` desktop dependency eliminates an accidental recursive repository payload and the embedded lockfile rewrite. Release automation requires both desktop artifacts plus all four CLI archives before promotion. macOS public packaging requires signing and notarization.
+
+Validation: 857 Foundry CPU tests pass (ten new first-run/pairing/upgrade regressions), and the Electron/Angular production build passes. Client SDK bytes are pinned to Crucible source 407886b and the release staging SHA512. Windows/macOS packaging and clean installation are separate release acceptance gates; no local GPU/service restart was performed for these tests.

@@ -6,8 +6,9 @@
 tools/deploy.sh
 ```
 
-That builds all four platforms, packages them, publishes a GitHub release, and
-verifies every asset arrived. Every BookForge on every machine picks it up at
+After the coordinated package version is committed/pushed and both desktop
+installers are built, that builds all four CLI platforms, packages them, creates
+a prerelease candidate, verifies all seven assets and promotes it. Every BookForge picks it up at
 its next startup. **There is no version to bump in BookForge.**
 
 ---
@@ -45,8 +46,32 @@ checksums.txt              ← sha256 of each, published in the SAME release
 `tools/release-package.sh` produces exactly that set. An asset published
 without its line in `checksums.txt` is **refused by name** at install time
 rather than installed unverified — which is correct, and also means a
-half-uploaded release breaks installs. `deploy.sh` verifies all five are
-present and fails loudly if one is missing, so this cannot happen by accident.
+half-uploaded release breaks installs. `deploy.sh` also requires the matching
+`Foundry-X.Y.Z-windows-x64.exe` and `Foundry-X.Y.Z-macos-arm64.dmg` under
+`app/release/`; all seven assets must be present before the candidate is promoted.
+
+## Desktop builds and version agreement
+
+The root CLI and `app/package.json` versions must match the intended release.
+Update both versions and npm lockfiles, then commit/push before release builds.
+`deploy.sh` now refuses a mismatch: it previously chose a newer tag while
+compiling the older version still in `package.json`.
+
+Build the CLI with `tools/release-build.sh windows-x64 darwin-arm64` (Git Bash on
+Windows), then `npm --prefix app run build`. From the app directory package
+Windows with `npx electron-builder --win --x64 --publish never`.
+Package macOS on an Apple Silicon Mac with
+`npx electron-builder --mac --arm64 --publish never` after its app/CLI build.
+Copy both resulting installers into the publishing checkout's `app/release/`.
+The desktop ships the compiled CLI through `extraResources`; it must not depend
+on `file:..`, which bundled the development repository into older installers.
+
+No signing identity is configured in Foundry's committed build settings.
+Electron-builder may discover credentials from the build machine; absence means
+an unsigned package and must be reported in release notes. macOS notarization is
+not configured here. Build success does not imply signing/notarization or a
+clean-machine install test. Coordinate installation acceptance and the Crucible
+runtime release before running the publishing command.
 
 ## The developer's own machine is the exception
 
@@ -160,3 +185,5 @@ and is written out on first use; only the Python *environment* is yours to
 provide. (It did not always: a compiled binary handed python a path inside its
 own executable — `/$bunfs/root/vlm_page.py` — and every packaged conversion
 failed. Embedded as text since.)
+
+Public macOS builds use `npm --prefix app run package:mac:signed`. This requires Developer ID signing and Apple notarization; missing credentials or signing failure aborts the build. The wrapper reads credentials from the environment or the shared login-keychain item `BOOKFORGE_NOTARIZE_ASP`, without printing them. Verify the resulting bundle with `codesign --verify --deep --strict` and `spctl --assess --type execute` before promotion.
