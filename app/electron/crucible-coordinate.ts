@@ -612,6 +612,11 @@ async function prepare(
     const last = await followModuleTask(server, taskId, (progress) => {
       report({ server, phase: 'preparing', missing, unmet, progress, followed });
     });
+    // A shared engine may have been preparing the OTHER app's module. Its
+    // success only releases the task slot; it says nothing about our demand,
+    // so re-read the catalog before deciding whether a task of our own is
+    // still needed. Never blindly repeat an accepted task.
+    if (followed && last.state === 'done') return runCoordination(server);
     return report({ server, phase: 'preparing', missing, unmet, progress: last, followed });
   }
 }
