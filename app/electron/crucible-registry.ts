@@ -208,6 +208,14 @@ export function crucibleServerNamed(name: string): CrucibleServerEntry | null {
 
 /** The registry as the renderer is allowed to see it. */
 export function crucibleServerViews(): CrucibleServerView[] {
+  /*
+   * THE SLOTS ARE DERIVED FIRST, and that is not a wasted call: `slotsFrom` is
+   * what decides which entries share a machine, and reading `engineSharedWith`
+   * without it would hand back whatever the last derivation happened to say —
+   * on a fresh process, nothing at all. It is a pure pass over the registry
+   * against a cache, with no network in it.
+   */
+  computeSlots();
   return crucibleServers().map(viewOf);
 }
 
@@ -218,6 +226,7 @@ function viewOf(entry: CrucibleServerEntry): CrucibleServerView {
     enabled: entry.enabled,
     tokenSet: entry.token.length > 0,
     loopback: isLoopbackUrl(entry.url),
+    sharesEngineWith: engineSharedWith(entry.name),
   };
 }
 
@@ -506,6 +515,24 @@ export function computeSlots(): ComputeSlot[] {
  * neither computes a slot the other would not, because there is one function
  * here that turns servers into slots and both call it.
  */
+/**
+ * WHICH ENTRIES LOST THE MERGE, by lower-cased name, and to whom.
+ *
+ * Written by {@link slotsFrom} because that is where the decision is made, and
+ * read by the Servers card so a row that draws no slot can say WHY. A merge
+ * nobody can see is the app quietly disagreeing with somebody's registry.
+ *
+ * It is a snapshot of the LAST derivation rather than a durable fact: the hop
+ * cache expires, a server is switched off, and the answer changes. Every reader
+ * of it re-derives the slots first, which is what keeps the two in step.
+ */
+let sharesEngineWith = new Map<string, string>();
+
+/** Whose engine this entry turned out to share, or null. See {@link sharesEngineWith}. */
+export function engineSharedWith(name: string): string | null {
+  return sharesEngineWith.get(name.toLowerCase()) ?? null;
+}
+
 function slotsFrom(entries: readonly CrucibleServerEntry[]): ComputeSlot[] {
   /*
    * ── ONE LIST, ONE DERIVATION, BOTH WAYS ───────────────────────────────────
@@ -534,7 +561,47 @@ function slotsFrom(entries: readonly CrucibleServerEntry[]): ComputeSlot[] {
    * will pay for it, and there is no third party anywhere in it.
    */
   const servers = entries.filter((entry) => entry.enabled && engineAbsence(entry) === null);
-  const out: ComputeSlot[] = servers.map(
+  /*
+   * ── TWO DOORWAYS ONTO ONE MACHINE ARE ONE SLOT ────────────────────────────
+   *
+   * Owen, 2026-09-15: *"the windows crucible instance should act as a
+   * passthrough for the WSL crucible … it's just a passthrough to the real
+   * engine."* So the Windows tray and the WSL engine behind it are one card
+   * reachable two ways, and a registry holding both entries would otherwise
+   * draw TWO GPU LANES OVER ONE CARD — the queue would believe it had two
+   * machines and start two jobs on one, where the 27B needs 20.1 of the 21 GiB
+   * that card has free. Slower than running them in turn, and often a failure.
+   *
+   * THE ADDRESS RULE IS WAVE 70's, the third caller of it: a doorway is the same
+   * doorway whatever its host case or its default port
+   * ({@link sameCrucibleAddress}). What is compared is the RESOLVED address, so
+   * the tray at `:7101` and the engine at `:7100` land on one key.
+   *
+   * FIRST IN REGISTRY ORDER WINS, because the order is the person's own drag
+   * rank (Wave 66) and nothing else here is entitled to rank two entries. The
+   * loser is not deleted, not disabled and not renamed — it keeps its row on the
+   * Servers card, which says which entry it shares a machine with.
+   *
+   * AN UNRESOLVED ENTRY IS NEVER MERGED. `resolvedEngineAddress` answers null
+   * for a machine nobody has asked yet, and every null is its own key, so a slot
+   * is hidden only on a fact and never on ignorance — `engineAbsence`'s rule one
+   * line above, which this now sits beside.
+   */
+  const byEngine: CrucibleServerEntry[] = [];
+  const merged = new Map<string, string>();
+  for (const entry of servers) {
+    const address = resolvedEngineAddress(entry);
+    const first = address === null
+      ? undefined
+      : byEngine.find((kept) => {
+        const keptAt = resolvedEngineAddress(kept);
+        return keptAt !== null && sameCrucibleAddress(keptAt, address);
+      });
+    if (first === undefined) byEngine.push(entry);
+    else merged.set(entry.name.toLowerCase(), first.name);
+  }
+  sharesEngineWith = merged;
+  const out: ComputeSlot[] = byEngine.map(
     (entry): ComputeSlot => ({ name: entry.name, kind: 'crucible', url: entry.url }),
   );
   const taken = new Set(out.map((slot) => slot.name.toLowerCase()));
@@ -752,6 +819,29 @@ export function engineAbsence(entry: CrucibleServerEntry): string | null {
   const known = engineless.get(hopKey(entry));
   if (known === undefined || Date.now() - known.at >= HOP_CACHE_MS) return null;
   return known.sentence;
+}
+
+/**
+ * WHERE THIS ENTRY'S WORK ACTUALLY LANDS — the engine's address, or null for
+ * "nobody has resolved this one yet".
+ *
+ * Owen, 2026-09-15, on the Windows tray: *"the windows crucible instance should
+ * act as a passthrough for the WSL crucible. all settings and calls should
+ * arrive at the WSL crucible. it's just a passthrough to the real engine."* So
+ * an entry pointing at an orchestrator is not a machine of its own — it is a
+ * second doorway onto one — and the address below is the machine, whichever
+ * doorway was registered.
+ *
+ * SYNCHRONOUS AND A CACHE READ AND NOTHING ELSE, exactly as {@link
+ * engineAbsence} is and for the same reason: the reader is the slot list, which
+ * runs behind every picker and on every pump pass. An unresolved entry answers
+ * null and {@link slotsFrom} keeps its lane — this app never hides a machine on
+ * the strength of not having asked.
+ */
+export function resolvedEngineAddress(entry: CrucibleServerEntry): string | null {
+  const cached = hops.get(hopKey(entry));
+  if (cached === undefined || Date.now() - cached.at >= HOP_CACHE_MS) return null;
+  return cached.target.hop?.engineUrl ?? cached.target.entry.url;
 }
 
 /**

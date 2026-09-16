@@ -5998,3 +5998,99 @@ and its refusal is at least loud, so neither is changing tonight.
 **Unexercised and named:** every path through a real placement. Exercising the
 park needs a scheduler race against a live server, which loads a model on
 somebody's card.
+
+### Wave 73 — two doorways onto one machine are one GPU slot (Owen, 2026-09-15) — LANDED, and the open question is CLOSED
+
+**Owen's ruling**, given when the question was put to him concretely: *"the
+windows crucible instance should act as a passthrough for the WSL crucible. all
+settings and calls should arrive at the WSL crucible. it's just a passthrough to
+the real engine. the only case in which the windows crucible would be active and
+show up as a gpu slot is if there was no engine to point to. like if a user
+doesnt have WSL and doesnt know how to set it up. in that case, crucible wouldnt
+configure a passthrough to WSL, it would just be the server/service that foundry
+uses. it would go through the normal windows doors. which means no VLLM, no
+batching, etc."*
+
+**He was answering the lane-dedupe question left open by Wave 70**, and the
+answer is merge: an orchestrator is not a machine, it is a second doorway onto
+one.
+
+#### The contract already agreed, and NO EXISTING RULE WAS WRONG — checked
+
+Owen's second sentence looked at first like it contradicted Wave 67's *"an
+orchestrator with no engine is not a slot"*. It does not, and crucible
+`docs/PHASE17-ORCHESTRATOR.md` §1 is why: **role is a property of a PROCESS, not
+of an install** — *"on a Windows machine with no WSL, one install runs both, as
+two processes."* An orchestrator has backend kind `orchestrator` and **zero job
+types**, on `:7101`; an engine serves job types on `:7100` and on a WSL-less
+Windows box its backend is `llama-windows`. So Owen's no-WSL case is not an
+orchestrator-with-no-engine — it is a native Windows ENGINE, which is a slot like
+any other, with exactly the reduced capability he names. An orchestrator with
+nothing behind it still serves zero job types and still cannot be a slot. Both
+rules stand, unchanged.
+
+#### What was actually wrong
+
+Registering BOTH doorways — the tray and the engine behind it — drew **two GPU
+lanes over one card**. The queue would believe it had two machines and start two
+jobs on one: translate wants 20.1 GiB of the 21.0 GiB that card has free, so the
+second does not fit. Slower than running them in turn, and often a failure, on a
+machine that was never oversubscribed.
+
+Wave 70 closed the easy half (the same literal address twice). This is the half
+that needs somebody to have ASKED each address who it is.
+
+#### The merge
+
+`slotsFrom` groups the enabled entries by their RESOLVED engine address and emits
+one slot per group. Three decisions:
+
+- **The address rule is Wave 70's**, now on its third caller: a doorway is the
+  same doorway whatever its host case or default port (`sameCrucibleAddress`).
+  What is compared is the resolved address, so a tray on `:7101` and its engine
+  on `:7100` land on one key.
+- **First in registry order wins.** That order is the person's own drag rank
+  (Wave 66) and nothing here is entitled to rank two entries by any other
+  measure.
+- **AN UNRESOLVED ENTRY IS NEVER MERGED.** `resolvedEngineAddress` is a
+  cache-only read — `engineAbsence`'s posture, for its reason: the reader is the
+  slot list, which runs behind every picker and on every pump pass, and neither
+  may put a network hop behind a lane. Every `null` is its own key, so **a slot
+  is hidden on a fact and never on ignorance.**
+
+#### The row stays, and says so
+
+`CrucibleServerView.sharesEngineWith` names the entry it was merged into, and the
+Servers card draws one line: *"Same engine as X — one machine reached two ways,
+so the queue gives them one GPU slot between them. Work sent here still
+arrives."* The row is still listed, still enabled, still editable, and work sent
+to either address still arrives at the same engine — what it loses is a lane of
+its own. **A row that quietly stopped being a slot would be the app disagreeing
+with somebody's registry behind their back**, which was the whole objection to
+merging silently; this is what makes a wrong merge diagnosable rather than
+mysterious.
+
+`crucibleServerViews` derives the slots first, deliberately: `slotsFrom` is what
+decides the grouping, and reading the answer without it would hand back whatever
+the last derivation said — on a fresh process, nothing.
+
+#### A false-merge case, named rather than hidden
+
+`resolveEngine` takes the orchestrator's `engine.url` as given and does not
+rewrite a loopback address into a reachable one. So a REMOTE orchestrator
+advertising `127.0.0.1:7100` would key against this machine's own engine at the
+same address. That configuration is already broken — Foundry cannot reach that
+engine to dispatch to it either — and registry order means the earlier entry
+keeps the lane; the later one now says which entry it believes it shares. It is
+recorded here because it is the one way this merge can be wrong, and the card
+line is what makes it visible when it is.
+
+**Proved on FIXTURES** (hand-written entries, addresses in TEST-NET-1 and
+loopback, no server contacted): Owen's case collapses to one slot naming the
+tray; two genuinely different machines stay two; **one resolved beside one never
+probed stays two, and two unprobed stay two**; host case and an explicit default
+port collapse; a disabled duplicate was never in the running. Six for six.
+
+**Unexercised and named:** the merge against a live orchestrator hop. Reaching it
+needs a Windows tray claiming a WSL engine and both registered, and the resolve
+runs through a real server.

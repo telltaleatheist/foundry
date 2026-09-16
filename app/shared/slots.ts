@@ -369,6 +369,22 @@ export interface CrucibleServerView {
    * local-config read is about.
    */
   loopback: boolean;
+  /**
+   * THE ENTRY THIS ONE TURNED OUT TO SHARE A MACHINE WITH, or null.
+   *
+   * Owen's pass-through ruling (2026-09-15) means a Windows tray and the WSL
+   * engine behind it are ONE card reachable two ways, so registering both draws
+   * one slot and not two. This is the row's half of saying so: the entry is
+   * still listed, still enabled and still editable — what it does not have is a
+   * lane of its own, and a row that silently stopped being a slot would be the
+   * app disagreeing with somebody's registry behind their back.
+   *
+   * DERIVED FROM THE LAST SLOT DERIVATION, never stored: the hop cache expires
+   * and the answer changes with it. Null covers both "it has its own machine"
+   * and "nobody has resolved it yet", which are the same thing to this card —
+   * in both cases the row draws a slot.
+   */
+  sharesEngineWith: string | null;
 }
 
 /**
