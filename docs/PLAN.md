@@ -6144,6 +6144,39 @@ picker and on every pump pass — **a refusal there is a refusal nobody reads.**
 Same principle as the address one, one level up: the right posture depends on who
 is reading and when, and neither choice would be right in the other's seat.
 
+#### THE RESIDUAL BECAME REACHABLE ON 2026-09-15, and by an ordinary route
+
+BookForge put this PC's engine on the tailnet with
+`tailscale serve --bg --tcp 7100 tcp://127.0.0.1:7100` — a userspace forward on
+the Windows side, no rebind, no elevation, no `wsl --shutdown`, tailnet only
+(verified independently from here: `http://owens-pc.owenmorgan.com:7100/v1/info`
+answers `crucible@owens-pc-wsl`, role `engine`, the same RTX 3090 Ti as
+`127.0.0.1:7100`, through the full authenticated path. **http only — `serve`
+labels the row "TLS over TCP" and REFUSES https**, which both sessions hit).
+
+**So one engine now has TWO working addresses, and neither guard catches the
+pair.** `127.0.0.1:7100` is registered automatically by `connectLocalEngine` at
+startup; `owens-pc.owenmorgan.com:7100` is the address a person is given for the
+Mac. Add both to one registry and Wave 70's door does not refuse (the addresses
+genuinely differ) and Wave 73's merge does not collapse them (no orchestrator
+hop, so each resolves to itself) — **two GPU lanes over one 3090 Ti**, by the
+plausible route of somebody registering "my PC's engine" on the PC.
+
+**The safe mitigation, NOT built and offered to Owen:** warn at the ADD door when
+the engine being added reports the same `server.name` as an entry already held.
+Additive, hides nothing, decides nothing — unlike the name-keyed MERGE rejected
+above, whose failure was hiding a real machine when two hostnames collide. A
+warning that is wrong costs a sentence; a merge that is wrong costs a card.
+
+**And BookForge's sharpening of the Wave 73 hazard, which is NOT closed:** the
+orchestrator still advertises loopback, so `resolveEngine` still produces
+`127.0.0.1` from this machine's `/v1/info`. *"An engine can be remotely reachable
+while every document about it still says loopback."* The pairing file is the
+same: it keeps working locally because a local reader means itself by
+`127.0.0.1`, and it is useless to a remote one. **Neither app may rewrite or
+infer a tailnet address from a loopback document** — the fix, if one is wanted,
+belongs where the forward is declared, not in a client guessing.
+
 **And it is the same principle as the false-merge case above, in the other
 direction** (BookForge's observation, and it is the right generalisation): a
 remote orchestrator advertising `127.0.0.1:7100` is a loopback literal read as
