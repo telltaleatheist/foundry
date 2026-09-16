@@ -790,20 +790,6 @@ export type CloudProbe =
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * THE WHEEL, NAMED ONCE.
- *
- * Crucible's server is published as a wheel on its GitHub release, and the
- * version here is the same 0.5.0 that `@crucible/client` is pinned to in
- * `app/package.json` — the SDK, the bootstrap package and the server are cut
- * together and their versions are the same number by design. Written here rather
- * than in the install module because the sequence a person copies and the
- * sequence `@crucible/bootstrap` would run must name the same file, and two
- * spellings of a filename is how they stop doing that.
- */
-export const CRUCIBLE_WHEEL =
-  'https://github.com/telltaleatheist/crucible/releases/download/v0.5.0/crucible-0.5.0-py3-none-any.whl';
-
-/**
  * One numbered step of the hand sequence, or one of the elevated commands beside
  * it.
  *
@@ -871,13 +857,7 @@ export interface CrucibleInstallPlan {
   elevated: CrucibleInstallStep[];
   /** Crucible's own README — the argument behind the sequence. */
   readme: string;
-  /** The release wheel the sequence installs. {@link CRUCIBLE_WHEEL}. */
-  wheel: string;
-  /**
-   * Whether the driven install can run. FALSE ON EVERY MACHINE TODAY —
-   * `@crucible/bootstrap` is released with Crucible's next version and is
-   * deliberately not a dependency until it exists.
-   */
+  /** Whether this platform supports installing from this standalone window. */
   driven: boolean;
   /** The sentence the disabled button wears. Always set, whether driven or not. */
   drivenWhy: string;

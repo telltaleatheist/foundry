@@ -80,7 +80,6 @@ import type {
 import { pairingFileRead, readConnectCode } from './crucible-pairing';
 import { forgetCrucibleFacts, refreshCrucibleFacts } from './crucible-provider';
 import {
-  CRUCIBLE_WHEEL,
   tidySlotName,
   type CloudProviderEdit,
   type ConnectCodePreview,
@@ -906,22 +905,8 @@ export async function adoptPairingFile(): Promise<LocalCrucibleAdd> {
  * path that runs before the window exists.
  */
 export async function connectLocalEngine(): Promise<LocalCrucibleAdd> {
-  const paired = await adoptPairingFile();
-  if (paired.outcome === 'added') return paired;
-  if (paired.code === 'already_registered') {
-    console.log(`[engine] ${paired.message} Nothing to connect.`);
-    return paired;
-  }
-  /*
-   * A pairing file that is PRESENT and unreadable stops here rather than
-   * falling through. `config_unreadable` means a file exists and says something
-   * this app could not use — a corrupt line, a name the registry refuses — and
-   * quietly registering a different file instead would hide a defect somebody
-   * needs to see. Only `no_local_config`, which means there was no file at all,
-   * is a reason to look in the other place.
-   */
-  if (paired.code !== 'no_local_config') return paired;
-
+  if (hosted()) return { outcome: 'failed', code: 'no_local_config',
+    message: 'The local connection belongs to the host application.' };
   const local = await addLocalCrucible('');
   if (local.outcome === 'added') {
     console.log(`[engine] registered "${local.serverName}" at ${local.url} from ${local.configPath}.`);
@@ -3874,11 +3859,15 @@ export function registerIpc(): void {
    * released with Crucible's next version; see crucible-install.ts for the
    * four-step change that turns this on.
    */
-  ipcMain.handle('crucible:install', () => driveCrucibleInstall({
-    jobTypes: ['llm'],
-    wheel: CRUCIBLE_WHEEL,
-    onLine: () => { /* nothing to relay while the door refuses. */ },
-  }));
+  ipcMain.handle('crucible:install', async (event) => {
+    await driveCrucibleInstall((line) => {
+      if (!event.sender.isDestroyed()) event.sender.send('crucible:install-line', line);
+    });
+    await afterRegistryChanged();
+    for (const entry of crucibleServers().filter((entry) => entry.enabled)) {
+      void coordinateWithServer(entry.name, 'Crucible was installed');
+    }
+  });
   /*
    * ── UNINSTALL: THREE DOORS, AND THE FIRST ONE DECIDES THE OTHER TWO ───────
    *
@@ -3983,22 +3972,25 @@ export function registerIpc(): void {
    */
   ipcMain.handle('crucible:offer-start', async (): Promise<Asked<'start' | 'later'>> => {
     const state = await crucibleRunState();
+    if (state.kind === 'problem') return {
+      kind: 'ask', question: {
+        title: 'Crucible needs attention', message: state.why,
+        detail: ['Open Crucible to repair its local installation or connection.'],
+        choices: [{ key: 'later', label: 'Close' }], preferred: 'later',
+        dismissed: 'later', checkbox: null,
+      },
+    };
     if (state.kind !== 'stopped') return { kind: 'answered', answer: 'later' };
-    const where = state.via === 'wsl-guest'
-      ? 'Crucible is installed inside WSL on this computer'
-      : 'Crucible is installed on this computer';
     return {
       kind: 'ask',
       question: {
         title: 'Start Crucible?',
-        message: `${where}, and nothing is answering at ${state.url}.`,
+        message: 'Crucible is installed on this computer and is stopped.',
         detail: [
           'Crucible is the GPU engine. Translation, simplification, cleanup, analysis and page '
           + 'reading all run on it, and none of them can run while it is stopped. Opening a book, '
           + 'compiling one and exporting one are unaffected.',
-          'Starting it launches the small program that keeps it running and watches it — not a '
-          + 'one-off run. It stays up after Foundry is closed, and it is the thing that brings the '
-          + 'engine back if it stops.',
+          'Crucible starts its managed service. It stays running after Foundry closes.',
         ],
         choices: [
           { key: 'start', label: 'Start Crucible' },
@@ -4016,7 +4008,11 @@ export function registerIpc(): void {
    * a fact somebody should read, and a rejected invoke would arrive at the
    * renderer as an unhandled error with the interesting half missing.
    */
-  ipcMain.handle('crucible:start', () => startCrucible());
+  ipcMain.handle('crucible:start', async () => {
+    const result = await startCrucible();
+    if (result.started) await connectLocalEngine();
+    return result;
+  });
   ipcMain.handle('crucible:set-queue-gpu-dial', (_event, dial: string) => {
     const stored = writeAppSettings({ queueGpuDial: dial }).queueGpuDial;
     queue.venueRulesChanged();

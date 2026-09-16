@@ -265,6 +265,7 @@ const api: FoundryApi = {
     startCrucible: () => ipcRenderer.invoke('crucible:start'),
     installPlan: () => ipcRenderer.invoke('crucible:install-plan'),
     install: () => ipcRenderer.invoke('crucible:install'),
+    onInstallLine: (listener) => subscribe<string>('crucible:install-line', listener),
     /*
      * The uninstall door's three. The FIRST one is what decides whether the
      * other two are ever drawn — crucible docs/INSTALL-UNINSTALL.md §6.1: the

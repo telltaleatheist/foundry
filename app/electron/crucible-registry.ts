@@ -59,6 +59,7 @@ import {
 } from './app-settings';
 import { cloudProviderViews, enabledCloudProviders } from './cloud-providers';
 import { foundryHost, hosted } from './host';
+import { pairingFileRead } from './crucible-pairing';
 import {
   ANY_SLOT,
   isLoopbackUrl,
@@ -73,7 +74,6 @@ import {
   type CrucibleServerView,
   type CrucibleSettingsView,
   type LocalCrucibleAdd,
-  type LocalCrucibleFailure,
 } from '../shared/slots';
 
 /**
@@ -361,17 +361,24 @@ export function addCrucibleServer(name: string, url: string, token: string): Cru
       + 'or remove it if this is meant to replace it.',
     );
   }
-  const kept = crucibleServers()
-    .filter((entry) => entry.name.toLowerCase() !== label.toLowerCase())
-    .map((entry): CrucibleServerEdit => ({
+  let replaced = false;
+  const updated = crucibleServers()
+    .map((entry): CrucibleServerEdit => {
+      if (entry.name.toLowerCase() === label.toLowerCase()) {
+        replaced = true;
+        return { name: entry.name, url, enabled: entry.enabled, token };
+      }
+      return {
       name: entry.name,
       url: entry.url,
       enabled: entry.enabled,
       // Null, so the stored token is carried forward — this function has no
       // business handling the tokens of servers it was not asked about.
       token: null,
-    }));
-  return writeCrucibleServers([...kept, { name: label, url, enabled: true, token }]);
+      };
+    });
+  if (!replaced) updated.push({ name: label, url, enabled: true, token });
+  return writeCrucibleServers(updated);
 }
 
 /**
@@ -1186,312 +1193,35 @@ async function probeEntry(entry: CrucibleServerEntry): Promise<CrucibleProbe> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The local server, read from its own config
+// The local connection, published by Crucible on the native filesystem.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * ADD THE CRUCIBLE ON THIS MACHINE, by reading the file that server itself
- * reads.
- *
- * ── Why this is not "type in localhost and paste a token" ──────────────────
- *
- * Because the token would immediately be a second copy of a fact with an owner.
- * `crucible init --force` mints a new one, the copy goes stale, and the first
- * symptom is a 401 that nothing explains. BookForge reached this the hard way
- * and the rule it landed on is the one mirrored here: the local server's single
- * owner is `<CRUCIBLE_HOME>/config.toml` — `[server] host/port` and `[auth]
- * token` — and the way to register it is to read that file. Pressing the button
- * again after a re-init is how a stale entry is fixed, and it is one press.
- *
- * ── On Windows the file is inside WSL ──────────────────────────────────────
- *
- * Windows is never a Crucible backend, so the local server lives in a WSL2
- * guest and the file is read through `wsl.exe -d <distro> --exec bash -c`.
- * `--exec` and not the implicit shell: the implicit form pre-expands `$VAR` on
- * the WINDOWS side, so `$HOME` would resolve to the Windows profile and the
- * command would look in a directory that does not exist inside the guest. The
- * distro comes from this app's own `wslDistro` setting and there is NO DEFAULT:
- * "the default distro" is whatever `wsl --set-default` last said, and a token
- * read out of the wrong guest is a wrong token.
- */
 export async function addLocalCrucible(name: string): Promise<LocalCrucibleAdd> {
   refuseHostedRegistryChange();
-  let read: LocalConfig;
   try {
-    read = await readLocalConfig();
+    const published = await pairingFileRead();
+    if (published.found !== 'pairing') {
+      return {
+        outcome: 'failed',
+        code: published.found === 'absent' ? 'no_local_config' : 'config_unreadable',
+        message: published.found === 'absent'
+          ? 'Crucible has not published a local connection. Install or repair Crucible, then try again.'
+          : published.message,
+      };
+    }
+    const connection = published.pairing;
+    // Refresh an existing address in place, preserving the user's name, rank
+    // and enabled state even if the server renamed itself or rotated its token.
+    const existing = crucibleServers().find((entry) => sameCrucibleAddress(entry.url, connection.url));
+    const wanted = tidySlotName(name);
+    const label = existing !== undefined ? existing.name : wanted.length > 0 ? wanted : connection.name;
+    const servers = addCrucibleServer(label, connection.url, connection.token);
+    return { outcome: 'added', servers, serverName: label, url: connection.url, configPath: published.path };
   } catch (err) {
-    const failure = err instanceof LocalCrucibleError
-      ? err
-      : new LocalCrucibleError('wsl_read_failed', err instanceof Error ? err.message : String(err));
-    return { outcome: 'failed', code: failure.code, message: failure.message };
-  }
-  const wanted = tidySlotName(name);
-  const label = wanted.length > 0 ? wanted : read.serverName;
-  const existing = crucibleServers();
-  /*
-   * ── ALREADY THERE IS GOOD NEWS, AND IT USED TO BE PHRASED AS A FAULT ─────
-   *
-   * This arm said *"Rename or remove that entry first"*, and Owen pressed this
-   * button on a machine whose engine was registered and working: *"i tried to
-   * connect to the crucible server but it gave me an error. this should be
-   * idiot proof."* The refusal itself is right — a second row on one address
-   * would draw two GPU lanes over one card (docs/PLAN.md, the slot wave) — but
-   * the instruction was to dismantle a working connection in order to satisfy
-   * a button, which is the app serving its own bookkeeping.
-   *
-   * SO THE ROW IS STILL NOT WRITTEN AND THE ROW IS STILL NOT RENAMED (Wave 66:
-   * the app must not rename somebody's row), and what changed is that the
-   * answer says what is actually true — it is connected, there is nothing to
-   * do. The caller decides how loudly to say it: `connectLocalEngine`
-   * (electron/ipc.ts) reads this code as success and shows nothing at all.
-   */
-  const clash = existing.find(
-    (entry) => entry.name !== label && sameCrucibleAddress(entry.url, read.url),
-  );
-  if (clash !== undefined) {
-    return {
-      outcome: 'failed',
-      code: 'already_registered',
-      message: `The Crucible on this machine is already connected, as "${clash.name}" `
-        + `(${read.url}). There is nothing to do.`,
-    };
-  }
-  /*
-   * A REPLACE RATHER THAN A SECOND ENTRY when the name is already taken, and it
-   * is the whole reason pressing the button twice is the fix for a stale token:
-   * the second press overwrites the first entry's token with whatever the file
-   * says now, in place, keeping its position in the ranking and its enabled
-   * state. A new entry would leave the stale one beside it in the picker.
-   */
-  const kept = existing.filter((entry) => entry.name.toLowerCase() !== label.toLowerCase());
-  const wasEnabled = existing.find((entry) => entry.name.toLowerCase() === label.toLowerCase())?.enabled;
-  const entry: CrucibleServerEntry = {
-    name: label,
-    url: read.url,
-    token: read.token,
-    enabled: wasEnabled ?? true,
-  };
-  writeAppSettings({ crucibleServers: [...kept, entry] });
-  return {
-    outcome: 'added',
-    servers: crucibleServerViews(),
-    serverName: read.serverName,
-    url: read.url,
-    configPath: read.configPath,
-  };
-}
-
-/** What the local `config.toml` said. The token is returned and never logged. */
-interface LocalConfig {
-  serverName: string;
-  url: string;
-  token: string;
-  /** The path, as the reading side names it — `<distro>:/home/x/.crucible/…` under WSL. */
-  configPath: string;
-}
-
-class LocalCrucibleError extends Error {
-  readonly code: LocalCrucibleFailure;
-
-  constructor(code: LocalCrucibleFailure, message: string) {
-    super(message);
-    this.name = 'LocalCrucibleError';
-    this.code = code;
+    return { outcome: 'failed', code: 'config_unreadable',
+      message: err instanceof Error ? err.message : String(err) };
   }
 }
-
-/**
- * The guest-side command, as one string for `bash -c`.
- *
- * Exit 3 is "there is no config there", told apart from every other failure so
- * that "you have no local Crucible" — which is an ordinary and correct state for
- * a laptop that only ever renders on the Mac — does not arrive wearing the same
- * sentence as "wsl.exe would not run".
- *
- * `${CRUCIBLE_HOME:-$HOME/.crucible}` resolves exactly as the server's own
- * `crucible_home()` does, INSIDE the guest, which is the whole reason this is a
- * script and not a path composed on the Windows side.
- */
-const LOCAL_CONFIG_SCRIPT =
-  'p="${CRUCIBLE_HOME:-$HOME/.crucible}/config.toml"; '
-  + 'if [ ! -f "$p" ]; then echo "$p" >&2; exit 3; fi; '
-  + 'echo "$p"; cat "$p"';
-
-async function readLocalConfig(): Promise<LocalConfig> {
-  if (process.platform === 'win32') return readLocalConfigThroughWsl();
-  /*
-   * On macOS and Linux the file is simply on this filesystem, and it is read
-   * with the same script through the login shell's own `sh`, so that
-   * `$CRUCIBLE_HOME` is resolved by a shell rather than by this process's idea
-   * of the environment — the server reads the variable the user's shell exports,
-   * and an Electron app launched from the Dock does not inherit a login shell's
-   * environment at all.
-   */
-  const result = await runCommand('/bin/sh', ['-c', LOCAL_CONFIG_SCRIPT]);
-  return interpretLocalRead(result, null);
-}
-
-async function readLocalConfigThroughWsl(): Promise<LocalConfig> {
-  const distro = readAppSettings().wslDistro;
-  if (distro.length === 0) {
-    throw new LocalCrucibleError(
-      'no_wsl_distro',
-      'The Crucible on a Windows machine runs inside WSL, and no WSL distro is set. '
-      + 'Name the distro in this card first — there is deliberately no default, because a '
-      + 'server read out of the wrong guest is a different server with a different token.',
-    );
-  }
-  /*
-   * `--exec` and not the implicit shell. The implicit form hands the command
-   * line to a shell on the WINDOWS side first, which expands `$CRUCIBLE_HOME`
-   * and `$HOME` against the Windows environment before the guest ever sees
-   * them — so the script would look for a config in `C:\Users\…/.crucible`,
-   * find nothing, and report "no local Crucible" on a machine that has one.
-   */
-  const result = await runCommand('wsl.exe', ['-d', distro, '--exec', 'bash', '-c', LOCAL_CONFIG_SCRIPT]);
-  return interpretLocalRead(result, distro);
-}
-
-function interpretLocalRead(result: CommandResult, distro: string | null): LocalConfig {
-  const where = distro === null ? 'this machine' : `WSL distro "${distro}"`;
-  if (result.failure !== null) {
-    throw new LocalCrucibleError(
-      'wsl_read_failed',
-      `Reading the local Crucible's config on ${where} failed: ${result.failure}`,
-    );
-  }
-  if (result.code === 3) {
-    throw new LocalCrucibleError(
-      'no_local_config',
-      `There is no Crucible on ${where}: ${result.stderr.trim() || 'no config.toml'} does not exist. `
-      + 'Install one with `crucible init` there, or add a remote server instead.',
-    );
-  }
-  if (result.code !== 0) {
-    throw new LocalCrucibleError(
-      'wsl_read_failed',
-      `Reading the local Crucible's config on ${where} exited ${result.code}: `
-      + `${result.stderr.trim() || '(nothing on stderr)'}`,
-    );
-  }
-  const newline = result.stdout.indexOf('\n');
-  if (newline < 0) {
-    throw new LocalCrucibleError(
-      'wsl_read_failed',
-      `Nothing usable came back from ${where} — the config path was not printed before the file.`,
-    );
-  }
-  const configPath = result.stdout.slice(0, newline).trim();
-  const named = distro === null ? configPath : `${distro}:${configPath}`;
-  return parseLocalConfig(result.stdout.slice(newline + 1), named);
-}
-
-/**
- * `[server] name/host/port` and `[auth] token`, out of a config.toml.
- *
- * ── A minimal parser, and why it refuses instead of guessing ───────────────
- *
- * Neither Node nor bun ships a TOML parser and this app has no dependency that
- * does. Adding one for four keys would put a package in the bundle whose surface
- * is a hundred times the question being asked. So this reads the two tables it
- * needs and REFUSES EVERY LINE IT DOES NOT UNDERSTAND inside them — an array, a
- * multi-line string, an inline table, a dotted key. That is the important half:
- * a parser that skipped what it could not read would eventually skip the `token`
- * line and report "auth.token is missing" about a file that has it, which is a
- * worse failure than "this file has something in it I cannot read".
- *
- * Lines outside `[server]` and `[auth]` are SKIPPED rather than refused, because
- * the real file has `[jobs]`, `[accelerator]` and `[[capability.classes]]` in it
- * and none of them is any of this reader's business.
- */
-export function parseLocalConfig(text: string, configPath: string): LocalConfig {
-  let table: string | null = null;
-  let name: string | null = null;
-  let host: string | null = null;
-  let port: number | null = null;
-  let token: string | null = null;
-  const lines = text.split(/\r?\n/);
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = (lines[index] ?? '').trim();
-    if (line.length === 0 || line.startsWith('#')) continue;
-    const header = /^\[\[?([A-Za-z0-9_.-]+)\]?\]$/.exec(line);
-    if (header !== null) {
-      table = header[1] ?? null;
-      continue;
-    }
-    if (table !== 'server' && table !== 'auth') continue;
-    const pair = /^([A-Za-z0-9_-]+)\s*=\s*(.+?)\s*(?:#.*)?$/.exec(line);
-    if (pair === null) {
-      throw new LocalCrucibleError(
-        'config_unreadable',
-        `${configPath}, line ${index + 1}: this reader understands only "key = value" inside `
-        + `[${table}], and that line is not one. Nothing was taken from the file.`,
-      );
-    }
-    const key = pair[1] ?? '';
-    const raw = pair[2] ?? '';
-    if (table === 'server' && key === 'name') name = readTomlString(raw, configPath, index + 1);
-    else if (table === 'server' && key === 'host') host = readTomlString(raw, configPath, index + 1);
-    else if (table === 'server' && key === 'port') port = readTomlInteger(raw, configPath, index + 1);
-    else if (table === 'auth' && key === 'token') token = readTomlString(raw, configPath, index + 1);
-    /*
-     * Any OTHER key in those two tables is skipped without complaint. The
-     * refusal above is about a line whose SHAPE this reader cannot parse, not
-     * about a key it has no use for — a `[server] workers = 4` added next year
-     * must not stop somebody registering their own machine.
-     */
-  }
-  if (host === null || port === null) {
-    throw new LocalCrucibleError(
-      'config_missing_key',
-      `${configPath} has no [server] host/port. The server itself would refuse to start on it.`,
-    );
-  }
-  if (token === null || token.length === 0) {
-    throw new LocalCrucibleError(
-      'config_missing_key',
-      `${configPath} has no [auth] token. A Crucible has no anonymous mode — run \`crucible init\` there.`,
-    );
-  }
-  /*
-   * BIND ADDRESS → CONNECT ADDRESS, which is a mapping and not a fallback. A
-   * server bound to `0.0.0.0` or `::` is listening on every interface, and the
-   * interface a client on the same machine uses is loopback; the file records
-   * only the first of those two facts. A specific bind address is used as
-   * written, because that is a machine somebody configured deliberately.
-   */
-  const bind = host === '0.0.0.0' || host === '::' || host.length === 0 ? '127.0.0.1' : host;
-  const authority = bind.includes(':') ? `[${bind}]` : bind;
-  return {
-    serverName: name ?? 'crucible',
-    url: `http://${authority}:${port}`,
-    token,
-    configPath,
-  };
-}
-
-function readTomlString(raw: string, configPath: string, line: number): string {
-  const basic = /^"([^"\\]*)"$/.exec(raw);
-  if (basic !== null) return basic[1] ?? '';
-  const literal = /^'([^']*)'$/.exec(raw);
-  if (literal !== null) return literal[1] ?? '';
-  throw new LocalCrucibleError(
-    'config_unreadable',
-    `${configPath}, line ${line}: this reader understands only a plain quoted string here `
-    + '(no escapes, no multi-line). Nothing was taken from the file.',
-  );
-}
-
-function readTomlInteger(raw: string, configPath: string, line: number): number {
-  if (!/^[0-9]+$/.test(raw)) {
-    throw new LocalCrucibleError(
-      'config_unreadable',
-      `${configPath}, line ${line}: this reader understands only a plain integer here.`,
-    );
-  }
-  return Number.parseInt(raw, 10);
-}
-
 export interface CommandResult {
   code: number | null;
   stdout: string;
