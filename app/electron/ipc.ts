@@ -27,6 +27,7 @@ import type { Pairing } from '@crucible/client';
 import { actGates } from './act-gates';
 import {
   clampCrucibleUrl,
+  sameCrucibleAddress,
   readAppSettings,
   writeAppSettings,
   type CrucibleServerEntry,
@@ -797,12 +798,22 @@ export async function adoptPairingFile(): Promise<LocalCrucibleAdd> {
     return { outcome: 'failed', code: 'config_unreadable', message: read.message };
   }
   /*
-   * THE ADDRESS DECIDES, NOT THE ADDRESS'S SHAPE. Compared through
-   * `clampCrucibleUrl` because that is what the registry stored its own rows
-   * through, so a trailing slash on one side is not a second server.
+   * THE ADDRESS DECIDES, NOT THE ADDRESS'S SHAPE. Clamped first because that is
+   * what the registry stored its own rows through, then compared with
+   * `sameCrucibleAddress` — the registry's one duplicate rule, which also
+   * settles host case and a default port.
+   *
+   * IT MUST BE THE SAME RULE THE WRITER USES, and that is not tidiness. Since
+   * the writer began refusing a duplicate address, a check here that was even
+   * slightly narrower would let a line through to `registerPairing` that the
+   * writer then THREW on — turning this function's clean "already registered,
+   * nothing to do" into a caught `config_unreadable`, on the startup path, on
+   * every launch. The two rules being one is what keeps that unreachable.
    */
   const url = clampCrucibleUrl(read.pairing.url);
-  const already = crucibleServers().find((entry) => entry.url === url);
+  const already = crucibleServers().find(
+    (entry) => url !== null && sameCrucibleAddress(entry.url, url),
+  );
   if (already !== undefined) {
     return {
       outcome: 'failed',

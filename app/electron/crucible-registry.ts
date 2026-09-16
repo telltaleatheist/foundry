@@ -53,6 +53,7 @@ import {
   readAppSettings,
   writeAppSettings,
   clampCrucibleUrl,
+  sameCrucibleAddress,
   CRUCIBLE_SERVER_MAX,
   type CrucibleServerEntry,
 } from './app-settings';
@@ -319,9 +320,38 @@ export function writeCrucibleServers(edits: readonly CrucibleServerEdit[]): Cruc
  * state, which is `addLocalCrucible`'s rule for the same reason: somebody
  * re-adding a server they already have is fixing its token, and a second entry
  * beside the first would leave the stale one in the picker.
+ *
+ * ── AND A SECOND NAME FOR ONE ADDRESS IS REFUSED, SINCE 2026-09-15 ────────
+ *
+ * This door compared NAMES and nothing else, so a registry already holding
+ * `127.0.0.1:7100` as "3090 Ti" would take a second row for the same address
+ * under any other name and hand the queue two GPU lanes over one card.
+ * `addLocalCrucible` has always compared addresses, which made it worse than a
+ * missing rule: a person who pressed the local button got a safety that a
+ * person who pasted a connect code did not, for a reason nobody could infer
+ * from either screen. One rule now ({@link sameCrucibleAddress}), consulted by
+ * both, which is the shape the slot-name fix took for the same kind of split.
+ *
+ * REPLACING THE ROW AT THAT ADDRESS IS STILL FINE — that is the token refresh
+ * above, and it is why the test excludes the row this call is replacing rather
+ * than asking whether the address is present at all.
+ *
+ * It THROWS, like every other refusal this file makes, because the doors that
+ * call it already print what they catch. There is no arm for "added it anyway".
  */
 export function addCrucibleServer(name: string, url: string, token: string): CrucibleServerView[] {
   const label = tidySlotName(name);
+  const clash = crucibleServers().find(
+    (entry) => entry.name.toLowerCase() !== label.toLowerCase()
+      && sameCrucibleAddress(entry.url, url),
+  );
+  if (clash !== undefined) {
+    throw new Error(
+      `${url} is already registered as "${clash.name}". One engine wants one entry — `
+      + 'two would give the queue two GPU slots over the same card. Rename that entry, '
+      + 'or remove it if this is meant to replace it.',
+    );
+  }
   const kept = crucibleServers()
     .filter((entry) => entry.name.toLowerCase() !== label.toLowerCase())
     .map((entry): CrucibleServerEdit => ({
@@ -1125,7 +1155,9 @@ export async function addLocalCrucible(name: string): Promise<LocalCrucibleAdd> 
    * do. The caller decides how loudly to say it: `connectLocalEngine`
    * (electron/ipc.ts) reads this code as success and shows nothing at all.
    */
-  const clash = existing.find((entry) => entry.url === read.url && entry.name !== label);
+  const clash = existing.find(
+    (entry) => entry.name !== label && sameCrucibleAddress(entry.url, read.url),
+  );
   if (clash !== undefined) {
     return {
       outcome: 'failed',

@@ -5641,3 +5641,89 @@ will not answer), the "Add another machine" disclosure, and `connectLocalEngine`
 config.toml arm — this machine has a pairing file, so it takes the first branch
 and returns on `already_registered`, which was verified by reading that file's
 address rather than by deleting it.
+
+### Wave 70 — one address, one entry: the door half of the two-lanes-one-card hazard (2026-09-15) — LANDED
+
+**The fact, stated as the consequence rather than the mechanism** (BookForge's
+sharpening, and they are right that this is the sentence that gets a decision):
+**the queue believes it has two cards and schedules onto one.** Since Wave 67
+every enabled entry draws its own GPU lane, so two enabled rows at one address
+oversubscribe that machine, and nothing on screen says so — two rows is exactly
+what two machines looks like.
+
+**Reachable two ways, and only one of them is closed here.**
+
+1. **Two rows with the same literal address.** No resolve needed, no
+   orchestrator: they are unambiguously one machine. **This wave closes it.**
+2. **Two addresses resolving to one engine through a Phase-17 orchestrator
+   hop.** Needs `resolveEngine` to know, and only Foundry makes that hop today.
+   **Still open, and still Owen's** — see the lane half below.
+
+**THE ASYMMETRY THIS EXPOSED, which mattered more than the gap.** Foundry had
+TWO doors into one registry disagreeing about the rule: `addLocalCrucible`
+compared addresses and `addCrucibleServer` — the pasted connect code and the
+manual three-box form, which is how every remote server and most local ones
+actually arrive — compared NAMES ONLY and never looked at the address. So a
+person who pressed the local button got a safety that a person who pasted a
+connect code did not, for a reason neither screen could tell them. BookForge's
+equivalent was one consistent rule on the wrong field (`duplicate_server`, by
+name); ours was two rules, which is worse in exactly the way that matters. One
+rule now — `sameCrucibleAddress` in `app-settings.ts` — consulted by both doors
+and by `adoptPairingFile`, the shape Wave 66's slot-name fix took for the same
+kind of split.
+
+**Normalised as an ORIGIN, because `clampCrucibleUrl` was never a normal form.**
+It drops a trailing slash and a `/v1` and stops, so `http://LOCALHOST:7100` and
+`http://localhost:7100` were two different servers. `URL.origin` settles the
+rest for free: it lower-cases the host and drops a port that is the scheme's
+default.
+
+**`localhost` and `127.0.0.1` are deliberately NOT folded.** They can genuinely
+differ — a hosts-file entry, a server bound to IPv6 only — and folding them
+would be this app guessing about somebody's machine and then refusing a row on
+the strength of the guess. The ordinary version of that mistake arrives under
+the same NAME and the name rule has always caught it. BookForge took the same
+decision for the same reason (bookforge `e70f30f6`), so one rule holds across
+both apps.
+
+**ON ADD, NEVER ON READ — and that is what made this safe to land without a
+ruling.** Nothing calls the rule while loading a settings file and nothing
+re-validates one at startup, so a registry that already holds a duplicate keeps
+working exactly as it did (badly, with two lanes, but unchanged) and no file
+becomes unopenable because the rule arrived. Replacing the row AT that address
+still works, which is the token refresh: the test excludes the row this call is
+replacing rather than asking whether the address is present at all.
+
+**THE ONE PLACE IT COULD HAVE BITTEN, closed deliberately.**
+`adoptPairingFile` runs on the startup path and ends in `registerPairing` →
+`addCrucibleServer`, which now THROWS on a duplicate address. Its own
+pre-check was an exact string compare — narrower than the writer's new rule — so
+a line differing only in host case would have sailed past it and hit the throw,
+turning a clean *"already registered, nothing to do"* into a caught
+`config_unreadable` on every launch. It consults the same rule now, and the two
+being one is what keeps that unreachable.
+
+**Proved:** the rule lifted VERBATIM from `app-settings.ts` and run against
+twelve cases — identical, trailing slash, host case, default port made explicit
+on http and https, path dropped, and the five that must stay distinct (loopback
+vs `localhost`, port, scheme, host, and two unparseable strings). All twelve as
+intended. **And against Owen's real registry, read-only:** one row, no duplicate
+address present, so a rule that refuses on add cannot strand his file; and the
+pairing file on this machine resolves to that same row's origin, so
+`adoptPairingFile` returns `already_registered` before `registerPairing` and the
+new throw is never reached at startup.
+
+#### STILL OPEN FOR OWEN — the lane half
+
+The door and the lanes solve different halves and are **not alternatives**
+(BookForge's refinement, taken): the door stops NEW duplicates and does nothing
+for a registry that already has one; **lane-dedupe fixes existing files and is
+the only thing that also covers the orchestrator hop**, but leaves the door open
+to rows that will never both be usable. Picking one leaves a real case uncovered
+either way, so this is door-now / lanes-also rather than a choice between them.
+
+What is left to decide is what the LANES do when two enabled rows resolve to one
+engine: dedupe on the resolved engine (covers both routes, costs a resolve in
+`slotsFrom`), or draw both and WARN on the Servers card. `resolveEngine` is
+where both the fact and the fix would live. Not built, because it changes what
+an existing registry means at schedule time rather than what a door accepts.
