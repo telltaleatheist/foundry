@@ -3407,10 +3407,15 @@ export function registerIpc(): void {
    * THE ROW PICKER'S ONE DOOR — send this row to a different slot.
    *
    * `waitFor` is a slot name or `any` (`ANY_SLOT`, shared/slots.ts). Nothing is
-   * answered: the change publishes on `queue:changed` like every other change to
-   * a row, and a handler returning the row would be a second copy of it racing
-   * the push. Refused silently for a row that has started — see `setWaitFor`,
-   * which carries the atomicity argument.
+   * answered on the way OUT: the change publishes on `queue:changed` like every
+   * other change to a row, and a handler returning the row would be a second
+   * copy of it racing the push.
+   *
+   * A REFUSAL IS NOT NOTHING, THOUGH, and it is deliberately not swallowed here.
+   * `setWaitFor` throws a `QueueRoutingRefusal` for a row a GPU has already
+   * taken — the race it argues at length — and the throw crosses the preload as
+   * a rejected invoke so the picker that sent it can say the sentence. Catching
+   * it here would restore exactly the silence that made the race invisible.
    */
   ipcMain.handle('queue:set-wait-for', (_event, id: string, waitFor: string) => {
     queue.setWaitFor(id, waitFor);

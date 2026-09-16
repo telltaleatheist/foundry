@@ -5756,3 +5756,96 @@ engine: dedupe on the resolved engine (covers both routes, costs a resolve in
 `slotsFrom`), or draw both and WARN on the Servers card. `resolveEngine` is
 where both the fact and the fix would live. Not built, because it changes what
 an existing registry means at schedule time rather than what a door accepts.
+
+### Wave 71 — an edit racing admission is refused by name (2026-09-15) — LANDED, and the dial is SPEC'd not built
+
+**Owen asked for this shape** and named the blocker: *"the queue has a global
+crucible server option that the user can pick. and we have a pending area now,
+too… ask bookforge for the logic on this if youre still looking for info on
+it."* BookForge sent the field and state names out of their SHIPPED code on
+2026-09-15. This wave lands the one piece Foundry was plainly wrong about and
+records the rest as a spec rather than guessing at it.
+
+#### What Foundry already had, checked rather than assumed
+
+Most of the shape was here. `Job.waitFor` is the per-row picker (a slot name or
+`ANY_SLOT`); `JobState` already has **`held`** — *"configured, ordered, visible
+and doing nothing"* — which is the pending band under another word;
+`setWaitFor` is the door; `NewJobsWaitFor` (`top | any`) is what a new row
+starts as. **The open question for Owen is whether `held` IS his "pending area"
+or whether he means a second band in front of it.**
+
+#### The defect: the picker's refusal was silent, and the race made it invisible
+
+`setWaitFor` began `if (job.state !== 'held' && job.state !== 'queued') return;`
+— a bare return for every other state. The comment argued for it: *"the picker
+is not drawn on a running row, and this is the door behind that."*
+
+**That argument holds for a row somebody can SEE is running, and it is exactly
+wrong for the only case that reaches here.** The picker IS drawn on a `queued`
+row, and since `3b13392` a start *"marks running before its first await"* — so
+the pump can admit that row between the frame a person read and the message
+their click sent. The edit then vanished: no change, no sentence, and a select
+still showing the machine they had just chosen. The same file says the rule this
+broke, thirty lines above, about a different control: *"a control that quietly
+does nothing is the defect this seam exists to remove."*
+
+**Four of six states now get a sentence instead of silence** (`running`, `done`,
+`failed`, `cancelled`); `held` and `queued` proceed as before.
+
+- `running` → **`venue_fixed_at_admission`**, and the NAME IS BOOKFORGE'S,
+  agreed 2026-09-15 so two queues refusing one state refuse it with one word.
+  The sentence says the three things a person needs: what took it, that nothing
+  was altered, and the way out.
+- terminal → **`already_finished`**, its own sentence, because *"a GPU took it
+  before your change arrived"* is false about a row that ran an hour ago, and a
+  refusal that misdescribes why is worse than none.
+
+It is a THROW and not an `{outcome}` union because every other result of
+`setWaitFor` is "it happened", and a union would make all three callers unwrap a
+success they cannot act on.
+
+#### The two callers a person drives, both fixed
+
+- **The picker** (`queue-page`) printed nothing. It catches now and puts main's
+  own sentence on `NoticeService`, unsummarised.
+- **The Servers card's "free the orphans"** looped `for … await setWaitFor(…)`
+  with no guard, so the FIRST refusal would abort the loop and silently leave
+  every row after it pinned to a machine that is gone — the press half-done and
+  reporting success. In a loop that refusal is likely rather than exotic: the
+  press exists because a server was switched off, which is precisely when the
+  other slots are picking work up. Each row is caught on its own now and the
+  ones that would not move are counted and named — Owen's *"told, never moved
+  silently."*
+
+#### Recorded from BookForge, to build against — NOT invented here
+
+Their wire, out of shipped code: `waitFor` (what the book asks for, `'any'` or a
+server name, `undefined` = never asked), `waitForResolved` (the venue ASSIGNED —
+**and it is the immutability boundary itself, with no separate `locked` flag, so
+"editable until a GPU takes it" is true by construction**), `QueueStep.venue`
+(written once by the pump at admission). The dial is its own record
+(`queue-gpu-dial.json`), missing = `'any'`, sharing one literal with
+`WAIT_FOR_ANY` so the two controls cannot drift apart in spelling; a corrupt or
+unknown-server record is refused, a DISABLED server accepted. Precedence has one
+owner, `decideWaitFor`, answering `run | ask | hold`.
+
+**THE PART WORTH COPYING HARDEST is `VenueSource = 'row' | 'dial'`.** The parked
+sentences are not three, they are a 2×N: the cause (`holdDisabled`,
+`holdUnreachable`, `holdUnknownServer`, `holdAnyNoneEnabled`,
+`holdAnyNoneReachable`) crossed with WHO chose the venue. Telling a `dial`-sourced
+operator to "set this book to Any" is telling them to do what they have already
+done, and that wrong-cause failure is invisible unless the source travels beside
+the cause.
+
+**Foundry has neither the dial nor `VenueSource` and neither is built here.** The
+dial is a new record, a queue gate and a sentence surface; it also depends on
+Owen's `held`-vs-pending answer above, since the parked sentences describe which
+band a row sits in. Guessing at it would be inventing a second vocabulary for a
+state BookForge has already named — the mistake avoided twice tonight.
+
+**Proved:** the guard's branch table walked across all six `JobState` values —
+`held` and `queued` proceed, the other four refuse, each with the right one of
+the two codes. The race itself is UNEXERCISED and named as such: reproducing it
+means winning a scheduler race against a real placement, which loads a model on
+somebody's card.

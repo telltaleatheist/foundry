@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ANY_SLOT } from '@shared/slots';
 import type { Job } from '@shared/types';
 
+import { NoticeService } from '../../core/notice.service';
 import { QueueService } from '../../core/queue.service';
 import { QueueViewService, type SlotView } from '../../core/queue-view.service';
 import { hosted } from '../../core/foundry';
@@ -1024,6 +1025,8 @@ interface PickerGroup {
 export class QueuePageComponent {
   /** The route already refuses hosted; this is the other half. See the header. */
   protected readonly hosted = hosted;
+  private readonly notices = inject(NoticeService);
+
   protected readonly queue = inject(QueueService);
   protected readonly view = inject(QueueViewService);
 
@@ -1132,9 +1135,22 @@ export class QueuePageComponent {
     return this.slots().some((slot) => slot.name === option) ? option : `${option} (not available)`;
   }
 
+  /**
+   * AND THE REFUSAL IS SPOKEN, because the only way to reach one is a race a
+   * person cannot see.
+   *
+   * The picker is not drawn on a running row, so a refusal here means the pump
+   * admitted this row between the frame that was read and the click that was
+   * sent (electron/job-queue.ts `setWaitFor` argues it). Dropping that left the
+   * select showing a machine the row is not going to, with nothing to say so.
+   * Main's sentence already names what took it and what to do instead, so it is
+   * printed as it arrives rather than summarised.
+   */
   protected sendTo(job: Job, waitFor: string): void {
     if (waitFor === (job.waitFor ?? ANY_SLOT)) return;
-    void this.queue.setWaitFor(job.id, waitFor);
+    void this.queue.setWaitFor(job.id, waitFor).catch((err: unknown) => {
+      this.notices.notice.set(err instanceof Error ? err.message : String(err));
+    });
   }
 
   /** How many rows are waiting, across every book — the band's own count. */
