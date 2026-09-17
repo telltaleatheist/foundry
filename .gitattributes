@@ -2,3 +2,17 @@
 # turns `set -euo pipefail` into `set: pipefail\r: invalid option name`.
 # Pinned to LF so core.autocrlf=true checkouts on Windows cannot break them.
 *.sh text eol=lf
+
+# The two files vendored BYTE FOR BYTE out of the crucible repo. Both are
+# written LF by `scripts/gen-modules.py`, and the doctrine for the module is
+# that posting it means posting exactly those bytes — a hand edit, or a line
+# ending this repo added on the way out, is a different file.
+#
+# core.autocrlf=true is set on the machine this was found on, and a fresh
+# checkout there wrote foundry.module.json as 467 CRLF bytes where canonical is
+# 435 LF. Nothing catches that: the JSON still parses, the working copy anyone
+# looks at is whatever their git wrote, and the difference only shows up in
+# something that hashes the file rather than the parsed value. Same reason the
+# shell scripts above are pinned, one file type along.
+app/shared/foundry.module.json text eol=lf
+app/shared/model-lineup.json text eol=lf
