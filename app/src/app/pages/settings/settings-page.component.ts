@@ -5,6 +5,7 @@ import type { BackendMode, DoctorReport, EngineInfo, TierReport } from '@shared/
 
 import { api, hosted } from '../../core/foundry';
 import { CloudCardComponent } from './cloud-card.component';
+import { EngineModelsCardComponent } from './engine-models-card.component';
 import { EngineSettingsCardComponent } from './engine-settings-card.component';
 import { EnvCardComponent } from './env-card.component';
 import { LibraryCardComponent } from './library-card.component';
@@ -29,7 +30,8 @@ import { ServersCardComponent } from './servers-card.component';
 @Component({
   selector: 'app-settings-page',
   imports: [
-    CloudCardComponent, EngineSettingsCardComponent, EnvCardComponent, FormsModule,
+    CloudCardComponent, EngineModelsCardComponent, EngineSettingsCardComponent, EnvCardComponent,
+    FormsModule,
     LibraryCardComponent, SetupCardComponent,
     MachineModelsCardComponent, PageReaderCardComponent, ServersCardComponent,
   ],

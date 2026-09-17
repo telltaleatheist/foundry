@@ -69,10 +69,13 @@ import {
 
 import { engineClientFor } from './crucible-registry';
 import type { CrucibleServerEntry } from './app-settings';
+import { MODEL_CLASSES, type ModelClass } from '../shared/types';
 import {
   LLM_CLASSES,
   UPSTREAM_LABEL,
   type LlmClass,
+  type LocalModelChoice,
+  type LocalModelSupport,
   type SettingsDocument,
   type SettingsPatch,
   type UpstreamName,
@@ -190,6 +193,7 @@ export async function testUpstream(
  */
 function patchFor(patch: SettingsPatch): EngineSettingsPatch {
   const out: {
+    localModels?: Record<string, string | null>;
     routes?: Record<string, string>;
     upstreams?: Partial<Record<EngineUpstreamName, { key?: string; url?: string } | null>>;
     desktopAllowanceBytes?: number;
@@ -209,6 +213,20 @@ function patchFor(patch: SettingsPatch): EngineSettingsPatch {
     if (patch.upstreams.ollama !== undefined) upstreams.ollama = patch.upstreams.ollama;
     out.upstreams = upstreams;
   }
+  if (patch.localModels !== undefined) {
+    /*
+     * PRESENT-AND-NULL IS SENT; ABSENT IS NOT. `null` asks the engine to choose
+     * (the SDK: *"null restores the engine's automatic decision"*), so it is a
+     * value this app forwards rather than a gap it skips. Only `undefined` —
+     * a class the person did not touch — is left out of the patch.
+     */
+    const local: Record<string, string | null> = {};
+    for (const cls of MODEL_CLASSES) {
+      const named = patch.localModels[cls];
+      if (named !== undefined) local[cls] = named;
+    }
+    out.localModels = local;
+  }
   if (patch.desktopAllowanceBytes !== undefined) {
     out.desktopAllowanceBytes = patch.desktopAllowanceBytes;
   }
@@ -225,8 +243,61 @@ function patchFor(patch: SettingsPatch): EngineSettingsPatch {
  * server named with a route this app has no row for, which is the conservative
  * direction: it does not claim a person's book is being sent to a company.
  */
+/**
+ * THE TWO LOCAL-MODEL FIELDS, CORRELATED ONCE — and the only place a partial
+ * document is caught.
+ *
+ * ── The rule, agreed with BookForge 2026-09-16 ──────────────────────────
+ *
+ * The SDK types both fields optional so that reading a 0.6.3 engine keeps
+ * working, and a 0.6.6 engine emits both unconditionally. So:
+ *
+ *   * NEITHER present  → the engine predates model assignment. A FACT the
+ *     document states, reported as `{supported: false}`, and the panel says so
+ *     rather than drawing an empty picker. This is the document-vintage rule
+ *     `CapabilityRow.route` already carries, one field along.
+ *   * BOTH present      → the ordinary answer.
+ *   * ONE present       → a defect, REFUSED BY NAME. There is no server that
+ *     produces this and no screen that can draw it: an assignment without the
+ *     list it was chosen from cannot be rendered, and a list without the
+ *     assignments cannot say what is selected. Filling the missing half in
+ *     would be inventing the one fact the person is here to read.
+ *
+ * A CLASS THE SERVER DID NOT MENTION GETS `null` AND AN EMPTY LIST, which is
+ * not a fallback: `null` is the engine's own word for *"choose automatically"*,
+ * and a class it offers nothing for genuinely has nothing to offer. What is
+ * refused above is the document being half-shaped; what is normalised here is a
+ * class this build knows about and that server does not serve.
+ */
+function localModelsFrom(doc: EngineSettingsDocument): LocalModelSupport {
+  const assignedRaw = doc.localModels;
+  const choicesRaw = doc.localModelChoices;
+  if (assignedRaw === undefined && choicesRaw === undefined) return { supported: false };
+  if (assignedRaw === undefined || choicesRaw === undefined) {
+    throw new Error(
+      'local_models_half_present: this engine sent '
+      + `${assignedRaw === undefined ? 'local_model_choices without local_models' : 'local_models without local_model_choices'}`
+      + '. One without the other cannot be drawn — an assignment needs the list it was chosen '
+      + 'from — and Foundry will not guess the missing half.',
+    );
+  }
+  const assigned = {} as Record<ModelClass, string | null>;
+  const choices = {} as Record<ModelClass, LocalModelChoice[]>;
+  for (const cls of MODEL_CLASSES) {
+    assigned[cls] = assignedRaw[cls] ?? null;
+    choices[cls] = (choicesRaw[cls] ?? []).map((row) => ({
+      id: row.id,
+      memoryBytesEstimate: row.memoryBytesEstimate,
+      fits: row.fits,
+      installed: row.installed,
+    }));
+  }
+  return { supported: true, assigned, choices };
+}
+
 function documentFrom(doc: EngineSettingsDocument): SettingsDocument {
   return {
+    localModels: localModelsFrom(doc),
     routes: Object.fromEntries(
       LLM_CLASSES.map((cls) => {
         const row = doc.routes[cls];

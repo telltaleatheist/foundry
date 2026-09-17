@@ -59,6 +59,7 @@
  * (electron/crucible-registry.ts's header states it for the token).
  */
 import type { CrucibleServerView } from './slots';
+import type { ModelClass } from './types';
 
 /**
  * THE FOUR CLASSES THAT MAY ROUTE UPSTREAM, spelled as crucible's
@@ -146,9 +147,86 @@ export interface AddressedUpstream {
  * guess what took"*), which is why every surface here redraws from a write's
  * answer instead of from what it sent.
  */
+/**
+ * ONE MODEL THE ENGINE COULD RUN FOR A CLASS, as it offers it.
+ *
+ * ── `fits` IS AN ESTIMATE AND MUST NEVER BE DRAWN AS A PROMISE ────────────
+ *
+ * It is computed from {@link LocalModelChoice.memoryBytesEstimate}, which is a
+ * WEIGHTS-ONLY figure: **it excludes the KV cache**. A long context on a large
+ * model is several gigabytes of KV on top, so a model can report `fits: true`
+ * and then fail to load.
+ *
+ * That is not hypothetical on the machine this was written on. Measured against
+ * `crucible@owens-pc-wsl` on 2026-09-16: `qwen3.8-27b-4bit` offers
+ * `memoryBytesEstimate` 21,633,171,456 — 20.15 GiB — and reports `fits: true`
+ * against a 24 GB card carrying a 3 GiB desktop allowance, so roughly 21 GiB
+ * available. **Under a gigabyte of headroom before any KV cache at all.**
+ *
+ * The defect is Crucible's and is Owen's to rule on; this app's duty is to
+ * repeat the estimate honestly and say what it leaves out, never to paper over
+ * it with a margin of its own invention.
+ */
+export interface LocalModelChoice {
+  id: string;
+  /** Weights only. See the note above before putting this in front of anybody. */
+  memoryBytesEstimate: number;
+  /** The engine's own verdict on the estimate — an estimate, not a guarantee. */
+  fits: boolean;
+  /** Whether the weights are already on that machine. */
+  installed: boolean;
+}
+
+/**
+ * WHICH LOCAL MODEL RUNS EACH CLASS — present, or a server too old to have the
+ * question.
+ *
+ * ── WHY THIS IS ONE VALUE AND NOT TWO OPTIONAL FIELDS ────────────────────
+ *
+ * `/v1/settings` carries `local_models` and `local_model_choices`, and the SDK
+ * types both as optional because reading a 0.6.3 server must keep working. Two
+ * optional fields let a caller hold one without the other — a state no server
+ * produces and no screen can draw, because the assignment is meaningless
+ * without the list it was chosen from. Mirroring them as two optionals would
+ * put the burden of correlating them on every reader.
+ *
+ * So the mirror is a DISCRIMINATED value and the seam that builds it is the one
+ * place the correlation is checked. The partial document becomes unrepresentable
+ * rather than merely unlikely — the same move as fusing a venue to its source
+ * (docs/PLAN.md, Wave 72): make the bad state unconstructible, not unreachable.
+ *
+ * ── ABSENCE IS A FACT ABOUT THE SERVER, NOT A DEFAULT TO FILL ────────────
+ *
+ * `supported: false` means the engine predates model assignment, and the panel
+ * says so rather than drawing an empty picker. This is the document-vintage rule
+ * {@link CapabilityRow.route} already states for its own field, agreed with
+ * BookForge 2026-09-16: whole-document absence is a statement the document
+ * makes; a PARTIAL document is a defect refused by name. A 0.6.6 engine emits
+ * both fields unconditionally, so absence will keep meaning exactly this.
+ */
+export type LocalModelSupport =
+  | { supported: false }
+  | {
+    supported: true;
+    /**
+     * The class's chosen model, or `null`.
+     *
+     * **`null` IS A CHOICE, NOT AN ABSENCE** — the SDK states it: *"Null
+     * requests automatic selection, never a fallback."* So the picker draws it
+     * as a named option ("Choose automatically") rather than as an empty slot,
+     * and nothing in this app may read it as "nobody has decided" and
+     * substitute something.
+     */
+    assigned: Record<ModelClass, string | null>;
+    /** What the engine would accept for each class. May be empty for a class. */
+    choices: Record<ModelClass, LocalModelChoice[]>;
+  };
+
 export interface SettingsDocument {
   /** Every llm class, always all four — the server fills the ones nobody set. */
   routes: Record<LlmClass, RouteRow>;
+  /** Which local model runs each class, or a server too old to be asked. */
+  localModels: LocalModelSupport;
   upstreams: {
     anthropic: KeyedUpstream;
     openai: KeyedUpstream;
@@ -172,6 +250,25 @@ export interface SettingsDocument {
  * send as a single body.
  */
 export interface SettingsPatch {
+  /**
+   * WHICH LOCAL MODEL A CLASS SHOULD USE — a model id, or `null`.
+   *
+   * `null` is not "unset this field"; it is the engine's own word for *"decide
+   * automatically"* (the SDK: *"null restores the engine's automatic
+   * decision"*). A patch that omits a class does not change it, and a patch that
+   * names one with `null` is a person asking the engine to choose. Those are
+   * different requests and this wire keeps them different: absent versus
+   * present-and-null.
+   *
+   * THE ENGINE REFUSES BY NAME and this app does not pre-empt it —
+   * `local_model_not_selectable` (400), `local_model_unknown` (400),
+   * `local_model_does_not_fit` (409), `capability_undecided` (503). A client
+   * that filtered the picker to what it believed would be accepted would be a
+   * second copy of the engine's rules, going stale the first time they change;
+   * see the fit estimate's own note above for why this app's belief about what
+   * fits is worth less than the engine's.
+   */
+  localModels?: Partial<Record<ModelClass, string | null>>;
   routes?: Partial<Record<LlmClass, string>>;
   upstreams?: {
     anthropic?: { key: string } | null;
