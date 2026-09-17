@@ -245,35 +245,24 @@ function patchFor(patch: SettingsPatch): EngineSettingsPatch {
  * both fields unconditionally and the 0.6.6 SDK reads them unconditionally,
  * failing in `settings()` with the field's own name.
  *
- * ── LABELLED STOPGAP — DELETE THIS CHECK AT THE 0.6.6 RE-VENDOR ──────────
+ * ── THE STOPGAP THAT WAS HERE IS GONE, ON ITS OWN CONDITION ──────────────
  *
- * The check below is here ONLY because the vendored SDK is still 0.6.3, which
- * types both fields optional; the compiler will not let this function read them
- * without it. It is not a vintage test and must not grow back into one — it
- * refuses, by name, a document that the 0.6.6 client will itself refuse one
- * layer earlier.
+ * Between the ruling and the 0.6.6 re-vendor this function carried an explicit
+ * refusal for a document missing either field, marked as a stopgap with its
+ * deletion condition written into it: the vendored 0.6.3 client typed both
+ * fields optional, so the compiler would not let them be read without one.
  *
- * **When `@crucible/client` moves to 0.6.6, delete the whole `if` and read the
- * two fields directly.** Leaving it would make this a second owner of a rule the
- * SDK holds, unreachable and therefore never exercised — the worst kind of
- * guard, because nothing would tell you when its sentence stopped being true.
- *
- * An explicit refusal rather than a non-null assertion, deliberately: an
- * assertion that turns out to be wrong crashes a settings window, and this names
- * the server and the field instead. (BookForge took the same shape for the same
- * reason.)
+ * `@crucible/client` is 0.6.6 now and types both as REQUIRED, refusing such a
+ * document in `settings()` with the field's own name. So the check became
+ * unreachable and went — an unreachable guard is a second owner of a rule the
+ * SDK holds, never exercised, with nothing to tell you when its sentence stopped
+ * being true. The compiler is the proof the condition was met: reading these
+ * two fields without a guard does not typecheck against 0.6.3 and does against
+ * 0.6.6.
  */
 function localModelsFrom(doc: EngineSettingsDocument): LocalModels {
   const assignedRaw = doc.localModels;
   const choicesRaw = doc.localModelChoices;
-  if (assignedRaw === undefined || choicesRaw === undefined) {
-    throw new Error(
-      'settings_local_models_missing: this engine did not send '
-      + `${assignedRaw === undefined ? 'local_models' : 'local_model_choices'}`
-      + '. Every engine sends both; an engine that does not is too old for this build of '
-      + 'Foundry, and updating Crucible on that machine is the fix.',
-    );
-  }
   const assigned = {} as Record<ModelClass, string | null>;
   const choices = {} as Record<ModelClass, LocalModelChoice[]>;
   for (const cls of MODEL_CLASSES) {
