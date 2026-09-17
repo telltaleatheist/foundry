@@ -4826,6 +4826,10 @@ llm class (local — <model>, each configured upstream's routed model, or a free
 text `<upstream>/<model>`), a server selector only when more than one is
 registered, hidden only when the registry is empty — NOT hosted-gated, because
 §5.3 says the hosted card draws the host's registry onto the same engine.
+(This card and "Which model runs each act" were MERGED into Settings › AI on
+2026-09-17 — `pages/settings/ai-pane.component.ts`, one row per job with one
+list of chips. Every rule recorded above survived the merge; what went is the
+split between the route control and the model control for one class.)
 
 **The wizard gained a `routes` step after `crucible`**, shown only when a server
 exists (a hidden step is not drawn, not counted in the rail, and never recorded
@@ -5396,8 +5400,8 @@ wizard's whole Ollama step; `AppSettings.defaultLlmModel` / `cleanTextModel` /
 **KEPT, and this is the other half of Owen's ruling:** the engine-settings
 pass-through is untouched, not narrowed and not renamed —
 `crucible-settings.ts`, the `crucible:engine-settings*` doors,
-`shared/engine-settings.ts`, the "Where the text work runs" card, the shared
-upstream child and the wizard's `routes` step. A route row naming
+`shared/engine-settings.ts`, the "Where the text work runs" card (Settings ›
+AI since 2026-09-17), the shared upstream child and the wizard's `routes` step. A route row naming
 `anthropic/claude-sonnet-5` IS a person choosing a model; it lives in the
 ENGINE's `/v1/settings`, which Foundry draws and writes through. The test
 applied throughout: **does the value live in Foundry's `app-settings.json` or in
