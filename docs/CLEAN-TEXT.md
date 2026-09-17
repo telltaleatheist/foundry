@@ -1487,6 +1487,16 @@ form, the "verse" form, and the default that carries both are all correct.
 The first run against a real model (`qwen3.8:27b-24g`, Kershaw, 68 blocks, 120 s,
 36 edits, 0 parse failures) is the evidence behind the three rulings below.
 
+> **That tag no longer exists, and the measurement is unaffected** (2026-09-16).
+> `qwen3.8:27b-24g` was a local retag of the published `qwen3.8:27b`, and it has
+> since been retagged back to the canonical name. It was never a different model:
+> its model, projector and licence digests are identical to the published one
+> (`f5f1dd8920d417a`, `ac3714bfdddeca3`, `4c6a8e842ef0d85`) and the whole
+> difference was an 18-byte params layer carrying a `num_ctx` of 98304. So the
+> numbers above stand and the name above is still the honest record of what was
+> run — it is written down here because somebody re-reading this to reproduce the
+> run would otherwise go looking for a tag that is not on the machine any more.
+
 ### All-caps initialisms are LEFT AS PRINTED
 
 The model left every all-caps initialism in the book alone — `SA`, `SS` and the
