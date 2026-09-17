@@ -59,11 +59,17 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { defaultEngineServer, type LocalModelChoice, type SettingsDocument } from '@shared/engine-settings';
+import {
+  LLM_CLASSES,
+  defaultEngineServer,
+  type CapabilityRecord,
+  type LocalModelChoice,
+  type SettingsDocument,
+} from '@shared/engine-settings';
 import type { CrucibleCatalogRow, CruciblePullProgress } from '@shared/model-wire';
 import type { CrucibleServerView } from '@shared/slots';
 import { MODEL_CLASSES, type ModelClass } from '@shared/types';
-import { actWords, sizeWords } from '../../core/crucible-words';
+import { actWords, shortfallWords, sizeWords } from '../../core/crucible-words';
 import { api } from '../../core/foundry';
 
 /**
@@ -107,22 +113,65 @@ const AUTOMATIC = 'automatic-choice';
         @if (problem(); as why) { <p class="warn">{{ why }}</p> }
 
         @if (support()) {
+            <!--
+              ROWS RATHER THAN A SELECT, and that is Owen's own shape: *"it can
+              show them other models available, but theyll be grayed out but
+              clickable if they cant run it."* A native option element cannot be
+              both — the disabled attribute greys it AND stops the click, and styling one
+              greyed while leaving it selectable is not reliable across
+              platforms. It also had nowhere to put the numbers, which 3b wants
+              ON the row.
+            -->
             @for (row of rows(); track row.cls) {
-              <div class="act">
+              <div class="act-head">
                 <span class="who">{{ row.act }}</span>
-                <select class="wide" [name]="'m-' + row.cls"
-                        [disabled]="working()"
-                        [ngModel]="row.selected"
-                        (ngModelChange)="assign(row.cls, $event)">
-                  <option [value]="automatic">Choose automatically</option>
-                  @for (choice of row.choices; track choice.id) {
-                    <option [value]="choice.id">{{ optionLabel(choice) }}</option>
-                  }
-                </select>
+                @if (row.shortfall; as short) { <span class="small warnish">{{ short }}</span> }
               </div>
+
+              <button class="pick" type="button" [disabled]="working()"
+                      [class.chosen]="row.selected === automatic"
+                      (click)="assign(row.cls, automatic)">
+                <span class="tick">{{ row.selected === automatic ? '●' : '○' }}</span>
+                <span class="pick-name">Choose automatically</span>
+                <span class="small">the engine decides</span>
+              </button>
+
+              @for (choice of row.choices; track choice.id) {
+                <!--
+                  A MODEL THAT DOES NOT FIT IS STILL PRESSABLE. The estimate
+                  excludes the KV cache so it is not a verdict; somebody may be
+                  about to free memory; and the ENGINE refuses by name
+                  (local_model_does_not_fit, 409). Greyed says "expect this to
+                  be refused", not "you may not ask".
+                -->
+                <button class="pick" type="button" [disabled]="working()"
+                        [class.chosen]="row.selected === choice.id"
+                        [class.wont-fit]="!choice.fits"
+                        (click)="assign(row.cls, choice.id)">
+                  <span class="tick">{{ row.selected === choice.id ? '●' : '○' }}</span>
+                  <span class="pick-name">{{ choice.id }}</span>
+                  <span class="small mono">{{ choiceWords(choice) }}</span>
+                </button>
+              }
+
               @if (row.choices.length === 0) {
                 <p class="small">
                   This engine offers no model for {{ row.act.toLowerCase() }}.
+                </p>
+              }
+              @if (row.reason; as why) { <p class="act-why small">{{ why }}</p> }
+              @if (row.needsAccount) {
+                <!--
+                  3c: NOTHING ON THIS CARD FITS, so the honest next step is the
+                  card below. Owen: *"if nothing fits their card, it should give
+                  them the option of using api keys for claude or openai."* It
+                  POINTS rather than growing a key field — the key belongs in the
+                  engine, written once, by the card that owns that door.
+                -->
+                <p class="small">
+                  Nothing on this engine's card can run it. An Anthropic or OpenAI account can —
+                  "Where the text work runs", just above, is where the key goes, and it is stored
+                  in the engine rather than in Foundry.
                 </p>
               }
             }
@@ -203,6 +252,27 @@ const AUTOMATIC = 'automatic-choice';
     .warn { margin: 0; font-size: 12px; color: var(--error); }
     .field { display: flex; align-items: center; gap: 8px; }
     .label { font-size: 11px; color: var(--text-tertiary); }
+    .act-head { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; }
+    .warnish { color: var(--warn); }
+    /* One choice. A button rather than an option element so it can be greyed
+       AND pressed — see the template's note on Owen's wording. */
+    .pick {
+      display: flex; align-items: baseline; gap: 8px; width: 100%;
+      font: inherit; font-size: 12px; text-align: left;
+      background: transparent; color: var(--text-primary);
+      border: 1px solid transparent; border-radius: var(--radius-sm);
+      padding: 3px 6px; cursor: pointer;
+    }
+    .pick:hover:not(:disabled) { background: var(--bg-sunken); }
+    .pick.chosen { border-color: var(--border-subtle); background: var(--bg-sunken); }
+    .pick:disabled { cursor: default; }
+    .tick { color: var(--text-tertiary); }
+    .pick.chosen .tick { color: var(--accent); }
+    .pick-name { flex: 1; min-width: 0; }
+    /* GREYED BUT NOT DISABLED. The dimming says "expect the engine to refuse
+       this"; the button stays pressable because the estimate is not a verdict
+       and the engine is what refuses, by name. */
+    .pick.wont-fit .pick-name, .pick.wont-fit .small { color: var(--text-tertiary); }
     .act { display: flex; align-items: center; gap: 10px; }
     .who { font-size: 12px; color: var(--text-primary); min-width: 160px; }
     select {
@@ -255,6 +325,18 @@ export class EngineModelsCardComponent {
    * the noise Owen objected to, and the acts this app has are all served by
    * models.
    */
+  /**
+   * THE CAPABILITY RECORD — where the REASONS and the shortfall live.
+   *
+   * The settings document's choice rows carry only id / estimate / fits /
+   * installed. What a person needs when a class will not run is the server's own
+   * sentence about WHY, and that is per-class and lives here: *"no qwen3.8
+   * variant fits: the smallest needs 20.1 GiB and there is 5.0 GiB available"*.
+   * Rendered rather than re-composed — 0.6.7 puts the term breakdown into this
+   * same string, and an app that rebuilt it from parts would print a worse
+   * version of a sentence it already has.
+   */
+  protected readonly capability = signal<CapabilityRecord | null>(null);
   protected readonly catalog = signal<CrucibleCatalogRow[]>([]);
   protected readonly catalogProblem = signal<string | null>(null);
   /** Pulls in flight or just finished, by subject id. Cleared on a fresh read. */
@@ -298,12 +380,35 @@ export class EngineModelsCardComponent {
     // Null only until the first read lands, or after one that failed — the
     // failure is drawn on its own line and this draws no rows for it.
     if (local === null) return [];
-    return MODEL_CLASSES.map((cls) => ({
-      cls,
-      act: actWords(cls),
-      selected: local.assigned[cls] ?? AUTOMATIC,
-      choices: local.choices[cls],
-    }));
+    const cap = this.capability();
+    return MODEL_CLASSES.map((cls) => {
+      const klass = cap?.classes.find((row) => row.capability === cls) ?? null;
+      const choices = local.choices[cls];
+      /*
+       * THE REASON IS DRAWN ONLY WHEN IT IS NEWS. On a class that runs, the
+       * server's sentence is a restatement of the row above it ("X fits: it
+       * needs 20.1 GiB and there is 21.0 available") — true, and five of them
+       * under five working pickers is noise nobody reads. When the class will
+       * NOT run it is the only thing on screen that says why.
+       */
+      const failing = klass !== null && !klass.enabled;
+      return {
+        cls,
+        act: actWords(cls),
+        selected: local.assigned[cls] ?? AUTOMATIC,
+        choices,
+        reason: failing ? klass.reason : null,
+        shortfall: failing ? shortfallWords(klass.shortfallBytes) : null,
+        /*
+         * 3c's TEST, and it is about the CLASS rather than about any model:
+         * the engine says it cannot serve this, AND it is one of the classes
+         * that may route upstream at all (`pages` cannot — PHASE15 §1 — so a
+         * card offering an account for it would be offering something the
+         * server refuses by name).
+         */
+        needsAccount: failing && (LLM_CLASSES as readonly string[]).includes(cls),
+      };
+    });
   });
 
   constructor() {
@@ -368,10 +473,21 @@ export class EngineModelsCardComponent {
     if (!api) return;
     this.working.set(true);
     try {
-      this.doc.set(await api.crucible.engineSettings(this.chosen()));
+      const [document, capability] = await Promise.all([
+        api.crucible.engineSettings(this.chosen()),
+        api.crucible.engineCapability(this.chosen()),
+      ]);
+      this.doc.set(document);
+      this.capability.set(capability);
       this.problem.set(null);
     } catch (err) {
+      /*
+       * BOTH GO TOGETHER. A document kept beside a capability record that failed
+       * to read would draw five working pickers and no reason under the class
+       * that cannot run — the one sentence this card exists to show.
+       */
       this.doc.set(null);
+      this.capability.set(null);
       this.problem.set(err instanceof Error ? err.message : String(err));
     } finally {
       this.working.set(false);
@@ -514,10 +630,10 @@ export class EngineModelsCardComponent {
    * this app enforcing a rule it holds a worse copy of, and the person would be
    * left wondering where the model went.
    */
-  protected optionLabel(choice: LocalModelChoice): string {
-    const size = sizeWords(choice.memoryBytesEstimate);
-    const room = choice.fits ? `${size} est.` : `${size} est., larger than this card`;
-    return `${choice.id} — ${room}${choice.installed ? '' : ', not installed'}`;
+  protected choiceWords(choice: LocalModelChoice): string {
+    const size = `${sizeWords(choice.memoryBytesEstimate)} est.`;
+    const room = choice.fits ? size : `${size} · larger than this card`;
+    return choice.installed ? room : `${room} · not installed`;
   }
 
   /**
@@ -538,6 +654,14 @@ export class EngineModelsCardComponent {
       this.doc.set(await api.crucible.engineSettingsPut(this.chosen(), {
         localModels: { [cls]: model },
       }));
+      /*
+       * THE CAPABILITY IS RE-READ, because choosing a model can change it:
+       * a class whose selection moved to something that does not fit becomes a
+       * class the engine will not serve, and the PUT answers with the settings
+       * document alone. Without this the reason line would describe the previous
+       * choice.
+       */
+      this.capability.set(await api.crucible.engineCapability(this.chosen()));
       this.problem.set(null);
     } catch (err) {
       /*
