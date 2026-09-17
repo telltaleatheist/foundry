@@ -32,6 +32,14 @@
  * Putting a five-row control inside a four-row table would mean one row with an
  * empty half and a reader wondering what it means.
  *
+ * ── THERE IS NO "OLDER ENGINE" FACE ──────────────────────────────────────
+ *
+ * This card had one, and Owen removed the reason for it on 2026-09-16:
+ * *"Nothing is legacy because nothing exists publicly."* Every engine sends the
+ * two local-model fields, the SDK refuses a document without them by name, and
+ * a face for a server that cannot exist was a branch nobody would ever see and
+ * everybody reading this file had to understand.
+ *
  * ── `null` IS A CHOICE AND IS DRAWN AS ONE ───────────────────────────────
  *
  * The SDK states it: *"null restores the engine's automatic decision"*. So the
@@ -98,8 +106,7 @@ const AUTOMATIC = 'automatic-choice';
 
         @if (problem(); as why) { <p class="warn">{{ why }}</p> }
 
-        @if (support(); as local) {
-          @if (local.supported) {
+        @if (support()) {
             @for (row of rows(); track row.cls) {
               <div class="act">
                 <span class="who">{{ row.act }}</span>
@@ -161,18 +168,6 @@ const AUTOMATIC = 'automatic-choice';
               rather than a list of files, and the engine does not state a total. What is already
               on that machine is measured and shown above.
             </p>
-          } @else {
-            <!--
-              A FACT ABOUT THE SERVER, NOT AN EMPTY STATE. The document carried
-              neither field, which means this engine predates model assignment —
-              so the card says which engine and what to do, rather than drawing a
-              picker with nothing in it.
-            -->
-            <p class="small">
-              This engine is older than per-act model choice, so it decides for itself and there
-              is nothing here to set. Updating Crucible on that machine adds it.
-            </p>
-          }
         }
       </div>
     }
@@ -283,7 +278,9 @@ export class EngineModelsCardComponent {
    */
   protected readonly rows = computed(() => {
     const local = this.support();
-    if (local === null || !local.supported) return [];
+    // Null only until the first read lands, or after one that failed — the
+    // failure is drawn on its own line and this draws no rows for it.
+    if (local === null) return [];
     return MODEL_CLASSES.map((cls) => ({
       cls,
       act: actWords(cls),

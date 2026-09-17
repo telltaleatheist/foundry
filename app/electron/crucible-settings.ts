@@ -75,7 +75,7 @@ import {
   UPSTREAM_LABEL,
   type LlmClass,
   type LocalModelChoice,
-  type LocalModelSupport,
+  type LocalModels,
   type SettingsDocument,
   type SettingsPatch,
   type UpstreamName,
@@ -234,51 +234,44 @@ function patchFor(patch: SettingsPatch): EngineSettingsPatch {
 }
 
 /**
- * The document, with the four route rows spelled out.
+ * THE TWO LOCAL-MODEL FIELDS, INTO ONE VALUE.
  *
- * THE ONLY SHAPING LEFT. The SDK reads every field and refuses a document that
- * is not API v1's, so there is nothing here to read defensively; what it does
- * NOT do is invent a row the server omitted, and §2 says an omitted row IS an
- * answer (*"absent key = local"*). `local` is also the answer for a class the
- * server named with a route this app has no row for, which is the conservative
- * direction: it does not claim a person's book is being sent to a company.
+ * ── THE VINTAGE ARM IS GONE (Owen, 2026-09-16) ───────────────────────────
+ *
+ * This used to answer `{supported:false}` for an engine predating model
+ * assignment. Owen deleted the population that served: *"Nothing is legacy
+ * because nothing exists publicly. There will be no person trying to access the
+ * system with an older version of crucible other than us."* A 0.6.6 engine emits
+ * both fields unconditionally and the 0.6.6 SDK reads them unconditionally,
+ * failing in `settings()` with the field's own name.
+ *
+ * ── LABELLED STOPGAP — DELETE THIS CHECK AT THE 0.6.6 RE-VENDOR ──────────
+ *
+ * The check below is here ONLY because the vendored SDK is still 0.6.3, which
+ * types both fields optional; the compiler will not let this function read them
+ * without it. It is not a vintage test and must not grow back into one — it
+ * refuses, by name, a document that the 0.6.6 client will itself refuse one
+ * layer earlier.
+ *
+ * **When `@crucible/client` moves to 0.6.6, delete the whole `if` and read the
+ * two fields directly.** Leaving it would make this a second owner of a rule the
+ * SDK holds, unreachable and therefore never exercised — the worst kind of
+ * guard, because nothing would tell you when its sentence stopped being true.
+ *
+ * An explicit refusal rather than a non-null assertion, deliberately: an
+ * assertion that turns out to be wrong crashes a settings window, and this names
+ * the server and the field instead. (BookForge took the same shape for the same
+ * reason.)
  */
-/**
- * THE TWO LOCAL-MODEL FIELDS, CORRELATED ONCE — and the only place a partial
- * document is caught.
- *
- * ── The rule, agreed with BookForge 2026-09-16 ──────────────────────────
- *
- * The SDK types both fields optional so that reading a 0.6.3 engine keeps
- * working, and a 0.6.6 engine emits both unconditionally. So:
- *
- *   * NEITHER present  → the engine predates model assignment. A FACT the
- *     document states, reported as `{supported: false}`, and the panel says so
- *     rather than drawing an empty picker. This is the document-vintage rule
- *     `CapabilityRow.route` already carries, one field along.
- *   * BOTH present      → the ordinary answer.
- *   * ONE present       → a defect, REFUSED BY NAME. There is no server that
- *     produces this and no screen that can draw it: an assignment without the
- *     list it was chosen from cannot be rendered, and a list without the
- *     assignments cannot say what is selected. Filling the missing half in
- *     would be inventing the one fact the person is here to read.
- *
- * A CLASS THE SERVER DID NOT MENTION GETS `null` AND AN EMPTY LIST, which is
- * not a fallback: `null` is the engine's own word for *"choose automatically"*,
- * and a class it offers nothing for genuinely has nothing to offer. What is
- * refused above is the document being half-shaped; what is normalised here is a
- * class this build knows about and that server does not serve.
- */
-function localModelsFrom(doc: EngineSettingsDocument): LocalModelSupport {
+function localModelsFrom(doc: EngineSettingsDocument): LocalModels {
   const assignedRaw = doc.localModels;
   const choicesRaw = doc.localModelChoices;
-  if (assignedRaw === undefined && choicesRaw === undefined) return { supported: false };
   if (assignedRaw === undefined || choicesRaw === undefined) {
     throw new Error(
-      'local_models_half_present: this engine sent '
-      + `${assignedRaw === undefined ? 'local_model_choices without local_models' : 'local_models without local_model_choices'}`
-      + '. One without the other cannot be drawn — an assignment needs the list it was chosen '
-      + 'from — and Foundry will not guess the missing half.',
+      'settings_local_models_missing: this engine did not send '
+      + `${assignedRaw === undefined ? 'local_models' : 'local_model_choices'}`
+      + '. Every engine sends both; an engine that does not is too old for this build of '
+      + 'Foundry, and updating Crucible on that machine is the fix.',
     );
   }
   const assigned = {} as Record<ModelClass, string | null>;
@@ -292,9 +285,19 @@ function localModelsFrom(doc: EngineSettingsDocument): LocalModelSupport {
       installed: row.installed,
     }));
   }
-  return { supported: true, assigned, choices };
+  return { assigned, choices };
 }
 
+/**
+ * The document, with the four route rows spelled out.
+ *
+ * THE ONLY SHAPING LEFT. The SDK reads every field and refuses a document that
+ * is not API v1's, so there is nothing here to read defensively; what it does
+ * NOT do is invent a row the server omitted, and §2 says an omitted row IS an
+ * answer (*"absent key = local"*). `local` is also the answer for a class the
+ * server named with a route this app has no row for, which is the conservative
+ * direction: it does not claim a person's book is being sent to a company.
+ */
 function documentFrom(doc: EngineSettingsDocument): SettingsDocument {
   return {
     localModels: localModelsFrom(doc),

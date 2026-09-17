@@ -178,55 +178,49 @@ export interface LocalModelChoice {
 }
 
 /**
- * WHICH LOCAL MODEL RUNS EACH CLASS — present, or a server too old to have the
- * question.
+ * WHICH LOCAL MODEL RUNS EACH CLASS, and what it could have run.
  *
- * ── WHY THIS IS ONE VALUE AND NOT TWO OPTIONAL FIELDS ────────────────────
+ * ── THERE IS NO "OLDER ENGINE" ARM, AND THERE USED TO BE ─────────────────
  *
- * `/v1/settings` carries `local_models` and `local_model_choices`, and the SDK
- * types both as optional because reading a 0.6.3 server must keep working. Two
- * optional fields let a caller hold one without the other — a state no server
- * produces and no screen can draw, because the assignment is meaningless
- * without the list it was chosen from. Mirroring them as two optionals would
- * put the burden of correlating them on every reader.
+ * This was a discriminated union whose `supported: false` arm meant an engine
+ * predating model assignment. Owen deleted the population it served, 2026-09-16:
+ * *"I won't be releasing any of this until it's completely done, so we don't
+ * need to worry about legacy functionality at all right now. Nothing is legacy
+ * because nothing exists publicly. There will be no person trying to access the
+ * system with an older version of crucible other than us."*
  *
- * So the mirror is a DISCRIMINATED value and the seam that builds it is the one
- * place the correlation is checked. The partial document becomes unrepresentable
- * rather than merely unlikely — the same move as fusing a venue to its source
- * (docs/PLAN.md, Wave 72): make the bad state unconstructible, not unreachable.
+ * So the vintage branch was correct engineering for a world with no inhabitants,
+ * and it cost a discriminant every reader had to remember the meaning of. A
+ * 0.6.6 engine emits both fields unconditionally and the 0.6.6 SDK reads them
+ * unconditionally, so a document without them fails in `settings()` naming the
+ * field — which is one owner of that rule, in the layer that can name it.
  *
- * ── ABSENCE IS A FACT ABOUT THE SERVER, NOT A DEFAULT TO FILL ────────────
+ * ── THE TWO HALVES STAY FUSED, THOUGH, AND THAT IS NOT THE SAME THING ────
  *
- * `supported: false` means the engine predates model assignment, and the panel
- * says so rather than drawing an empty picker. This is the document-vintage rule
- * {@link CapabilityRow.route} already states for its own field, agreed with
- * BookForge 2026-09-16: whole-document absence is a statement the document
- * makes; a PARTIAL document is a defect refused by name. A 0.6.6 engine emits
- * both fields unconditionally, so absence will keep meaning exactly this.
+ * The union went; the grouping did not. An assignment is meaningless without the
+ * list it was chosen from — a screen cannot draw "selected" against choices it
+ * does not have — so they remain ONE value rather than two fields a reader could
+ * be handed half of. That property was never about vintage.
  */
-export type LocalModelSupport =
-  | { supported: false }
-  | {
-    supported: true;
-    /**
-     * The class's chosen model, or `null`.
-     *
-     * **`null` IS A CHOICE, NOT AN ABSENCE** — the SDK states it: *"Null
-     * requests automatic selection, never a fallback."* So the picker draws it
-     * as a named option ("Choose automatically") rather than as an empty slot,
-     * and nothing in this app may read it as "nobody has decided" and
-     * substitute something.
-     */
-    assigned: Record<ModelClass, string | null>;
-    /** What the engine would accept for each class. May be empty for a class. */
-    choices: Record<ModelClass, LocalModelChoice[]>;
-  };
+export interface LocalModels {
+  /**
+   * The class's chosen model, or `null`.
+   *
+   * **`null` IS A CHOICE, NOT AN ABSENCE** — the SDK states it: *"Null requests
+   * automatic selection, never a fallback."* So the picker draws it as a named
+   * option ("Choose automatically") rather than as an empty slot, and nothing in
+   * this app may read it as "nobody has decided" and substitute something.
+   */
+  assigned: Record<ModelClass, string | null>;
+  /** What the engine would accept for each class. May be empty for a class. */
+  choices: Record<ModelClass, LocalModelChoice[]>;
+}
 
 export interface SettingsDocument {
   /** Every llm class, always all four — the server fills the ones nobody set. */
   routes: Record<LlmClass, RouteRow>;
-  /** Which local model runs each class, or a server too old to be asked. */
-  localModels: LocalModelSupport;
+  /** Which local model runs each class, and what it could have run. */
+  localModels: LocalModels;
   upstreams: {
     anthropic: KeyedUpstream;
     openai: KeyedUpstream;
