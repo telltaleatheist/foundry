@@ -50,13 +50,24 @@
  * ask for the same key four times. The rows point DOWN at it in words, which is
  * what BookForge's rows do and what its screenshot says.
  *
- * And Foundry's own cloud slots (`app-cloud-card`) sit below those, separate,
- * because they are a different mechanism with a different bill: an engine
- * upstream is the ENGINE forwarding on the operator's account, a cloud slot is
- * FOUNDRY calling the provider directly for a machine that has no engine at all
- * (docs/SLOTS.md §3). Adjacent because they are the same question — an account
- * that can run a text act — and headed separately because the money moves
- * differently.
+ * ── AND FOUNDRY'S OWN CLOUD SLOTS ARE NOT HERE AT ALL ────────────────────
+ *
+ * They were, for about an hour, as a second block headed "Cloud accounts
+ * Foundry calls itself" — Foundry's own keys, used when a job goes straight to
+ * a provider instead of to an engine (docs/SLOTS.md §3). Owen, reading the two
+ * blocks: *"the 'connect a provider' section - ist that already covered by
+ * having the api key input boxes above it?"*
+ *
+ * Not literally — one pays through the engine's account and one through
+ * Foundry's — but that distinction is invisible to somebody looking at two
+ * groups of Anthropic and OpenAI boxes on one page, and it fails his standing
+ * rule: *"foundry should only be exposing the settings it needs, nothing else."*
+ * Since Wave 66 every act goes through a Crucible server and the tiles are dark
+ * without one, so the direct-to-provider path is the one with no caller.
+ *
+ * THE MECHANISM IS UNTOUCHED — `cloud-providers.ts`, the slots, the dispatcher
+ * group headed "Cloud — costs credits" — and only the card is gone. Restoring
+ * it is one import.
  */
 import {
   ChangeDetectionStrategy, Component, computed, DestroyRef, inject, signal,
@@ -65,6 +76,8 @@ import { FormsModule } from '@angular/forms';
 
 import {
   LLM_CLASSES,
+  UPSTREAM_LABEL,
+  UPSTREAM_NAMES,
   defaultEngineServer,
   splitUpstreamModel,
   type LlmClass,
@@ -73,7 +86,7 @@ import {
   type SettingsDocument,
   type SettingsPatch,
 } from '@shared/engine-settings';
-import type { CrucibleCatalogRow, CruciblePullProgress } from '@shared/model-wire';
+import type { CruciblePullProgress } from '@shared/model-wire';
 import type { CrucibleServerView } from '@shared/slots';
 import { MODEL_CLASSES, type ModelClass } from '@shared/types';
 import { actWords, shortfallWords, sizeWords } from '../../core/crucible-words';
@@ -82,7 +95,6 @@ import {
   EngineUpstreamsComponent,
   type UpstreamApply,
 } from '../../components/engine-upstreams/engine-upstreams.component';
-import { CloudCardComponent } from './cloud-card.component';
 
 /**
  * THE JOBS, GROUPED BY WHAT THE WORK IS.
@@ -140,6 +152,8 @@ interface JobChip {
   readonly action: 'assign' | 'automatic' | 'route' | 'fetch';
   /** The model id, the upstream id, or the empty string for `automatic`. */
   readonly value: string;
+  /** What the free-text box opens with, for a `route` chip that opens one. */
+  readonly prefill: string;
   /**
    * Draw it dimmed — the engine is expected to refuse it, or it is not on the
    * machine yet. NEVER disabled: see {@link chipsFor}.
@@ -165,7 +179,7 @@ interface JobRow {
 
 @Component({
   selector: 'app-ai-pane',
-  imports: [CloudCardComponent, EngineUpstreamsComponent, FormsModule],
+  imports: [EngineUpstreamsComponent, FormsModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (servers().length === 0) {
@@ -305,59 +319,6 @@ interface JobRow {
           [busy]="working()"
           (apply)="applyUpstream($event)" />
 
-        <!-- ── And Foundry's own, which are a different bill ───────────── -->
-        <h3 class="group">Cloud accounts Foundry calls itself</h3>
-        <p class="detail">
-          Separate from the accounts above: these are Foundry's own keys, used when a job is sent
-          to a provider directly instead of to a Crucible server. They are the answer for a
-          machine with no engine at all, and they are never what work falls through to — a
-          provider is only ever a deliberate per-job choice.
-        </p>
-        <app-cloud-card />
-
-        <!-- ── What is on that machine, and what it could fetch ─────────── -->
-        <h3 class="group">
-          Models on that engine
-          @if (catalogProblem() === null && stock().length > 0) {
-            <span class="small">{{ installedWords() }}</span>
-          }
-        </h3>
-        @if (catalogProblem(); as why) { <p class="warn">{{ why }}</p> }
-        @for (row of stock(); track row.id) {
-          <div class="stock">
-            <span class="dotstate" [attr.data-ok]="row.installed"></span>
-            <span class="who">{{ row.name || row.id }}</span>
-            <span class="small mono">{{ stockWords(row) }}</span>
-            @if (pullOf(row.id); as run) {
-              <span class="small">{{ pullWords(run) }}</span>
-            } @else if (!row.installed) {
-              <button class="ghost" type="button" [disabled]="pulling()"
-                      (click)="fetch(row.kind, row.id)">Fetch</button>
-            } @else {
-              <!--
-                Owen asked for this and is short of disk: "they sohuld have a
-                way to delete models from crucible, too. probably through
-                bookforge/foundry settings". It supersedes PHASE15 3.5a, which
-                said neither app calls the remove door — but NOT the condition
-                on it, "an app does not call this on a user's behalf without
-                saying so on screen", which is why the press goes through a
-                question carrying the figure.
-              -->
-              <button class="ghost" type="button" [disabled]="removing() === row.id"
-                      (click)="remove(row)">
-                {{ removing() === row.id ? 'Removing…' : 'Remove' }}
-              </button>
-            }
-          </div>
-          @if (pullOf(row.id); as run) {
-            @if (run.error; as bad) { <p class="small bad">{{ bad.message }}</p> }
-          }
-        }
-        <p class="small">
-          A download's size is not known before it runs: these weights are a whole repository
-          rather than a list of files, and the engine does not state a total. What is already on
-          that machine is measured and shown above.
-        </p>
       } @else if (problem() === null) {
         <p class="small">Asking the engine…</p>
       }
@@ -393,9 +354,16 @@ interface JobRow {
       here keeps its own foreground and gains a mark plus an edge, which cannot
       go wrong against any theme because nothing about the contrast moves.
     */
+    /*
+      ONE LINE, NOT TWO. The tick used to sit ABOVE the name in a column, which
+      made a chosen chip taller than its neighbours and the whole row ragged —
+      Owen: "the buttons are oddly shaped". The tick is inline now and its slot
+      is reserved whether or not it is filled, so pressing one does not resize
+      it or shift the chips beside it.
+    */
     .chip {
-      display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
-      font: inherit; font-size: 12px; text-align: left;
+      display: inline-flex; align-items: baseline; gap: 6px;
+      font: inherit; font-size: 12px; text-align: left; white-space: nowrap;
       background: var(--bg-sunken); color: var(--text-primary);
       border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
       padding: 4px 10px; cursor: pointer;
@@ -405,10 +373,12 @@ interface JobRow {
     .chip:disabled { cursor: default; opacity: 0.6; }
     /* Expect the engine to refuse this, or it is not downloaded yet. Pressable. */
     .chip.dim .chip-name { color: var(--text-tertiary); }
-    .chip-name { display: block; }
     .chip-detail { font-size: 10px; color: var(--text-tertiary); }
-    .tick { font-size: 10px; color: var(--accent); min-height: 12px; }
-    .chip.server { min-width: 140px; }
+    /* A fixed slot, so a chip is the same size ticked and unticked. */
+    .tick { font-size: 10px; color: var(--accent); width: 8px; flex: none; }
+    /* The server chips DO stack, because their second line is a fact about the
+       machine rather than a mark on a choice. */
+    .chip.server { flex-direction: column; align-items: flex-start; gap: 1px; min-width: 140px; }
 
     .job {
       background: var(--bg-raised);
@@ -431,14 +401,6 @@ interface JobRow {
       border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
       padding: 4px 6px;
     }
-
-    .stock { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-    .stock .who { min-width: 0; flex: 1; }
-    .dotstate {
-      width: 8px; height: 8px; border-radius: 50%;
-      background: var(--text-tertiary); flex-shrink: 0;
-    }
-    .dotstate[data-ok="true"] { background: var(--ok); }
 
     .primary {
       display: inline-flex; align-items: center; justify-content: center;
@@ -470,41 +432,14 @@ export class AiPaneComponent {
   protected readonly problem = signal<string | null>(null);
   protected readonly upgradeMessage = signal<string | null>(null);
 
-  protected readonly catalog = signal<CrucibleCatalogRow[]>([]);
-  protected readonly catalogProblem = signal<string | null>(null);
   /** Pulls in flight or just finished, by subject id. Cleared on a fresh read. */
   private readonly pulls = signal<Record<string, CruciblePullProgress>>({});
-  /** Which row is being removed, so only its own button says so. */
-  protected readonly removing = signal<string | null>(null);
+  protected readonly pulling = computed(
+    () => Object.values(this.pulls()).some((run) => run.state === 'running'));
 
   /** The free-text box under a row, while that row's account chip is open. */
   protected readonly custom = signal<ModelClass | null>(null);
   protected readonly typed = signal('');
-
-  /*
-   * `catalog` is every subject the engine knows, INCLUDING BookForge's voices
-   * and RVC models — main reports the whole disk on purpose, because somebody
-   * looking at storage is asking about the whole disk. This page narrows it to
-   * `model`: a Foundry settings page listing voices would be the noise Owen
-   * objected to, and the acts this app has are all served by models.
-   */
-  protected readonly stock = computed(
-    () => this.catalog().filter((row) => row.kind === 'model'));
-  protected readonly pulling = computed(
-    () => Object.values(this.pulls()).some((run) => run.state === 'running'));
-
-  /**
-   * "45.6 GB of models on that machine" — the one figure this page can state
-   * without qualification, because it is measured rather than estimated.
-   */
-  protected readonly installedWords = computed(() => {
-    const rows = this.stock().filter((row) => row.installed);
-    const known = rows.filter((row) => row.installedBytes !== null);
-    const total = known.reduce((sum, row) => sum + (row.installedBytes ?? 0), 0);
-    const unmeasured = rows.length - known.length;
-    const tail = unmeasured > 0 ? `, plus ${unmeasured} whose size it did not state` : '';
-    return `${rows.length} installed — ${sizeWords(total)}${tail}`;
-  });
 
   /**
    * Every upstream model id THIS ENGINE ALREADY ROUTES SOMETHING TO.
@@ -644,6 +579,7 @@ export class AiPaneComponent {
       chosen: local && assigned === null,
       action: 'automatic',
       value: '',
+      prefill: '',
       dim: false,
     }];
 
@@ -655,6 +591,7 @@ export class AiPaneComponent {
         chosen: local && assigned === choice.id,
         action: choice.installed ? 'assign' : 'fetch',
         value: choice.id,
+        prefill: '',
         dim: !choice.fits || !choice.installed,
       });
     }
@@ -668,18 +605,37 @@ export class AiPaneComponent {
           chosen: upstream === id,
           action: 'route',
           value: id,
+          prefill: '',
           dim: false,
         });
       }
-      chips.push({
-        key: `${cls}:route:typed`,
-        label: 'an account…',
-        detail: 'name a model on an account the engine holds',
-        chosen: upstream !== null && !this.upstreamOptions().includes(upstream),
-        action: 'route',
-        value: '',
-        dim: false,
-      });
+      /*
+       * ONE CHIP PER CONFIGURED ACCOUNT, NAMED — and none at all when no
+       * account is set up.
+       *
+       * This was a single chip reading "an account…", drawn on every row
+       * whether or not any account existed. Owen, on meeting it: *"it says 'an
+       * account...' - not sure what that is."* Neither could anybody: it named
+       * no provider, and on a machine with no key configured it opened a box
+       * for a model id on an account the engine did not hold, which the engine
+       * then refused. A control that is meaningless until something else is
+       * true does not belong on screen until that thing is true — the row's own
+       * line already says where to go and set one up.
+       */
+      for (const name of UPSTREAM_NAMES) {
+        if (!settings.upstreams[name].configured) continue;
+        const open = upstream !== null && splitUpstreamModel(upstream)?.upstream === name;
+        chips.push({
+          key: `${cls}:route:${name}`,
+          label: `${UPSTREAM_LABEL[name]}…`,
+          detail: `name a model on the ${UPSTREAM_LABEL[name]} account this engine holds`,
+          chosen: open && !this.upstreamOptions().includes(upstream as string),
+          action: 'route',
+          value: '',
+          prefill: `${name}/`,
+          dim: false,
+        });
+      }
     }
 
     return chips;
@@ -702,10 +658,10 @@ export class AiPaneComponent {
       if (progress.server !== this.chosen()) return;
       this.pulls.update((all) => ({ ...all, [progress.id]: progress }));
       /*
-       * A LANDED PULL CHANGES BOTH HALVES: the stock row becomes installed, and
-       * the job's chip stops being a fetch and becomes something assignable. So
-       * the whole page re-reads rather than patching in place — the engine is
-       * the truth and this is a window onto it.
+       * A LANDED PULL CHANGES THE ROW IT WAS FOR: the job's chip stops being a
+       * fetch and becomes something assignable. So the page re-reads rather
+       * than patching in place — the engine is the truth and this is a window
+       * onto it.
        */
       if (progress.state === 'done') void this.load();
     });
@@ -728,10 +684,7 @@ export class AiPaneComponent {
     if (this.chosen().length === 0) {
       this.chosen.set(defaultEngineServer(view.servers)?.name ?? '');
     }
-    if (this.chosen().length > 0) {
-      await this.read();
-      await this.readCatalog();
-    }
+    if (this.chosen().length > 0) await this.read();
   }
 
   /**
@@ -762,27 +715,6 @@ export class AiPaneComponent {
     }
   }
 
-  /**
-   * The stock, read separately from the settings document and failing
-   * separately.
-   *
-   * TWO READS AND TWO PROBLEM LINES, deliberately. `/v1/settings` and
-   * `/v1/catalog` are different doors and an engine can answer one and not the
-   * other — and the halves are independently useful: knowing what is installed
-   * is worth having when the assignment door is unreachable, and the pickers
-   * work on an engine whose catalog read failed.
-   */
-  private async readCatalog(): Promise<void> {
-    if (!api) return;
-    try {
-      this.catalog.set(await api.crucible.catalog(this.chosen()));
-      this.catalogProblem.set(null);
-    } catch (err) {
-      this.catalog.set([]);
-      this.catalogProblem.set(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   protected choose(name: string): void {
     if (name === this.chosen()) return;
     this.chosen.set(name);
@@ -796,7 +728,6 @@ export class AiPaneComponent {
      */
     this.doc.set(null);
     this.capability.set(null);
-    this.catalog.set([]);
     this.pulls.set({});
     this.custom.set(null);
     this.upgradeMessage.set(null);
@@ -833,23 +764,6 @@ export class AiPaneComponent {
     return choice.installed ? room : `${room} · not installed`;
   }
 
-  protected stockWords(row: CrucibleCatalogRow): string {
-    if (!row.installed) return 'not installed';
-    return row.installedBytes === null ? 'installed' : sizeWords(row.installedBytes);
-  }
-
-  protected pullOf(id: string): CruciblePullProgress | null {
-    return this.pulls()[id] ?? null;
-  }
-
-  /**
-   * A PULL AS A SENTENCE, and it never invents a percentage.
-   *
-   * `bytes.total` is null wherever the server did not state one, which for a
-   * model it usually will not — the weights are a whole repository rather than
-   * a list of files. So the no-denominator case says how much has arrived and
-   * stops, instead of composing a bar out of a number nobody has.
-   */
   protected pullWords(run: CruciblePullProgress): string {
     switch (run.state) {
       case 'done': return run.skipped === null ? 'fetched' : run.skipped;
@@ -891,13 +805,13 @@ export class AiPaneComponent {
    */
   protected press(row: JobRow, chip: JobChip): void {
     if (chip.action === 'fetch') {
-      void this.fetch('model', chip.value);
+      void this.fetch(chip.value);
       return;
     }
     if (chip.action === 'route') {
       if (chip.value.length === 0) {
         this.custom.set(row.cls);
-        this.typed.set('');
+        this.typed.set(chip.prefill);
         return;
       }
       this.custom.set(null);
@@ -968,56 +882,17 @@ export class AiPaneComponent {
    * running — one machine, one disk, one network, and two concurrent
    * multi-gigabyte fetches onto one card is not a thing to make easy.
    *
-   * A REFUSAL TO START is drawn on the catalog's own problem line rather than
+   * A REFUSAL TO START is drawn on this page's own problem line rather than
    * invented into a progress frame: nothing was fetched, so there is no pull to
    * report the state of.
    */
-  protected async fetch(kind: string, id: string): Promise<void> {
+  private async fetch(id: string): Promise<void> {
     if (!api || this.pulling()) return;
     try {
-      await api.crucible.pull(this.chosen(), kind, id);
-      this.catalogProblem.set(null);
+      await api.crucible.pull(this.chosen(), 'model', id);
+      this.problem.set(null);
     } catch (err) {
-      this.catalogProblem.set(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  /**
-   * DELETE ONE MODEL'S WEIGHTS FROM THAT MACHINE.
-   *
-   * ASKED FIRST, ALWAYS, and main composes the question because main is what
-   * knows the size — deciding about 17.3 GB is a different decision from
-   * deciding about "a file". `keep` is the dismissal and the default.
-   *
-   * THE PAGE RE-READS AFTERWARDS rather than dropping the row locally. Removing
-   * a model can change the assignments too — the engine may have been using it
-   * for a class — and the engine is the truth about both.
-   */
-  protected async remove(row: CrucibleCatalogRow): Promise<void> {
-    if (!api || this.removing() !== null) return;
-    const answer = await api.crucible.confirmRemoveModel({
-      server: this.chosen(),
-      id: row.id,
-      name: row.name,
-      bytes: row.installedBytes,
-    });
-    if (answer !== 'remove') return;
-    this.removing.set(row.id);
-    try {
-      await api.crucible.removeModel(this.chosen(), row.kind, row.id);
-      this.catalogProblem.set(null);
-      await this.load();
-    } catch (err) {
-      /*
-       * THE SERVER'S OWN SENTENCE, unshortened. Its four refusals are four
-       * different things to do — `subject_in_use` names what is holding the
-       * weights, `subject_remove_failed` names the file that would not go — and
-       * a page that collapsed them into "could not remove" would throw away the
-       * half that says what to do next.
-       */
-      this.catalogProblem.set(err instanceof Error ? err.message : String(err));
-    } finally {
-      this.removing.set(null);
+      this.problem.set(err instanceof Error ? err.message : String(err));
     }
   }
 

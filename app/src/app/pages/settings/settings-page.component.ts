@@ -5,7 +5,6 @@ import { UiService } from '../../core/ui.service';
 import { AiPaneComponent } from './ai-pane.component';
 import { DoctorPaneComponent } from './doctor-pane.component';
 import { LibraryCardComponent } from './library-card.component';
-import { MachineModelsCardComponent } from './machine-models-card.component';
 import { ServersCardComponent } from './servers-card.component';
 import { SetupCardComponent } from './setup-card.component';
 
@@ -103,7 +102,7 @@ const SECTIONS: readonly SettingsSection[] = [
   selector: 'app-settings-page',
   imports: [
     AiPaneComponent, DoctorPaneComponent, LibraryCardComponent,
-    MachineModelsCardComponent, ServersCardComponent, SetupCardComponent,
+    ServersCardComponent, SetupCardComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -137,6 +136,16 @@ const SECTIONS: readonly SettingsSection[] = [
       </nav>
 
       <section class="pane">
+        <!--
+          THE SCROLLER FILLS THE WINDOW AND THE CONTENT IS CENTRED INSIDE IT.
+          It used to be one element doing both jobs — max-width 860 AND
+          overflow-y — which put the scrollbar at the right edge of the CONTENT,
+          860px into a 2000px window, with dead space beyond it. A scrollbar
+          belongs at the edge of the thing it scrolls, and the thing it scrolls
+          is the window. Owen, seeing it: "the scrollbar is in the middle of the
+          window."
+        -->
+        <div class="pane-inner">
         @if (current(); as section) {
           <header class="pane-head">
             <h2>{{ section.name }}</h2>
@@ -161,13 +170,6 @@ const SECTIONS: readonly SettingsSection[] = [
                    section list, where actions live. -->
               <app-setup-card />
 
-              <!--
-                WHAT IS ON THE DISK, across every store the app knows about —
-                docs/SLOTS.md §5b. Last because it acts on nothing: it describes
-                the consequences of choices made in the other three sections, so
-                it reads after them.
-              -->
-              <app-machine-models-card />
             }
 
             @case ('crucible') {
@@ -199,6 +201,7 @@ const SECTIONS: readonly SettingsSection[] = [
             }
           }
         }
+        </div>
       </section>
     </div>
   `,
@@ -206,10 +209,12 @@ const SECTIONS: readonly SettingsSection[] = [
     :host { display: block; height: 100%; overflow: hidden; }
     .page { display: grid; grid-template-columns: 200px minmax(0, 1fr); height: 100%; }
 
+    /* No divider rule: the rail is set apart by its own width and the pane's
+       indentation, and a line down the middle of a wide window reads as a seam.
+       Owen: "dont give it a border". */
     .rail {
       display: flex; flex-direction: column; gap: 4px;
       padding: 16px 8px;
-      border-right: 1px solid var(--border-subtle);
       overflow-y: auto;
     }
     .rail h1 { margin: 0 0 10px 10px; font-size: 18px; font-weight: 600; }
@@ -246,11 +251,13 @@ const SECTIONS: readonly SettingsSection[] = [
     }
     .section-item.guided-setup:hover { opacity: 1; }
 
-    .pane {
+    /* The scroller. Full width, so its scrollbar is the window's right edge. */
+    .pane { overflow-y: auto; padding: 20px 24px 60px; }
+    /* The content. Centred, and it re-centres as the window resizes because the
+       margin is auto rather than a computed offset. */
+    .pane-inner {
       display: flex; flex-direction: column; gap: 10px;
-      padding: 20px 24px 60px;
-      max-width: 860px;
-      overflow-y: auto;
+      max-width: 860px; margin: 0 auto;
     }
     .pane-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
     .pane-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
@@ -258,8 +265,7 @@ const SECTIONS: readonly SettingsSection[] = [
 
     @media (max-width: 720px) {
       .page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-      .rail { flex-direction: row; align-items: center; border-right: none;
-              border-bottom: 1px solid var(--border-subtle); overflow-x: auto; }
+      .rail { flex-direction: row; align-items: center; overflow-x: auto; }
       .rail h1 { display: none; }
       .section-list { flex-direction: row; }
       .section-item.guided-setup { margin-top: 0; padding-top: 7px; border-top: none; }
