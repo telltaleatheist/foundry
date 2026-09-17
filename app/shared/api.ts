@@ -1494,6 +1494,15 @@ export interface FoundryApi {
      * should be held open that long.
      */
     pull(server: string, kind: string, id: string): Promise<string>;
+    /**
+     * Ask before deleting weights. `keep` covers the dismissal and the window
+     * that had no card to draw — a question nobody saw was not agreed to.
+     */
+    confirmRemoveModel(
+      ask: { server: string; id: string; name: string | null; bytes: number | null },
+    ): Promise<'remove' | 'keep'>;
+    /** Delete an installed subject's files. The server's refusals arrive as they are. */
+    removeModel(server: string, kind: string, id: string): Promise<void>;
     /** Every frame of every pull in flight, each naming its server, kind and id. */
     onPullProgress(listener: (progress: CruciblePullProgress) => void): () => void;
     /** Read the platform's native installation plan without changing the machine. */

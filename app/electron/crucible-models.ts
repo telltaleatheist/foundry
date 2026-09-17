@@ -163,3 +163,49 @@ export async function pullSubject(
 
   return taskId;
 }
+
+/**
+ * REMOVE ONE SUBJECT'S FILES FROM THAT MACHINE.
+ *
+ * ── The ruling, and the contract note it supersedes ───────────────────────
+ *
+ * The SDK's own comment on `removeSubject` says *"3.5a is explicit that neither
+ * BookForge nor Foundry calls it in this phase; the host does, and an operator
+ * does from the page."* That was PHASE15's division, and Owen reversed it on
+ * 2026-09-16: *"they sohuld have a way to delete models from crucible, too.
+ * probably through bookforge/foundry settings"*, which crucible's own
+ * `docs/MODEL-CHOICE.md` then spells out as the app getting the delete button
+ * wired to that route. The SDK's sentence is stale in the same way its *"five
+ * things a subject can be"* was — the prose did not move with the ruling.
+ *
+ * ── WHAT DOES NOT CHANGE IS THE CONDITION ON IT ──────────────────────────
+ *
+ * *"An app does not call this on a user's behalf without saying so on screen."*
+ * That clause survives the reversal intact, and it is why this is reached only
+ * from a confirmed press: the door is not called to tidy up, not called because
+ * a different model was chosen, and never called without the person having read
+ * what goes and how much it frees.
+ *
+ * ── THE FOUR REFUSALS ARE THE SERVER'S AND ARE NOT RETRIED ───────────────
+ *
+ * `subject_unknown`, `subject_not_installed`, `subject_in_use` (whose
+ * `details.who` names what is holding it) and `subject_remove_failed` (whose
+ * `details.path` names the file that would not go). Each is a different thing
+ * for a person to do, so each arrives as its own sentence rather than as "could
+ * not remove".
+ */
+export async function removeModel(server: string, kind: string, id: string): Promise<void> {
+  if (!SUBJECT_KINDS.includes(kind as CrucibleSubjectKind)) {
+    throw new Error(
+      `"${kind}" is not a kind of thing this build of Foundry knows how to remove. It expects `
+      + `one of ${SUBJECT_KINDS.join(', ')}.`,
+    );
+  }
+  const entry = crucibleServerNamed(server);
+  if (entry === null) {
+    throw new Error(
+      `"${server}" is not a registered engine, so there is nothing of its to remove.`,
+    );
+  }
+  await (await engineClientFor(entry)).removeSubject(kind as CrucibleSubjectKind, id);
+}

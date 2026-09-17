@@ -157,6 +157,20 @@ const AUTOMATIC = 'automatic-choice';
                 } @else if (!row.installed) {
                   <button class="ghost" type="button" [disabled]="pulling()"
                           (click)="fetch(row)">Fetch</button>
+                } @else {
+                  <!--
+                    OWEN ASKED FOR THIS AND IS SHORT OF DISK: *"they sohuld have
+                    a way to delete models from crucible, too. probably through
+                    bookforge/foundry settings"*. It supersedes PHASE15 §3.5a,
+                    which said neither app calls the remove door — but NOT the
+                    condition on it, *"an app does not call this on a user's
+                    behalf without saying so on screen"*, which is why the press
+                    goes through a card carrying the figure.
+                  -->
+                  <button class="ghost" type="button" [disabled]="removing() === row.id"
+                          (click)="remove(row)">
+                    {{ removing() === row.id ? 'Removing…' : 'Remove' }}
+                  </button>
                 }
               </div>
               @if (pullOf(row.id); as run) {
@@ -245,6 +259,9 @@ export class EngineModelsCardComponent {
   protected readonly catalogProblem = signal<string | null>(null);
   /** Pulls in flight or just finished, by subject id. Cleared on a fresh read. */
   private readonly pulls = signal<Record<string, CruciblePullProgress>>({});
+
+  /** Which row is being removed, so only its own button says so. */
+  protected readonly removing = signal<string | null>(null);
 
   protected readonly stock = computed(
     () => this.catalog().filter((row) => row.kind === 'model'));
@@ -422,6 +439,48 @@ export class EngineModelsCardComponent {
       return `${run.step.name} (${run.step.index} of ${run.step.total})`;
     }
     return 'starting…';
+  }
+
+  /**
+   * DELETE ONE MODEL'S WEIGHTS FROM THAT MACHINE.
+   *
+   * ASKED FIRST, ALWAYS, and main composes the question because main is what
+   * knows the size — deciding about 17.3 GB is a different decision from
+   * deciding about "a file". `keep` is the dismissal and the default, so Escape
+   * and the scrim both leave the weights alone.
+   *
+   * THE CARD RE-READS AFTERWARDS rather than dropping the row locally. Removing
+   * a model can change the ASSIGNMENT half too — the engine may have been using
+   * it for a class — and the engine is the truth about both. A row struck out
+   * optimistically would be this app claiming a deletion the server may have
+   * refused.
+   */
+  protected async remove(row: CrucibleCatalogRow): Promise<void> {
+    if (!api || this.removing() !== null) return;
+    const answer = await api.crucible.confirmRemoveModel({
+      server: this.chosen(),
+      id: row.id,
+      name: row.name,
+      bytes: row.installedBytes,
+    });
+    if (answer !== 'remove') return;
+    this.removing.set(row.id);
+    try {
+      await api.crucible.removeModel(this.chosen(), row.kind, row.id);
+      this.catalogProblem.set(null);
+      await this.load();
+    } catch (err) {
+      /*
+       * THE SERVER'S OWN SENTENCE, unshortened. Its four refusals are four
+       * different things to do — `subject_in_use` names what is holding the
+       * weights, `subject_remove_failed` names the file that would not go — and
+       * a card that collapsed them into "could not remove" would throw away the
+       * half that says what to do next.
+       */
+      this.catalogProblem.set(err instanceof Error ? err.message : String(err));
+    } finally {
+      this.removing.set(null);
+    }
   }
 
   /**

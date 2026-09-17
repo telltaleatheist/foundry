@@ -273,6 +273,12 @@ const api: FoundryApi = {
     startCrucible: () => ipcRenderer.invoke('crucible:start'),
     catalog: (server) => ipcRenderer.invoke('crucible:catalog', server),
     pull: (server, kind, id) => ipcRenderer.invoke('crucible:pull', server, kind, id),
+    // NOT named `ask`: that is the helper on the line below, and a parameter of
+    // that name shadows it into something with no call signature.
+    confirmRemoveModel: (about) =>
+      ask<'remove' | 'keep'>('crucible:confirm-remove-model', about, 'keep'),
+    removeModel: (server, kind, id) =>
+      ipcRenderer.invoke('crucible:remove-model', server, kind, id),
     onPullProgress: (listener) =>
       subscribe<CruciblePullProgress>('crucible:pull-progress', listener),
     installPlan: () => ipcRenderer.invoke('crucible:install-plan'),
