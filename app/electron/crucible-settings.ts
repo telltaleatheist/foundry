@@ -294,9 +294,28 @@ function localModelsFrom(doc: EngineSettingsDocument): LocalModels {
  * THE ONLY SHAPING LEFT. The SDK reads every field and refuses a document that
  * is not API v1's, so there is nothing here to read defensively; what it does
  * NOT do is invent a row the server omitted, and §2 says an omitted row IS an
- * answer (*"absent key = local"*). `local` is also the answer for a class the
- * server named with a route this app has no row for, which is the conservative
- * direction: it does not claim a person's book is being sent to a company.
+ * answer (*"absent key = local"*). That absence is the one thing filled in
+ * below, and it is a CONTRACT rule about a current server, not tolerance of an
+ * old one.
+ *
+ * ── AND IT NO LONGER SECOND-GUESSES THE VALUE ────────────────────────────
+ *
+ * This read `row?.route === 'upstream' ? 'upstream' : 'local'`, defended as
+ * *"the conservative direction: it does not claim a person's book is being sent
+ * to a company"*. That was a good argument against the wrong alternative. The
+ * alternative was never "claim upstream" — it is that **the value cannot
+ * arrive**: `readSettings` parses the field as `oneOf(str(entry, 'route'),
+ * ROUTES, …)` (verified in the vendored 0.6.3 client), so a route that is
+ * neither word throws a protocol error naming `settings.routes.<class>.route`
+ * before this function is reached.
+ *
+ * So the ternary was a SECOND reader of a field the SDK had already validated,
+ * and a weaker one: it turned a value that cannot exist into a silent `local`.
+ * A `local` invented here is exactly the fact the capability path refuses to
+ * invent (`capability_route_unknown`), on the argument that it decides whether
+ * a run costs GPU-minutes or money — two readers of one concept, one refusing
+ * and one defaulting. The SDK's value is used now, and the refusal has one
+ * owner.
  */
 function documentFrom(doc: EngineSettingsDocument): SettingsDocument {
   return {
@@ -305,7 +324,9 @@ function documentFrom(doc: EngineSettingsDocument): SettingsDocument {
       LLM_CLASSES.map((cls) => {
         const row = doc.routes[cls];
         return [cls, {
-          route: row?.route === 'upstream' ? 'upstream' : 'local',
+          // The SDK has already refused anything that is not one of the two
+          // words; the fallback is for an ABSENT row, which §2 makes an answer.
+          route: row?.route ?? 'local',
           model: row?.model ?? null,
         }];
       }),
