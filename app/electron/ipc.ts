@@ -431,6 +431,40 @@ function refuseRunningGhost(row: Job): void {
  *
  * NULL FOR A REAL STEP, and the ordinary delete goes on exactly as it did.
  */
+/**
+ * DROP ONE STEP — the door a HOST reaches, and the one the handler runs.
+ *
+ * BookForge lists a Foundry export as a version nested under its parent book,
+ * and Owen's ruling of 2026-09-17 makes those two rows one fact: deleting the
+ * version there must drop the step here. That host lives in another process's
+ * renderer and can never send this app's `ipcMain` message, so what it needs is
+ * a FUNCTION — re-exported through `mount.ts` beside `exportEpubFromStep`.
+ *
+ * IT IS A HOLDER RATHER THAN THE BODY ITSELF because the body belongs to
+ * `registerIpc`'s scope: the two proofs it must run (`refuseBusyStepDelete`,
+ * and `refuseBusyJob` under it) close over locals there. Lifting those to module
+ * scope to satisfy this caller would be rearranging the file around its newest
+ * reader. So the body is assigned once, where it is written, and this is the
+ * only way in from outside — which keeps ONE body rather than a copy shaped like
+ * it. A copy would have to carry the ghost branch, both busy proofs and the
+ * subtree cascade, and the first edit to either would leave a press in Foundry
+ * and a press in BookForge deleting different things.
+ *
+ * BEFORE `registerIpc` RUNS IT REFUSES BY NAME. Answering "deleted" from an app
+ * that has not mounted would be the silent success this codebase refuses
+ * everywhere else.
+ */
+let stepDeleteDoor: ((projectDir: string, stepId: string) => Promise<unknown>) | null = null;
+
+export function deleteLedgerStep(projectDir: string, stepId: string): Promise<unknown> {
+  if (stepDeleteDoor === null) {
+    return Promise.reject(new Error(
+      'Foundry has not been mounted, so there is no ledger to delete a step from. '
+      + '`mountFoundry` must run before a host can drop a step.'));
+  }
+  return stepDeleteDoor(projectDir, stepId);
+}
+
 function promisedDeletion(projectDir: string, stepId: string): StepDeletion | null {
   const rows = rowsIn(projectDir);
   const row = rowMinting(rows, stepId);
@@ -3176,7 +3210,8 @@ export function registerIpc(): void {
     await refuseBusyStepDelete(projectDir, stepId);
     return describeStepDelete(projectDir, stepId);
   });
-  ipcMain.handle('ledger:delete', async (_event, projectDir: string, stepId: string) => {
+  stepDeleteDoor = async (projectDir: string, stepId: string) => {
+
     /*
      * A GHOST IS REMOVED FROM THE QUEUE, not deleted from a ledger it is not in.
      * A row still waiting leaves by `remove`; one already running leaves by
@@ -3209,7 +3244,9 @@ export function registerIpc(): void {
     // the question and the answer, and this is the call that unlinks something.
     await refuseBusyStepDelete(projectDir, stepId);
     return deleteStep(projectDir, stepId);
-  });
+  };
+  ipcMain.handle('ledger:delete', (_event, projectDir: string, stepId: string) =>
+    deleteLedgerStep(projectDir, stepId));
 
   // ── The library folder ───────────────────────────────────────────────────
   /*
