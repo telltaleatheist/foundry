@@ -63,7 +63,7 @@ import {
 } from './crucible-registry';
 import { readCapability } from './crucible-dispatch';
 import { readEngineSettings, testUpstream, writeEngineSettings } from './crucible-settings';
-import { crucibleRunState, startCrucible } from './crucible-start';
+import { crucibleFaultWords, crucibleRunState, startCrucible } from './crucible-start';
 import { engineCatalog, pullSubject, removeModel } from './crucible-models';
 import type {
   SettingsDocument,
@@ -4033,31 +4033,70 @@ export function registerIpc(): void {
    *
    * ANSWERED RATHER THAN ASKED IS THE ORDINARY CASE, and it is why this is a
    * question door rather than a state read the renderer branches on: running,
-   * absent and hosted all resolve without a card, so nothing flickers on the
-   * three startups out of four where there is nothing to say. Only
-   * `installed && not running` composes one.
+   * absent, unhealthy and hosted all resolve without a card, so nothing flickers
+   * on the startups where there is nothing to say.
    *
-   * THE CARD NAMES THE TRAY, NOT THE ENGINE, because that is what will be
-   * started (electron/crucible-start.ts argues why at length) and because the
-   * thing a person is agreeing to is a program that stays running and keeps the
-   * engine up — which is a different promise from "run this once".
+   * ── THE THREE ANSWERS, AND WHY SILENCE IS ONE OF THEM ───────────────────
+   *
+   * Owen met the old version of this door on 2026-09-17 with a perfectly healthy
+   * engine and was told to repair his installation, because every state that was
+   * not `running`, `stopped` or `absent` came through as one word and drew one
+   * card. electron/crucible-start.ts carries the full account of what had really
+   * happened — a three-second timeout on `/v1/info` — and why the fold is gone.
+   * What is left here is the consequence:
+   *
+   *   * `stopped` and `unreachable` compose the OFFER. Something is installed
+   *     and nothing is serving, and the press is the repair.
+   *   * `unhealthy` composes NOTHING. It answered its ping, so there is nothing
+   *     to start; and the Servers card watches that machine continuously, so a
+   *     card here would be a second, worse voice on a question already covered.
+   *     It is logged, because somebody reporting "it feels slow" deserves to
+   *     have this line in the file.
+   *   * `problem` composes the alarm — and now only ever over a fault in the
+   *     installation, in that fault's own words rather than in a sentence that
+   *     names two possibilities and then an action fitting one of them.
+   *
+   * THE CARD NAMES THE MANAGED SERVICE, NOT A ONE-OFF RUN, because the thing a
+   * person is agreeing to is something that stays up after Foundry closes, which
+   * is a different promise from "run this once" and one they should make
+   * knowingly.
    */
   ipcMain.handle('crucible:offer-start', async (): Promise<Asked<'start' | 'later'>> => {
     const state = await crucibleRunState();
-    if (state.kind === 'problem') return {
-      kind: 'ask', question: {
-        title: 'Crucible needs attention', message: state.why,
-        detail: ['Open Crucible to repair its local installation or connection.'],
-        choices: [{ key: 'later', label: 'Close' }], preferred: 'later',
-        dismissed: 'later', checkbox: null,
-      },
-    };
-    if (state.kind !== 'stopped') return { kind: 'answered', answer: 'later' };
+    if (state.kind === 'problem') {
+      const words = crucibleFaultWords(state.fault);
+      return {
+        kind: 'ask', question: {
+          title: words.title, message: state.why, detail: words.detail,
+          choices: [{ key: 'later', label: 'Close' }], preferred: 'later',
+          dismissed: 'later', checkbox: null,
+        },
+      };
+    }
+    if (state.kind === 'unhealthy') {
+      console.log(
+        `[crucible] the local engine answered its ping and did not finish the rest: ${state.why}. `
+        + 'Nothing is offered — there is nothing to start, and nothing here repairs a slow '
+        + 'answer. The Servers card has it from now on.',
+      );
+      return { kind: 'answered', answer: 'later' };
+    }
+    if (state.kind !== 'stopped' && state.kind !== 'unreachable') {
+      return { kind: 'answered', answer: 'later' };
+    }
     return {
       kind: 'ask',
       question: {
         title: 'Start Crucible?',
-        message: 'Crucible is installed on this computer and is stopped.',
+        /*
+         * TWO SENTENCES FOR TWO STATES, because they are different facts and a
+         * person who reads "is stopped" about a machine whose tray icon they can
+         * see has been told something they know to be false. `unreachable` is the
+         * one where Crucible believes it is up and nothing is answering.
+         */
+        message: state.kind === 'stopped'
+          ? 'Crucible is installed on this computer and is stopped.'
+          : 'Crucible is installed on this computer and is not answering.',
         detail: [
           'Crucible is the GPU engine. Translation, simplification, cleanup, analysis and page '
           + 'reading all run on it, and none of them can run while it is stopped. Opening a book, '
