@@ -289,11 +289,11 @@ async function provision(): Promise<void> {
  * The window, plus the two things only this program does with a fresh one.
  *
  * Both hang off `did-finish-load` and both did before the split, inside
- * `createWindow` itself: a document named on the command line is handed over
- * once there is a renderer listening, because `document:opened` is a push and
- * sending it earlier sends it to nobody; and the environments this machine is
- * missing are fetched as shelf rows, not awaited, because the window is already
- * usable and a doctor run is seconds.
+ * `createWindow` itself: every document the outside world has handed this app so
+ * far is opened once there is a renderer listening, because `document:opened` is
+ * a push and sending it earlier sends it to nobody; and the environments this
+ * machine is missing are fetched as shelf rows, not awaited, because the window
+ * is already usable and a doctor run is seconds.
  *
  * They are attached HERE rather than in `openWindow` because they are the
  * shell's: a hosted window has no argv of its own and is not the place to start
@@ -304,11 +304,51 @@ function openTheWindow(): void {
   const win = foundryWindow();
   if (win === null) return;
   whenRendererReady(win, () => {
-    const named = documentFromArgv(process.argv);
-    if (named) void openDocument(named);
+    for (const target of waiting.splice(0)) void openDocument(target);
     void provision();
   });
 }
+
+/*
+ * ── THE DOUBLE-CLICK THAT OPENED THE HOME PAGE ──────────────────────────────
+ *
+ * `document:opened` is a PUSH, and every way a file reaches this app from
+ * outside it can arrive before there is anything to push to. On macOS a
+ * double-click in Finder LAUNCHES Foundry and delivers the file as `open-file`,
+ * which fires before `whenReady` — so `openDocument` ran against zero windows,
+ * the message went nowhere, and the app came up on Home. Double-clicking the
+ * same file again worked, because by then the renderer was listening; that was
+ * the bug, not a quirk.
+ *
+ * So nothing opens a document until there is a page to open it in. A file that
+ * arrives too early WAITS here, and the window's `did-finish-load` drains it.
+ * The launch document from argv goes in the same queue at module load — first
+ * in, because argv exists before any event fires — which also means a window
+ * reopened later (macOS, everything closed, app still running) does NOT re-open
+ * the file the app was launched with hours ago.
+ */
+const waiting: string[] = [];
+
+function openWhenThereIsAWindow(target: string): void {
+  const win = foundryWindow();
+  if (win !== null) {
+    // A window mid-load is still too early, and `whenRendererReady` knows the
+    // difference between a page that is up and one that is on its way.
+    whenRendererReady(win, () => void openDocument(target));
+    return;
+  }
+  waiting.push(target);
+  /*
+   * No window, and the reason matters. Before `whenReady` there is one coming —
+   * `openTheWindow` builds it and drains this queue. After it, there is not:
+   * macOS keeps the app alive with every window closed, and a file opened with
+   * it then has to build the window itself or it would wait forever.
+   */
+  if (app.isReady()) openTheWindow();
+}
+
+const launchDocument = documentFromArgv(process.argv);
+if (launchDocument !== null) waiting.push(launchDocument);
 
 /*
  * ONE FOUNDRY PER MACHINE. Foundry is a program a .pdf or .epub can be
@@ -334,7 +374,7 @@ if (!app.requestSingleInstanceLock()) {
     const named = documentFromArgv(argv);
     // Resolved against the SECOND instance's cwd, not ours: a relative path on
     // its command line means nothing from where this process happens to sit.
-    if (named) void openDocument(path.resolve(workingDirectory, named));
+    if (named) openWhenThereIsAWindow(path.resolve(workingDirectory, named));
   });
 }
 
@@ -369,9 +409,16 @@ void app.whenReady().then(async () => {
   });
 });
 
+/*
+ * macOS's open-with, for a launch AND for an app that is already up. Registered
+ * at module load rather than inside `whenReady`, because on a cold launch this
+ * event beats `ready` — a handler installed later would miss the very file the
+ * app was started for. Where the file goes from here is `openWhenThereIsAWindow`'s
+ * problem, and it is the whole reason that function exists.
+ */
 app.on('open-file', (event, filePath) => {
   event.preventDefault();
-  void openDocument(filePath);
+  openWhenThereIsAWindow(filePath);
 });
 
 app.on('window-all-closed', () => {
