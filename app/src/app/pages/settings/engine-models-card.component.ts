@@ -52,6 +52,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } 
 import { FormsModule } from '@angular/forms';
 
 import { defaultEngineServer, type LocalModelChoice, type SettingsDocument } from '@shared/engine-settings';
+import type { CrucibleCatalogRow, CruciblePullProgress } from '@shared/model-wire';
 import type { CrucibleServerView } from '@shared/slots';
 import { MODEL_CLASSES, type ModelClass } from '@shared/types';
 import { actWords, sizeWords } from '../../core/crucible-words';
@@ -130,6 +131,36 @@ const AUTOMATIC = 'automatic-choice';
               KV cache, which a long context on a large model adds several gigabytes to. A model
               can be offered as fitting and still run out of memory when it loads.
             </p>
+
+            <!-- ── What is on that machine, and what it could fetch ───────── -->
+            <div class="card-head stock-head">
+              <span class="card-title">Models on that engine</span>
+              @if (catalogProblem() === null && stock().length > 0) {
+                <span class="small">{{ installedWords() }}</span>
+              }
+            </div>
+            @if (catalogProblem(); as why) { <p class="warn">{{ why }}</p> }
+            @for (row of stock(); track row.id) {
+              <div class="stock">
+                <span class="dotstate" [attr.data-ok]="row.installed"></span>
+                <span class="who">{{ row.name || row.id }}</span>
+                <span class="small mono">{{ stockWords(row) }}</span>
+                @if (pullOf(row.id); as run) {
+                  <span class="small">{{ pullWords(run) }}</span>
+                } @else if (!row.installed) {
+                  <button class="ghost" type="button" [disabled]="pulling()"
+                          (click)="fetch(row)">Fetch</button>
+                }
+              </div>
+              @if (pullOf(row.id); as run) {
+                @if (run.error; as bad) { <p class="small bad">{{ bad.message }}</p> }
+              }
+            }
+            <p class="small">
+              A download's size is not known before it runs: these weights are a whole repository
+              rather than a list of files, and the engine does not state a total. What is already
+              on that machine is measured and shown above.
+            </p>
           } @else {
             <!--
               A FACT ABOUT THE SERVER, NOT AN EMPTY STATE. The document carried
@@ -175,6 +206,24 @@ const AUTOMATIC = 'automatic-choice';
       padding: 4px 6px;
     }
     select.wide { flex: 1; min-width: 0; }
+    .stock-head { margin-top: 4px; }
+    .stock { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .stock .who { min-width: 0; flex: 1; }
+    .mono { font-family: var(--font-mono); }
+    .bad { color: var(--error); }
+    .dotstate {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-tertiary); flex-shrink: 0;
+    }
+    .dotstate[data-ok="true"] { background: var(--ok); }
+    button.ghost {
+      font: inherit; font-size: 11px;
+      background: transparent; color: var(--text-secondary);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 3px 10px; cursor: pointer;
+    }
+    button.ghost:disabled { opacity: 0.5; cursor: default; }
   `,
 })
 export class EngineModelsCardComponent {
@@ -186,6 +235,43 @@ export class EngineModelsCardComponent {
   protected readonly problem = signal<string | null>(null);
 
   protected readonly support = computed(() => this.doc()?.localModels ?? null);
+
+  /*
+   * ── THE STOCK PANEL (step 2) ──────────────────────────────────────────
+   *
+   * `catalog` is every subject the engine knows, INCLUDING BookForge's voices
+   * and RVC models — main reports the whole disk on purpose, because somebody
+   * looking at storage is asking about the whole disk. The CARD narrows it,
+   * and narrows it to `model`: a Foundry settings page listing voices would be
+   * the noise Owen objected to, and the acts this app has are all served by
+   * models.
+   */
+  protected readonly catalog = signal<CrucibleCatalogRow[]>([]);
+  protected readonly catalogProblem = signal<string | null>(null);
+  /** Pulls in flight or just finished, by subject id. Cleared on a fresh read. */
+  private readonly pulls = signal<Record<string, CruciblePullProgress>>({});
+
+  protected readonly stock = computed(
+    () => this.catalog().filter((row) => row.kind === 'model'));
+  protected readonly pulling = computed(
+    () => Object.values(this.pulls()).some((run) => run.state === 'running'));
+
+  /**
+   * "45.6 GB of models on that machine" — the one figure this screen can state
+   * without qualification, because it is measured rather than estimated.
+   *
+   * A row whose `installedBytes` is null contributes nothing rather than being
+   * guessed at; on a healthy engine those are exactly the not-installed rows,
+   * which weigh nothing.
+   */
+  protected readonly installedWords = computed(() => {
+    const rows = this.stock().filter((row) => row.installed);
+    const known = rows.filter((row) => row.installedBytes !== null);
+    const total = known.reduce((sum, row) => sum + (row.installedBytes ?? 0), 0);
+    const unmeasured = rows.length - known.length;
+    const tail = unmeasured > 0 ? `, plus ${unmeasured} whose size it did not state` : '';
+    return `${rows.length} installed — ${sizeWords(total)}${tail}`;
+  });
 
   /**
    * One row per act, in {@link MODEL_CLASSES} order.
@@ -208,6 +294,24 @@ export class EngineModelsCardComponent {
 
   constructor() {
     effect(() => { void this.load(); }, { allowSignalWrites: true });
+
+    /*
+     * EVERY FRAME OF EVERY PULL, filtered to the engine this card is looking
+     * at. Main broadcasts to all windows and names the server on each frame, so
+     * a card watching the Mac does not draw the PC's download — and a person
+     * with both cards open in two windows sees each one's own work.
+     */
+    api?.crucible.onPullProgress((progress) => {
+      if (progress.server !== this.chosen()) return;
+      this.pulls.update((all) => ({ ...all, [progress.id]: progress }));
+      /*
+       * A LANDED PULL CHANGES BOTH HALVES OF THIS CARD: the row becomes
+       * installed, and the assignment picker gains a model it may now choose.
+       * So the whole card re-reads rather than patching the row in place —
+       * the engine is the truth and this is a window onto it.
+       */
+      if (progress.state === 'done') void this.load();
+    });
   }
 
   private async load(): Promise<void> {
@@ -217,7 +321,32 @@ export class EngineModelsCardComponent {
     if (this.chosen().length === 0) {
       this.chosen.set(defaultEngineServer(view.servers)?.name ?? '');
     }
-    if (this.chosen().length > 0) await this.read();
+    if (this.chosen().length > 0) {
+      await this.read();
+      await this.readCatalog();
+    }
+  }
+
+  /**
+   * The stock, read separately from the settings document and failing
+   * separately.
+   *
+   * TWO READS AND TWO PROBLEM LINES, deliberately. `/v1/settings` and
+   * `/v1/catalog` are different doors and an engine can answer one and not the
+   * other — and the halves are independently useful: knowing what is installed
+   * is worth having when the assignment door is unreachable, and the assignment
+   * picker works on an engine whose catalog read failed. Folding them into one
+   * try would black out both halves over either failure.
+   */
+  private async readCatalog(): Promise<void> {
+    if (!api) return;
+    try {
+      this.catalog.set(await api.crucible.catalog(this.chosen()));
+      this.catalogProblem.set(null);
+    } catch (err) {
+      this.catalog.set([]);
+      this.catalogProblem.set(err instanceof Error ? err.message : String(err));
+    }
   }
 
   /** One read. A failure is DRAWN and the document cleared — never swallowed. */
@@ -237,7 +366,84 @@ export class EngineModelsCardComponent {
 
   protected choose(name: string): void {
     this.chosen.set(name);
+    /*
+     * THE PULLS GO WITH THE ENGINE. They are keyed by subject id, and two
+     * engines can be fetching the same model — so carrying the map across would
+     * draw the PC's progress on the Mac's row. A pull that is still running is
+     * not lost: main keeps following it and its next frame names its own
+     * server, which this card ignores until it is looking at that engine again.
+     */
+    this.pulls.set({});
     void this.read();
+    void this.readCatalog();
+  }
+
+  /** The pull for this row, or null. Keyed by id, which is unique per engine. */
+  protected pullOf(id: string): CruciblePullProgress | null {
+    return this.pulls()[id] ?? null;
+  }
+
+  /**
+   * What is known about one row's bytes — and "not installed" says nothing
+   * about size, because nothing knows it.
+   *
+   * `expectedBytes` is null for every model (the contract: the weights are a
+   * whole-repo snapshot no manifest sizes, *"never an estimate"*), so there is
+   * no honest figure to put beside a Fetch button. Saying so once under the
+   * list is better than five rows each claiming "unknown".
+   */
+  protected stockWords(row: CrucibleCatalogRow): string {
+    if (!row.installed) return 'not installed';
+    return row.installedBytes === null
+      ? 'installed, size not stated'
+      : `installed · ${sizeWords(row.installedBytes)}`;
+  }
+
+  /**
+   * A pull in words — and it survives having NO DENOMINATOR, which is the
+   * ordinary case here rather than the edge.
+   *
+   * The server states `bytesTotal` only where a manifest declared one, and for
+   * a model it does not. So the running sentence counts UP rather than showing
+   * a percentage: a bar that invented a denominator would be a bar that jumps
+   * when the real total arrives, or never moves off an imagined one.
+   */
+  protected pullWords(run: CruciblePullProgress): string {
+    switch (run.state) {
+      case 'done': return run.skipped === null ? 'fetched' : run.skipped;
+      case 'failed': return 'could not be fetched';
+      case 'cancelled': return 'stopped';
+      default: break;
+    }
+    if (run.bytes !== null) {
+      const done = sizeWords(run.bytes.done);
+      return run.bytes.total === null
+        ? `fetching — ${done} so far`
+        : `fetching — ${done} of ${sizeWords(run.bytes.total)}`;
+    }
+    if (run.step !== null) {
+      return `${run.step.name} (${run.step.index} of ${run.step.total})`;
+    }
+    return 'starting…';
+  }
+
+  /**
+   * ONE PRESS, ONE PULL. The button is gone while any pull on this engine is
+   * running — one machine, one disk, one network, and two concurrent
+   * multi-gigabyte fetches onto one card is not a thing to make easy.
+   *
+   * A REFUSAL TO START is drawn on the catalog's own problem line rather than
+   * invented into a progress frame: nothing was fetched, so there is no pull to
+   * report the state of.
+   */
+  protected async fetch(row: CrucibleCatalogRow): Promise<void> {
+    if (!api || this.pulling()) return;
+    try {
+      await api.crucible.pull(this.chosen(), row.kind, row.id);
+      this.catalogProblem.set(null);
+    } catch (err) {
+      this.catalogProblem.set(err instanceof Error ? err.message : String(err));
+    }
   }
 
   /**

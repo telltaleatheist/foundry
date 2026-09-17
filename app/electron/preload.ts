@@ -11,6 +11,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { FoundryApi, MenuAction } from '../shared/api';
 import type { CrucibleCoordinationState } from '../shared/coordinate-wire';
 import type { HostOffers, HostStatus } from '../shared/host-ops';
+import type { CruciblePullProgress } from '../shared/model-wire';
 import type {
   AppQuestion,
   Asked,
@@ -270,6 +271,10 @@ const api: FoundryApi = {
      */
     offerStart: () => ask<'start' | 'later'>('crucible:offer-start', null, 'later'),
     startCrucible: () => ipcRenderer.invoke('crucible:start'),
+    catalog: (server) => ipcRenderer.invoke('crucible:catalog', server),
+    pull: (server, kind, id) => ipcRenderer.invoke('crucible:pull', server, kind, id),
+    onPullProgress: (listener) =>
+      subscribe<CruciblePullProgress>('crucible:pull-progress', listener),
     installPlan: () => ipcRenderer.invoke('crucible:install-plan'),
     install: () => ipcRenderer.invoke('crucible:install'),
     onInstallLine: (listener) => subscribe<string>('crucible:install-line', listener),
