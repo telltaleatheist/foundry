@@ -12,6 +12,7 @@ import { OpenDocumentsService, type Tab } from '../../core/documents.service';
 import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
 import { api, hosted } from '../../core/foundry';
+import { RunProgressComponent } from '../run-progress/run-progress.component';
 import { RunTargetComponent } from '../run-target/run-target.component';
 
 /**
@@ -45,7 +46,7 @@ import { RunTargetComponent } from '../run-target/run-target.component';
  */
 @Component({
   selector: 'app-ocr-dialog',
-  imports: [FormsModule, RunTargetComponent],
+  imports: [FormsModule, RunProgressComponent, RunTargetComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="scrim" (click)="ui.closeOcr()"></div>
@@ -71,11 +72,7 @@ import { RunTargetComponent } from '../run-target/run-target.component';
         -->
         @if (watched(); as job) {
           <p class="fact">{{ nameFor(input) }}</p>
-          <div class="bar" [attr.data-state]="job.state">
-            <div class="fill" [style.width.%]="percent(job)"></div>
-          </div>
-          <p class="note">{{ progressWords(job) }}</p>
-          @if (job.error; as reason) { <p class="problem">{{ reason }}</p> }
+          <app-run-progress [job]="job" verb="Reading" />
         } @else {
           <!--
             A PICKER RATHER THAN A READONLY BOX, and that is what makes a batch
@@ -212,7 +209,7 @@ import { RunTargetComponent } from '../run-target/run-target.component';
         -->
         @if (watched(); as job) {
           <footer class="foot">
-            <p class="beside">{{ progressWords(job) }}</p>
+            <p class="beside">{{ job.state === 'done' ? 'Done.' : 'It keeps going if you close this.' }}</p>
             <button class="ghost" (click)="cancelRun(job.id)">Stop</button>
             <button class="primary" (click)="background()">Send to background</button>
           </footer>
@@ -331,21 +328,7 @@ import { RunTargetComponent } from '../run-target/run-target.component';
       margin: 0; font-size: 12px; color: var(--text-primary);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    /* EMPTY IS A REAL STATE and is drawn as one: a run that has not reported a
-       fraction yet shows a track with nothing in it, rather than a bar this app
-       invented a position for. */
-    .bar {
-      height: 4px; border-radius: 999px;
-      background: var(--bg-sunken); overflow: hidden;
-    }
-    .fill {
-      height: 100%; width: 0;
-      background: var(--accent);
-      transition: width 200ms cubic-bezier(0, 0, 0.2, 1);
-    }
-    .bar[data-state="failed"] .fill, .bar[data-state="cancelled"] .fill {
-      background: var(--warn);
-    }
+
     .problem { margin: 0; font-size: 12px; color: var(--warn); }
     /* The confirmation the dialog owes you now that it no longer closes. Green
        rather than the warn colour, and role=status on the element so a screen
@@ -906,40 +889,4 @@ export class OcrDialogComponent {
     this.watching.set(null);
   }
 
-  /**
-   * How far along, as a percentage, or 0 when there is no fraction yet.
-   *
-   * A run that has not reported a count draws an empty bar rather than a
-   * guessed one: `JobProgress` is the engine's own fraction and this app has no
-   * second opinion about how far through a book it is.
-   */
-  protected percent(job: Job): number {
-    const progress = job.progress;
-    if (progress === null || progress.total <= 0) return 0;
-    return Math.min(100, Math.round((progress.page / progress.total) * 100));
-  }
-
-  /**
-   * THE RUN IN A SENTENCE, and the states are said in the words of what happened
-   * rather than in the queue's vocabulary.
-   *
-   * `held` cannot appear here — this card only watches a row it released — but
-   * it is answered anyway rather than falling through to a bare state name,
-   * because the one thing a progress line must never do is print an internal
-   * word at somebody.
-   */
-  protected progressWords(job: Job): string {
-    if (job.error) return 'It stopped.';
-    switch (job.state) {
-      case 'held': return 'Waiting to be released.';
-      case 'queued': return 'Waiting for the engine.';
-      case 'running': break;
-      case 'cancelled': return 'Stopped.';
-      case 'failed': return 'It stopped.';
-      case 'done': return 'Read. The book is in the library.';
-    }
-    const progress = job.progress;
-    if (progress === null) return job.message ?? 'Reading…';
-    return `Reading page ${progress.page} of ${progress.total}.`;
-  }
 }
