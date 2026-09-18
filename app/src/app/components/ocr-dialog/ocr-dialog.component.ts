@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } 
 import { FormsModule } from '@angular/forms';
 
 import { qualify } from '@shared/documents';
+import { LANGUAGE_CHOICES } from '@shared/languages';
 import { reReadAhead } from '@shared/reread';
 import type { Job, JobRequest } from '@shared/types';
 
@@ -134,9 +135,29 @@ import { RunTargetComponent } from '../run-target/run-target.component';
             like, without reading anything again.
           </p>
 
+          <!--
+            NAMES, NOT TAGS, AND A LIST RATHER THAN A BOX.
+            
+            It was free text with an "en" placeholder, which asked a person to
+            know BCP-47 to answer a question about their own book — and answered
+            wrong it does not fail, it produces a worse reading with nothing to
+            show for it. Owen, 2026-09-17: *"if its a real choice it can stay but
+            it shouldnt be en/de, make it the acutal language name. english,
+            german, etc."*
+            
+            THE LIST IS THE ONE TRANSLATE ALREADY USES — "LANGUAGE_CHOICES",
+            sorted by name, the curated table the engine consults too. This
+            dialog having its own text box while the dialog next door had a
+            proper picker was the two screens disagreeing about how hard the
+            question is.
+          -->
           <label class="field">
             <span class="label">Language <em>declared, not detected</em></span>
-            <input type="text" placeholder="en" [ngModel]="language()" (ngModelChange)="language.set($event)" name="language">
+            <select [ngModel]="language()" (ngModelChange)="language.set($event)" name="language">
+              @for (choice of languages; track choice.tag) {
+                <option [value]="choice.tag">{{ choice.name }}</option>
+              }
+            </select>
           </label>
 
           <label class="field">
@@ -577,6 +598,16 @@ export class OcrDialogComponent {
    * button during it is how somebody concludes they pressed the wrong one.
    */
   protected readonly busy = signal<'queue' | 'start' | null>(null);
+
+  /**
+   * Every language this app offers, by name — the same table Translate lists.
+   *
+   * The DEFAULT IS ENGLISH rather than blank. A blank would be the honest shape
+   * if nothing were known, but the field is "declared, not detected": something
+   * is going to be sent, and an empty select is a question with no answer
+   * selected that a person can walk past without noticing.
+   */
+  protected readonly languages = LANGUAGE_CHOICES;
 
   /** The engine this run is pinned to. The child picks the default. */
   protected readonly server = signal('');

@@ -47,6 +47,22 @@ import type { CapabilityRecord } from '@shared/engine-settings';
 import { defaultEngineServer } from '@shared/engine-settings';
 import type { CrucibleServerView } from '@shared/slots';
 import type { ModelClass } from '@shared/types';
+
+/**
+ * WHAT EACH ACT IS CALLED when telling somebody a machine cannot do it.
+ *
+ * Deliberately not `actWords` (core/crucible-words.ts), whose phrasings are
+ * NOUNS for a settings row — "Read the pages of a scan", "Analyse claims". These
+ * are verb phrases that have to finish the sentence *"X cannot …"*, and a table
+ * that tried to serve both would serve one of them badly.
+ */
+const ACT_WORDS: Readonly<Record<string, string>> = {
+  pages: 'read pages',
+  clean: 'clean up text',
+  translate: 'translate',
+  simplify: 'simplify',
+  analysis: 'analyse',
+};
 import { api } from '../../core/foundry';
 
 @Component({
@@ -84,11 +100,34 @@ import { api } from '../../core/foundry';
         }
 
         <!--
-          ONE LINE OF FACT. At one server it names the machine, because that is
-          news to somebody who has never opened Settings; at several it does not
-          repeat the name they just pressed.
+          ── TWO LINES WHEN IT CANNOT RUN, AND THE ORDER MATTERS ─────────────
+
+          It was one line carrying the engine's own reason verbatim, on the
+          rule act-gates follows: a server says things this app could not have
+          composed, so do not reword them. That rule is right about a reason
+          somebody can ACT on and wrong about this one. Owen, picking the Mac for
+          an OCR, got:
+
+              disabled: reading page images (the VLM door) needs page readers,
+              and this build ships none with a mlx-darwin block
+
+          Every clause of which is true and three of them are Crucible's
+          internals — a door, a build, a manifest block. It also opens with a
+          LABEL ("disabled:") rather than a sentence.
+
+          So the first line is this app's, in the words of what it means to the
+          person: this machine cannot do this. The engine's own sentence stays,
+          underneath and quieter, because it is still the only thing that says
+          WHY and somebody diagnosing it needs exactly those words. Nothing is
+          discarded and nothing is reworded; the two are put in the order a
+          person reads them in.
         -->
-        <p class="says" [class.warn]="!runnable()">{{ says() }}</p>
+        @if (runnable()) {
+          <p class="says">{{ says() }}</p>
+        } @else {
+          <p class="says warn">{{ cannot() }}</p>
+          @if (reason(); as why) { <p class="because">{{ why }}</p> }
+        }
       </div>
     }
   `,
@@ -116,6 +155,11 @@ import { api } from '../../core/foundry';
 
     .says { margin: 0; font-size: 11px; line-height: 1.5; color: var(--text-tertiary); }
     .says.warn { color: var(--warn); }
+    /* The engine's own words: kept, and quieter than the sentence above them. */
+    .because {
+      margin: 0; font-size: 11px; line-height: 1.5;
+      color: var(--text-muted); font-style: italic;
+    }
   `],
 })
 export class RunTargetComponent {
@@ -165,14 +209,38 @@ export class RunTargetComponent {
    */
   protected readonly says = computed(() => {
     const chosen = this.server();
-    const many = this.servers().length > 1;
-    const where = many ? '' : `${chosen} · `;
+    const where = this.servers().length > 1 ? '' : `${chosen} · `;
     if (this.problem() !== null) return `${where}could not be asked what it runs: ${this.problem()}`;
     const row = this.row();
     if (row === null) return `${where}asking what it runs…`;
-    if (!row.enabled) return `${where}${row.reason}`;
     const model = row.selected.length > 0 ? row.selected : 'a model it chooses itself';
     return `${where}runs on ${model}`;
+  });
+
+  /** What a refusal MEANS, in this app's words. See the template's note. */
+  protected readonly cannot = computed(() => {
+    const chosen = this.server();
+    const named = chosen.length > 0 ? `"${chosen}"` : 'That engine';
+    if (this.problem() !== null) return `${named} could not be asked what it can do.`;
+    return `${named} cannot ${ACT_WORDS[this.act()] ?? 'run this'} — choose another engine.`;
+  });
+
+  /**
+   * The engine's own sentence, kept verbatim except for a leading LABEL.
+   *
+   * `disabled:` is not part of the explanation; it is the field's name leaking
+   * into its value, and it reads as the first word of a sentence that then does
+   * not parse. Stripping a known prefix is not rewording — every word the server
+   * wrote about WHY survives.
+   */
+  protected readonly reason = computed(() => {
+    if (this.problem() !== null) return this.problem();
+    const row = this.row();
+    if (row === null || row.enabled) return null;
+    const said = row.reason.trim();
+    const cut = said.toLowerCase().startsWith('disabled:') ? said.slice('disabled:'.length) : said;
+    const trimmed = cut.trim();
+    return trimmed.length > 0 ? trimmed.charAt(0).toUpperCase() + trimmed.slice(1) : null;
   });
 
   constructor() {
