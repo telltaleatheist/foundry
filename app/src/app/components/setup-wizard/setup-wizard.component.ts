@@ -82,9 +82,6 @@ import {
   splitUpstreamModel,
   type CapabilityRecord,
   type CapabilityRow,
-  type LlmClass,
-  type SettingsDocument,
-  type SettingsPatch,
 } from '@shared/engine-settings';
 import { CrucibleDoorsComponent } from '../crucible-doors/crucible-doors.component';
 import {
@@ -94,15 +91,11 @@ import {
   coordinationWords,
   shortfallWords,
 } from '../../core/crucible-words';
-import {
-  EngineUpstreamsComponent,
-  type UpstreamApply,
-} from '../engine-upstreams/engine-upstreams.component';
 import { UiService } from '../../core/ui.service';
 import { api } from '../../core/foundry';
 
 type StepId =
-  | 'welcome' | 'library' | 'crucible' | 'routes' | 'done';
+  | 'welcome' | 'library' | 'crucible' | 'done';
 
 interface StepDef {
   id: StepId;
@@ -185,27 +178,6 @@ const STEPS: readonly StepDef[] = [
     title: 'A GPU engine',
     blurb: 'Where translation, simplification, cleanup, analysis and page reading run — on this machine or another one. Without one they cannot run.',
   },
-  {
-    /*
-     * ── SHOWN ONLY WHEN THERE IS AN ENGINE TO ASK ────────────────────────
-     *
-     * crucible docs/PHASE15-HOST.md §5.2: the wizard's AI step reads the chosen
-     * server's capability and, for each llm class that will not run on its card,
-     * offers to run that class through an upstream instead. With no server
-     * registered there is no capability to read and nothing to configure, so the
-     * step is not drawn, not counted in the rail, and NOT recorded as skipped —
-     * a settings screen saying somebody skipped a step that was never offered
-     * would be saying something false (`dismiss`'s rule about the skipped list).
-     *
-     * IMMEDIATELY AFTER THE CRUCIBLE STEP, because that step is where the server
-     * comes from: registering one there is what makes this one appear, and a
-     * question about where translation runs asked before there is anywhere for
-     * it to run is a question with no answers in it.
-     */
-    id: 'routes',
-    title: 'Where the text work runs',
-    blurb: 'Use this engine’s models, an existing Ollama model, or a connected account.',
-  },
   /*
    * ── THE PAGE READER STEP IS GONE (2026-09-17) ──────────────────────────
    *
@@ -231,7 +203,7 @@ const STEPS: readonly StepDef[] = [
 
 @Component({
   selector: 'app-setup-wizard',
-  imports: [CrucibleDoorsComponent, EngineUpstreamsComponent],
+  imports: [CrucibleDoorsComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (up()) {
@@ -402,9 +374,17 @@ const STEPS: readonly StepDef[] = [
                   next step instead of growing a key box, because that step is
                   PHASE15 §5.2's panel and the key belongs in the engine, once.
                 -->
+                <!--
+                  IT SAID "the next step is where that key goes" and there is no
+                  next step: the routes step was deleted on 2026-09-18 because
+                  Settings > AI asks the same question better. A wizard pointing
+                  at a screen that does not exist is worse than one that points
+                  at the screen that does.
+                -->
                 <p class="line">
-                  What this card cannot run, an Anthropic or OpenAI account can. The next step is
-                  where that key goes — it is stored in the engine, not in foundry.
+                  What this card cannot run, an Anthropic or OpenAI account can. Settings > AI is
+                  where that key goes — it is stored in the engine, not in Foundry, so BookForge
+                  uses the same one.
                 </p>
               }
 
@@ -458,38 +438,6 @@ const STEPS: readonly StepDef[] = [
             }
           }
 
-          <!-- ── Where the text work runs ────────────────────────────────── -->
-          @if (current() === 'routes') {
-            <p class="lead">
-              The GPU engine (Crucible) runs cleanup, translation, simplification and analysis.
-              Choose its own models or connect an existing model or account —
-              the key is stored in the engine, not in Foundry, and BookForge uses the same one.
-            </p>
-            @if (routeProblem(); as why) { <p class="line bad">{{ why }}</p> }
-
-            @if (routeDoc(); as settings) {
-              @for (cls of classes; track cls) {
-                <p class="small">{{ classLabel(cls) }} — {{ routeLine(cls) }}</p>
-              }
-              @for (row of unservedClasses(); track row.cls) {
-                <p class="small"><strong>{{ classLabel(row.cls) }}</strong> — {{ row.reason }}</p>
-              }
-              <p class="line">
-                Keep these choices and continue, or use an existing Ollama model, OpenAI or
-                Anthropic for text work. Ollama keeps its own model files; Crucible connects
-                through its API. Models are prepared when you finish setup.
-              </p>
-              <app-engine-upstreams
-                [serverName]="routeServer()"
-                [doc]="settings"
-                [busy]="routeBusy()"
-                [wantsModel]="true"
-                applyLabel="Use for text work"
-                (apply)="applyRoutes($event)" />
-            } @else if (routeProblem() === null) {
-              <p class="line">Asking the engine…</p>
-            }
-          }
 
           <!-- ── Done ────────────────────────────────────────────────────── -->
           @if (current() === 'done') {
@@ -842,43 +790,6 @@ export class SetupWizardComponent {
    */
   protected readonly coordination = signal<CrucibleCoordinationMap>({});
 
-  /*
-   * ── The routes step's four facts (PHASE15-HOST.md §5.2) ──────────────────
-   *
-   * Which engine is being configured, its settings document, its capability
-   * record, and whatever the last press was answered with. NONE OF IT IS
-   * STORED: the document is the engine's and is re-read from every write's own
-   * answer, which is the whole of what §5.2 means by *"there is no Save button
-   * that writes an app file and syncs later"*.
-   */
-  protected readonly routeServer = signal('');
-  protected readonly routeDoc = signal<SettingsDocument | null>(null);
-  protected readonly routeCap = signal<CapabilityRecord | null>(null);
-  protected readonly routeBusy = signal(false);
-  protected readonly routeProblem = signal<string | null>(null);
-
-  /**
-   * THE CLASSES THIS ENGINE WILL NOT RUN ON ITS OWN CARD, with the server's own
-   * sentence about each.
-   *
-   * §5.2: *"for each llm class that is `enabled: false` locally it says the
-   * class's reason and offers 'run it through Anthropic / OpenAI / an Ollama
-   * server instead'."* THE REASON IS THE SERVER'S and is printed verbatim —
-   * replacing it with a word of ours is how a fixable problem ("2.1 GB short")
-   * becomes an unfixable one ("not supported").
-   *
-   * A class already routed upstream is NOT here: §3.3 says such a row answers
-   * `enabled: true`, so the engine itself has already stopped asking.
-   */
-  protected readonly unservedClasses = computed<{ cls: LlmClass; reason: string }[]>(() => {
-    const record = this.routeCap();
-    if (record === null) return [];
-    return LLM_CLASSES.flatMap((cls) => {
-      const row = record.classes.find((entry) => entry.capability === cls);
-      if (row === undefined || row.enabled) return [];
-      return [{ cls, reason: row.reason }];
-    });
-  });
 
   /** Step ids moved past without doing the thing. A Set would not survive JSON. */
   protected readonly skipped = signal<string[]>([]);
@@ -904,7 +815,6 @@ export class SetupWizardComponent {
   protected readonly visible = computed<readonly StepDef[]>(() => {
     const hasEngine = this.crucibleServers().length > 0;
     return STEPS.filter((step) => {
-      if (step.id === 'routes') return hasEngine;
       return true;
     });
   });
@@ -1036,7 +946,6 @@ export class SetupWizardComponent {
       const here = this.current();
       if (here === 'library') void this.loadLibrary();
       if (here === 'crucible') void this.loadCrucible();
-      if (here === 'routes') void this.loadRoutes();
     });
 
   }
@@ -1163,111 +1072,26 @@ export class SetupWizardComponent {
 
   // ── Where the text work runs (PHASE15-HOST.md §5.2) ───────────────────────
 
-  /**
-   * BOTH ANSWERS, TOGETHER, because the step is one picture made of two.
+  /*
+   * ── THE ROUTES STEP AND ITS FIVE MEMBERS ARE GONE (2026-09-18) ─────────
    *
-   * The CAPABILITY record says which classes this engine cannot serve locally
-   * and WHY, in its own sentence; the settings document says where each class is
-   * routed now and which upstreams are configured. Read one without the other
-   * and the step either offers to fix something already fixed or shows a route
-   * with no reason beside it.
+   * `loadRoutes`, `applyRoutes`, `routeLine`, `classLabel` and the four
+   * signals they drove. The step asked a first-run user to decide where each
+   * text class runs -- and opened by offering to "choose its own models",
+   * which it had no control for.
    *
-   * THE SERVER IS CHOSEN ONCE, by the same rule the settings card uses
-   * (`defaultEngineServer`, shared/engine-settings.ts): the loopback engine
-   * first, because it is the one whose routes decide what this computer does.
+   * Settings > AI answers the same question and answers it better: one row
+   * per job, the chosen model stated rather than offered, and accounts at the
+   * foot. Two screens teaching different vocabularies for one document is the
+   * thing that made this one worth deleting rather than fixing, and the one a
+   * person meets on their first five minutes is the wrong place to teach the
+   * worse vocabulary.
+   *
+   * WHAT IT WAS FOR IS STILL REACHABLE and now sits on the engine step: a
+   * card that cannot run a class says so there, in the engine's own words,
+   * and points at Settings.
    */
-  protected async loadRoutes(): Promise<void> {
-    if (!api) return;
-    const server = this.routeServer().length > 0
-      ? this.routeServer()
-      : defaultEngineServer(this.crucibleServers())?.name ?? '';
-    this.routeServer.set(server);
-    if (server.length === 0) return;
-    this.routeBusy.set(true);
-    try {
-      const [document, capability] = await Promise.all([
-        api.crucible.engineSettings(server),
-        api.crucible.engineCapability(server),
-      ]);
-      this.routeDoc.set(document);
-      this.routeCap.set(capability);
-      this.routeProblem.set(null);
-    } catch (err) {
-      /*
-       * BOTH GO, TOGETHER. The step's offer is composed from the two, and a
-       * document kept beside a capability record that failed to re-read would
-       * let the step say "this engine can run all four" on the strength of an
-       * EMPTY list of unserved classes — which is the same sentence as "nothing
-       * was measured", said as though it were good news.
-       */
-      this.routeDoc.set(null);
-      this.routeCap.set(null);
-      this.routeProblem.set(err instanceof Error ? err.message : String(err));
-    } finally {
-      this.routeBusy.set(false);
-    }
-  }
 
-  /**
-   * ONE PRESS, ONE PUT: the key AND every route it is meant to serve.
-   *
-   * §5.2: *"entering a key calls `test`, then one `PUT` that configures the
-   * upstream AND sets the route, then capability is re-read and the step shows
-   * the new answer."* §3.2 is what makes one request the RIGHT number: upstreams
-   * are applied, then routes, then the whole is validated, and *"a refusal
-   * applies nothing"*. Two requests would leave a key stored against routes that
-   * were refused — a half-configured engine nobody asked for.
-   *
-   * This setup action applies the selected provider/model to all four text
-   * classes. It remains available when local models fit, so an existing Ollama
-   * model can be reused before any separate Crucible weights are downloaded.
-   * Per-class choices remain available in the engine settings card.
-   */
-  protected async applyRoutes(event: UpstreamApply): Promise<void> {
-    const server = this.routeServer();
-    if (!api || server.length === 0 || event.model === null) return;
-    const classes = LLM_CLASSES;
-    const model = `${event.upstream}/${event.model}`;
-    const patch: SettingsPatch = {
-      ...(event.upstreams === undefined ? {} : { upstreams: event.upstreams }),
-      routes: Object.fromEntries(classes.map((cls) => [cls, model])),
-    };
-    this.routeBusy.set(true);
-    try {
-      this.routeDoc.set(await api.crucible.engineSettingsPut(server, patch));
-      this.skipped.update(steps => steps.filter(step => step !== 'routes'));
-      this.routeProblem.set(null);
-      /*
-       * AND CAPABILITY AGAIN, because §2 recomputes it in-process on every write
-       * that touches a route and §3.3 puts the route in every row. The rows this
-       * step draws come from THAT record, so the step showing the new answer is
-       * this read and not a redraw of what was sent.
-       */
-      this.routeCap.set(await api.crucible.engineCapability(server));
-    } catch (err) {
-      this.routeProblem.set(err instanceof Error ? err.message : String(err));
-    } finally {
-      this.routeBusy.set(false);
-    }
-  }
-
-  /** One class's row, in the words a person uses for it. */
-  protected classLabel(cls: LlmClass): string {
-    switch (cls) {
-      case 'clean': return 'Cleanup';
-      case 'translate': return 'Translation';
-      case 'simplify': return 'Simplification';
-      case 'analysis': return 'Analysis';
-    }
-  }
-
-  /** Where a class runs right now, as one line under its name. */
-  protected routeLine(cls: LlmClass): string {
-    const row = this.routeDoc()?.routes[cls];
-    if (row === undefined) return '';
-    if (row.route === 'upstream' && row.model !== null) return `runs on ${row.model}`;
-    return row.model === null ? 'runs here, if anything fits' : `runs here on ${row.model}`;
-  }
 
   /** The registered servers, named, for the one line the step prints about them. */
   protected crucibleNames(): string {
@@ -1346,9 +1170,14 @@ export class SetupWizardComponent {
   }
 
   private async close(skipped: string[], prepare = false): Promise<void> {
-    const choicesNotSeen = this.routeDoc() === null;
-    const finished = choicesNotSeen && !skipped.includes('routes') ? [...skipped, 'routes'] : skipped;
-    await api?.setup.finish(finished, prepare);
+    /*
+     * IT USED TO MARK `routes` SKIPPED when that step's document had never been
+     * read — a step somebody walked past without answering. There is no routes
+     * step (2026-09-18), so there is nothing to record about it, and adding a
+     * skipped-step id for a step that does not exist would put a line in
+     * Settings saying somebody skipped something they were never offered.
+     */
+    await api?.setup.finish(skipped, prepare);
     this.ui.closeSetup();
   }
 
