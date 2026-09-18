@@ -138,7 +138,6 @@ import {
 } from './host-ops';
 import type { HostNodeAction } from '../shared/host-ops';
 import * as queue from './job-queue';
-import { applyPageReaderRemoval, machineModels, removeFoundryDownloads } from './machine-models';
 import { finishSetup, finishPreparedSetup, setupState } from './setup';
 import { probeSystem } from './system-probe';
 import {
@@ -176,7 +175,6 @@ import {
   listRecents,
 } from './recents';
 import { readSettings, writeSettings } from './settings';
-import * as pageReader from './page-reader';
 import { answerLetGo, broadcast, foundryWindow } from './window';
 import {
   planAnalysis, planCleanup, planExport, planReading, planSimplification, planTranslation,
@@ -676,12 +674,14 @@ async function afterRegistryChanged(): Promise<void> {
   forgetEngineTargets();
   forgetCrucibleFacts();
   await refreshCrucibleFacts();
-  const removed = await applyPageReaderRemoval();
+  /*
+   * THE AUTOMATIC REMOVAL WENT WITH THE THING IT REMOVED. SLOTS.md 5b had a
+   * Crucible on this machine take over page reading, at which point Foundry
+   * deleted its own copy of the reader and printed a receipt. Foundry has no
+   * copy of anything to delete (2026-09-17), so the gates are still re-read --
+   * a registry change moves the OCR tile -- and nothing is swept.
+   */
   gatesChanged();
-  if (removed !== null) {
-    console.log(`[slots] ${removed}`);
-    broadcast('models:changed', null);
-  }
 }
 
 /**
@@ -3585,58 +3585,23 @@ export function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
-  // ── The local page reader ────────────────────────────────────────────────
   /*
-   * ONE READ for the settings row and the setup step, and four acts beside it.
+   * ── THE LOCAL PAGE READER IS GONE, AND WITH IT EIGHT DOORS ─────────────
    *
-   * `page-reader:state` answers the whole question — supported here, installed,
-   * which llama.cpp build, which model files, what a download would cost, and
-   * what the server is doing — because every one of those facts is measured off
-   * the same directory at the same moment, and a screen that asked separately
-   * could draw "installed" beside "0 of 2 files". The keep-warm minutes ride on
-   * it for the same reason rather than having a read of their own.
+   * `page-reader:state`, `:install`, `:install-cancel`, `:start`, `:stop`,
+   * `:set-keep-warm`, and the `:progress` / `:status-changed` pushes.
+   *
+   * Owen, 2026-09-17: *"foundry shouldnt assume there even is a local system.
+   * there sohuldnt be a local system. foundry does all ai work through
+   * crucible."* Reading a page wants a GPU, so it belongs to an engine. The
+   * settings card went first, then the queue's fallback, then the gate that
+   * lit the OCR tile with no engine, then the first-run step that sold the
+   * download -- this is the machinery all four stood on.
+   *
+   * `models:inventory` and `models:remove-page-reader` went with them for a
+   * smaller reason: they served the "Models on this machine" card, which Owen
+   * deleted as unnecessary, and nothing else ever called either one.
    */
-  ipcMain.handle('page-reader:state', () =>
-    pageReader.pageReaderState(readAppSettings().keepServerWarmMinutes));
-  /*
-   * The install does NOT go through the job queue, and the reason outlived the
-   * door that used to state it (`ollama:pull`, deleted with Foundry's own model
-   * store): the queue exists to keep GPU work from running two at a time and to
-   * give a run a cancellable row, and a download is neither. It is cancellable
-   * through its own door, and what it has already fetched survives the cancel —
-   * see `fetchResumable`.
-   */
-  ipcMain.handle('page-reader:install', async () => {
-    const outcome = await pageReader.installPageReader(
-      (progress) => broadcast('page-reader:progress', progress),
-    );
-    /*
-     * AND THE §5b RECEIPT IS TORN UP. `AppSettings.pageReaderRemoved` is the
-     * sentence the Models card prints about an automatic removal — *"a Crucible
-     * took over page reading, so Foundry removed its own copy"* — and a reader
-     * that is back on this disk makes that sentence false. Cleared on the
-     * failure too: a half-finished install leaves files here either way, and a
-     * receipt claiming they are gone is the worse of the two wrong screens.
-     */
-    writeAppSettings({ pageReaderRemoved: null });
-    // The OCR tile is dark on a machine with no reader and lit on one with it,
-    // so the install is one of the three things that moves a gate. Announced on
-    // the failure too: a partial install that got the binary and not the weights
-    // leaves the gate exactly where it was, and re-reading says so.
-    gatesChanged();
-    return outcome;
-  });
-  ipcMain.handle('page-reader:install-cancel', () => { pageReader.cancelPageReaderInstall(); });
-  // Pre-warming, so the first book of an evening does not pay the load. The
-  // same door a reading job uses, pressed by hand.
-  ipcMain.handle('page-reader:start', async () => (await pageReader.ensurePageReader()).status);
-  ipcMain.handle('page-reader:stop', () => pageReader.stopPageReader('the Stop button'));
-  // The keep-warm knob is APP policy, not engine settings: the engine neither
-  // starts nor stops servers, so its settings.json never carries this. The
-  // queue reads it at every drain (job-queue.ts), so a change applies to the
-  // very next one — no restart, no re-plumb.
-  ipcMain.handle('page-reader:set-keep-warm', (_event, minutes: number) =>
-    writeAppSettings({ keepServerWarmMinutes: minutes }).keepServerWarmMinutes);
 
   // ── First run ────────────────────────────────────────────────────────────
   /*
@@ -4369,15 +4334,6 @@ export function registerIpc(): void {
    * waits on package C. A refusal comes back as a RESULT with a sentence rather
    * than as a rejection, because the row prints what happened either way.
    */
-  ipcMain.handle('models:inventory', () => machineModels());
-  ipcMain.handle('models:remove-page-reader', async () => {
-    const outcome = await removeFoundryDownloads();
-    // Only when something actually went. A refusal changed nothing, and a push
-    // saying otherwise would send every open window to re-probe for no reason.
-    if (outcome.ok && outcome.freedBytes > 0) gatesChanged();
-    return outcome;
-  });
-
   /*
    * The whole list on every mutation — and hosted, the whole list is the HOST's
    * (`shelfJobs`, electron/job-queue.ts). The queue hands it over already
@@ -4400,7 +4356,6 @@ export function registerIpc(): void {
    * for the list itself, the same way the queue's mirror asks for jobs on boot.
    */
   onProjectsChanged(() => broadcast('projects:changed', null));
-  pageReader.onPageReaderStatus((status) => broadcast('page-reader:status-changed', status));
   // Published beside the job row, not instead of it: the shelf reads the queue,
   // the settings card reads this, and neither of them owns the run.
   onEnvInstallProgress((progress) => broadcast('env:install-progress', progress));
@@ -4518,13 +4473,11 @@ export function registerIpc(): void {
       );
     });
 
+  // Same at startup: the facts are refreshed, and there is no longer a local
+  // reader for a local engine to have superseded.
   void refreshCrucibleFacts()
-    .then(() => applyPageReaderRemoval())
-    .then((removed) => {
-      if (removed === null) return;
-      console.log(`[slots] ${removed}`);
+    .then(() => {
       gatesChanged();
-      broadcast('models:changed', null);
     })
     .catch((err: unknown) => {
       console.error(

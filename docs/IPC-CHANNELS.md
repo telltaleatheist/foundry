@@ -25,7 +25,8 @@ and 145 − 12 = 133, which is the whole of the arithmetic.
 
 > ### THE COUNT ABOVE IS 2026-09-15's AND THE FILE DRIFTED UNDER IT
 >
-> **Re-counted 2026-09-17: 147 `ipcMain.handle` call sites, 147 distinct names,
+> **Re-counted 2026-09-17: 147, then 139 after the page-reader sweep the same
+> evening. 139 `ipcMain.handle` call sites, 139 distinct names,
 > zero `ipcMain.on`, zero duplicates.** One of those 147 is `queue:release`,
 > added that evening (below). The other **thirteen** arrived between 09-15 and
 > 09-17 without this line moving.
@@ -1187,3 +1188,21 @@ name rule kept character for character.
 | `queue:release` | Job id → whether that row was released. Moves ONE held row to queued and pumps; `queue:start` releases the whole held batch and is the shelf's button. False covers released-already, started-already and removed-while-you-were-looking, which are one state to a caller. Hosted it forwards like Start and answers false. |
 
 Added for the dialogs' own Start (Owen, 2026-09-17: *"the user can hit 'start', 'add to queue', or 'cancel'. if they hit start, progress shows in the modal live"*). A modal committing to its own run must not also let go of rows somebody parked deliberately, which is what routing it through `queue:start` would have done.
+
+## Eight doors removed with the local page reader (2026-09-17)
+
+`page-reader:state`, `page-reader:install`, `page-reader:install-cancel`,
+`page-reader:start`, `page-reader:stop`, `page-reader:set-keep-warm`,
+`models:inventory`, `models:remove-page-reader` — plus the `page-reader:progress`
+and `page-reader:status-changed` pushes.
+
+Owen, 2026-09-17: *"there sohuldnt be a local system. foundry does all ai work
+through crucible."* Reading a page wants a GPU, so it belongs to an engine. The
+six `page-reader:` doors drove a llama.cpp holding dots.ocr on this machine; the
+two `models:` doors served the "Models on this machine" card, deleted as
+unnecessary, and had no other caller. `electron/page-reader.ts` and
+`electron/machine-models.ts` are deleted, and the first-run step that offered the
+download went with them.
+
+**147 → 139, measured by script, 139 distinct, zero `ipcMain.on`.** Removals only;
+nothing was added or renamed in this pass.

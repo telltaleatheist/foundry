@@ -2917,15 +2917,14 @@ supposed to be, and it exists so the same failure is visible next time.
   Fixing it means a generation bump, which invalidates every stored score in
   every book, so it wants doing deliberately. Found by bookforge-02 while
   reviewing the contract for a class that then was not built.
-- **`electron/page-reader.ts` is unreachable but not removed.** The local
-  page reader lost its card, its gate and its queue fallback on 2026-09-17
-  (*"there sohuldnt be a local system"*), so no screen can start it. The
-  module is still woven through env provisioning, dispatch and
-  crucible-provider, and its six IPC channels still answer — removing them
-  means regenerating docs/IPC-CHANNELS.md, which BookForge's keeper reads as
-  authority. A refactor with a blast radius, deliberately not done in the
-  same pass as the behaviour change that made it dead.
-
+- **~~`electron/page-reader.ts` is unreachable but not removed.~~ DONE
+  2026-09-17.** Swept the same evening: both modules deleted
+  (`page-reader.ts`, `machine-models.ts`), eight IPC doors and two pushes
+  gone, the quit hooks in `main.ts` and `mount.ts` that stopped a server
+  nothing starts, the queue's keep-warm bookkeeping, two stored settings keys
+  nothing read, and the first-run step that offered the download — which
+  turned out to be the last door a person could still walk through.
+  Channels 147 → 139, `docs/IPC-CHANNELS.md` re-counted.
 ---
 
 ## 7. Known and accepted, not scheduled

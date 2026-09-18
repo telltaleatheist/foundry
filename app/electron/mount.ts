@@ -104,7 +104,6 @@ import {
 import { connectLocalEngine, registerIpc } from './ipc';
 import * as queue from './job-queue';
 import { ledgerOf, listProjects, onImportLanded, projectDirOf, readManifest } from './projects';
-import * as pageReader from './page-reader';
 import { planExport } from './workspace';
 import { foundryWindow, isDev, openWindow, whenRendererReady } from './window';
 import { stepOf } from '../shared/ledger';
@@ -1091,11 +1090,10 @@ let stopping: Promise<void> | null = null;
 export function stopFoundry(): Promise<void> {
   if (stopping !== null) return stopping;
   queue.shutdown();
-  stopping = pageReader.ownsServer()
-    // A server this app merely FOUND running is not ours to stop, and the wait
-    // would be a wait for somebody else's process to die.
-    ? pageReader.stopPageReader('the app is quitting').then(() => undefined)
-    : Promise.resolve();
+  // The reading server this used to stop was the local page reader's, and there
+  // is no local page reader (2026-09-17). Shutting the queue down, above, is the
+  // whole of what quitting has left to do.
+  stopping = Promise.resolve();
   return stopping;
 }
 

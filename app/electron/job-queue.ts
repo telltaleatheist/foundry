@@ -197,7 +197,6 @@ import {
   type FinalRotation,
   type Rotation,
 } from './projects';
-import { noteQueueBusy, noteQueueIdle } from './page-reader';
 /*
  * THE PLANS, FOR THE RE-PLAN AT SPAWN AND FOR NOTHING ELSE (`materializeDeferred`).
  *
@@ -1611,7 +1610,6 @@ export function venueRulesChanged(): void {
 }
 
 export function hostQueueDrained(): void {
-  noteQueueIdle(readAppSettings().keepServerWarmMinutes);
   // AND IT IS NEWS TOO, on `setHostQueueRows`' reasoning and more sharply: the
   // host having nothing left means every parent a row of ours was waiting on has
   // either landed or gone, which is precisely the pair `reconcileChains` exists
@@ -4057,10 +4055,16 @@ async function pump(): Promise<void> {
    * defaulting to 0 and nothing left running to justify it. What it is waiting for
    * is a PERSON, which is the one thing the drain has never counted.
    */
-  const waiting = jobs.some((job) => job.state === 'queued' && chainVerdict(job) === 'go');
-  if (slots.size === 0 && !waiting && detachedRuns.size === 0) {
-    noteQueueIdle(readAppSettings().keepServerWarmMinutes);
-  }
+  /*
+   * THE DRAIN USED TO ARM A COUNTDOWN AND NOW TELLS NOBODY.
+   *
+   * noteQueueIdle(minutes) kept the local reading server warm for a while after
+   * the last job so the next book did not pay the load. There is no local
+   * server to keep warm (2026-09-17), and the engines that do the work hold
+   * their own models on their own terms -- so the whole computation went with
+   * it, the `waiting` test included, which existed only to decide whether the
+   * countdown should be armed over a row that was waiting on a PERSON.
+   */
 }
 
 /**
@@ -4478,7 +4482,6 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
    * surely as one the pump chose — which is the half of the drain rule that does
    * not move when a host takes the queue over (`hostQueueDrained`).
    */
-  noteQueueBusy();
 
   /*
    * The reading server, before the engine that will post pages to it. A remote
