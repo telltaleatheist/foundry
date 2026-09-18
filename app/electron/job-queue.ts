@@ -871,6 +871,34 @@ const slots = new Map<string, Slot>();
  * holds while it lives, its ✕ reaches it, and `shutdown` stops it.
  */
 const detachedRuns = new Map<string, () => void>();
+/**
+ * THE RUNS THAT ARE LANDING — the window in which a row's ending is the RUN's to
+ * say and nobody else's, by row id.
+ *
+ * ── The one thing it decides ────────────────────────────────────────────────
+ *
+ * `cancelHere` settles a `running` row that has no live child of its own, and it
+ * has to: a job waiting for the reading server is `running` for minutes before
+ * there is anything to kill, and a ✕ that did nothing there would leave the
+ * button dead for all of them. But there is a SECOND way a running row has no
+ * child, and it is the opposite case — the child has already exited, the product
+ * is on disk, and `carry` is between `wires.release()` and the line that writes
+ * the row's outcome, removing the intermediate and the derived book. Two real
+ * disk operations, both awaits.
+ *
+ * A cancel landing in there settled the row `cancelled`, swept the derived book
+ * out from under the landing and told every listener — and then the landing
+ * wrote `done` over it and settled it again. TWO ENDINGS FOR ONE RUN, which is
+ * exactly what `onJobSettled` promises never happens (`exportEpubFromStep`
+ * resolves on the first and rejects on the second), plus a cascade that cancels
+ * the chain behind a job whose product had just landed.
+ *
+ * So this is the ordering, said out loud: the run owns the ending from the
+ * moment its engine is gone, and a ✕ that arrives after that is a gesture about
+ * work that is already done. Entered beside `wires.release()` and left in
+ * `executeJob`'s `finally`, so it cannot outlive the run that made it.
+ */
+const landings = new Set<string>();
 let notify: (jobs: Job[]) => void = () => { /* set by main */ };
 
 /** Where the queue publishes. Called on every mutation, with the whole list. */
@@ -2622,6 +2650,21 @@ export function settleMint(id: string, outcome: { file: string } | { error: stri
 export function cancelHere(id: string): void {
   const job = jobs.find((j) => j.id === id);
   if (!job) return;
+  if (landings.has(id)) {
+    /*
+     * THE RUN IS LANDING, SO THE ENDING IS ALREADY ITS OWN — `landings` carries
+     * the whole argument. There is nothing to stop: the engine has exited, the
+     * product is where the row says it will be, and the row is a moment away
+     * from settling with what actually happened. Said out loud rather than
+     * silently, because a person who pressed ✕ and got a finished job is owed an
+     * account of why somewhere.
+     */
+    console.log(
+      `[queue] the ✕ on ${path.basename(job.outputPath)} arrived after the engine had finished; `
+      + 'the run is filing what it made and will settle with that.',
+    );
+    return;
+  }
   if (job.state === 'running') {
     const stop = slots.get(id)?.cancel ?? detachedRuns.get(id);
     if (stop !== undefined) {
@@ -4547,11 +4590,15 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
      * now would make the shelf and the waiters disagree about what happened.
      *
      * A `cancelled` ROW IS THE OTHER, AND IT IS SOMEBODY ELSE'S. `cancelHere`
-     * settles a row that has no live child of its own — which is exactly the
-     * window between `wires.release()` and the landing that throws — so the
-     * ending is already out and it is not this one. A cancel is a person taking
-     * their GPU back and filing it as a failure is how a host's retry restarts
-     * work they just stopped (`runJob`, which argues the three states).
+     * settles a row that has no live child of its own, which is every moment
+     * BEFORE the spawn — the minutes a job spends waiting for the reading
+     * server, and the file preparation after it — so the ending is already out
+     * and it is not this one. (While the child is alive the ✕ kills it and the
+     * close handler says what happened; from the moment it exits the row is
+     * landing and the ✕ is refused — `landings`, which is what makes this
+     * sentence true rather than hopeful.) A cancel is a person taking their GPU
+     * back, and filing it as a failure is how a host's retry restarts work they
+     * just stopped (`runJob`, which argues the three states).
      */
     if (!over && next.state !== 'cancelled') {
       next.state = 'failed';
@@ -4560,6 +4607,15 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
       changed();
       settle();
     }
+  } finally {
+    /*
+     * AND THE LANDING MARK GOES, ON EVERY WAY OUT — the rotation's `finally` one
+     * function down, for its reason: a mark left behind is a row whose ✕ is dead
+     * for ever, and the alternative is clearing it at each of the arms that end
+     * a run plus whichever is added next. `carry` enters it beside
+     * `wires.release()`; this is the one place it can be left from.
+     */
+    landings.delete(next.id);
   }
 }
 
@@ -4912,9 +4968,9 @@ async function carry(
         rotatedIn = projectDir;
         try {
           if (exporting) {
-            filedRotation = await rotateFinal(projectDir, path.basename(request.outputPath));
+            filedRotation = await rotateFinal(projectDir, path.basename(request.outputPath), next.id);
           } else {
-            rotation = await rotateGenerated(projectDir, path.basename(request.outputPath));
+            rotation = await rotateGenerated(projectDir, path.basename(request.outputPath), next.id);
           }
         } catch (err) {
           next.state = 'failed';
@@ -5227,6 +5283,14 @@ async function carry(
     // No child of this job's is alive from here on: the slot, or the detached
     // registry, gives it up. See `RunWires`.
     wires.release();
+    /*
+     * AND THE ENDING BECOMES THIS RUN'S, in the same breath and for the same
+     * fact: the child is gone. The two lines are together because the gap
+     * between them is the defect — a ✕ arriving in it finds a `running` row with
+     * nothing to kill and settles it itself, while the landing below goes on to
+     * settle it again. `landings` holds the argument in full.
+     */
+    landings.add(next.id);
     next.finishedAt = Date.now();
 
     /*
@@ -5749,6 +5813,9 @@ async function carry(
       const live = await recordGenerated(
         next.outputPath,
         request.records !== undefined ? 'translation' : generatedRoleFor(request.kind),
+        // The row's id, which is what names the archive folder if this promotion
+        // rotates a live PDF aside — the same id the rotation above used.
+        next.id,
       );
       /*
        * WHERE THE FINISHED ROW POINTS, when the catalogue made a live copy of what
