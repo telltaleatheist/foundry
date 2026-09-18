@@ -946,10 +946,10 @@ export function compileBook(opts: CompileOptions): CompileReport {
     throw new CompileError('this run would write the book over the file it is compiling from.');
   }
   if (!fs.existsSync(bookPath)) {
-    throw new CompileError(
-      `no such book file: ${bookPath}. This command compiles a book that has already been made — it `
-      + 'reads no bank and no page, so an absent book is nothing it can make up for.',
-    );
+    // Terse on purpose: the path is the whole of what a reader needs, and the
+    // paragraph that used to follow it explained the command's design to
+    // somebody who was trying to export a book.
+    throw new CompileError(`no such book file: ${bookPath}`);
   }
 
   let book: BookFile;
@@ -1076,9 +1076,8 @@ export function compileBook(opts: CompileOptions): CompileReport {
           texts: bookPositionTexts(book),
           where: bookPath,
           command: 'vlm-compile',
-          remedy: 'Compile the position that sits UNDER the clean step — the book file '
-            + 'materialised from that step\'s records — or run `foundry clean-text` over this book '
-            + 'and stamp with the stamp it writes.',
+          remedy: 'Compile the position under the clean step, or re-run '
+            + '`foundry clean-text` over this book.',
           log: opts.log,
           fail: (message: string): never => { throw new CompileError(message); },
         }),

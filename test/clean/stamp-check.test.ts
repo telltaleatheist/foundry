@@ -70,10 +70,19 @@ describe('a stamp recomputed over the book actually handed', () => {
     } catch (err) {
       thrown = (err as Error).message;
     }
-    expect(thrown).toContain('over 3 block(s)');
-    expect(thrown).toContain('2 of them do not hold the text that cleanup produced');
+    /*
+     * THE WORDING CHANGED AND THE CLAIMS DID NOT (2026-09-17). This refusal ran
+     * to five sentences and spent three of them explaining what a stamp is, to
+     * somebody who had asked for an EPUB — Owen: *"the error messages are
+     * absurdly wordy."* What the test guards is unchanged and is what the test
+     * name says: the COUNT and the POSITIONS reach the reader, and a block that
+     * matched is not accused.
+     */
+    expect(thrown).toContain('2 of 3 cleaned blocks have changed');
     expect(thrown).toContain('b1-0, b1-1');
-    expect(thrown).toContain('THE BOOK HANDED IS NOT THE ONE THIS CLEANUP PRODUCED');
+    // The remedy survives the trim: a refusal that does not say what to do next
+    // is the one thing shortening must not cost.
+    expect(thrown).toContain('Nothing was written');
     // The block that DID match is not accused of anything.
     expect(thrown).not.toContain('b1-2');
   });

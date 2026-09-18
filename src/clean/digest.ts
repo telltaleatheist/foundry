@@ -218,12 +218,15 @@ export function checkStampBlocks(request: {
     const more = differing.length > NAMED_IN_REFUSAL
       ? ` and ${differing.length - NAMED_IN_REFUSAL} more`
       : '';
+    /*
+     * ONE SENTENCE OF FACT, ONE OF REMEDY. This ran to five and spent three of
+     * them explaining what a stamp is — to somebody who had asked for an EPUB.
+     * Every fact survives: which stamp, how many blocks moved out of how many,
+     * which ones by name, what to do, and that nothing was written.
+     */
     request.fail(
-      `--narration-stamp ${request.stampPath} claims a narration text cleanup over ${named.length} `
-      + `block(s), and ${differing.length} of them do not hold the text that cleanup produced — `
-      + `${shown}${more}. THE BOOK HANDED IS NOT THE ONE THIS CLEANUP PRODUCED: a stamp is a claim `
-      + 'about a FILE, and this recomputed it over the book it was actually given. '
-      + `${request.remedy} Nothing was written.`,
+      `${request.stampPath}: ${differing.length} of ${named.length} cleaned blocks have changed `
+      + `since this stamp — ${shown}${more}. ${request.remedy} Nothing was written.`,
     );
   }
 
