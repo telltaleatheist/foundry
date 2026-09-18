@@ -48,7 +48,7 @@ function topLevelHelp(): string {
     '  A document vision model reads each page image and writes marked-up text,',
     '  and foundry assembles the answers into an EPUB. It needs a Python with',
     '  PyMuPDF (and mlx-vlm for the local MLX path); --vlm-endpoint sends the',
-    '  pages to an OpenAI-compatible server (e.g. vLLM) instead.',
+    '  pages to a Crucible instead, which publishes what a page request is.',
     '',
     'Global options:',
     formatOptionsBlock(),

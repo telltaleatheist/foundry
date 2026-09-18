@@ -500,18 +500,32 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
     );
   }
 
-  // The budget the boxes were measured in — `read.ts` owns the rule, because it
-  // is the phase that shows the model the page.
-  const maxPixels = pixelBudget(model, viaEndpoint);
+  /*
+   * The budget the boxes were measured in — `read.ts` owns the rule, because it
+   * is the phase that shows the model the page.
+   *
+   * ONLY THE LOCAL ROUTE'S IS KNOWN HERE. Against an endpoint the budget is the
+   * server's and does not exist until the server has been asked, so it comes
+   * back on the phase (`ReadPhase.maxPixels`) and the log line below says the
+   * number for the route that has one. Computing it twice, once before the
+   * phase and once inside it, is how the parser ends up scaling boxes out of a
+   * frame nobody rendered in.
+   */
+  const localBudget = viaEndpoint ? undefined : pixelBudget(model);
 
   // The pages this run is not about. Sorted, so the log line, the report and
   // the chapters file all name them in the same order.
   const skipPages = [...new Set(opts.skipPages ?? [])].sort((a, b) => a - b);
 
   opts.log(
-    `vlm-convert: ${model.id} (${viaEndpoint ? opts.endpoint : model.repo}), pages rendered at `
-    + `${VLM_DPI} dpi${maxPixels === undefined ? '' : `, ${maxPixels.toLocaleString('en-US')} pixel `
-      + 'budget for any page this run reads'}`,
+    viaEndpoint
+      // The dpi and the budget are the server's on this route and it has not
+      // been asked yet; `read.ts` prints both the moment the contract lands,
+      // rather than this line guessing at them to look complete.
+      ? `vlm-convert: ${model.id} via ${opts.endpoint}, which publishes the page contract`
+      : `vlm-convert: ${model.id} (${model.repo}), pages rendered at ${VLM_DPI} dpi`
+        + `${localBudget === undefined ? '' : `, ${localBudget.toLocaleString('en-US')} pixel `
+          + 'budget for any page this run reads'}`,
   );
 
   // The renders survive the run when the dialect measures them — the ink of a
@@ -539,7 +553,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       model,
       rendersDir,
       keepRenders,
-      maxPixels,
+      maxPixels: localBudget,
       skipPages,
       ...(opts.python !== undefined ? { python: opts.python } : {}),
       ...(opts.endpoint !== undefined ? { endpoint: opts.endpoint } : {}),
@@ -574,22 +588,43 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
      * cropped wrong and every indent test is flipped.
      *
      * So the bank's own record wins wherever it has one (`VlmReading.maxPixels`,
-     * written beside every answer), and this run's budget is the fallback for a
-     * page read before that field existed. A run whose pages disagree with it
-     * SAYS SO — it is the one line that explains a book whose figures came out
-     * right on a machine where nobody expected them to.
+     * written beside every answer), and THIS RUN's budget — `phase.maxPixels`,
+     * which is the server's where a server read the pages and `pixelBudget`'s
+     * where this machine did — answers for a page read before that field
+     * existed. A run whose pages disagree with it SAYS SO: it is the one line
+     * that explains a book whose figures came out right on a machine where
+     * nobody expected them to.
+     *
+     * A PAGE WITH NEITHER IS REFUSED BY NAME rather than scaled by nothing.
+     * That combination is an old bank replayed against an endpoint, where this
+     * run has no budget of its own because the budget was the server's and the
+     * bank predates the field that would have recorded it — and a box scaled
+     * out of a frame nobody can name is the invisible failure this whole
+     * paragraph is about.
      */
-    const budgetFor = (page: number): number =>
-      phase.readings?.get(page)?.maxPixels ?? maxPixels!;
+    const runBudget = phase.maxPixels;
+    const budgetFor = (page: number): number => {
+      const banked = phase.readings?.get(page)?.maxPixels;
+      if (banked !== undefined) return banked;
+      if (runBudget === undefined) {
+        throw new Error(
+          `page ${page} banks no pixel budget and this run has none of its own, so there is no `
+          + 'frame its boxes can be scaled out of. A bank written before that field existed can '
+          + 'only be replayed on the route that read it — read the page again, or render it on '
+          + 'the machine whose budget it was.',
+        );
+      }
+      return runBudget;
+    };
     if (geometric) {
       const banked = run.pages
         .map((page) => phase.readings?.get(page.number)?.maxPixels)
-        .filter((budget): budget is number => budget !== undefined && budget !== maxPixels);
+        .filter((budget): budget is number => budget !== undefined && budget !== runBudget);
       if (banked.length > 0) {
         const distinct = [...new Set(banked)].map((n) => n.toLocaleString('en-US')).join(', ');
         opts.log(
           `vlm-convert: ${banked.length} page(s) were read under a pixel budget this run would not `
-          + `have chosen (${distinct}, against ${maxPixels?.toLocaleString('en-US') ?? 'none'}), and `
+          + `have chosen (${distinct}, against ${runBudget?.toLocaleString('en-US') ?? 'none'}), and `
           + 'their boxes are scaled by the budget the bank records rather than by this run\'s. A '
           + 'reading is interpretable only in the frame it was made in.',
         );

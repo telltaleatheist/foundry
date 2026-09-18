@@ -176,8 +176,15 @@ export async function dumpBlocks(opts: BlocksDumpOptions): Promise<BlocksDump> {
    * The budget for a page the bank did not record one for. Absent geometry means
    * the run predates the fields, and a run that predates them made this exact
    * choice on the command line it was given — which is why the flag exists.
+   *
+   * AND THERE IS NO SUCH NUMBER FOR THE ENDPOINT ROUTE ANY MORE. It was a copy
+   * of the processor config of weights this machine does not hold; the server
+   * publishes the real one and this command speaks to no server (it opens a
+   * bank, never a socket). So an old endpoint-read page with no banked budget
+   * is refused by name below, which is the honest answer: nothing here knows
+   * the frame its boxes were measured in.
    */
-  const fallbackBudget = opts.viaEndpoint === true ? model.maxPixels : MLX_MAX_PIXELS;
+  const fallbackBudget = opts.viaEndpoint === true ? undefined : MLX_MAX_PIXELS;
   const missing = pages.filter((page) => readings.geometry(page) === null);
   const rendered = missing.length > 0
     ? await renderSizes(missing, opts, readingsPath, fallbackBudget)
@@ -222,7 +229,8 @@ export async function dumpBlocks(opts: BlocksDumpOptions): Promise<BlocksDump> {
     const maxPixels = banked?.maxPixels ?? fallbackBudget;
     if (maxPixels === undefined) {
       throw new VlmBlocksError(
-        `page ${page} banks no pixel budget and ${model.id} declares none in src/vlm/models.ts, so `
+        `page ${page} banks no pixel budget and nothing here can name the one it was read `
+        + `under (${model.id}, ${opts.viaEndpoint === true ? 'endpoint' : 'local'} route), so `
         + 'there is no frame its boxes can be scaled out of.',
       );
     }

@@ -115,10 +115,21 @@ model's processor is the same number the answer's boxes are scaled with.
 A model's input distribution moves with resolution, and the damage shows up as
 a bad model rather than a bad render: nothing errors, boxes land slightly off,
 categories get slightly worse, and every symptom points at the weights. 200 dpi
-is the resolution the registered models were measured at, so it is pinned in
-code (`src/vlm/vlm_page.py`, `src/vlm/endpoint.ts`) rather than exposed as a
-knob. A processor that will not accept the pixel budget is a failure, not a
-silent ignore.
+is the resolution the registered models were measured at, so it is pinned
+rather than exposed as a knob. A processor that will not accept the pixel
+budget is a failure, not a silent ignore.
+
+**Pinned WHERE depends on who holds the weights**, and since 2026-09-18 that is
+two answers rather than one. On the local MLX route this program loads the
+model and runs its processor, so the numbers are its own and live in code
+(`src/vlm/vlm_page.py`, `VLM_DPI` and `MLX_MAX_PIXELS` in `src/vlm/read.ts`).
+Against `--vlm-endpoint` they are not: the server holds the weights, so it
+publishes the dpi, the pixel budget, the prompt, the token ceiling and the
+dialect on `GET /v1/info` (`pages_engine.request`), and `src/vlm/contract.ts`
+reads them for every run. A copy here would be the same fact with two owners —
+they would agree until the day they did not, and that day costs a book quietly.
+A server that publishes no such contract is refused before the first page; it
+is never answered out of a local default.
 
 ---
 

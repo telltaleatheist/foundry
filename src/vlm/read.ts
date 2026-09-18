@@ -49,6 +49,7 @@ import { looksLikeRunaway } from './runaway.js';
 import { resolveEndpointHeaders } from '../backend/endpoint-headers.js';
 import { fetchTransport } from '../translate/transport.js';
 import { servedModels } from '../translate/vllm.js';
+import { readPageContract } from './contract.js';
 import { DEFAULT_VLM_CONCURRENCY, readPagesFromEndpoint, VlmEndpointError } from './endpoint.js';
 import { requireVlmModel, type VlmModelDef } from './models.js';
 import {
@@ -61,36 +62,39 @@ import {
 } from './readings.js';
 
 /**
- * The resolution every page is rendered at, and not a setting.
+ * The resolution the LOCAL route renders at, and not a setting.
  *
  * The models are measured on 200 dpi pages — 1300×2112 for a 468×760 pt page —
  * and a model's behaviour moves with its input resolution. The same pin, for
  * the same reason, as the rest of foundry (ARCHITECTURE §5).
+ *
+ * IT IS NO LONGER WHAT THE ENDPOINT ROUTE USES. A server that reads pages
+ * publishes the dpi it wants beside the prompt and the pixel budget
+ * (`contract.ts`), and those three are one set of facts about the weights; this
+ * program's copy of one of them would be the drift the contract exists to
+ * remove. What is still HERE is the number the local MLX route uses — where
+ * this program holds the weights and runs the processor, so the choice is
+ * genuinely its own — and the number a REPLAY re-rasterises a banked page at,
+ * because a bank records the render size it measured but never the dpi behind
+ * it, and no server is in the room to ask.
  */
 export const VLM_DPI = 200;
 
 /**
- * The pixel budget, and the one number the two routes disagree about.
+ * The pixel budget for the LOCAL route.
  *
- * A geometric dialect answers in the frame its processor resized the page to, so
- * whatever budget the reader used has to reach the parser. On MLX this program
- * chooses it — `MLX_MAX_PIXELS`, a measurement, halving the per-page cost.
- * Against an endpoint it does not: the server was started with a processor
- * config, so the model's own cap is what the boxes are in, and at 200 dpi that
- * means no resize at all. A dialect with no geometry gets no budget from here —
- * its behaviour was measured at the processor's default and changing that would
- * change the model.
+ * A geometric dialect answers in the frame its processor resized the page to,
+ * so whatever budget the reader used has to reach the parser. On MLX this
+ * program chooses it — `MLX_MAX_PIXELS`, a measurement, halving the per-page
+ * cost. Against an endpoint it does NOT choose and no longer guesses: the
+ * server publishes the budget its processor was configured with, and
+ * `readPagesIntoBank` takes it from there (`ReadPhase.maxPixels`). A dialect
+ * with no geometry gets no budget from here — its behaviour was measured at the
+ * processor's default and changing that would change the model.
  */
-export function pixelBudget(model: VlmModelDef, viaEndpoint: boolean): number | undefined {
+export function pixelBudget(model: VlmModelDef): number | undefined {
   if (model.dialect !== 'dots-json') return undefined;
-  if (!viaEndpoint) return MLX_MAX_PIXELS;
-  if (model.maxPixels === undefined) {
-    throw new Error(
-      `${model.id} answers with geometry but its registry entry declares no maxPixels, so its`
-      + ' boxes cannot be scaled back into the render. Add it in src/vlm/models.ts.',
-    );
-  }
-  return model.maxPixels;
+  return MLX_MAX_PIXELS;
 }
 
 /**
@@ -208,6 +212,18 @@ export interface VlmBridge {
    * the check is simply not made. The real bridge always carries it.
    */
   confirmModel?: typeof confirmServedModel;
+  /**
+   * WHAT A PAGE REQUEST IS, asked of the server that will answer it.
+   *
+   * REQUIRED, where `confirmModel` is optional, and the difference is what each
+   * one is for: that is a CHECK, and a bridge that stubs the outside may
+   * honestly not make it; this is the prompt, the dpi, the pixel budget and the
+   * ceiling the endpoint route builds every request out of (`contract.ts`).
+   * There is nothing to fall back on because there is deliberately no copy of
+   * those in this program any more, so a bridge that did not carry this would
+   * be a run with no request to send.
+   */
+  pageContract: typeof readPageContract;
 }
 
 export interface ReadPhaseOptions {
@@ -228,7 +244,14 @@ export interface ReadPhaseOptions {
   rendersDir: string;
   /** Keep the images there after the run — the caller was given `--renders`. */
   keepRenders: boolean;
-  /** The budget for this run, from `pixelBudget`. Banked beside every answer. */
+  /**
+   * The LOCAL route's budget, from `pixelBudget`. Banked beside every answer.
+   *
+   * Ignored on the endpoint route, which takes the budget from the server's
+   * published contract instead — one number, one owner, and the owner is the
+   * machine whose processor resized the page. `ReadPhase.maxPixels` is what
+   * this run actually used and is what a caller must read afterwards.
+   */
   maxPixels: number | undefined;
   python?: string;
   endpoint?: string;
@@ -299,6 +322,17 @@ export interface ReadPhase {
   pendingPath: string | null;
   /** What was decided about the bank — `resume`, `reuse` or `read-fresh`. */
   bankAction: ReadingsBankAction | null;
+  /**
+   * The pixel budget this run's answers were actually produced under, which is
+   * the server's on the endpoint route and `pixelBudget`'s locally.
+   *
+   * Handed back rather than recomputed by the caller, because on the endpoint
+   * route the number does not exist until the server has been asked — and a
+   * caller that recomputed it would be scaling boxes out of a frame nobody
+   * used. Undefined for a dialect that answers with no geometry, and for a
+   * replay, which read nothing and whose budgets are the bank's own.
+   */
+  maxPixels: number | undefined;
   inferenceSeconds: number;
   /** How many pages this run actually paid a model for. */
   inferredPages: number;
@@ -317,9 +351,14 @@ export interface ReadPhase {
  * costs the page that was in flight and nothing else.
  */
 export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPhase> {
-  const { label, model, maxPixels, rendersDir } = opts;
+  const { label, model, rendersDir } = opts;
   const bridge = opts.bridge
-    ?? { readPages: readPagesWithVlm, fromEndpoint: readPagesFromEndpoint, confirmModel: confirmServedModel };
+    ?? {
+      readPages: readPagesWithVlm,
+      fromEndpoint: readPagesFromEndpoint,
+      confirmModel: confirmServedModel,
+      pageContract: readPageContract,
+    };
   const viaEndpoint = opts.endpoint !== undefined;
   const geometric = model.dialect === 'dots-json';
   const notInBook = new Set(opts.skipPages);
@@ -386,10 +425,61 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
    */
   const replaying = bank?.action === 'reuse';
 
+  /*
+   * ── WHAT A PAGE REQUEST IS, ASKED BEFORE THE FIRST PAGE IS RENDERED ───────
+   *
+   * On the endpoint route this program no longer owns the prompt, the dpi, the
+   * pixel budget or the token ceiling: the server that will answer publishes
+   * all four and `contract.ts` reads them. It has to happen HERE, before the
+   * rasteriser is spawned, because the dpi is one of the four — a run that
+   * asked afterwards would have rendered at a resolution the server did not
+   * want and nothing to do about it.
+   *
+   * A REPLAY ASKS NOTHING, which is the promise this file's header makes and
+   * the reason the condition is `replaying` rather than `viaEndpoint`: a run
+   * over a completed bank contacts no server, so it cannot ask one what a page
+   * request is and does not need to — its answers already exist and the budget
+   * each was produced under is banked beside it. A RESUME does ask, even when
+   * its bank turns out to hold every page, for `replaysCompletedBank`'s own
+   * reason: nothing knows how many pages the book has until the PDF is opened,
+   * so a resume is a run that intends to read.
+   *
+   * The dialect is checked here too. The server says what shape its answers
+   * come back in and this program picks a parser from the model registry; two
+   * different answers to that question is a page of JSON handed to a markdown
+   * reader, which produces a book rather than an error.
+   */
+  const headers = viaEndpoint ? resolveEndpointHeaders() : undefined;
+  const contract = viaEndpoint && !replaying
+    ? await bridge.pageContract(opts.endpoint!, headers)
+    : null;
+  if (contract !== null) {
+    if (contract.dialect !== model.dialect) {
+      throw new VlmEndpointError(
+        `${opts.endpoint} answers pages in "${contract.dialect}" and this run is set up to read `
+        + `"${model.dialect}" (--vlm-model ${model.id}). One of the two parses the other's `
+        + 'answers into nonsense without failing, so the run stops here.',
+      );
+    }
+    opts.log(
+      `${label}: ${opts.endpoint} publishes the page contract — ${contract.model}`
+      + `${contract.engine === null ? '' : ` on ${contract.engine}`}, ${contract.dpi} dpi, `
+      + `${contract.maxPixels.toLocaleString('en-US')} pixel budget, ${contract.maxTokens}-token `
+      + `ceiling, ${contract.dialect}`,
+    );
+  }
+  /*
+   * ONE BUDGET FOR THIS RUN, from whichever side of the seam owns it. The
+   * server's where a server read the pages; `pixelBudget`'s where this machine
+   * did. It is banked beside every answer, so a rendering tomorrow scales the
+   * boxes by the frame they were measured in rather than by its own.
+   */
+  const maxPixels = contract !== null ? contract.maxPixels : opts.maxPixels;
+
   const run = await bridge.readPages({
     source: opts.source,
     model,
-    dpi: VLM_DPI,
+    dpi: contract !== null ? contract.dpi : VLM_DPI,
     ...(opts.python ? { python: opts.python } : {}),
     ...(geometric || viaEndpoint || opts.keepRenders ? { rendersDir } : {}),
     ...(maxPixels !== undefined ? { maxPixels } : {}),
@@ -471,10 +561,18 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
     const concurrency = opts.concurrency ?? DEFAULT_VLM_CONCURRENCY;
     if (wanted.length === 0) {
       /*
-       * NOT ONE REQUEST, and the difference between this and posting an empty
-       * queue is the difference between a run that works on an aeroplane and one
-       * that does not. A book whose pages are all banked needs the server for
-       * nothing, so the server is not named, not resolved and not reached.
+       * NOT ONE PAGE, and the difference between this and posting an empty
+       * queue is the difference between a run that works on an aeroplane and
+       * one that does not. A book whose pages are all banked needs the server
+       * for nothing, so no page is sent to it.
+       *
+       * IT IS NO LONGER "NOT ONE REQUEST", and the honest sentence is worth
+       * more than the old one. A run that intends to read asks the server what
+       * a page request IS before it rasterises anything, because the dpi is
+       * part of the answer — so a RESUME whose bank turns out to hold every
+       * page has already made that one call. A REPLAY has not and never does:
+       * `replaysCompletedBank` is the difference, and the promise about a
+       * rendering costing nothing is about a replay.
        */
       opts.log(
         `${label}: every page is answered out of the bank, so nothing is sent to `
@@ -482,12 +580,24 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
       );
     } else {
       /*
-       * Resolved ONCE for the run, and only where a request is actually going to
-       * be made -- the banked-everything branch above reaches no server at all
-       * and must keep not reaching one.
+       * THE NAME ON THE WIRE IS THE CONTRACT'S, unless a person named one.
+       *
+       * `--vlm-endpoint-model` is somebody SAYING which model this server was
+       * started under, and a stated reason wins; with no flag the name is the
+       * one the server itself published beside the prompt. What is gone is the
+       * pair of pinned fallbacks that used to sit here — `model.endpointModel`
+       * and then `model.repo` — because a served name guessed out of this
+       * program's registry is the same class of copy as a prompt guessed out
+       * of it, and the server is the only side that knows.
        */
-      const headers = resolveEndpointHeaders();
-      const servedName = opts.endpointModel ?? model.endpointModel ?? model.repo;
+      if (contract === null) {
+        throw new VlmEndpointError(
+          `${wanted.length} page(s) are waiting for ${opts.endpoint} and no page contract was `
+          + 'read from it. This run reached the send with nothing to build a request out of, '
+          + 'which is a defect in this file rather than in the server.',
+        );
+      }
+      const servedName = opts.endpointModel !== undefined ? opts.endpointModel : contract.model;
       await bridge.confirmModel?.(label, opts.endpoint!, servedName, headers, opts.log);
       opts.log(`${label}: ${wanted.length} page(s) to ${opts.endpoint}, ${concurrency} at a time`);
       const endpointStarted = Date.now();
@@ -519,7 +629,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
       const sentCap = new Map<number, number>();
 
       const capForPage = (page: { number: number }): number => {
-        const cap = capToSend(opts.fixedCap === true, longestAccepted, model.maxTokens);
+        const cap = capToSend(opts.fixedCap === true, longestAccepted, contract.maxTokens);
         sentCap.set(page.number, cap);
         return cap;
       };
@@ -527,7 +637,8 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
       await bridge.fromEndpoint({
         endpoint: opts.endpoint!,
         model: servedName,
-        prompt: model.prompt,
+        prompt: contract.prompt,
+        temperature: contract.temperature,
         maxTokens: capForPage,
         concurrency,
         ...(headers !== undefined ? { headers } : {}),
@@ -550,9 +661,9 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
             ...(maxPixels !== undefined ? { maxPixels } : {}),
             model: model.id,
           });
-          if (page.finishReason === 'length') {
+          if (page.finishReason === contract.truncatedFinishReason) {
             ranAway.add(page.number);
-            refuse(page.number, cutOff(sentCap.get(page.number) ?? model.maxTokens, longestAccepted));
+            refuse(page.number, cutOff(sentCap.get(page.number) ?? contract.maxTokens, longestAccepted));
           } else if (page.text.trim().length === 0) {
             refuse(page.number, `it came back empty from ${model.id}`);
           } else {
@@ -561,7 +672,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
           }
           opts.log(
             `${label}: page ${page.number} (${done}/${wanted.length}) — `
-            + `${howItWent(page, sentCap.get(page.number) ?? model.maxTokens)}, `
+            + `${howItWent(page, sentCap.get(page.number) ?? contract.maxTokens)}, `
             + `${page.seconds.toFixed(1)}s`,
           );
         },
@@ -590,19 +701,20 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
        * everything that has actually been read is nothing.
        */
       const misjudged = pagesToReread(
-        unreadable.keys(), sentCap, capFor(longestAccepted, model.maxTokens),
+        unreadable.keys(), sentCap, capFor(longestAccepted, contract.maxTokens),
       );
 
       if (opts.fixedCap !== true && misjudged.length > 0) {
         opts.log(
           `${label}: ${misjudged.length} page(s) were cut by a cap this book has since left `
-          + `behind — reading them again at ${model.maxTokens} tokens`,
+          + `behind — reading them again at ${contract.maxTokens} tokens`,
         );
         await bridge.fromEndpoint({
           endpoint: opts.endpoint!,
           model: servedName,
-          prompt: model.prompt,
-          maxTokens: model.maxTokens,
+          prompt: contract.prompt,
+          temperature: contract.temperature,
+          maxTokens: contract.maxTokens,
           concurrency,
           ...(headers !== undefined ? { headers } : {}),
           pages: misjudged.map((number) => ({ number, imagePath: renderPath(rendersDir, number) })),
@@ -619,7 +731,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
               ...(maxPixels !== undefined ? { maxPixels } : {}),
               model: model.id,
             });
-            if (page.finishReason !== 'length' && page.text.trim().length > 0) {
+            if (page.finishReason !== contract.truncatedFinishReason && page.text.trim().length > 0) {
               // It was a real page all along. It stops being unreadable, and it
               // raises the band like any other accepted page -- which is what
               // spares the rest of its cohort.
@@ -701,6 +813,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
     readings,
     pendingPath: bank?.pendingPath ?? null,
     bankAction: bank?.action ?? null,
+    maxPixels,
     inferenceSeconds,
     inferredPages,
   };
@@ -978,9 +1091,10 @@ export async function vlmRead(opts: VlmReadOptions): Promise<VlmReadReport> {
   const source = sourceFor(opts);
   const readingsPath = path.resolve(opts.readingsPath);
   const viaEndpoint = opts.endpoint !== undefined;
-  const maxPixels = pixelBudget(model, viaEndpoint);
-
-
+  // Local only. Against an endpoint the budget and the dpi are the server's
+  // and the phase prints them once it has read the contract — see the sibling
+  // paragraph in `convert.ts`.
+  const localBudget = viaEndpoint ? undefined : pixelBudget(model);
 
   const skipPages = [...new Set(opts.skipPages ?? [])].sort((a, b) => a - b);
 
@@ -993,9 +1107,9 @@ export async function vlmRead(opts: VlmReadOptions): Promise<VlmReadReport> {
   opts.log(
     `vlm-read: ${model.id} (${viaEndpoint ? opts.endpoint : model.repo}), `
     + (source.kind === 'pdf'
-      ? `pages rendered at ${VLM_DPI} dpi`
+      ? (viaEndpoint ? 'pages rendered at the dpi the server publishes' : `pages rendered at ${VLM_DPI} dpi`)
       : `${source.paths.length} page image(s) read as they are, no rasteriser`)
-    + `${maxPixels !== undefined ? `, ${maxPixels.toLocaleString('en-US')} pixel budget` : ''}`,
+    + `${localBudget !== undefined ? `, ${localBudget.toLocaleString('en-US')} pixel budget` : ''}`,
   );
   opts.log(
     `vlm-read: the product of this run is the reading in ${readingsPath}. No book is written here — `
@@ -1014,7 +1128,7 @@ export async function vlmRead(opts: VlmReadOptions): Promise<VlmReadReport> {
       model,
       rendersDir,
       keepRenders,
-      maxPixels,
+      maxPixels: localBudget,
       skipPages,
       readingsPath,
       ...(opts.python !== undefined ? { python: opts.python } : {}),

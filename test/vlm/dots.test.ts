@@ -72,12 +72,17 @@ test('the dots prompt is the model card\'s, byte for byte', () => {
   );
 });
 
-test('dots-ocr is the default and declares the frame its boxes are in', () => {
+test('dots-ocr is the default, and its frame is no longer pinned here', () => {
   const model = requireVlmModel('dots-ocr');
   assert.equal(model.dialect, 'dots-json');
-  assert.equal(model.maxPixels, 11289600);
-  // A dense index page went past 4096 and came back truncated.
+  // A dense index page went past 4096 and came back truncated. This is the
+  // LOCAL route's ceiling; the endpoint route reads the server's.
   assert.ok(model.maxTokens >= 8192);
+  // The pixel budget used to be `maxPixels: 11289600` here, a copy of the
+  // processor config of weights this machine does not hold. It is the
+  // server's now (`contract.ts`) and MLX_MAX_PIXELS locally, so the registry
+  // declaring one again would be the drift coming back.
+  assert.equal('maxPixels' in model, false);
 });
 
 // ── smart_resize ────────────────────────────────────────────────────────────
