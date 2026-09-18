@@ -3487,6 +3487,14 @@ export function registerIpc(): void {
     await madeFrom(request, request.kind === 'read' ? request.readingsPath : request.outputPath),
   ));
   ipcMain.handle('queue:start', () => queue.start());
+  /*
+   * ONE ROW, BY NAME — what a dialog's own Start presses. `queue:start` is the
+   * shelf's button and releases the whole held batch; this releases the row the
+   * caller just made and leaves every other parked row parked. Answers whether
+   * it let go, so a dialog that is about to watch the run can tell "running" from
+   * "somebody removed it while I was open".
+   */
+  ipcMain.handle('queue:release', (_event, id: string) => queue.release(id));
   ipcMain.handle('queue:remove', (_event, id: string) => { queue.remove(id); });
   ipcMain.handle('queue:cancel', (_event, id: string) => { queue.cancel(id); });
   ipcMain.handle('queue:clear-finished', () => { queue.clearFinished(); });

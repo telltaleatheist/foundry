@@ -229,6 +229,7 @@ const api: FoundryApi = {
     enqueueAnalysis: (request) => ipcRenderer.invoke('queue:enqueue-analysis', request),
     run: (request) => ipcRenderer.invoke('queue:run', request),
     start: () => ipcRenderer.invoke('queue:start'),
+    release: (id) => ipcRenderer.invoke('queue:release', id),
     remove: (id) => ipcRenderer.invoke('queue:remove', id),
     cancel: (id) => ipcRenderer.invoke('queue:cancel', id),
     clearFinished: () => ipcRenderer.invoke('queue:clear-finished'),

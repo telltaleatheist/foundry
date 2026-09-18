@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 
 import { qualify } from '@shared/documents';
 import { reReadAhead } from '@shared/reread';
-import type { JobRequest } from '@shared/types';
+import type { Job, JobRequest } from '@shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
@@ -12,6 +12,7 @@ import { OpenDocumentsService, type Tab } from '../../core/documents.service';
 import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
 import { api, hosted } from '../../core/foundry';
+import { RunTargetComponent } from '../run-target/run-target.component';
 
 /**
  * OCR — read the pages, and stop there.
@@ -44,7 +45,7 @@ import { api, hosted } from '../../core/foundry';
  */
 @Component({
   selector: 'app-ocr-dialog',
-  imports: [FormsModule],
+  imports: [FormsModule, RunTargetComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="scrim" (click)="ui.closeOcr()"></div>
@@ -62,6 +63,20 @@ import { api, hosted } from '../../core/foundry';
 
       @if (source(); as input) {
         <div class="body">
+        <!--
+          THE RUN REPLACES THE FORM RATHER THAN SITTING UNDER IT. Leaving the
+          fields up while the job moves would offer edits that change nothing —
+          the request was composed and handed over at the press — which is the
+          same defect as a read-only box drawn as a control, one step later.
+        -->
+        @if (watched(); as job) {
+          <p class="fact">{{ nameFor(input) }}</p>
+          <div class="bar" [attr.data-state]="job.state">
+            <div class="fill" [style.width.%]="percent(job)"></div>
+          </div>
+          <p class="note">{{ progressWords(job) }}</p>
+          @if (job.error; as reason) { <p class="problem">{{ reason }}</p> }
+        } @else {
           <!--
             A PICKER RATHER THAN A READONLY BOX, and that is what makes a batch
             possible at all. It used to name the focused tab and nothing else, so
@@ -69,27 +84,44 @@ import { api, hosted } from '../../core/foundry';
             front of you. With every open PDF in the list, four books open is
             four jobs without closing this once.
           -->
-          <label class="field">
-            <span class="label">Source</span>
-            <!--
-              THE BOOK, QUALIFIED BY WHAT IT IS. These options were basenames,
-              and every document of one project shares a single stem — so two
-              open books were two forty-character strings differing somewhere in
-              the middle, and a project's scan and the real-text PDF made from it
-              were the same option twice over, differing only by the directory the
-              user is deliberately never shown. Picking the wrong one earned a
-              refusal after the whole form had been filled in.
-            -->
-            @if (sources().length > 1) {
+          <!--
+            THE BOOK, QUALIFIED BY WHAT IT IS. These options were basenames, and
+            every document of one project shares a single stem — so two open
+            books were two forty-character strings differing somewhere in the
+            middle, and a project's scan and the real-text PDF made from it were
+            the same option twice over, differing only by the directory the user
+            is deliberately never shown. Picking the wrong one earned a refusal
+            after the whole form had been filled in.
+
+            AT ONE DOCUMENT IT IS NOT A FIELD. It was a read-only input, which is
+            a control that looks pressable and is not. Owen, 2026-09-17: "if an
+            option is impossible to click ... dont present it as an option. it
+            isnt an option. present it as information or dont present it at all."
+            So one source is a sentence and several are a picker.
+          -->
+          @if (sources().length > 1) {
+            <label class="field">
+              <span class="label">Source</span>
               <select [ngModel]="input" (ngModelChange)="pick($event)" name="source" [title]="input">
                 @for (candidate of sources(); track candidate) {
                   <option [value]="candidate">{{ optionFor(candidate) }}</option>
                 }
               </select>
-            } @else {
-              <input type="text" [value]="optionFor(input)" readonly [title]="input">
-            }
-          </label>
+            </label>
+          } @else {
+            <p class="fact" [title]="input">{{ optionFor(input) }}</p>
+          }
+
+          <!--
+            WHERE IT WILL RUN, AND WHAT WILL RUN IT. Owen met this dialog on
+            2026-09-17 having just dragged in a PDF, and it was the card from
+            before Crucible existed: no engine named, no model named, and no hint
+            that reading now needs a server at all. The child draws the one
+            real choice (which engine, and only when there is more than one) and
+            states the rest, because there is no per-run model override to offer
+            — see run-target.component.ts, which carries that ruling.
+          -->
+          <app-run-target act="pages" [(server)]="server" (ready)="canRun.set($event)" />
 
           <!--
             NO OUTPUT FORMAT. What this job makes is the reading, and what the
@@ -132,6 +164,7 @@ import { api, hosted } from '../../core/foundry';
           @if (added(); as note) {
             <p class="added" role="status">{{ note }}</p>
           }
+        }
         </div>
 
         <!--
@@ -158,15 +191,45 @@ import { api, hosted } from '../../core/foundry';
           main's own box the moment Add is pressed. No line for a book nobody has
           read, because there is nothing to say.
         -->
-        <footer class="foot">
-          @if (branchNote(); as fact) {
-            <p class="beside">{{ fact }}</p>
-          }
-          <button class="ghost" (click)="ui.closeOcr()">Cancel</button>
-          <button class="primary" [disabled]="busy()" (click)="add()">
-            {{ busy() ? 'Working…' : 'Add to queue' }}
-          </button>
-        </footer>
+        <!--
+          ── THREE PRESSES, AND THEN TWO WHILE IT RUNS ────────────────────────
+
+          Owen, 2026-09-17: *"most of these actions will probably be serialized
+          … which means most of the time we probably wont be using the queue, so
+          inline modals will have to handle it. the user can hit 'start', 'add to
+          queue', or 'cancel'. if they hit start, progress shows in the modal
+          live. if they hit 'send to background', it adds it to the queeu while
+          running and they can continue their work."*
+
+          THERE IS STILL ONE RUNNER. Start does not spawn anything itself: it
+          enqueues exactly as Add does, then releases that ONE row
+          (queue:release, added for this) and watches it. So "in the modal" and
+          "in the queue" are the same run seen from two places, and Send to
+          background is this card letting go rather than a handover. That also
+          answers the old objection recorded on queue.run, which refuses a read
+          by name because "hours of GPU never run under a dialog's spinner" —
+          they no longer have to, because the spinner is escapable.
+        -->
+        @if (watched(); as job) {
+          <footer class="foot">
+            <p class="beside">{{ progressWords(job) }}</p>
+            <button class="ghost" (click)="cancelRun(job.id)">Stop</button>
+            <button class="primary" (click)="background()">Send to background</button>
+          </footer>
+        } @else {
+          <footer class="foot">
+            @if (branchNote(); as fact) {
+              <p class="beside">{{ fact }}</p>
+            }
+            <button class="ghost" (click)="ui.closeOcr()">Cancel</button>
+            <button class="ghost" [disabled]="busy() || !canRun()" (click)="add(false)">
+              {{ busy() === 'queue' ? 'Working…' : 'Add to queue' }}
+            </button>
+            <button class="primary" [disabled]="busy() || !canRun()" (click)="add(true)">
+              {{ busy() === 'start' ? 'Starting…' : 'Start' }}
+            </button>
+          </footer>
+        }
       } @else {
         <div class="body empty">
           <!--
@@ -263,6 +326,26 @@ import { api, hosted } from '../../core/foundry';
     .check em { display: block; font-style: normal; font-size: 11px; color: var(--text-tertiary); }
 
     .note { margin: 0; font-size: 11px; color: var(--text-tertiary); line-height: 1.5; }
+    /* A fact, not a field. What a read-only input used to be. */
+    .fact {
+      margin: 0; font-size: 12px; color: var(--text-primary);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* EMPTY IS A REAL STATE and is drawn as one: a run that has not reported a
+       fraction yet shows a track with nothing in it, rather than a bar this app
+       invented a position for. */
+    .bar {
+      height: 4px; border-radius: 999px;
+      background: var(--bg-sunken); overflow: hidden;
+    }
+    .fill {
+      height: 100%; width: 0;
+      background: var(--accent);
+      transition: width 200ms cubic-bezier(0, 0, 0.2, 1);
+    }
+    .bar[data-state="failed"] .fill, .bar[data-state="cancelled"] .fill {
+      background: var(--warn);
+    }
     .problem { margin: 0; font-size: 12px; color: var(--warn); }
     /* The confirmation the dialog owes you now that it no longer closes. Green
        rather than the warn colour, and role=status on the element so a screen
@@ -493,7 +576,7 @@ export class OcrDialogComponent {
   }
 
   /** One rule for what a document is called, and it is not this file's. */
-  private nameFor(filePath: string): string {
+  protected nameFor(filePath: string): string {
     return this.projects.nameFor(filePath);
   }
 
@@ -502,8 +585,42 @@ export class OcrDialogComponent {
   protected readonly problem = signal<string | null>(null);
   /** Why nothing was queued. Cleared whenever the form's answers change. */
   protected readonly added = signal<string | null>(null);
-  /** The workspace plan is a hash of the whole PDF; a 400 MB scan is not instant. */
-  protected readonly busy = signal(false);
+  /**
+   * WHICH PRESS IS IN FLIGHT, so only that button says so.
+   *
+   * A boolean here read "something is happening" and both buttons would have
+   * said it. The workspace plan is a hash of the whole PDF -- a 400 MB scan is
+   * not instant -- so there is a real moment to label, and labelling the wrong
+   * button during it is how somebody concludes they pressed the wrong one.
+   */
+  protected readonly busy = signal<'queue' | 'start' | null>(null);
+
+  /** The engine this run is pinned to. The child picks the default. */
+  protected readonly server = signal('');
+  /** May this act run on that engine at all -- the child's verdict. */
+  protected readonly canRun = signal(false);
+
+  /**
+   * THE ROW THIS CARD IS WATCHING, or null when it is a form.
+   *
+   * An id rather than the job, because the job is re-pushed whole on every
+   * change (`queue:changed`) and a held copy would be a snapshot going stale
+   * under a progress bar. See {@link watched}.
+   */
+  private readonly watching = signal<string | null>(null);
+
+  /**
+   * That row as it stands right now, out of the queue's own mirror.
+   *
+   * NULL THE MOMENT IT LEAVES THE LIST, which is what makes Send to background
+   * and a finished run the same code path: the card stops watching and what it
+   * draws goes back to being a form.
+   */
+  protected readonly watched = computed(() => {
+    const id = this.watching();
+    if (id === null) return null;
+    return this.queue.jobs().find((job) => job.id === id) ?? null;
+  });
 
   /**
    * What pressing Add would do to the reading this project already has.
@@ -576,7 +693,15 @@ export class OcrDialogComponent {
     void this.documents.openViaDialog();
   }
 
-  protected async add(): Promise<void> {
+  /**
+   * ONE COMPOSE, TWO ENDINGS.
+   *
+   * `release` is the whole difference between the two buttons, and it is one
+   * argument rather than two methods because everything above the last four
+   * lines -- the cost question, the plan, the request -- is identical and a
+   * second copy of it would drift.
+   */
+  protected async add(release: boolean): Promise<void> {
     const input = this.source();
     if (input === null || !api) return;
 
@@ -604,7 +729,7 @@ export class OcrDialogComponent {
     const ahead = this.ahead();
     if (ahead?.kind === 'replace' && !await api.confirmReRead(ahead.message)) return;
 
-    this.busy.set(true);
+    this.busy.set(release ? 'start' : 'queue');
     this.problem.set(null);
     try {
       const skip = this.skipPages().trim();
@@ -660,7 +785,17 @@ export class OcrDialogComponent {
       if (skip.length > 0) request.skipPages = skip;
       if (language.length > 0) request.language = language;
 
-      const outcome = await this.queue.enqueue(request);
+      /*
+       * PINNED TO THE ENGINE THE CARD NAMED, and pinned AFTER the enqueue rather
+       * than carried on the request: `waitFor` is a property of the ROW (a
+       * person can re-route a parked row from the shelf), so the queue's own
+       * door is the one owner of it. A blank server means nothing was chosen and
+       * the row keeps the default it was admitted with.
+       */
+      const { outcome, id } = await this.queue.enqueueNamed(request);
+      if (id !== null && this.server().length > 0) {
+        await this.queue.setWaitFor(id, this.server());
+      }
       /*
        * A REFUSAL IS NOT A SUCCESS, so it does not get the success behaviour.
        * Main dedupes on what a job produces — for a reading that is the bank —
@@ -670,7 +805,31 @@ export class OcrDialogComponent {
        * for a problem.
        */
       if (outcome === 'already') {
+        /*
+         * A DUPLICATE IS STILL A RUN SOMEBODY CAN WATCH. Main answers with the
+         * EXISTING row, and if that row is the thing the person just asked for
+         * then Start's honest behaviour is to show it working rather than to
+         * report that nothing happened. Add to queue keeps the old sentence,
+         * because there the news IS that the shelf did not grow.
+         */
+        if (release && id !== null) {
+          await this.queue.release(id);
+          this.watching.set(id);
+          return;
+        }
         this.added.set(`${this.nameFor(input)} is already waiting to be read — nothing was added.`);
+        return;
+      }
+
+      /*
+       * START COMMITS TO THIS ROW AND NOTHING ELSE. `queue:release` was added
+       * for exactly this: the shelf's Start lets go of the whole held batch,
+       * which is right for a button somebody pressed while looking at the batch
+       * and wrong for a dialog that means one book.
+       */
+      if (release && id !== null) {
+        await this.queue.release(id);
+        this.watching.set(id);
         return;
       }
       /*
@@ -715,7 +874,72 @@ export class OcrDialogComponent {
       // both are sentences.
       this.problem.set(err instanceof Error ? err.message : String(err));
     } finally {
-      this.busy.set(false);
+      this.busy.set(null);
     }
+  }
+
+  /**
+   * LET GO OF THE RUN, KEEP THE RUN. Owen: *"if they hit 'send to background',
+   * it adds it to the queeu while running and they can continue their work."*
+   *
+   * Nothing is moved and nothing is handed over, because the row has been in the
+   * queue since the press — this card simply stops watching it and closes. The
+   * queue panel opens on the way out for the reason Add has always opened it:
+   * what somebody has just done is put work somewhere else on the screen, and
+   * they should be able to see it.
+   */
+  protected background(): void {
+    this.watching.set(null);
+    this.ui.summonQueue(true);
+    this.ui.closeOcr();
+  }
+
+  /**
+   * STOP THE RUN, and go back to being a form rather than closing.
+   *
+   * A cancelled reading leaves a row in the shelf and nothing on disk worth
+   * keeping, so the useful next thing is usually to change a page range and try
+   * again — which is this card, with the values still in it.
+   */
+  protected async cancelRun(id: string): Promise<void> {
+    await this.queue.cancel(id);
+    this.watching.set(null);
+  }
+
+  /**
+   * How far along, as a percentage, or 0 when there is no fraction yet.
+   *
+   * A run that has not reported a count draws an empty bar rather than a
+   * guessed one: `JobProgress` is the engine's own fraction and this app has no
+   * second opinion about how far through a book it is.
+   */
+  protected percent(job: Job): number {
+    const progress = job.progress;
+    if (progress === null || progress.total <= 0) return 0;
+    return Math.min(100, Math.round((progress.page / progress.total) * 100));
+  }
+
+  /**
+   * THE RUN IN A SENTENCE, and the states are said in the words of what happened
+   * rather than in the queue's vocabulary.
+   *
+   * `held` cannot appear here — this card only watches a row it released — but
+   * it is answered anyway rather than falling through to a bare state name,
+   * because the one thing a progress line must never do is print an internal
+   * word at somebody.
+   */
+  protected progressWords(job: Job): string {
+    if (job.error) return 'It stopped.';
+    switch (job.state) {
+      case 'held': return 'Waiting to be released.';
+      case 'queued': return 'Waiting for the engine.';
+      case 'running': break;
+      case 'cancelled': return 'Stopped.';
+      case 'failed': return 'It stopped.';
+      case 'done': return 'Read. The book is in the library.';
+    }
+    const progress = job.progress;
+    if (progress === null) return job.message ?? 'Reading…';
+    return `Reading page ${progress.page} of ${progress.total}.`;
   }
 }

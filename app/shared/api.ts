@@ -1095,6 +1095,16 @@ export interface FoundryApi {
      */
     start(): Promise<number>;
     /**
+     * RELEASE ONE HELD ROW and let the queue drain — a dialog's own Start.
+     *
+     * `start()` above is the shelf's button and commits to the whole held batch;
+     * this commits to the row the caller just enqueued, so a modal that starts a
+     * run does not also let go of rows somebody parked on purpose. Answers
+     * whether it let go: false covers released-already, started-already and
+     * removed-while-you-were-looking, which are one state to a caller.
+     */
+    release(id: string): Promise<boolean>;
+    /**
      * Take a held or queued row out of the list entirely.
      *
      * Not `cancel`: a job that never started has nothing to stop and leaves no

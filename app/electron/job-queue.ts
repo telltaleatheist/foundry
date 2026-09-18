@@ -2182,6 +2182,42 @@ export function start(): number {
 }
 
 /**
+ * RELEASE ONE HELD ROW BY NAME, and nothing else.
+ *
+ * ── Why this exists beside {@link start} rather than inside it ─────────────
+ *
+ * Start is a commitment to a BATCH somebody has just looked over — it releases
+ * everything held at that moment, which is right for the shelf's own button and
+ * wrong for a dialog. Owen, 2026-09-17, on the modals: *"the user can hit
+ * 'start', 'add to queue', or 'cancel'. if they hit start, progress shows in the
+ * modal live."* A dialog's Start means THIS run. Routing it through `start()`
+ * would let go of every other row a person had deliberately parked, which is a
+ * batch nobody pressed anything for — the exact failure `start`'s own comment
+ * guards against one step further out.
+ *
+ * ANSWERS WHETHER IT LET GO, and false is not an error: the row may have been
+ * released already, may have started, or may have been removed while the dialog
+ * was open. All three mean "there is nothing here to release", and a caller that
+ * is watching the run finds out what happened from the row itself.
+ *
+ * HOSTED IT FORWARDS, exactly as Start does, and answers false — zero of
+ * FOUNDRY's rows were released because hosted there are none.
+ */
+export function release(id: string): boolean {
+  const host = hostQueue();
+  if (host !== null) {
+    forwardToHost('Start', host.start?.bind(host));
+    return false;
+  }
+  const job = jobs.find((row) => row.id === id);
+  if (job === undefined || job.state !== 'held') return false;
+  job.state = 'queued';
+  changed();
+  void pump();
+  return true;
+}
+
+/**
  * A ROUTING GESTURE THIS QUEUE WILL NOT PERFORM, with the reason as a NAME.
  *
  * The name is the contract and the sentence is the surface: BookForge throws the
