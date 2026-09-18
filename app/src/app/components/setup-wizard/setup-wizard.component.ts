@@ -3,12 +3,22 @@
  *
  * ── WHAT IT IS FOR, IN ONE SENTENCE ─────────────────────────────────────────
  *
- * Foundry needs four things that do not arrive with the application — a folder
- * to keep books in, a GPU engine, one or two prebuilt Pythons and the page
- * reader — and until this screen existed, a new installation discovered each of
- * them by failing at it. The wizard asks for them in the order they are needed,
- * says what each one costs before fetching a byte of it, and lets every single
- * one be skipped.
+ * Foundry needs TWO things that do not arrive with the application — a folder to
+ * keep books in, and a GPU engine — and until this screen existed, a new
+ * installation discovered both by failing at them.
+ *
+ * IT WAS FOUR, and the other two left the same way: the prebuilt Pythons became
+ * something startup provisions for itself, and the page reader was deleted
+ * outright on 2026-09-17 (*"there sohuldnt be a local system. foundry does all
+ * ai work through crucible"*). So this screen no longer downloads anything at
+ * all, which is a change in kind rather than in size — see the welcome step,
+ * which used to promise a price beside every button.
+ *
+ * OF THE TWO, ONE IS OPTIONAL AND ONE IS NOT. The library folder has a default
+ * and a person can walk past it. The engine cannot be walked past and the screen
+ * should stop implying otherwise: since Wave 66 every GPU slot in the queue is a
+ * registered engine, so somebody who skips it has no slot and cannot translate,
+ * simplify, clean, analyse or read a page.
  *
  * ── IT USED TO ASK FOR OLLAMA AND A MODEL, AND THAT STEP IS DELETED ─────────
  *
@@ -33,16 +43,17 @@
  *
  * `UiService.dialogs` is the one-modal list, and this is deliberately not on
  * it (see `setupOpen` there). A modal is a question with an answer; this is
- * several steps, one of which STARTS WORK THAT OUTLIVES THE STEP — a
- * page-reader download keeps what it has already fetched even when it is
- * cancelled. So:
+ * several steps, one of which STARTS WORK THAT OUTLIVES THE STEP — installing
+ * an engine, and on Windows upgrading it to WSL afterwards, both of which keep
+ * going if this card is dismissed. (It used to be the page-reader download that
+ * made this true. That is gone; the install is not.) So:
  *
  *   * it does not go through `only()`, which would let any dialog opened over
  *     it clear the boolean and take a half-finished setup off the screen;
  *   * it is MOUNTED UNCONDITIONALLY by the shell and holds its own `@if`,
  *     because an `@if` around this component is a DESTROY, and destroying it
- *     mid-download would drop the progress subscription that is the only
- *     thing telling somebody their download is alive;
+ *     mid-install would drop the progress subscription that is the only thing
+ *     telling somebody their engine is still being built;
  *   * closing it is never a failure. `setup:finish` is called on the way out
  *     however it is left, and what was skipped is written down.
  *
@@ -137,7 +148,13 @@ const STEPS: readonly StepDef[] = [
   {
     id: 'welcome',
     title: 'Welcome',
-    blurb: 'A library folder and a GPU engine. Each one can be skipped, and each one can be done later from Settings.',
+    /*
+     * IT SAID *"Each one can be skipped"*, which is true of the mechanism and
+     * misleading about the result: skipping the engine leaves a queue with no
+     * GPU slot, and the engine step two screens later says so at length. A
+     * welcome page that contradicts a step is worse than one that says less.
+     */
+    blurb: 'A library folder, and a GPU engine that does the actual work. Both can be changed later in Settings.',
   },
   {
     id: 'library',
@@ -248,9 +265,18 @@ const STEPS: readonly StepDef[] = [
               language model is sent to a GPU engine, which is the one thing here worth setting up
               carefully.
             </p>
+            <!--
+              THIS SAID *"Nothing on the next screens downloads until you press
+              the button that downloads it, and the size is always beside the
+              button"* — a promise about the Pythons step and the page-reader
+              step, neither of which exists. Nothing here downloads to THIS
+              machine any more. What can still take minutes is installing the
+              engine, so that is what the sentence is about now.
+            -->
             <p class="line">
-              Nothing on the next screens downloads until you press the button that downloads it,
-              and the size is always beside the button.
+              Nothing here downloads a model to this computer. If you ask Foundry to install the
+              GPU engine, that runs Crucible's own installer and takes a few minutes — and it is
+              the only thing on these screens that does.
             </p>
           }
 
@@ -317,6 +343,53 @@ const STEPS: readonly StepDef[] = [
                     </div>
                     @if (!act.enabled) { <p class="act-why small">{{ act.reason }}</p> }
                   }
+                </div>
+              }
+
+              <!--
+                ── WSL ACCELERATION: AN UPGRADE, NEVER A GATE ─────────────────
+
+                Owen, 2026-09-18: *"if theres no local crucible server, help the
+                user set up the local windows one and then the wsl engine."* Two
+                stages, and this is the second — but the shape matters more than
+                the order, and BookForge's hostabilityOf is explicit about it:
+                "Crucible runs natively on Windows. WSL is not required to
+                install or connect."
+
+                So stage one IS the whole install, and this is offered
+                afterwards, on an engine that is already working. A wizard that
+                required WSL to finish would strand a machine with virtualisation
+                switched off in its BIOS — a machine that could have had a
+                working llama-windows engine a minute after pressing Install.
+
+                IT HANDS OFF RATHER THAN DRIVING. upgradeWindowsEngine submits
+                the work as a TASK to that engine's own controller and follows
+                it; the engine owns WSL, and this app owns none of it. That is
+                the same shape BookForge's upgradeWsl takes, and deliberately
+                NOT the shape of the install above it — at install time there is
+                no engine to ask, and once one exists everything goes through it.
+
+                A DROPPED STREAM IS NOT A FAILURE, which BookForge learned the
+                hard way: the upgrade replaces the process serving the progress
+                stream, so the last frame can simply never arrive. The sentence
+                below says the work continues, and the Servers card is where its
+                result shows up.
+              -->
+              @if (engine.backend === 'llama-windows') {
+                <div class="wsl">
+                  <p class="line">
+                    This engine runs natively on Windows and works now — everything below is
+                    already running on it. WSL acceleration is the speed upgrade: it lets the
+                    engine serve through vLLM, which is faster and can hold models the native
+                    build cannot. The engine sets it up itself; Foundry only asks.
+                  </p>
+                  <div class="actions">
+                    <button class="primary" type="button" [disabled]="wslBusy()"
+                            (click)="upgradeWsl(engine.serverName)">
+                      {{ wslBusy() ? 'Setting up…' : 'Set up WSL acceleration' }}
+                    </button>
+                  </div>
+                  @if (wslSaid(); as said) { <p class="small">{{ said }}</p> }
                 </div>
               }
 
@@ -591,6 +664,7 @@ const STEPS: readonly StepDef[] = [
     .badge.held { color: var(--ok); background: var(--ok-soft); }
     .badge.warn-badge { color: var(--warn); background: var(--warn-soft); }
 
+    .wsl { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
     .engine {
       display: flex;
       flex-direction: column;
@@ -687,6 +761,10 @@ export class SetupWizardComponent {
    * the step draws the doors for both. They are never half-set.
    */
   protected readonly engineProbe = signal<Extract<CrucibleProbe, { outcome: 'ok' }> | null>(null);
+
+  /** A WSL upgrade in flight, and the last thing the engine's task said. */
+  protected readonly wslBusy = signal(false);
+  protected readonly wslSaid = signal<string | null>(null);
   protected readonly engineCap = signal<CapabilityRecord | null>(null);
   protected readonly engineAsking = signal(false);
   /**
@@ -852,6 +930,16 @@ export class SetupWizardComponent {
     destroyRef.onDestroy(api.acts.onChanged(() => { void this.loadCrucible(); }));
 
     /*
+     * THE ENGINE'S OWN WORDS WHILE IT BUILDS A WSL BACKEND. Filtered to the
+     * server being upgraded, because main broadcasts to every window and names
+     * the server on each frame.
+     */
+    destroyRef.onDestroy(api.crucible.onEngineUpgrade((progress) => {
+      if (!this.wslBusy()) return;
+      this.wslSaid.set(progress.message);
+    }));
+
+    /*
      * COORDINATION IS NOT SOMETHING THIS SCREEN STARTS, so it is only heard.
      * The sweep runs at app start on every enabled server (crucible
      * docs/PHASE14-ENVPACKS.md §4a), and somebody standing on this step while a
@@ -969,6 +1057,40 @@ export class SetupWizardComponent {
    * says nothing more, on the standing rule that main's answer is the truth and
    * a component holding its own copy of a list is the copy that goes stale.
    */
+  /**
+   * ASK THE ENGINE TO GROW A WSL BACKEND, and follow what it says.
+   *
+   * Nothing here runs a command. `upgradeWindowsEngine` submits a task to that
+   * engine's controller and this listens — the engine owns WSL, including the
+   * distro, the guest install and any restart it needs, and an app that drove
+   * it would be a second owner of somebody else's machine.
+   *
+   * THE PROMISE RESOLVING IS NOT THE ANSWER, and neither is it failing. The
+   * upgrade replaces the process serving the progress stream, so the stream can
+   * die before its final frame — BookForge hit exactly this and now polls
+   * readiness afterwards rather than believing the drop. Foundry does the
+   * cheaper honest thing: it stops saying "setting up", re-reads the engine, and
+   * if the re-read has not caught up it says the work continues rather than
+   * claiming either outcome.
+   */
+  protected async upgradeWsl(server: string): Promise<void> {
+    if (!api || this.wslBusy()) return;
+    this.wslBusy.set(true);
+    this.wslSaid.set('Asking the engine to set up WSL. This can take several minutes.');
+    try {
+      await api.crucible.upgradeWindowsEngine(server);
+      await this.loadCrucible();
+      this.wslSaid.set(this.engineProbe()?.backend === 'cuda-linux'
+        ? 'WSL acceleration is set up. The engine is serving through it now.'
+        : 'The engine is still working on it. It continues whether this window is open or '
+          + 'not, and Settings › Crucible Servers shows where it got to.');
+    } catch (err) {
+      this.wslSaid.set(err instanceof Error ? err.message : String(err));
+    } finally {
+      this.wslBusy.set(false);
+    }
+  }
+
   protected async loadCrucible(): Promise<void> {
     if (!api) return;
     const view = await api.crucible.settings();
