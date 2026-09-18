@@ -63,7 +63,7 @@ const ACT_WORDS: Readonly<Record<string, string>> = {
   simplify: 'simplify',
   analysis: 'analyse',
 };
-import { api } from '../../core/foundry';
+import { api, hosted } from '../../core/foundry';
 
 @Component({
   selector: 'app-run-target',
@@ -80,6 +80,25 @@ import { api } from '../../core/foundry';
         No Crucible server is connected, and every page is read on one. Add an engine under
         Settings › Crucible Servers and this fills itself in.
       </p>
+    } @else if (hosted()) {
+      <!--
+        ── HOSTED, THE PLACEMENT IS NOT OURS TO OFFER ────────────────────────
+
+        Vendored into BookForge, a queued job goes to the HOST's queue and the
+        host's pump decides which of its engines takes it. Foundry's own
+        setWaitFor looks in Foundry's job array, which holds none of the host's
+        rows, so it finds nothing and silently does nothing.
+
+        Chips here would therefore be a control that changes nothing -- pressed,
+        ticked, and ignored -- which is the exact defect this component exists to
+        remove one screen along. So hosted it says who decides and offers no
+        press.
+
+        Owen, 2026-09-18: "when it goes to the queue when vendored in bookforge
+        it should go to bookforge's queue, not ours." It does; this is the half
+        that makes the screen agree with it.
+      -->
+      <p class="says">Runs on one of BookForge's engines — it chooses which when the job starts.</p>
     } @else {
       <div class="target">
         <!--
@@ -181,6 +200,9 @@ import { api } from '../../core/foundry';
   `],
 })
 export class RunTargetComponent {
+  /** Read in the template: hosted, the host's queue owns the placement. */
+  protected readonly hosted = hosted;
+
   /** Which act this dialog is about — the engine's own class name. */
   readonly act = input.required<ModelClass>();
 
@@ -243,6 +265,9 @@ export class RunTargetComponent {
   });
 
   protected readonly runnable = computed(() => {
+    // Hosted, the host accepts the row and places it. There is no capability of
+    // ours to consult, and consulting one would dark a button that works.
+    if (hosted()) return true;
     if (this.servers().length === 0) return false;
     const row = this.row();
     // Unread is not refused: a capability that has not answered yet must not

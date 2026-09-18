@@ -240,9 +240,23 @@ import { RunTargetComponent } from '../run-target/run-target.component';
               <p class="beside">{{ fact }}</p>
             }
             <button class="ghost" (click)="ui.closeOcr()">Cancel</button>
-            <button class="ghost" [disabled]="busy() || !canRun()" (click)="add(false)">
-              {{ busy() === 'queue' ? 'Working…' : 'Add to queue' }}
-            </button>
+            <!--
+              ── NO "ADD TO QUEUE" HOSTED, BECAUSE THERE IS NO HOLD ────────────
+
+              Vendored into BookForge the row goes to the HOST's queue, and the
+              host's pump decides when it runs -- nobody presses Start for it
+              (electron/job-queue.ts, enqueue: "nothing is minted here, nothing
+              is held here"). So the two buttons would do the same thing and
+              only one of them would be telling the truth about it.
+
+              Owen, 2026-09-18: *"when it goes to the queue when vendored in
+              bookforge it should go to bookforge's queue, not ours."*
+            -->
+            @if (!hosted()) {
+              <button class="ghost" [disabled]="busy() || !canRun()" (click)="add(false)">
+                {{ busy() === 'queue' ? 'Working…' : 'Add to queue' }}
+              </button>
+            }
             <button class="primary" [disabled]="busy() || !canRun()" (click)="add(true)">
               {{ busy() === 'start' ? 'Starting…' : 'Start' }}
             </button>
@@ -608,6 +622,9 @@ export class OcrDialogComponent {
    * selected that a person can walk past without noticing.
    */
   protected readonly languages = LANGUAGE_CHOICES;
+
+  /** Read in the template: hosted, the host's queue holds nothing. */
+  protected readonly hosted = hosted;
 
   /** The engine this run is pinned to. The child picks the default. */
   protected readonly server = signal('');

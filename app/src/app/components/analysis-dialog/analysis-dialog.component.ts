@@ -25,7 +25,7 @@ import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
 import { RunProgressComponent } from '../run-progress/run-progress.component';
 import { RunTargetComponent } from '../run-target/run-target.component';
-import { api } from '../../core/foundry';
+import { api, hosted } from '../../core/foundry';
 
 /*
  * THE TWO DEFAULTS ARE IMPORTED AND NEVER COPIED, exactly as the Translate dialog
@@ -289,9 +289,23 @@ import { api } from '../../core/foundry';
         } @else {
           <footer class="foot">
             <button class="ghost" (click)="ui.closeAnalysis()">Cancel</button>
-            <button class="ghost" [disabled]="busy() || !canRun() || picked().size === 0" (click)="add(false)">
-              {{ busy() === 'queue' ? 'Working…' : 'Add to queue' }}
-            </button>
+            <!--
+              ── NO "ADD TO QUEUE" HOSTED, BECAUSE THERE IS NO HOLD ────────────
+
+              Vendored into BookForge the row goes to the HOST's queue, and the
+              host's pump decides when it runs -- nobody presses Start for it
+              (electron/job-queue.ts, enqueue: "nothing is minted here, nothing
+              is held here"). So the two buttons would do the same thing and
+              only one of them would be telling the truth about it.
+
+              Owen, 2026-09-18: *"when it goes to the queue when vendored in
+              bookforge it should go to bookforge's queue, not ours."*
+            -->
+            @if (!hosted()) {
+              <button class="ghost" [disabled]="busy() || !canRun() || picked().size === 0" (click)="add(false)">
+                {{ busy() === 'queue' ? 'Working…' : 'Add to queue' }}
+              </button>
+            }
             <button class="primary" [disabled]="busy() || !canRun() || picked().size === 0" (click)="add(true)">
               {{ busy() === 'start' ? 'Starting…' : 'Start' }}
             </button>
@@ -594,6 +608,9 @@ export class AnalysisDialogComponent {
   /** The plan hashes the whole book to key it, and materialises one. Not instant. */
   /** WHICH press is in flight, so only that button says so. */
   protected readonly busy = signal<'queue' | 'start' | null>(null);
+  /** Read in the template: hosted, the host's queue holds nothing. */
+  protected readonly hosted = hosted;
+
   /** The engine this run is pinned to. The child picks the default. */
   protected readonly server = signal('');
   /** May this act run on that engine at all — the child's verdict. */

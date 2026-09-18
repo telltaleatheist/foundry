@@ -2202,11 +2202,23 @@ export function start(): number {
  * FOUNDRY's rows were released because hosted there are none.
  */
 export function release(id: string): boolean {
-  const host = hostQueue();
-  if (host !== null) {
-    forwardToHost('Start', host.start?.bind(host));
-    return false;
-  }
+  /*
+   * ── HOSTED, THERE IS NOTHING HERE TO RELEASE, AND NOTHING TO FORWARD ─────
+   *
+   * This first forwarded to `host.start()`, copying what `start()` does one
+   * function up. That was wrong in the one way this door exists to avoid: the
+   * host's Start releases the host's WHOLE held batch, so a dialog committing
+   * to its own book would have let go of every row somebody had parked in
+   * BookForge. Worse than the bug it was written to prevent, because the rows
+   * belong to another app.
+   *
+   * It does not need forwarding at all. A hosted enqueue hands the request to
+   * the host and answers with the HOST's row (see `enqueue`), and the host's own
+   * pump decides when that runs — nobody presses Start for it. So the honest
+   * answer is "no row of mine was released", which is the literal truth, and the
+   * dialog watches the host's row regardless.
+   */
+  if (hostQueue() !== null) return false;
   const job = jobs.find((row) => row.id === id);
   if (job === undefined || job.state !== 'held') return false;
   job.state = 'queued';
