@@ -102,6 +102,20 @@ export interface AnalysisHeader {
   generation?: string;
   /** Which entailment model produced every `rank` score in the file. */
   nli: string;
+  /**
+   * WHICH BUILD OF IT — the commit those weights were resolved from.
+   *
+   * `nli` above is a NAME, and a Hugging Face repo is mutable: the same name can
+   * serve different weights next month. Without this a report is unfalsifiable
+   * about its own provenance, and worse, `rankKey` would hand scores from the
+   * old weights back as answers from the new ones — the same silent reuse the
+   * `-2` bump in that function exists to prevent, arriving by a different route.
+   *
+   * OPTIONAL BECAUSE A WORKER MAY NOT SAY. `_commit_hash` is private to
+   * transformers; absent means unknown provenance, which `run.ts` treats as a
+   * mismatch rather than as agreement.
+   */
+  nliRevision?: string;
   /** `hypothesisSetVersion` — which questions those scores answer. */
   hypotheses: string;
   /** Which Ollama model produced every verdict. */
@@ -238,6 +252,29 @@ export class AnalysisReport {
   /** The header that was already there, for the sentence the caller prints. */
   get priorHeader(): Partial<AnalysisHeader> | null {
     return this.prior;
+  }
+
+  /**
+   * THROW AWAY EVERY CACHED RANK SCORE, keeping the verdicts.
+   *
+   * Called when the entailment model that answered them turns out not to be the
+   * one about to answer now (`run.ts`). The two halves are separable on purpose:
+   * a rank score is an answer from the NLI model and a verdict is an answer from
+   * the LLM, and a new build of one says nothing about the other — discarding
+   * both would re-pay an hour of verification to fix a minute of scoring.
+   *
+   * The rows on DISK are untouched and do not need to be: `finish` writes the
+   * cache from what is held here, so a row that is forgotten is a row the next
+   * file does not carry.
+   */
+  forgetRanks(): void {
+    this.ranks.clear();
+  }
+
+  /** How many sentence scores were read off the disk — for the sentence that
+   *  says how many are being paid for again. */
+  get rankCount(): number {
+    return this.ranks.size;
   }
 
   /**

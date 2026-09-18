@@ -9,7 +9,9 @@ costs ten to ninety seconds to load and a book is scored in several passes.
 THE WIRE, and it is briefcase's so its measurements transfer, plus one line
 briefcase never had (`progress`, foundry's — see `score()`):
 
-    worker -> {"ready": true, "device": "cuda|mps|cpu", "model": "..."}
+    worker -> {"ready": true, "device": "cpu", "model": "...", "revision": "<sha>"}
+                 (`device` is always cpu since 2026-09-17; `revision` is the
+                  model commit, or null when transformers did not stamp one)
     host   -> {"id": 1, "texts": ["..."], "hypotheses": ["..."]}
     worker -> {"id": 1, "progress": 32}          (texts scored so far, per chunk)
     worker -> {"id": 1, "scores": [[0.91, 0.02], ...]}
@@ -236,10 +238,32 @@ def score(classifier, texts, hypotheses, request_id):
     return rows
 
 
+def revision_of(classifier):
+    """WHICH BUILD OF THE MODEL THIS IS — the commit it was resolved from.
+
+    A model id is a NAME and a Hugging Face repo is mutable: the same name can
+    serve different weights next month. The host caches a score under the
+    question it answers, and until 2026-09-18 that question said "deberta-v3-
+    base-zeroshot-v2.0" and nothing about which one — so weights moving under
+    the name would have had old scores reused as if the new model had produced
+    them. The host compares this against what the report recorded and re-scores
+    when it differs.
+
+    `_commit_hash` is what transformers stamps on a config it resolved from a
+    cache or the Hub. It is private, hence the getattr rather than an attribute
+    read: a version that stops setting it returns None, the host treats that as
+    "unknown" and says so, and nothing here raises over provenance.
+    """
+    config = getattr(getattr(classifier, 'model', None), 'config', None)
+    value = getattr(config, '_commit_hash', None)
+    return value if isinstance(value, str) and value else None
+
+
 def main():
     device = pick_device()
     classifier = load(device)
-    emit({'ready': True, 'device': device, 'model': MODEL_ID})
+    emit({'ready': True, 'device': device, 'model': MODEL_ID,
+          'revision': revision_of(classifier)})
 
     for line in sys.stdin:
         line = line.strip()

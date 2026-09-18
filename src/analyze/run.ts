@@ -284,7 +284,46 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
 
   let worker: NliWorker | null = null;
   const ensureWorker = async (): Promise<NliWorker> => {
-    worker ??= await NliWorker.start({ ...opts.nli, log });
+    if (worker !== null) return worker;
+    worker = await NliWorker.start({ ...opts.nli, log });
+    /*
+     * ── IS THE MODEL ABOUT TO SCORE THE ONE THAT SCORED BEFORE? ─────────────
+     *
+     * `rankKey` hashes the model's NAME, and a Hugging Face repo is mutable: the
+     * same name can serve different weights next month. So a cached score and a
+     * fresh one can carry the same key and come from different models, and the
+     * report would mix them under a header naming one.
+     *
+     * THE CHECK IS HERE, AND HERE IS THE ONLY PLACE IT CAN BE. The revision is
+     * knowable only once the model is loaded, and loading happens lazily — on
+     * the first cache MISS — which is deliberate: a fully-cached re-run pays no
+     * model load at all. Putting the revision in the key would mean knowing it
+     * before knowing whether anything is a miss, which is circular. But the
+     * check does not need to happen at key time; it needs to happen before old
+     * and new scores are mixed, and that moment is exactly this one. A run that
+     * never reaches here is a run producing nothing new to mix.
+     *
+     * ABSENT COUNTS AS DIFFERENT, on both sides. A report written before this
+     * field existed, or a worker whose transformers stopped stamping
+     * `_commit_hash`, leaves provenance unknown — and unknown is not agreement.
+     * Re-scoring costs minutes; filing a score under weights that may not have
+     * produced it is the thing this whole key exists to prevent.
+     */
+    const before = report.priorHeader?.nliRevision ?? null;
+    const now = worker.revision;
+    if (before !== now || now === null) {
+      const had = report.rankCount;
+      if (had > 0) {
+        report.forgetRanks();
+        log(
+          `analyze: the ${had} stored sentence score(s) were produced by `
+          + `${before === null ? 'an unrecorded build' : before.slice(0, 12)} of `
+          + `${NLI_MODEL_ID} and this run has `
+          + `${now === null ? 'a build it cannot identify' : now.slice(0, 12)}. `
+          + 'They are being scored again — a score is an answer to a configuration.',
+        );
+      }
+    }
     return worker;
   };
   // Read through a function so the `finally` sees the CURRENT value: the
@@ -362,6 +401,7 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
       windows, sentences, plan, report, transport, server,
       concurrency: opts.concurrency ?? concurrencyFor(kind, DEFAULT_ANALYZE_CONCURRENCY),
       hypotheses, bankSha, generation, log,
+      nliRevision: startedWorker()?.revision ?? report.priorHeader?.nliRevision ?? null,
     });
   } finally {
     // The NLI worker is this run's own process and goes with it.
@@ -438,6 +478,15 @@ async function verifyStage(args: {
   hypotheses: string;
   bankSha: string;
   generation: string | undefined;
+  /**
+   * WHICH BUILD OF THE ENTAILMENT MODEL THE SCORES CAME FROM, for the header.
+   *
+   * Passed rather than read off the worker here, because the worker belongs to
+   * the rank stage and this stage runs after it has been stopped — and because
+   * a FULLY CACHED run never starts one, in which case the honest value is the
+   * revision the previous run recorded rather than nothing.
+   */
+  nliRevision: string | null;
   log: (line: string) => void;
 }): Promise<AnalyzeResult> {
   const { windows, sentences, report, log } = args;
@@ -586,6 +635,10 @@ async function verifyStage(args: {
       bankSha: args.bankSha,
       ...(args.generation !== undefined ? { generation: args.generation } : {}),
       nli: NLI_MODEL_ID,
+      // The build those scores came from, when it is known. Absent stays absent:
+      // a header that invented a revision would be the false provenance this
+      // field exists to prevent.
+      ...(args.nliRevision !== null ? { nliRevision: args.nliRevision } : {}),
       hypotheses: args.hypotheses,
       verify: args.server.model,
       capture: { threshold: CAPTURE_THRESHOLD, rescue: RESCUE_FLOOR },

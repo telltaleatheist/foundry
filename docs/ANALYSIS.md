@@ -266,12 +266,15 @@ stdin stays open, EOF is the shutdown, SIGKILL after 2 s the backstop.
 
 Wire contract (briefcase's, kept verbatim so measurements transfer):
 
-- worker → `{"ready": true, "device": "cpu"}` once the model is
-  (the field is the wire's and still carries a value, but since 2026-09-17 the
-  worker always answers `cpu`: a step wanting a GPU belongs to Crucible, so the
-  one that stays local is the one that needs no card — `pick_device()` carries
-  the ruling)
-  loaded; ready timeout 180 s.
+- worker → `{"ready": true, "device": "cpu", "model": "...", "revision": "<sha>"}`
+  once the model is loaded; ready timeout 180 s.
+  - `device` is always `cpu` since 2026-09-17. A step wanting a GPU belongs to
+    Crucible, so the one that stays local is the one that needs no card —
+    `pick_device()` carries the ruling.
+  - `revision` is the commit those weights were resolved from, or `null` when
+    transformers did not stamp one. A model id is a NAME and a Hub repo is
+    mutable; the host records this beside the id and re-scores when it changes,
+    because `rankKey` hashes the name and cannot see weights moving under it.
 - host → `{"id": n, "texts": [...], "hypotheses": [...]}`
 - worker → `{"id": n, "progress": k}` per internal chunk — foundry's one
   addition to briefcase's wire: it moves the queue bar every few seconds and
@@ -386,7 +389,8 @@ lesson, not the corpse).
   consciously against `MINTED_BY_THE_RUN`.
 - Header line first, rows after, **no timestamp anywhere in the body path**
   (same input, same bytes): the header carries the book's `source.bankSha`
-  and generation, the NLI model id, the hypothesis-set version, the verify
+  and generation, the NLI model id AND the commit it resolved to
+  (`nliRevision`, absent when unknown), the hypothesis-set version, the verify
   model, the capture floor, and `hues` + `names` — each category's display hue
   and display name, so the report owns its display facts on any device
   (`categoryHue`/`CATEGORY_NAMES` in plan.ts; the app's shared table is their

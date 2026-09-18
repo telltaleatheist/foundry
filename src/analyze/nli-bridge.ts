@@ -320,6 +320,8 @@ interface WorkerResponse {
   id?: number;
   ready?: boolean;
   device?: string;
+  /** The model's commit, or absent — see {@link NliWorker.revision}. */
+  revision?: string | null;
   model?: string;
   scores?: number[][];
   error?: string;
@@ -388,6 +390,22 @@ export class NliWorker {
   private ready = false;
   /** Which device the worker reported. Read for the log line, once. */
   device = 'unknown';
+
+  /**
+   * WHICH BUILD OF THE MODEL ANSWERED — the commit it was resolved from, or
+   * null when the worker could not say.
+   *
+   * A model id is a NAME and a Hugging Face repo is mutable, so the id alone
+   * does not identify the weights that produced a score. The report records
+   * this beside the model, and a re-run whose worker reports a DIFFERENT
+   * revision re-scores rather than reusing answers the old weights gave
+   * (src/analyze/run.ts).
+   *
+   * NULL IS A REAL ANSWER and is not an error: `_commit_hash` is private to
+   * transformers and a version that stops setting it leaves provenance unknown,
+   * which is worth saying rather than worth failing over.
+   */
+  revision: string | null = null;
 
   private constructor(readonly python: string, readonly script: string, private readonly log: (line: string) => void) {}
 
@@ -529,6 +547,7 @@ export class NliWorker {
           }
           this.ready = true;
           this.device = message.device ?? 'unknown';
+          this.revision = message.revision ?? null;
           resolve();
         },
         reject: (error) => {
@@ -540,7 +559,7 @@ export class NliWorker {
     });
 
     this.log(
-      `analyze: ${NLI_MODEL_ID} is loaded on ${this.device} (${this.python})`
+      `analyze: ${NLI_MODEL_ID}${this.revision === null ? '' : `@${this.revision.slice(0, 12)}`} is loaded on ${this.device} (${this.python})`
       + (this.device === 'cpu'
         ? ' — no GPU was offered to it, so ranking will take minutes rather than seconds'
         : ''),
