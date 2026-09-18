@@ -171,11 +171,19 @@ type DoorId = 'connect' | 'local' | 'install' | 'uninstall';
                 unconditionally -- and sent people to "Settings, Servers,
                 Connection requests", a list deleted the same day.
 
-                Foundry cannot yet READ which case it is in: the vendored SDK is
-                0.6.12 and predates the approval_required field 1.0.0 answers
-                with. So the sentence is worded to be true of both rather than
-                guessing, and when the SDK is re-vendored this becomes two
-                sentences chosen by that field.
+                FOUNDRY CANNOT READ WHICH CASE IT IS IN, and the reason moved
+                on 2026-09-18. It used to be that the vendored SDK was 0.6.12 and
+                predated the field. The SDK is 1.0.0 now and the field is STILL
+                not readable: startPairing reads /v1/pairing/start and builds its
+                result explicitly -- id, device_code, user_code, expires_in,
+                interval -- so approval_required arrives on the wire and is
+                dropped on the way out. Surfacing it belongs to the package, and
+                has been asked for.
+
+                Re-vendoring was worth doing anyway and this was not why. The
+                sentence stays true of both cases rather than guessing; when the
+                SDK carries the field it becomes two sentences chosen by it, and
+                only this block moves.
               -->
               <p class="small">Connecting to {{ pairing.name }}…
                 If that computer asks anyone to approve this, the code is
