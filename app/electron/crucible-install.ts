@@ -98,7 +98,7 @@ export async function driveCrucibleInstall(
  * above would report a clean install while the row that got registered belongs
  * to a different process than the one the installer built.
  *
- * bookforge-02, 2026-09-18, having built this first and offering it verbatim:
+ * bookforge-02, 2026-09-17, having built this first and offering it verbatim:
  * it is *"the difference between 'the installer exited 0' and 'the engine
  * answering is the engine we installed'."* Foundry had the first half only.
  *

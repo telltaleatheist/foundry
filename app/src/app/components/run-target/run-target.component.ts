@@ -94,7 +94,7 @@ import { api, hosted } from '../../core/foundry';
         remove one screen along. So hosted it says who decides and offers no
         press.
 
-        Owen, 2026-09-18: "when it goes to the queue when vendored in bookforge
+        Owen, 2026-09-17: "when it goes to the queue when vendored in bookforge
         it should go to bookforge's queue, not ours." It does; this is the half
         that makes the screen agree with it.
       -->
@@ -105,7 +105,7 @@ import { api, hosted } from '../../core/foundry';
           ── THE ENGINES, ALWAYS, AS BUTTONS ACROSS THE TOP ──────────────────
 
           It used to HIDE this at one server and print a sentence instead, on the
-          rule that a one-item list is not a choice. Owen, 2026-09-18: *"the
+          rule that a one-item list is not a choice. Owen, 2026-09-17: *"the
           modal should let the user pick along the top. One crucible server has a
           button along the top, already selected. Can't be de-selected."*
 
@@ -223,7 +223,7 @@ export class RunTargetComponent {
   /**
    * THE ENGINES, SPLIT INTO BALANCED ROWS OF AT MOST THREE.
    *
-   * Owen gave this by enumeration on 2026-09-18 — *"Two splits the row of
+   * Owen gave this by enumeration on 2026-09-17 — *"Two splits the row of
    * buttons into two. Three splits into three. Four splits into two rows of two
    * buttons each. Five splits into a row of two, and under it, a row of theee.
    * Six is split into two rows of three."* — which is one rule: no row wider

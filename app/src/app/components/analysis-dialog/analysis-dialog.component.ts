@@ -298,7 +298,7 @@ import { api, hosted } from '../../core/foundry';
               is held here"). So the two buttons would do the same thing and
               only one of them would be telling the truth about it.
 
-              Owen, 2026-09-18: *"when it goes to the queue when vendored in
+              Owen, 2026-09-17: *"when it goes to the queue when vendored in
               bookforge it should go to bookforge's queue, not ours."*
             -->
             @if (!hosted()) {

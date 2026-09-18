@@ -172,7 +172,7 @@ type DoorId = 'connect' | 'local' | 'install' | 'uninstall';
                 Connection requests", a list deleted the same day.
 
                 FOUNDRY CANNOT READ WHICH CASE IT IS IN, and the reason moved
-                on 2026-09-18. It used to be that the vendored SDK was 0.6.12 and
+                on 2026-09-17. It used to be that the vendored SDK was 0.6.12 and
                 predated the field. The SDK is 1.0.0 now and the field is STILL
                 not readable: startPairing reads /v1/pairing/start and builds its
                 result explicitly -- id, device_code, user_code, expires_in,

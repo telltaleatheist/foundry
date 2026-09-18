@@ -6,7 +6,7 @@
 #   tools/env/build-env.sh windows-x64      <workdir>   # windows: pymupdf (the rasteriser)
 #   tools/env/build-env.sh mac-arm64        <workdir>   # mac: mlx-vlm + pymupdf (both)
 #   tools/env/build-env.sh nli-windows-x64  <workdir>   # windows: torch + transformers + DeBERTa
-#   tools/env/build-env.sh nli-mac-arm64    <workdir>   # mac: the same, MPS-capable
+#   tools/env/build-env.sh nli-mac-arm64    <workdir>   # mac: the same, on the CPU
 #
 # WHY PREBUILT. `pip install vllm` on an end user's machine is a 2 GB download
 # resolved against whatever PyPI serves that day; these archives are the ONE

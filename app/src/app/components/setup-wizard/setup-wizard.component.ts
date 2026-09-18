@@ -321,7 +321,7 @@ const STEPS: readonly StepDef[] = [
               <!--
                 ── WSL ACCELERATION: AN UPGRADE, NEVER A GATE ─────────────────
 
-                Owen, 2026-09-18: *"if theres no local crucible server, help the
+                Owen, 2026-09-17: *"if theres no local crucible server, help the
                 user set up the local windows one and then the wsl engine."* Two
                 stages, and this is the second — but the shape matters more than
                 the order, and BookForge's hostabilityOf is explicit about it:
@@ -376,7 +376,7 @@ const STEPS: readonly StepDef[] = [
                 -->
                 <!--
                   IT SAID "the next step is where that key goes" and there is no
-                  next step: the routes step was deleted on 2026-09-18 because
+                  next step: the routes step was deleted on 2026-09-17 because
                   Settings > AI asks the same question better. A wizard pointing
                   at a screen that does not exist is worse than one that points
                   at the screen that does.
@@ -1073,7 +1073,7 @@ export class SetupWizardComponent {
   // ── Where the text work runs (PHASE15-HOST.md §5.2) ───────────────────────
 
   /*
-   * ── THE ROUTES STEP AND ITS FIVE MEMBERS ARE GONE (2026-09-18) ─────────
+   * ── THE ROUTES STEP AND ITS FIVE MEMBERS ARE GONE (2026-09-17) ─────────
    *
    * `loadRoutes`, `applyRoutes`, `routeLine`, `classLabel` and the four
    * signals they drove. The step asked a first-run user to decide where each
@@ -1173,7 +1173,7 @@ export class SetupWizardComponent {
     /*
      * IT USED TO MARK `routes` SKIPPED when that step's document had never been
      * read — a step somebody walked past without answering. There is no routes
-     * step (2026-09-18), so there is nothing to record about it, and adding a
+     * step (2026-09-17), so there is nothing to record about it, and adding a
      * skipped-step id for a step that does not exist would put a line in
      * Settings saying somebody skipped something they were never offered.
      */

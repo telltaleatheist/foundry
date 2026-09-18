@@ -19,7 +19,7 @@
  * it ("NO BACKTICKS ANYWHERE IN THIS TEMPLATE, not even in a comment"), which is
  * the documentation of a rule nothing enforced.
  *
- * Owen approved this keeper on 2026-09-18, asked for rather than assumed: the
+ * Owen approved this keeper on 2026-09-17, asked for rather than assumed: the
  * house rule here is that tests are not written unprompted.
  *
  * ── WHAT IT DELIBERATELY DOES NOT DO ──────────────────────────────────────

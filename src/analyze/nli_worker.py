@@ -243,7 +243,7 @@ def revision_of(classifier):
 
     A model id is a NAME and a Hugging Face repo is mutable: the same name can
     serve different weights next month. The host caches a score under the
-    question it answers, and until 2026-09-18 that question said "deberta-v3-
+    question it answers, and until 2026-09-17 that question said "deberta-v3-
     base-zeroshot-v2.0" and nothing about which one — so weights moving under
     the name would have had old scores reused as if the new model had produced
     them. The host compares this against what the report recorded and re-scores

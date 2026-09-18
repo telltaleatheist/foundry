@@ -141,7 +141,7 @@ export const ENV_ASSETS: Record<EnvTarget, EnvAsset> = {
    */
   'nli-mac-arm64': {
     archive: 'foundry-env-nli-mac-arm64-v1.tar.gz',
-    bytes: 472610887,
+    bytes: 472_610_887,
     sha256: 'a1e7e6b73459ff177ab56fed21427a9065edda0d409eec5dd3c04a7cbc539e6e',
     parts: [],
   },
