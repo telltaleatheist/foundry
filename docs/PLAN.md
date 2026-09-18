@@ -2874,25 +2874,49 @@ supposed to be, and it exists so the same failure is visible next time.
   a deliberate asymmetry.
 - **The metadata step does not un-apply values when deleted.** Deleting
   the record deletes the record. Same honesty curate already has.
-- **The NLI ranker still runs locally, and is moving to Crucible.** Owen,
-  2026-09-17: *"lets send it to crucible. i was leaning toward foundry, but
-  its plausible that at some point we might want to batch or something. if
-  thats the case it should go to crucible."* Analysis stage 1 holds
-  `MoritzLaurer/deberta-v3-base-zeroshot-v2.0` in a resident Python on this
-  machine (`src/analyze/nli-bridge.ts`); stage 3 already runs on Crucible as
-  the `analysis` class. The endpoint has been requested of Crucible with the
-  full contract, including the three ways a reimplementation breaks silently
-  (label order, duplicate hypotheses, the hypothesis template that IS the
-  0.7 calibration — docs/ANALYSIS.md §4, §5). **Nothing is built on this side
-  until there is a released version to build against.**
+- **The NLI ranker stays local, and that is the rule rather than an
+  exception.** Owen, 2026-09-17, first: *"lets send it to crucible … its
+  plausible that at some point we might want to batch."* Then, after Crucible
+  asked the question that mattered — would `entail` take the accelerator
+  lease, and thrash against the 27B the verify stage needs — he took CPU-only
+  and drew the consequence: *"if its cpu only, that means it stays local. cpu
+  work that doesnt take up many resources stays local. crucible is a gpu
+  orchestrator that does steps atomically, which sometimes leads to cpu steps
+  going to the other system, but if it's fully a cpu step, it can stay
+  local."*
 
-  Two facts that decide the shape when it lands: the rank cache is keyed on
-  `sentence ∥ NLI model ∥ hypothesis set ∥ threshold`, so an identical model
-  and template keep every existing report valid; and `nli-mac-arm64` has
-  NEVER been built (null size, null hash — it needs an Apple-silicon
-  interpreter executed on an Apple-silicon Mac), so analysis cannot run on
-  the Mac at all today and this move is what fixes it.
+  **So the boundary is the CARD, not the machine.** Anything wanting a GPU
+  goes to Crucible with no local fallback; a step that is fully CPU and cheap
+  stays here and is a dependency. Analysis is the worked example: stage 1
+  (rank, deberta-v3-base on CPU) local, stage 3 (verify, the 27B) on Crucible.
+  The shipped env is already `torch 2.9.1+cpu`, so this is what has been
+  running all along rather than a change.
 
+  No Crucible `entail` class. Requested and withdrawn the same evening, before
+  anything was built on either side.
+
+- **`nli-mac-arm64` has never been built, so the Mac cannot analyse.** Null
+  size, null hash in `env-catalog.ts`, and `requirePublished` throws on it —
+  which is honest, and leaves the Mac with no analysis at all. While the
+  ranker was moving to Crucible this resolved itself; under the ruling above
+  it does not, and building the pack is the fix. It must be built ON an
+  Apple-silicon Mac: `tools/env/build-env.sh nli-mac-arm64` downloads a
+  darwin-aarch64 interpreter and then EXECUTES it to install wheels and bake
+  the weights, which no cross-build can do. Owen has a Mac; this is the only
+  thing standing between it and the analysis feature.
+
+- **`rankKey` does not include the model REVISION.** `src/analyze/report.ts`
+  hashes `text ∥ model id ∥ hypothesis set ∥ threshold`. The id is fixed;
+  `MoritzLaurer/deberta-v3-base-zeroshot-v2.0` moving on the Hub changes every
+  score while the key says nothing happened. That function already carries the
+  precedent — its generation reads `foundry-analysis-rank-2`, bumped from `-1`
+  when the hypothesis template changed, noting *"a score is an answer to a
+  configuration"* — so this is the same defect, unguarded. Narrow in practice
+  (the weights are baked into an env pack pinned by archive sha256) and real
+  through `--fetch-nli-model`, which pulls from the Hub into a separate home.
+  Fixing it means a generation bump, which invalidates every stored score in
+  every book, so it wants doing deliberately. Found by bookforge-02 while
+  reviewing the contract for a class that then was not built.
 - **`electron/page-reader.ts` is unreachable but not removed.** The local
   page reader lost its card, its gate and its queue fallback on 2026-09-17
   (*"there sohuldnt be a local system"*), so no screen can start it. The

@@ -14,6 +14,22 @@
  * does not exist any more, so it cannot be offered, measured, or chosen
  * between.
  *
+ * ── AND THE LINE THAT RULING IS DRAWN ON, GIVEN THE SAME EVENING ──────────
+ *
+ * Two hours later, working out where the analysis ranker belongs: *"crucible is
+ * a gpu orchestrator that does steps atomically, which sometimes leads to cpu
+ * steps going to the other system, but if it's fully a cpu step, it can stay
+ * local."*
+ *
+ * So the rule is not *nothing runs here*. It is **THE CARD IS SOMEBODY ELSE'S
+ * AND THE PROCESSOR IS OURS.** Anything wanting a GPU goes to Crucible, without
+ * exception and with no local fallback to reach for — that is what the previous
+ * paragraph deleted. A step that is fully CPU and cheap stays on this machine,
+ * and is then a DEPENDENCY, which is precisely what this page is for.
+ *
+ * That line is what admits the two things left below, and it is why they are
+ * not a compromise: neither of them touches an accelerator.
+ *
  * WHAT WENT, 2026-09-17, and it was most of the page:
  *
  *   * **The tier cards.** `endpoint`, `wsl-vllm`, `mlx`, `native` — four
@@ -114,10 +130,19 @@ import { EnvCardComponent } from './env-card.component';
          repair half: this is the only thing on the page that can act. -->
     <app-env-card (changed)="probe()" />
 
+    <!--
+      SAID PRECISELY, because the first draft of this line claimed that every
+      act meeting a model runs on a Crucible server, and that is not true: the
+      analysis ranker is a small CPU classifier and stays here under Owen's rule
+      about which work belongs where. A page whose closing sentence overstates
+      is a page teaching somebody the wrong thing about their own machine.
+    -->
     <p class="muted">
-      Models are not on this list and will not be. Every act that meets a model — reading a
-      scanned page, cleaning up text, translating, simplifying, analysing — runs on a Crucible
-      server, so there is nothing about them for this computer to be missing.
+      Nothing on this page needs a graphics card. Every act that needs one — reading a scanned
+      page, cleaning up text, translating, simplifying, and the judging half of analysis — runs
+      on a Crucible server, and Foundry keeps no local copy of any of it to be missing. What this
+      computer does for itself is draw the pages, and for analysis the first pass that scores
+      every sentence. Both run on the processor, and both are environments above.
     </p>
   `,
   styles: [`
