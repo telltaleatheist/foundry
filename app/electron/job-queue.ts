@@ -4292,6 +4292,13 @@ async function placeRun(
   next: Job,
   request: EngineRequest,
   wires: RunWires,
+  /**
+   * THE RUN'S ONE ENDING, borrowed from the boundary — `executeJob`, which owns
+   * the counting. A refusal here is an ending like any other, and it is counted
+   * with the rest for the same reason: there is one `settled` per run, and the
+   * catch one function out has to know whether it has already happened.
+   */
+  settle: () => void,
 ): Promise<Placement | null> {
   const held = slots.get(next.id) ?? null;
   /*
@@ -4410,7 +4417,7 @@ async function placeRun(
       next.error = outcome.reason;
       next.finishedAt = Date.now();
       changed();
-      settled(next);
+      settle();
       return null;
     }
     const delay = parkDelay(next.id);
@@ -4466,8 +4473,110 @@ async function placeRun(
  * off it afterwards. Nothing is thrown from here — an engine that refuses is a
  * `failed` row with the engine's own words on it, which is what every reader of
  * this queue already understands.
+ *
+ * ── AND THAT LAST SENTENCE IS ENFORCED NOW, RATHER THAN ASSERTED ───────────
+ *
+ * It was a promise this function made about itself and nothing kept. Every
+ * landing in `carry` below is an unguarded await AFTER `placeRun` has recorded a
+ * lease — `recordReading`, `landReadProducts`, `recordAnalysis`, `recordFinal`
+ * and the rest — and so is `runEngine` itself, whose `engineCommand()` throws by
+ * design when Foundry is hosted with no `FOUNDRY_BIN`, which is Foundry's
+ * deployment inside BookForge. Neither caller catches: `runInSlot`'s `finally`
+ * frees the slot and pumps, `runDetached`'s drops the abort listener, and both
+ * let the rejection past. So a throw left the row `running` for ever, and
+ * because the only `clearInterval` on the lease heartbeat lives inside
+ * `release()` — which only `settled` calls — the beat went on renewing a
+ * two-minute claim on somebody's card for the life of this process. A card
+ * nothing can load onto, on behalf of a run that ended. `exportEpubFromStep`
+ * (electron/mount.ts), which awaits the ending, never resolved either.
+ *
+ * THE BOUNDARY IS HERE AND NOT IN THE CALLERS, for the reason this function is
+ * one function at all: there are two schedulers and there must not be two
+ * answers to "what happens when a run blows up". A catch in `runInSlot` would
+ * have to be written again in `runDetached`, and the next door onto this
+ * function would be the third place to forget it.
+ *
+ * IT IS NOT A SWALLOW. The console gets the whole error — object and all, so a
+ * stack survives — and the row gets the error's own message, which is the shape
+ * every deliberate failure arm in `carry` already uses.
  */
 async function executeJob(next: Job, request: EngineRequest, wires: RunWires): Promise<void> {
+  /*
+   * ── THE ONE ENDING, SAID ONCE, WHOEVER SAYS IT ────────────────────────────
+   *
+   * `carry` reaches `settled` down ten different arms and the catch below is an
+   * eleventh, so the idempotence cannot live at any one of them. It lives here,
+   * in the closure both sides call: the first caller wins and every caller after
+   * it is a no-op. That matters for exactly one reachable case — `settled` itself
+   * runs `cascadeFrom`, which is somebody else's code and can throw after the
+   * listeners have already been told — and the wrong answer there is a second
+   * ending for a job that has already had one.
+   *
+   * `over` IS READ BY THE CATCH TOO, and not only through this function: a row
+   * that has already settled `done` must not be rewritten to `failed` behind the
+   * back of the listeners that were handed it.
+   */
+  let over = false;
+  const settle = (): void => {
+    if (over) return;
+    over = true;
+    settled(next);
+  };
+  try {
+    await carry(next, request, wires, settle);
+  } catch (err) {
+    const said = err instanceof Error ? err.message : String(err);
+    /*
+     * WHOLE, AND WITH THE ERROR OBJECT BESIDE IT. A throw out of here is a
+     * defect rather than an engine's refusal, so the stack is the useful half
+     * and a message-only line would throw it away. The terminal is where
+     * somebody is already looking — the same argument the engine-failed line
+     * below in `carry` makes for printing stderr in full.
+     */
+    console.error(
+      `\n[job] ${next.kind} THREW — ${path.basename(next.inputPath)} — ${said}\n`,
+      err,
+    );
+    /*
+     * THE ROW IS ONLY REWRITTEN IF NOTHING HAS ENDED IT, and there are two ways
+     * something already has.
+     *
+     * `over` is this run's own ending, said down one of `carry`'s arms; reaching
+     * here with it set means the throw came out of `settled` itself, after every
+     * listener had been handed a row, and turning that row into a `failed` one
+     * now would make the shelf and the waiters disagree about what happened.
+     *
+     * A `cancelled` ROW IS THE OTHER, AND IT IS SOMEBODY ELSE'S. `cancelHere`
+     * settles a row that has no live child of its own — which is exactly the
+     * window between `wires.release()` and the landing that throws — so the
+     * ending is already out and it is not this one. A cancel is a person taking
+     * their GPU back and filing it as a failure is how a host's retry restarts
+     * work they just stopped (`runJob`, which argues the three states).
+     */
+    if (!over && next.state !== 'cancelled') {
+      next.state = 'failed';
+      next.error = said;
+      next.finishedAt = Date.now();
+      changed();
+      settle();
+    }
+  }
+}
+
+/**
+ * WHAT A JOB DOES, from the placement to the landing — `executeJob`'s body, and
+ * the only reason it is a second function is that a boundary cannot catch what
+ * it is inside of.
+ *
+ * `settle` IS THE CALLER'S, and every ending below goes through it rather than
+ * through `settled` directly: see `executeJob`, which owns the counting.
+ */
+async function carry(
+  next: Job,
+  request: EngineRequest,
+  wires: RunWires,
+  settle: () => void,
+): Promise<void> {
   if (next.state === 'cancelled') return;
   /*
    * ── THE JOB THAT LANDS IN THE TRAY INSTEAD OF THE WORKSHOP ────────────────
@@ -4583,7 +4692,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
    * NULL MEANS THE ROW IS NO LONGER THIS CALL'S — parked back in the queue, or
    * failed with the reason on it. `placeRun` has already said so and published.
    */
-  const placement = await placeRun(next, request, wires);
+  const placement = await placeRun(next, request, wires, settle);
   if (placement === null) return;
 
   /*
@@ -4612,7 +4721,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
       + 'Crucible Servers still serves page reading.';
     next.finishedAt = Date.now();
     changed();
-    settled(next);
+    settle();
     return;
   }
 
@@ -4711,7 +4820,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
       next.error = `The temporary folder for this job could not be made: ${(err as Error).message}`;
       next.finishedAt = Date.now();
       changed();
-      settled(next);
+      settle();
       return;
     }
   }
@@ -4783,7 +4892,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
         next.error = err instanceof Error ? err.message : String(err);
         next.finishedAt = Date.now();
         changed();
-        settled(next);
+        settle();
         return;
       }
     }
@@ -5022,7 +5131,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
     next.error = err instanceof Error ? err.message : String(err);
     next.finishedAt = Date.now();
     changed();
-    settled(next);
+    settle();
     return;
   }
   /*
@@ -5209,6 +5318,38 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
        * bank and the reprint is something a person asks for.
        */
       await landReadProducts(next.outputPath, next.inputPath);
+      /*
+       * ── AND THE READING IS OVER, WHICH THIS BRANCH NEVER SAID ───────────────
+       *
+       * Every other landing in this function ends on the settle and this one
+       * ended on `return`. It was not noticed for as long as a reading's ending
+       * cost nothing: the branch used to call `void pump()` itself, which kept the
+       * queue moving, and when `runInSlot`'s `finally` took the pump over that line
+       * was removed with nothing put in its place (338027b → d1dd5b6). A reading
+       * finished, the row went `done`, and the one function that says a job is
+       * over was never called for it.
+       *
+       * WHAT THAT COST, measured 2026-09-18: a reading of a book ended at 02:22:10
+       * and `dots-ocr` — twelve gigabytes — was still on the card at 02:29, because
+       * `settled` is the ONE place a Crucible lease is given back. The lease is not
+       * best-effort tidying; while it is open the server refuses to clear the card
+       * (crucible/settle.py, fact 2 of four), so a lease nothing releases is a
+       * resident model nothing can unload. Worse than a leak: the heartbeat timer
+       * lives in the same object, so it beat every forty seconds for the life of
+       * this process and, answered `unknown_lease`, went on trying to TAKE THE
+       * CARD BACK on behalf of a run that ended minutes ago (`takeLease`,
+       * electron/crucible-dispatch.ts).
+       *
+       * The lease is only the loudest of the three. `forgetPark` never ran for a
+       * reading either, and nothing waiting on `onJobSettled` ever heard a
+       * successful one end — the promise that function's own docstring makes.
+       *
+       * LAST, AFTER THE PRODUCTS, which is that promise and not an accident of
+       * where the line sits: a waiter has to see the bank and the book file before
+       * it hears the job is over, or it reads a reading that worked as an ending
+       * with nothing in it.
+       */
+      settle();
       return;
     }
     /*
@@ -5274,7 +5415,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
       });
       next.message = `Analysed ${path.basename(next.inputPath)} — the report is on its step.`;
       changed();
-      settled(next);
+      settle();
       return;
     }
     if (isTextPassRequest(request)) {
@@ -5337,7 +5478,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
        * in its own words.
        */
       await materializeTextPass(next.outputPath);
-      settled(next);
+      settle();
       return;
     }
     /*
@@ -5496,7 +5637,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
        * SEEN that landing before it hears the job is over, or it would read a
        * successful export as an ending with nothing in it.
        */
-      settled(next);
+      settle();
       return;
     }
     /*
@@ -5530,7 +5671,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
         ? 'The facsimile of those pages is ready.'
         : 'The book at that step is ready.';
       changed();
-      settled(next);
+      settle();
       return;
     }
     /*
@@ -5630,7 +5771,7 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
   // The three arms above return before this line, each saying it for itself
   // after whatever that landing produced; what reaches here is a cancel, a
   // failure, and the rendering whose landing is a catalogue row.
-  settled(next);
+  settle();
 }
 
 /**
