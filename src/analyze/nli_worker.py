@@ -127,19 +127,35 @@ def emit(obj):
 
 
 def pick_device():
-    """cuda, then mps, then cpu — the first one this machine actually has.
+    """The processor. Always, on every platform, whatever else is installed.
 
-    Reported on the ready line so a run that is unexpectedly slow can be
-    explained by one word rather than by guesswork. CPU is a legal answer and
-    not a failure: it is correct and it is roughly an order of magnitude slower,
-    which the host says out loud when it sees it.
+    IT USED TO PICK cuda, THEN mps, THEN cpu — the first accelerator the machine
+    actually had. Owen retired that on 2026-09-17, deciding where work belongs:
+    "crucible is a gpu orchestrator that does steps atomically, which sometimes
+    leads to cpu steps going to the other system, but if it's fully a cpu step,
+    it can stay local." The boundary is the CARD, not the machine. Anything
+    wanting a GPU goes to Crucible; what stays here stays here BECAUSE it is
+    fully CPU — and a worker that reached for a card whenever it saw one was the
+    single exception to that rule, living inside the thing the rule is about.
+
+    IT WAS ALREADY TRUE ON EVERY SHIPPED ENVIRONMENT. The Windows analysis pack
+    pins `torch==2.9.1+cpu` deliberately (tools/env/build-env.sh: "the GPU on a
+    machine running foundry is holding the reading model or the LLM"), so this
+    function has answered 'cpu' on every machine that installed one. What changes
+    is the hand-provisioned interpreter — a --nli-python with a CUDA torch in it
+    — which used to quietly take the card from whatever Crucible had on it.
+
+    AND IT IS WHAT MAKES THE MAC PACK SAFE TO BUILD. There is no CPU-only macOS
+    wheel to pin: PyPI's darwin-arm64 torch is the Metal-capable one, so an
+    Apple-silicon environment would have landed on 'mps' and scored in the same
+    unified memory as that machine's own Crucible. Deciding it here rather than
+    in the build is one rule in one place, instead of a per-target pin that the
+    next target forgets.
+
+    Still reported on the ready line. It is a constant now rather than news, and
+    it stays because the host prints it — a line that vanished would read as a
+    worker that had stopped answering the question.
     """
-    import torch
-    if torch.cuda.is_available():
-        return 'cuda'
-    mps = getattr(torch.backends, 'mps', None)
-    if mps is not None and mps.is_available():
-        return 'mps'
     return 'cpu'
 
 

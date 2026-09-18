@@ -49,9 +49,16 @@
 # foundry is holding the reading model or the LLM; a 2.5 GB CUDA torch would
 # double this archive to contend for a card that is already busy. Scoring a book
 # on CPU is roughly an order of magnitude slower than on CUDA and the worker
-# says which one it got on its ready line. On Apple silicon there is no such
-# split — PyPI's macOS wheel is the Metal-capable one — so the mac target takes
-# it as published and the worker picks `mps`.
+# says which one it got on its ready line.
+#
+# ON APPLE SILICON THERE IS NO SUCH SPLIT TO MAKE — PyPI's macOS wheel is the
+# Metal-capable one and there is no CPU-only build to pin — so the mac target
+# takes it as published. That USED to mean the worker picked `mps` there, and it
+# would have scored in the same unified memory as that machine's own Crucible.
+# It cannot any more: `pick_device()` returns 'cpu' on every platform since
+# 2026-09-17 (Owen: a step wanting a GPU belongs to Crucible, and what stays
+# local stays local BECAUSE it is fully CPU). The rule lives in the worker
+# rather than in a per-target pin here, so the next target cannot forget it.
 #
 # OUTPUT (in <workdir>):
 #   foundry-env-<target>-v1.tar.gz            the environment, one top dir `python/`

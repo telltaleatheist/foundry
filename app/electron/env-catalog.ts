@@ -224,7 +224,15 @@ export const ENV_SPECS: Record<EnvTarget, EnvSpec> = {
     pythonVersion: '3.12.13',
     packages: ['torch 2.9.1', 'transformers 4.57.6', 'deberta-v3-base-zeroshot-v2.0'],
     pythonRelpath: 'python/bin/python3',
-    purpose: 'The same entailment model on the Mac\'s own GPU — the worker picks `mps` when Metal is there.',
+    /*
+     * SAID IN WHAT IT DOES, NOT WHAT IT COULD. This read "on the Mac's own GPU
+     * — the worker picks `mps` when Metal is there", and it stopped being true
+     * on 2026-09-17: `pick_device()` answers 'cpu' on every platform now,
+     * because a GPU step belongs to Crucible and the reason this one stays local
+     * is that it needs no card. The sentence is drawn on the Doctor page, so a
+     * stale one here is a stale one in front of a person.
+     */
+    purpose: 'The same entailment model, scored on the processor — it never takes the Mac\'s GPU, which belongs to Crucible.',
     role: 'nli',
   },
 

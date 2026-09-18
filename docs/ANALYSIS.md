@@ -266,7 +266,11 @@ stdin stays open, EOF is the shutdown, SIGKILL after 2 s the backstop.
 
 Wire contract (briefcase's, kept verbatim so measurements transfer):
 
-- worker → `{"ready": true, "device": "cuda|mps|cpu"}` once the model is
+- worker → `{"ready": true, "device": "cpu"}` once the model is
+  (the field is the wire's and still carries a value, but since 2026-09-17 the
+  worker always answers `cpu`: a step wanting a GPU belongs to Crucible, so the
+  one that stays local is the one that needs no card — `pick_device()` carries
+  the ruling)
   loaded; ready timeout 180 s.
 - host → `{"id": n, "texts": [...], "hypotheses": [...]}`
 - worker → `{"id": n, "progress": k}` per internal chunk — foundry's one
