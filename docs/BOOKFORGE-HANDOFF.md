@@ -748,7 +748,7 @@ what this is built against, and the lease is now built (Owen ruled it
 2026-09-14): `POST /v1/models/{id}/lease {act, ttl_seconds}`, heartbeat at
 ttl/3, `DELETE /v1/leases/{id}` in the job's settle. Foundry takes one for the
 length of every Crucible-placed run, with `act` = the `X-Crucible-Act` word, so
-**you will see `409 model_leased` from us** and we render yours the same way.
+**you will see `409 leased` from us** and we render yours the same way.
 
 **What the re-vendor has to know:**
 

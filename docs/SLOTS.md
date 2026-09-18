@@ -133,7 +133,7 @@ a load evicts; one model is resident at a time; the engine refuses by name on
 client's load can evict a running job's model mid-book. **Proposed by
 BookForge, ruling owed to Owen:** an explicit lease on the resident model
 (`POST /v1/models/{id}/lease`, heartbeat, `DELETE` at run end); while leased,
-load/unload refuse `409 model_leased` naming the client, act and since.
+load/unload refuse `409 leased` naming the client, act and since.
 
 ## 5b. Weights on disk — one owner per capability per machine (Owen, 2026-09-14)
 
@@ -271,7 +271,7 @@ a 409 is a 409 everywhere.
 **Rendered by name**, on the row: `server_busy` → the SDK's `busyLine` ("busy:
 bookforge, tts qwen3.5-9b 62% done"; a null holder is "an unnamed client", never
 a guess); `engine_in_use` → *someone is narrating on "X"*; `model_not_resident`
-from a load → *"X" is holding a different model for someone else*; `model_leased`
+from a load → *"X" is holding a different model for someone else*; `leased`
 → *"X" is leased by <client> for <act> since <since>*; unreachable → *"X" is
 unreachable*; a disabled class → *"X" cannot translate: <reason> (n.n GiB
 short)*; `capability_undecided` → *"X" has not measured its card yet — run
