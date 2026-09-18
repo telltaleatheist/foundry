@@ -65,7 +65,6 @@ import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, injec
 
 import type { CrucibleCoordinationMap } from '@shared/coordinate-wire';
 import type { CrucibleProbe, CrucibleServerView } from '@shared/slots';
-import type { PageReaderProgress, PageReaderState } from '@shared/types';
 import {
   LLM_CLASSES,
   defaultEngineServer,
@@ -92,7 +91,7 @@ import { UiService } from '../../core/ui.service';
 import { api } from '../../core/foundry';
 
 type StepId =
-  | 'welcome' | 'library' | 'crucible' | 'routes' | 'reading' | 'done';
+  | 'welcome' | 'library' | 'crucible' | 'routes' | 'done';
 
 interface StepDef {
   id: StepId;
@@ -190,26 +189,22 @@ const STEPS: readonly StepDef[] = [
     title: 'Where the text work runs',
     blurb: 'Use this engine’s models, an existing Ollama model, or a connected account.',
   },
-  {
-    /*
-     * ── DRAWN ONLY WHEN NO CONNECTED ENGINE READS PAGES ──────────────────
-     *
-     * This step is the FALLBACK path and says so in its own prose: three
-     * gigabytes of dots.ocr weights for *"a machine that has no engine of its
-     * own"*. An engine whose capability record has `pages` enabled already
-     * reads pages, so offering the download beside it is offering somebody a
-     * second copy of something they have — which is the shape of Owen's
-     * complaint about this wizard, one screen along.
-     *
-     * HIDDEN RATHER THAN DELETED: Wave 68 held the local page reader
-     * deliberately, on a gate that has not been met, because it is the only
-     * road to an EPUB on a machine that cannot install WSL. A machine like that
-     * has no engine serving `pages`, so it still sees this step.
-     */
-    id: 'reading',
-    title: 'The page reader',
-    blurb: 'What actually reads the pages. On most machines this is the one download that matters.',
-  },
+  /*
+   * ── THE PAGE READER STEP IS GONE (2026-09-17) ──────────────────────────
+   *
+   * It offered to download dots.ocr onto this machine, and it was already
+   * conditional: hidden when a connected engine served `pages`. Wave 68 kept
+   * it deliberately as "the only road to an EPUB on a machine that cannot
+   * install WSL".
+   *
+   * Owen closed that road on 2026-09-17: *"foundry shouldnt assume there even
+   * is a local system. there sohuldnt be a local system. foundry does all ai
+   * work through crucible."* A machine with no engine now reads no pages and
+   * is TOLD so -- electron/act-gates.ts darks the tile with the engine's own
+   * sentence -- rather than being sold a six-gigabyte fallback during setup.
+   *
+   * The step above it is where that machine's answer is: connect an engine.
+   */
   {
     id: 'done',
     title: 'Finish setup',
@@ -421,49 +416,6 @@ const STEPS: readonly StepDef[] = [
             } @else if (routeProblem() === null) {
               <p class="line">Asking the engine…</p>
             }
-          }
-
-          <!-- ── The page reader ─────────────────────────────────────────── -->
-          @if (current() === 'reading') {
-            @if (reader(); as it) {
-              <p class="lead">
-                The model that reads pages is dots.ocr. Every other thing foundry asks a model to do
-                — translate, simplify, clean, analyse — runs on the GPU engine you connected, and so
-                does this when the engine serves it. This copy is the fallback for a machine that
-                has no engine of its own, and it is the only weights foundry ever fetches.
-              </p>
-              <p class="line">{{ it.platformNote }}</p>
-              <p class="line">{{ it.detail }}</p>
-              <p class="line">
-                It is fetched once and kept. Every read after it is offline, and the analysis model
-                is already handled — its weights are inside the analysis worker on the previous step.
-              </p>
-              @if (it.supported && !it.installed) {
-                <div class="actions">
-                  <button class="primary" type="button" [disabled]="warming()" (click)="getReader()">
-                    @if (it.downloadBytes !== null) {
-                      Download the page reader ({{ readerSize(it.downloadBytes) }})
-                    } @else {
-                      Download the page reader
-                    }
-                  </button>
-                  @if (warming()) {
-                    <button class="ghost" type="button" (click)="cancelReader()">Cancel</button>
-                  }
-                </div>
-              }
-              @if (readerSaid(); as progress) {
-                @if (progress.phase === 'download') {
-                  <div class="bar"><div class="fill" [style.width.%]="progress.percent"></div></div>
-                }
-                <p class="small" [class.bad]="progress.phase === 'error'">
-                  {{ progress.item }} — {{ progress.detail }}
-                </p>
-              }
-            } @else {
-              <p class="lead">Looking at what this machine has…</p>
-            }
-            @if (readingSaid()) { <p class="small">{{ readingSaid() }}</p> }
           }
 
           <!-- ── Done ────────────────────────────────────────────────────── -->
@@ -725,10 +677,6 @@ export class SetupWizardComponent {
   /** The four llm classes, in the order the routes step draws them. */
   protected readonly classes = LLM_CLASSES;
   protected readonly libraryDir = signal('');
-  protected readonly readingSaid = signal('');
-  protected readonly warming = signal(false);
-  protected readonly reader = signal<PageReaderState | null>(null);
-  protected readonly readerSaid = signal<PageReaderProgress | null>(null);
   /** The registry, so the Crucible step can say what is already there. */
   protected readonly crucibleServers = signal<CrucibleServerView[]>([]);
   /**
@@ -806,12 +754,6 @@ export class SetupWizardComponent {
     () => this.engineActs().some((act) => !act.enabled && act.routable));
 
   /**
-   * Does a connected engine already read pages? Decides whether the page-reader
-   * step is drawn at all — see its entry in {@link STEPS}.
-   */
-  protected readonly engineReadsPages = computed(
-    () => this.engineCap()?.classes.some((row) => row.capability === 'pages' && row.enabled) === true);
-  /**
    * And what Foundry has already said to each of them, by stored name.
    *
    * The same map the Servers card draws, from the same push, so the wizard and
@@ -883,10 +825,8 @@ export class SetupWizardComponent {
    */
   protected readonly visible = computed<readonly StepDef[]>(() => {
     const hasEngine = this.crucibleServers().length > 0;
-    const readsPages = this.engineReadsPages();
     return STEPS.filter((step) => {
       if (step.id === 'routes') return hasEngine;
-      if (step.id === 'reading') return !readsPages;
       return true;
     });
   });
@@ -911,13 +851,6 @@ export class SetupWizardComponent {
     // Re-read the same source when main announces the registration.
     destroyRef.onDestroy(api.acts.onChanged(() => { void this.loadCrucible(); }));
 
-    api.pageReader.onProgress((progress) => {
-      this.readerSaid.set(progress);
-      if (progress.phase === 'done' || progress.phase === 'error') {
-        this.warming.set(false);
-        void this.loadReader();
-      }
-    });
     /*
      * COORDINATION IS NOT SOMETHING THIS SCREEN STARTS, so it is only heard.
      * The sweep runs at app start on every enabled server (crucible
@@ -1016,7 +949,6 @@ export class SetupWizardComponent {
       if (here === 'library') void this.loadLibrary();
       if (here === 'crucible') void this.loadCrucible();
       if (here === 'routes') void this.loadRoutes();
-      if (here === 'reading') void this.loadReader();
     });
 
   }
@@ -1309,47 +1241,12 @@ export class SetupWizardComponent {
     this.libraryDir.set(await api.library.set(chosen));
   }
 
-  // ── The page reader ───────────────────────────────────────────────────────
-
   /*
-   * THIS STEP USED TO BE A DISCLOSURE, and now it is a download.
+   * ── THE PAGE READER METHODS WENT WITH THE STEP (2026-09-17) ────────────
    *
-   * It said "your first read pays about six gigabytes, through whatever reads
-   * the pages" — which was true, because the weights arrived inside vLLM's or
-   * mlx-vlm's own Hugging Face cache and this app had no door to them except a
-   * button that started a server. The local page reader has a door: the files
-   * are named, sized and fetched here, so the number is on screen before
-   * anybody agrees to it rather than inside somebody's first conversion.
-   *
-   * A MAC STILL HAS mlx-vlm IN PROCESS and does not strictly need this. It is
-   * offered anyway: a Mac whose MLX environment is not installed has no other
-   * way to read a page, and a step that hid the option on one platform would be
-   * a step that is wrong exactly when it matters.
+   * `loadReader`, `getReader`, `cancelReader` and `readerSize` drove a
+   * download of dots.ocr onto this machine. Owen: *"there sohuldnt be a local
+   * system. foundry does all ai work through crucible."* Reading a page wants
+   * a GPU, so it is the engine's, and there is nothing here to fetch.
    */
-  protected async loadReader(): Promise<void> {
-    if (!api) return;
-    this.reader.set(await api.pageReader.state());
-  }
-
-  protected readerSize(bytes: number): string {
-    if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
-    if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`;
-    return `${Math.round(bytes / 1024)} KB`;
-  }
-
-  protected async getReader(): Promise<void> {
-    if (!api) return;
-    this.warming.set(true);
-    this.readingSaid.set('');
-    this.readerSaid.set(null);
-    const result = await api.pageReader.install();
-    this.warming.set(false);
-    this.readingSaid.set(result.detail);
-    await this.loadReader();
-  }
-
-  protected cancelReader(): void {
-    void api?.pageReader.cancelInstall();
-    this.warming.set(false);
-  }
 }
