@@ -117,18 +117,32 @@ export const ENV_ASSETS: Record<EnvTarget, EnvAsset> = {
   },
 
   /*
-   * NOT YET BUILT, AND THE NULL IS THE HONEST STATE.
+   * BUILT 2026-09-17, on the Apple-silicon Mac it had to be built on.
    *
-   * `tools/env/build-env.sh nli-mac-arm64` has to run ON an Apple-silicon Mac:
-   * it downloads a darwin-aarch64 interpreter and then EXECUTES it to install
-   * wheels and bake the weights, which no cross-build can do. The header's rule
-   * applies unchanged — `requirePublished` throws on this, the card greys it
-   * out, and nobody downloads an archive nobody can name the hash of.
+   * `tools/env/build-env.sh nli-mac-arm64` cannot cross-build: it downloads a
+   * darwin-aarch64 interpreter and then EXECUTES it to install wheels and bake
+   * the weights. That is why this entry carried nulls until now, and why the
+   * nulls were the honest state rather than an omission — `requirePublished`
+   * threw on them, the card greyed the target out, and nobody downloaded an
+   * archive nobody could name the hash of.
+   *
+   * THE NUMBERS BELOW ARE THE BUILD'S OWN, copied from
+   * `foundry-env-nli-mac-arm64-v1.json`, which went up to the release beside the
+   * bytes so anybody can check this catalog against the build without having the
+   * build machine. Verified against the archive on the build host before upload:
+   * `shasum -a 256` and the byte count both reproduced.
+   *
+   * IT SCORES ON THE PROCESSOR, like every other analysis pack. There is no
+   * CPU-only macOS torch wheel to pin — PyPI's darwin-arm64 build is the
+   * Metal-capable one — so the rule lives in `pick_device()`, which answers
+   * 'cpu' on every platform since Owen's ruling of the same day. The build's
+   * last gate proved it rather than assuming it: the worker's ready line came
+   * back `"device": "cpu"`, and the request it answered returned real scores.
    */
   'nli-mac-arm64': {
     archive: 'foundry-env-nli-mac-arm64-v1.tar.gz',
-    bytes: null,
-    sha256: null,
+    bytes: 472610887,
+    sha256: 'a1e7e6b73459ff177ab56fed21427a9065edda0d409eec5dd3c04a7cbc539e6e',
     parts: [],
   },
 
