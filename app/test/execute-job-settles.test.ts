@@ -25,8 +25,25 @@
  * The engine is mocked both ways and no child is ever spawned: what is under
  * test is which of this file's own endings reach `settled`, not what an engine
  * does.
+ *
+ * ── AND SETTLING IS NOT THE WHOLE OF AN ENDING ──────────────────────────────
+ *
+ * The two tests below the first two are the same throw measured one layer out.
+ * `carry` moves the previous output aside the instant before it spawns, on the
+ * invariant the rotation block states about itself — A RUN THAT PRODUCES NOTHING
+ * LEAVES THE CATALOGUE EXACTLY AS IT WAS — and the put-back used to be written by
+ * hand on the cancel arm and the engine-failed arm and nowhere else. So the throw
+ * above, which settles the row correctly, left the book in
+ * `generated/archived-<stamp>/` with nothing in `generated/` at all: the exact
+ * state `restoreRotation`'s own essay was written to end, reached from the one
+ * direction nobody had enumerated.
+ *
+ * These two are on real disk rather than on a spy, because "the catalogue is as
+ * it was" is a claim about files and only files can answer it. The library is a
+ * temp directory, the project is two files, and the engine is mocked as above.
  */
 import { afterEach, expect, mock, spyOn, test } from 'bun:test';
+import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -54,10 +71,20 @@ mock.module('electron', () => ({
 
 const dispatch = await import('../electron/crucible-dispatch');
 const engine = await import('../electron/engine');
+const appSettings = await import('../electron/app-settings');
 const projects = await import('../electron/projects');
 const queue = await import('../electron/job-queue');
 
-afterEach(() => mock.restore());
+/** The temp libraries the rotation tests below built, swept when each ends. */
+const libraries: string[] = [];
+
+afterEach(async () => {
+  mock.restore();
+  while (libraries.length > 0) {
+    const library = libraries.pop();
+    if (library !== undefined) await fsp.rm(library, { recursive: true, force: true });
+  }
+});
 
 /**
  * A reading placed on a Crucible, holding a lease — the shape the defect needs.
@@ -126,6 +153,106 @@ test('a reading whose landing succeeds settles, so its lease and its waiter are 
     expect(row.state).toBe('done');
     expect(endings.map((one) => [one.id, one.state])).toEqual([[row.id, 'done']]);
     expect(release).toHaveBeenCalledTimes(1);
+  } finally {
+    stop();
+  }
+});
+
+/**
+ * A PROJECT WITH ONE RENDERING ALREADY IN IT — the state a rotation is about.
+ *
+ * The library is a fresh temp directory per test and `readAppSettings` is bent to
+ * point at it, because `projectDirOf` resolves against `<libraryDir>/projects`
+ * and a job whose output lands outside every project never rotates at all — which
+ * would make both tests below pass for the wrong reason.
+ */
+async function projectHoldingAPreviousBook(): Promise<{
+  output: string;
+  generated: string;
+}> {
+  const library = await fsp.mkdtemp(path.join(os.tmpdir(), 'foundry-rotation-putback-'));
+  // Swept after the test, because a mkdtemp per run would otherwise leave one
+  // library per test per suite run in the OS temp directory for ever.
+  libraries.push(library);
+  const dir = path.join(library, 'projects', 'rotation-keeper-0badc0de');
+  const generated = path.join(dir, 'generated');
+  await fsp.mkdir(generated, { recursive: true });
+  await fsp.writeFile(
+    path.join(dir, 'project.json'),
+    JSON.stringify({
+      version: 2,
+      key: 'rotation-keeper-0badc0de',
+      title: 'The Keeper',
+      stem: 'keeper',
+      createdAt: 0,
+      archive: null,
+      documents: [],
+      working: { files: [] },
+      final: [],
+      reading: null,
+    }),
+    'utf8',
+  );
+  const output = path.join(generated, 'keeper.epub');
+  await fsp.writeFile(output, 'the rendering that was already there', 'utf8');
+  const real = appSettings.readAppSettings();
+  spyOn(appSettings, 'readAppSettings').mockReturnValue({ ...real, libraryDir: library });
+  return { output, generated };
+}
+
+/** The `archived-<stamp>` folders a rotation leaves behind, if any. */
+async function archivesIn(generated: string): Promise<string[]> {
+  return (await fsp.readdir(generated)).filter((name) => name.startsWith('archived-'));
+}
+
+test('a run that throws after rotating the previous output puts the rotation back', async () => {
+  const { output, generated } = await projectHoldingAPreviousBook();
+  placedWithALease(async () => {});
+  // The same refusal as the first test: a hosted Foundry with no FOUNDRY_BIN,
+  // which throws out of `runEngine` — one statement after the rotation.
+  spyOn(engine, 'runEngine').mockImplementation(() => {
+    throw new Error('the foundry engine binary was not found and no FOUNDRY_BIN says where it is');
+  });
+  const { endings, stop } = listening();
+  try {
+    const row = await queue.runJob({
+      kind: 'epub', inputPath: SCAN, outputPath: output, readingsPath: BANK,
+    });
+    expect(row.state).toBe('failed');
+    expect(endings.map((one) => [one.id, one.state])).toEqual([[row.id, 'failed']]);
+    // THE WHOLE POINT: the book is where it was, and no archive folder was left
+    // standing for a run that wrote nothing.
+    expect(await fsp.readFile(output, 'utf8')).toBe('the rendering that was already there');
+    expect(await archivesIn(generated)).toEqual([]);
+  } finally {
+    stop();
+  }
+});
+
+test('a landing does not put its rotation back, because the product is filed', async () => {
+  const { output, generated } = await projectHoldingAPreviousBook();
+  placedWithALease(async () => {});
+  // The engine writes where it was aimed, which is what makes this a landing
+  // rather than the case above wearing a zero exit code.
+  spyOn(engine, 'runEngine').mockImplementation(() => ({
+    done: fsp.writeFile(output, 'the rendering this run made', 'utf8')
+      .then(() => ({ code: 0, stdout: '', stderr: '' })),
+    cancel: () => {},
+  }));
+  // The catalogue write is somebody else's unit, exactly as above.
+  spyOn(projects, 'recordGenerated').mockResolvedValue(null);
+  const restore = spyOn(projects, 'restoreRotation');
+  const { endings, stop } = listening();
+  try {
+    const row = await queue.runJob({
+      kind: 'epub', inputPath: SCAN, outputPath: output, readingsPath: BANK,
+    });
+    expect(row.state).toBe('done');
+    expect(endings.map((one) => [one.id, one.state])).toEqual([[row.id, 'done']]);
+    expect(restore).toHaveBeenCalledTimes(0);
+    // The new book stands and the old one is still in its archive folder.
+    expect(await fsp.readFile(output, 'utf8')).toBe('the rendering this run made');
+    expect(await archivesIn(generated)).toHaveLength(1);
   } finally {
     stop();
   }
