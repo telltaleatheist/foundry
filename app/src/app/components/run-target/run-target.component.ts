@@ -82,13 +82,27 @@ import { api } from '../../core/foundry';
       </p>
     } @else {
       <div class="target">
-        @if (servers().length > 1) {
-          <!--
-            A CHOICE, so it is drawn as one. Chips rather than a dropdown: Owen,
-            "i would prefer to avoid dropdowns if i can, theyre ugly."
-          -->
+        <!--
+          ── THE ENGINES, ALWAYS, AS BUTTONS ACROSS THE TOP ──────────────────
+
+          It used to HIDE this at one server and print a sentence instead, on the
+          rule that a one-item list is not a choice. Owen, 2026-09-18: *"the
+          modal should let the user pick along the top. One crucible server has a
+          button along the top, already selected. Can't be de-selected."*
+
+          He is right and the earlier rule was over-applied. A lone button that
+          is already pressed is not asking anything — it is showing WHERE this is
+          going to run, in the same place and the same shape it will appear the
+          day a second engine is added. Hiding it taught the layout to somebody
+          once and then rearranged it under them.
+
+          THE ROWS ARE BALANCED AND CAP AT THREE -- see the rows() computed. Owen gave the
+          shape by enumeration: one across, two across, three across, then 2+2,
+          then 2+3, then 3+3.
+        -->
+        @for (row of rows(); track $index) {
           <div class="chips">
-            @for (entry of servers(); track entry.name) {
+            @for (entry of row; track entry.name) {
               <button class="chip" type="button"
                       [class.chosen]="entry.name === server()"
                       (click)="server.set(entry.name)">
@@ -137,7 +151,11 @@ import { api } from '../../core/foundry';
     .none { margin: 0; font-size: 12px; line-height: 1.5; color: var(--warn); }
 
     .target { display: flex; flex-direction: column; gap: 6px; }
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    /* NO WRAP: the rows are composed in the class, so letting flex re-break them
+       would be a second opinion about the layout and the two would disagree at
+       exactly the widths where it matters. Each button takes an equal share. */
+    .chips { display: flex; gap: 6px; }
+    .chips .chip { flex: 1 1 0; min-width: 0; justify-content: center; }
 
     /* Selected is a tick and a border; the text never changes colour against its
        background. A sibling of this control shipped as text on a solid accent
@@ -179,6 +197,41 @@ export class RunTargetComponent {
   readonly ready = output<boolean>();
 
   protected readonly servers = signal<CrucibleServerView[]>([]);
+
+  /**
+   * THE ENGINES, SPLIT INTO BALANCED ROWS OF AT MOST THREE.
+   *
+   * Owen gave this by enumeration on 2026-09-18 — *"Two splits the row of
+   * buttons into two. Three splits into three. Four splits into two rows of two
+   * buttons each. Five splits into a row of two, and under it, a row of theee.
+   * Six is split into two rows of three."* — which is one rule: no row wider
+   * than three, rows as equal as they can be, and the SHORT row first.
+   *
+   *   1 → [1]        4 → [2, 2]      7 → [2, 2, 3]
+   *   2 → [2]        5 → [2, 3]      8 → [2, 3, 3]
+   *   3 → [3]        6 → [3, 3]      9 → [3, 3, 3]
+   *
+   * Short row first is the half that is only visible at five: 2 above 3, not 3
+   * above 2. It is what makes a growing list settle downwards instead of
+   * re-flowing the row somebody is already reading.
+   */
+  protected readonly rows = computed<CrucibleServerView[][]>(() => {
+    const all = this.servers();
+    if (all.length === 0) return [];
+    const count = Math.ceil(all.length / 3);
+    const base = Math.floor(all.length / count);
+    // The rows that get one extra. They are the LAST ones, which is what puts
+    // the short row on top.
+    const bigger = all.length % count;
+    const out: CrucibleServerView[][] = [];
+    let at = 0;
+    for (let row = 0; row < count; row += 1) {
+      const width = base + (row >= count - bigger ? 1 : 0);
+      out.push(all.slice(at, at + width));
+      at += width;
+    }
+    return out;
+  });
   private readonly capability = signal<CapabilityRecord | null>(null);
   private readonly problem = signal<string | null>(null);
 
@@ -208,13 +261,18 @@ export class RunTargetComponent {
    * both say what to do about it.
    */
   protected readonly says = computed(() => {
-    const chosen = this.server();
-    const where = this.servers().length > 1 ? '' : `${chosen} · `;
-    if (this.problem() !== null) return `${where}could not be asked what it runs: ${this.problem()}`;
+    /*
+     * THE NAME IS NOT IN THIS LINE ANY MORE. It used to be, at one server, on
+     * the argument that somebody who has never opened Settings should be told
+     * which machine this is. There is a button above saying exactly that now,
+     * on every count of servers — so repeating it here would print the name
+     * twice, six pixels apart.
+     */
+    if (this.problem() !== null) return `Could not be asked what it runs: ${this.problem()}`;
     const row = this.row();
-    if (row === null) return `${where}asking what it runs…`;
+    if (row === null) return 'Asking what it runs…';
     const model = row.selected.length > 0 ? row.selected : 'a model it chooses itself';
-    return `${where}runs on ${model}`;
+    return `Runs on ${model}`;
   });
 
   /** What a refusal MEANS, in this app's words. See the template's note. */
