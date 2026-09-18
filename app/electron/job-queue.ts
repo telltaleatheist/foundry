@@ -197,8 +197,7 @@ import {
   type FinalRotation,
   type Rotation,
 } from './projects';
-import { readSettings } from './settings';
-import { ensurePageReader, isLocalPageReader, noteQueueBusy, noteQueueIdle } from './page-reader';
+import { noteQueueBusy, noteQueueIdle } from './page-reader';
 /*
  * THE PLANS, FOR THE RE-PLAN AT SPAWN AND FOR NOTHING ELSE (`materializeDeferred`).
  *
@@ -3484,20 +3483,16 @@ function metaFlagsFor(record: Record<string, string>): string[] {
  * as it was stored and there is nothing left to hide from anybody.
  */
 
-/**
- * The endpoint this job will actually read through, or null when the run does
- * not go through one at all.
+/*
+ * `endpointFor()` WENT WITH THE FALLBACK IT FED (2026-09-17).
  *
- * The settings file's, and ONLY in `endpoint` mode. Under `auto` the engine
- * picks its own tier for itself — starting a server here because the file
- * happens to hold a URL would load three gigabytes for a backend the run was
- * never going to address.
+ * It answered the settings file's `backend.endpointUrl`, in `endpoint` mode
+ * only, and its one caller used that to decide whether to start Foundry's own
+ * page reader for a reading with no placement. Owen: *"there sohuldnt be a
+ * local system. foundry does all ai work through crucible."* With no local
+ * reader to start, a URL in that file names nothing this app would dial, and a
+ * reader with no caller is a question nobody asks.
  */
-function endpointFor(): string | null {
-  const settings = readSettings();
-  if (settings.backend.mode !== 'endpoint') return null;
-  return settings.backend.endpointUrl?.trim() || null;
-}
 
 /*
  * `starting` USED TO LIVE HERE, and the board is why it does not any more.
@@ -4521,29 +4516,34 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
   const placement = await placeRun(next, request, wires);
   if (placement === null) return;
 
-  const endpoint = next.kind === 'read' && placement.endpoint === null ? endpointFor() : null;
-  let localReader: { servedModel: string | null; concurrency: number } | null = null;
-  if (endpoint !== null && isLocalPageReader(endpoint)) {
-    next.message = 'Starting the reading server…';
+  /*
+   * ── A READING WITH NOWHERE TO READ REFUSES, AND SAYS SO ─────────────────
+   *
+   * What stood here started a model on this computer. If a read had no
+   * placement endpoint it fell back to `backend.endpointUrl`, and when that
+   * named Foundry's own llama.cpp copy of dots.ocr it printed "Starting the
+   * reading server…" and brought one up.
+   *
+   * Owen, 2026-09-17: *"foundry shouldnt assume there even is a local system.
+   * there sohuldnt be a local system. foundry does all ai work through
+   * crucible."* So the fallback is gone, and what replaces it is a REFUSAL BY
+   * NAME rather than nothing: `placeRun` answering with no endpoint for a
+   * reading is now a contradiction — the placement came from a server that
+   * said it serves `pages` — and a contradiction that fails quietly is one
+   * nobody ever finds. The tile is dark without such a server
+   * (electron/act-gates.ts), so reaching this is a defect upstream, and the
+   * sentence says which.
+   */
+  if (next.kind === 'read' && placement.endpoint === null) {
+    next.state = 'failed';
+    next.error = 'This reading was placed on a server that did not give an address to read '
+      + 'through, so there is nowhere to send the pages. Every act that meets a model runs on a '
+      + 'Crucible server; Foundry has no reader of its own. Check that the server in Settings › '
+      + 'Crucible Servers still serves page reading.';
+    next.finishedAt = Date.now();
     changed();
-    try {
-      const ready = await ensurePageReader();
-      localReader = { servedModel: ready.servedModel, concurrency: ready.concurrency };
-    } catch (err) {
-      // The server's own log tail, whole. A conversion that failed because the
-      // card ran out of memory must say so here, not "the engine exited 1".
-      next.state = 'failed';
-      next.error = err instanceof Error ? err.message : String(err);
-      next.finishedAt = Date.now();
-      changed();
-      settled(next);
-      return;
-    }
-    // Cancelled while the server was coming up — see `cancel`. Re-read rather
-    // than test `next.state`, which the compiler still believes is 'running'.
-    if (jobs.find((job) => job.id === next.id)?.state === 'cancelled') {
-      return;
-    }
+    settled(next);
+    return;
   }
 
   /*
@@ -4975,14 +4975,6 @@ async function executeJob(next: Job, request: EngineRequest, wires: RunWires): P
    * A zero concurrency means "say nothing", which is how an ADOPTED server keeps
    * the engine's own measured default of twelve.
    */
-  if (localReader !== null) {
-    if (localReader.servedModel !== null) {
-      args.push('--vlm-endpoint-model', localReader.servedModel);
-    }
-    if (localReader.concurrency > 0) {
-      args.push('--vlm-concurrency', String(localReader.concurrency));
-    }
-  }
   // File preparation above also awaits. Cancelling before the child exists
   // must never turn into a late spawn after the cancellation was acknowledged.
   if (jobs.find((job) => job.id === next.id)?.state === 'cancelled') return;
