@@ -2874,6 +2874,33 @@ supposed to be, and it exists so the same failure is visible next time.
   a deliberate asymmetry.
 - **The metadata step does not un-apply values when deleted.** Deleting
   the record deletes the record. Same honesty curate already has.
+- **The NLI ranker still runs locally, and is moving to Crucible.** Owen,
+  2026-09-17: *"lets send it to crucible. i was leaning toward foundry, but
+  its plausible that at some point we might want to batch or something. if
+  thats the case it should go to crucible."* Analysis stage 1 holds
+  `MoritzLaurer/deberta-v3-base-zeroshot-v2.0` in a resident Python on this
+  machine (`src/analyze/nli-bridge.ts`); stage 3 already runs on Crucible as
+  the `analysis` class. The endpoint has been requested of Crucible with the
+  full contract, including the three ways a reimplementation breaks silently
+  (label order, duplicate hypotheses, the hypothesis template that IS the
+  0.7 calibration — docs/ANALYSIS.md §4, §5). **Nothing is built on this side
+  until there is a released version to build against.**
+
+  Two facts that decide the shape when it lands: the rank cache is keyed on
+  `sentence ∥ NLI model ∥ hypothesis set ∥ threshold`, so an identical model
+  and template keep every existing report valid; and `nli-mac-arm64` has
+  NEVER been built (null size, null hash — it needs an Apple-silicon
+  interpreter executed on an Apple-silicon Mac), so analysis cannot run on
+  the Mac at all today and this move is what fixes it.
+
+- **`electron/page-reader.ts` is unreachable but not removed.** The local
+  page reader lost its card, its gate and its queue fallback on 2026-09-17
+  (*"there sohuldnt be a local system"*), so no screen can start it. The
+  module is still woven through env provisioning, dispatch and
+  crucible-provider, and its six IPC channels still answer — removing them
+  means regenerating docs/IPC-CHANNELS.md, which BookForge's keeper reads as
+  authority. A refactor with a blast radius, deliberately not done in the
+  same pass as the behaviour change that made it dead.
 
 ---
 
