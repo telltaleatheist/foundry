@@ -221,6 +221,7 @@ import type {
   AnalyzeRequest, ConversionKind, DeferredPlan, EnvInstallRequest, ExportLanding, ExportMintMetadata,
   FoundryJobRow, Job, JobKind, JobRequest, SimplifyRequest, TextPassRequest, TranslateRequest,
 } from '../shared/types';
+import { isResumableStop } from '../shared/types';
 /*
  * WHERE A JOB'S COMPUTE GOES, and the two modules that answer it (docs/SLOTS.md
  * §6, Package C). A one-way edge exactly like the plans above: neither has ever
@@ -872,6 +873,21 @@ const slots = new Map<string, Slot>();
  * holds while it lives, its ✕ reaches it, and `shutdown` stops it.
  */
 const detachedRuns = new Map<string, () => void>();
+
+/**
+ * Rows whose ending was a host's RESUMABLE STOP rather than a cancel.
+ *
+ * Recorded at the abort, because that is the only moment the gesture exists
+ * (`RESUMABLE_STOP`, shared/types.ts): `RunOptions` is handed over before the
+ * engine spawns and cannot know which button a person will press. Read once, at
+ * the one branch that destroys anything, and cleared by `settled` — the one
+ * ending every path in this file reaches — so a row id cannot carry a stale
+ * promise into whatever runs next.
+ *
+ * ABSENT MEANS CANCEL, which is the default the whole feature turns on: the ✕,
+ * an internal cancel and a host that says nothing all keep today's behaviour.
+ */
+const resumableStops = new Set<string>();
 /**
  * THE RUNS THAT ARE LANDING — the window in which a row's ending is the RUN's to
  * say and nobody else's, by row id.
@@ -1094,6 +1110,12 @@ function settled(
     leases.delete(job.id);
     void lease.release();
   }
+  /*
+   * AND THE GESTURE THAT ENDED IT IS FORGOTTEN HERE, for the lease's own reason
+   * one line up: this is the one ending every path in this file reaches, and a
+   * row id left in that set would hand its promise to whatever is minted next.
+   */
+  resumableStops.delete(job.id);
   const row = copyOf(job);
   for (const listener of [...settleListeners]) {
     try {
@@ -5935,12 +5957,29 @@ async function carry(
     } else if (result.code === -1) {
       next.state = 'cancelled';
       next.message = 'Cancelled.';
-      // AND A CANCELLED READING KEEPS NOTHING — Owen's ruling, and the one
-      // ending in this file that destroys. `discardCancelledReading` carries the
-      // whole argument, including the two guards that keep a finished reading
-      // out of it. Awaited so the row does not settle while its pages are still
-      // on disk: a re-read enqueued the instant the ✕ lands must not find them.
-      await discardCancelledReading(request);
+      /*
+       * AND A CANCELLED READING KEEPS NOTHING — Owen's ruling, and the one ending
+       * in this file that destroys. `discardCancelledReading` carries the whole
+       * argument, including the two guards that keep a finished reading out of it.
+       * Awaited so the row does not settle while its pages are still on disk: a
+       * re-read enqueued the instant the ✕ lands must not find them.
+       *
+       * UNLESS THE HOST SAID THIS WAS A STOP. BookForge's "Stop this step" and its
+       * "Cancel this book" arrive here as the same -1 (`engine.ts` resolves -1 for
+       * any cancel), and the first of the two promises in its own tooltip to keep
+       * what it has already read. Destroying the bank under that button would be a
+       * lie the person only discovers by pressing Start and watching page one go
+       * past. `RESUMABLE_STOP` (shared/types.ts) is how a host says which gesture
+       * it was; absent means cancel, so nothing about the ✕ changes.
+       */
+      if (resumableStops.has(next.id)) {
+        console.log(
+          `[queue] the reading was STOPPED rather than cancelled, so its pages stay banked and `
+          + 'Start resumes from where it left off.',
+        );
+      } else {
+        await discardCancelledReading(request);
+      }
       // Nothing was written, so nothing moved: `landed` is still false and the
       // `finally` below brings the previous output home and points the chain
       // back at it. See `restoreRotation` for what "nothing" has to include —
@@ -6218,7 +6257,16 @@ async function runDetached(
    * listener is dropped in `finally`: a host that keeps one controller per row
    * would otherwise leave this queue holding a reference to every row it ever ran.
    */
-  const abort = (): void => { cancelHere(job.id); };
+  const abort = (): void => {
+    /*
+     * WHICH GESTURE THIS WAS, read here and nowhere else. The host's Stop and its
+     * Cancel are one abort by the time `cancelHere` runs and one exit code by the
+     * time the discard decides, so the reason is captured at the only instant it
+     * is still distinguishable. See `RESUMABLE_STOP`, shared/types.ts.
+     */
+    if (isResumableStop(opts.signal?.reason)) resumableStops.add(job.id);
+    cancelHere(job.id);
+  };
   opts.signal?.addEventListener('abort', abort, { once: true });
   /*
    * A SIGNAL THAT WAS ALREADY ABORTED SPAWNS NOTHING, and it is worth the four
