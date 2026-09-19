@@ -129,10 +129,22 @@ function repin(manifest, from, to) {
   const changed = [];
   for (const name of PACKAGES) {
     const short = name.split('/')[1];
-    const before = `"${name}": "file:vendor/crucible-${short}-${from}.tgz"`;
-    const after = `"${name}": "file:vendor/crucible-${short}-${to}.tgz"`;
-    if (!text.includes(before)) die(`could not find the pin line for ${name} (${before})`);
-    text = text.replace(before, after);
+    /*
+     * A LABELLED PRE-RELEASE PACK IS RETIRED BY ADOPTING A REAL RELEASE, and
+     * this is where that happens. An app built against a crucible BRANCH pins
+     * `crucible-bootstrap-1.0.5-phase19.tgz` — the same version string as the
+     * release it will become, which is why the label is in the filename. So
+     * the pin being replaced is matched with the label OPTIONAL, and the
+     * replacement never has one: adopting 1.0.6 is exactly the moment the
+     * pre-release stops being what this app is built against.
+     */
+    const pin = new RegExp(
+      `"${name.replace('/', '\/')}": "file:vendor/crucible-${short}-`
+      + `${from.replace(/\./g, '\.')}(?:-[A-Za-z0-9.]+)?\.tgz"`,
+    );
+    const found = pin.exec(text);
+    if (found === null) die(`could not find the pin line for ${name} (${from})`);
+    text = text.replace(found[0], `"${name}": "file:vendor/crucible-${short}-${to}.tgz"`);
     changed.push(name);
   }
   for (const [key, value] of Object.entries(manifest.parsed)) {
@@ -198,10 +210,17 @@ async function main() {
 
   // Only after the new bytes are safely on disk and the manifest names them.
   for (const name of ['client', 'bootstrap']) {
-    const stale = path.join(vendor, `crucible-${name}-${from}.tgz`);
-    if (fs.existsSync(stale)) {
-      fs.unlinkSync(stale);
-      console.log(`adopt: removed crucible-${name}-${from}.tgz`);
+    /*
+     * EVERY TARBALL OF THE RELEASE BEING LEFT, labelled or not. The keeper in
+     * `app/test/crucible-pin.test.ts` refuses a `vendor/` holding anything the
+     * app is not pinned to, so a pre-release pack left behind here would fail
+     * the build rather than sit quietly — which is the right failure, and this
+     * is what stops it happening.
+     */
+    const leaving = new RegExp(`^crucible-${name}-${from.replace(/\./g, '\.')}(-[A-Za-z0-9.]+)?\.tgz$`);
+    for (const file of fs.readdirSync(vendor).filter((it) => leaving.test(it))) {
+      fs.unlinkSync(path.join(vendor, file));
+      console.log(`adopt: removed ${file}`);
     }
   }
 
