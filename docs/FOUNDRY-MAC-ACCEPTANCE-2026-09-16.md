@@ -59,7 +59,7 @@ it must not silently substitute the installed quantization.
 
 ## Retained artifacts
 
-Local directory: `C:/Users/tellt/Projects/foundry/dist/acceptance-mac/`.
+Local directory: `C:/Users/you/Projects/foundry/dist/acceptance-mac/`.
 `PREPARED.md` describes the guarded reproduction runner. `run.ts`, fixture PDF,
 extracted text/EPUB, book JSONL, records, narration stamp, per-operation logs,
 selected-default refusal, both translation results and final activity snapshot

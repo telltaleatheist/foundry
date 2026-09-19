@@ -1006,9 +1006,9 @@ So, on any such change:
 
 ```bash
 tsc --noEmit && bun test
-node C:/Users/tellt/Projects/orpheus-finetune/pipeline/normalization/run_fixtures.js \
+node C:/Users/you/Projects/orpheus-finetune/pipeline/normalization/run_fixtures.js \
      --mode bookforge --bookforge <this checkout>
-node C:/Users/tellt/Projects/orpheus-finetune/pipeline/normalization/run_fixtures.js \
+node C:/Users/you/Projects/orpheus-finetune/pipeline/normalization/run_fixtures.js \
      --compare --bookforge <this checkout>
 ```
 
