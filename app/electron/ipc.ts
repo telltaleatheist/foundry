@@ -23,6 +23,7 @@ import * as path from 'node:path';
 
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
+import { TERMINAL_OUTCOME_STATES } from '@crucible/bootstrap';
 import { startPairing, pollPairing, type Pairing } from '@crucible/client';
 import { RemotePairingSessions } from './crucible-remote-pairing';
 
@@ -72,7 +73,7 @@ import type {
   UpstreamProbe,
 } from '../shared/engine-settings';
 import { crucibleInstallPlan } from './crucible-install';
-import { preSdkInstallDoor, runInstallNarrated } from './crucible-install-door';
+import { crucibleInstallDoor, runInstallNarrated } from './crucible-install-door';
 import {
   crucibleUninstallAvailability,
   crucibleUninstallDryRun,
@@ -3948,11 +3949,12 @@ export function registerIpc(): void {
    */
   ipcMain.handle('crucible:install-plan', () => crucibleInstallPlan());
   /*
-   * THE SEAM, BUILT ONCE (electron/crucible-install-door.ts). Part 2 of PHASE19
-   * replaces this one expression with the SDK's `installStatus()`/
-   * `watchInstall()` door and nothing else in this file moves.
+   * THE SEAM, BUILT ONCE (electron/crucible-install-door.ts). It is the SDK's
+   * `installStatus()` / `watchInstall()` / `POST /install` now; the pre-SDK
+   * stopgap part 1 shipped is gone, and this one expression was the whole of
+   * the swap.
    */
-  const installDoor = preSdkInstallDoor();
+  const installDoor = crucibleInstallDoor();
   installDoor.watch((event) => broadcast('crucible:install-event', event));
   /**
    * THE RUN, AND WHAT MUST HAPPEN AFTER IT, in one place.
@@ -3962,10 +3964,25 @@ export function registerIpc(): void {
    * never coordinated leaves a connected server with none of the environments
    * this app asked for, and which of the two buttons was pressed has nothing
    * to do with that.
+   *
+   * ── COORDINATE WAITS FOR A TERMINAL OUTCOME (PHASE19 §2.8) ────────────────
+   *
+   * Coordinate-on-connect is what installs job environments and pulls weights,
+   * and under PHASE20 those are gigabytes. Run against the NATIVE engine on a
+   * machine that is mid-move they land on Windows and make migrate-weights
+   * expensive for nothing, so the app waits and then coordinates once, against
+   * whichever engine is left standing. `failed` is deliberately not terminal:
+   * the tray retries it once (§2.2), and coordinating over a move that is
+   * about to start again is the same mistake one attempt later.
+   *
+   * The gate is asked HERE and not inside the run, because it is a statement
+   * about what this app does NEXT, and the run's own business is finished.
    */
   const runInstallAndCoordinate = async (run: () => Promise<void> = runInstallNarrated) => {
     await run();
     await afterRegistryChanged();
+    const outcome = (await installDoor.status()).outcome;
+    if (outcome !== null && !TERMINAL_OUTCOME_STATES.includes(outcome.state)) return;
     for (const entry of crucibleServers().filter((entry) => entry.enabled)) {
       void coordinateWithServer(entry.name, 'Crucible was installed');
     }

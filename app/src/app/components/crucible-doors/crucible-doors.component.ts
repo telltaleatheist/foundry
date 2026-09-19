@@ -783,7 +783,21 @@ export class CrucibleDoorsComponent {
     if (this.rows().length === 0) {
       this.rows.set(initialInstallRows(plan.steps.map((step) => ({ id: step.id, label: step.title }))));
     }
-    this.status.set(await api.crucible.installStatus());
+    /*
+     * A DOOR THAT WILL NOT ANSWER IS SAID, NOT SWALLOWED.
+     *
+     * `installStatus` reaches the tray on `:7101`, and a host that is
+     * installed and not running refuses `host_unreachable` by name. That is a
+     * real fact about this machine and it belongs on screen — but it must not
+     * blank the install door, which is exactly where somebody goes to fix it.
+     * So the plan above is already drawn and this adds the sentence beside it.
+     */
+    try {
+      this.status.set(await api.crucible.installStatus());
+    } catch (err) {
+      this.status.set(null);
+      this.installSaid.set(err instanceof Error ? err.message : String(err));
+    }
   }
 
   // ── §3.1's words. Composed HERE, because the screen owns the wording ──────

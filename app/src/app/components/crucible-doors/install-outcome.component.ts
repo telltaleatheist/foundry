@@ -86,9 +86,23 @@ export class CrucibleInstallOutcomeComponent {
     void this.read();
   }
 
+  /**
+   * §2.6's `GET /install`, and the refusal it can answer with.
+   *
+   * A host that is installed and not running refuses `host_unreachable` by
+   * name, and that sentence is drawn rather than dropped: this readout is the
+   * only place on either screen that says anything about the tray, so a
+   * silent catch here would be the app deciding a machine is fine because it
+   * could not ask. The outcome stays null, which draws no control.
+   */
   private async read(): Promise<void> {
     if (!api) return;
-    this.outcome.set((await api.crucible.installStatus()).outcome);
+    try {
+      this.outcome.set((await api.crucible.installStatus()).outcome);
+    } catch (err) {
+      this.outcome.set(null);
+      this.refusal.set(err instanceof Error ? err.message : String(err));
+    }
   }
 
   /**

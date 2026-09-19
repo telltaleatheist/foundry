@@ -1,7 +1,8 @@
 /** The installer and its native/WSL decisions belong to Crucible. */
 import {
-  hostInstallCommand, install, processRunner, RELEASE_REPO, startLocal,
-  type Runner,
+  hostInstalled, install, installStatus, processRunner, RELEASE_REPO, startLocal,
+  TERMINAL_OUTCOME_STATES,
+  type HostEvent, type Runner,
 } from '@crucible/bootstrap';
 import { addLocalCrucible, probeCrucible, probeCrucibleAt } from './crucible-registry';
 import { pairingFileRead } from './crucible-pairing';
@@ -290,11 +291,31 @@ let installing = false;
  * whichever row is running, which is exactly what pip's output is for (§2.12:
  * pip has no byte total, so the line IS the progress).
  */
+/**
+ * THE THREE SINKS A RUN NARRATES INTO, all three owned by the door
+ * (electron/crucible-install-door.ts) and none of them by this file.
+ *
+ * `event` is this app's own rows — the ones only this sequence knows about.
+ * `hostEvent` is the orchestrator's stream, verbatim, which the door folds
+ * into rows because the fold is a statement about a screen. `windowsEngineUp`
+ * is a one-shot the door makes idempotent: §3.1's second row is finished
+ * either when the tray starts answering (its first move step proves the native
+ * engine is up, §2.8) or, on a machine with no move at all, when this sequence
+ * gets past the installer. Two callers, one row, and the door is where "only
+ * once" is decided.
+ */
+export interface InstallNarration {
+  event(event: CrucibleInstallEvent): void;
+  hostEvent(event: HostEvent): void;
+  windowsEngineUp(): void;
+}
+
 export async function driveCrucibleInstall(
-  onEvent: (event: CrucibleInstallEvent) => void,
+  narrate: InstallNarration,
   runner: Runner = processRunner(),
   sources: CrucibleReleaseSources = processReleaseSources(),
 ): Promise<void> {
+  const onEvent = (event: CrucibleInstallEvent) => narrate.event(event);
   const line = (text: string) => onEvent({ event: 'line', text, stream: 'stdout' });
   if (hosted()) throw new Error('Install Crucible from BookForge.');
   if (installing) throw new Error('A Crucible installation is already running.');
@@ -316,32 +337,89 @@ export async function driveCrucibleInstall(
      * the `try`, so the `finally` releases the flag over a refusal too.
      */
     const release = await releaseToInstall(sources);
-    onEvent({ event: 'step', row: 'install', jobType: null });
-    if (runner.platform === 'win32') {
+    narrate.event({ event: 'step', row: 'install', jobType: null });
+    if (runner.platform === 'win32' || runner.platform === 'darwin' || runner.platform === 'linux') {
       line(`Crucible ${release}`);
-      const result = await runner.stream([
-        'powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
-        "$ErrorActionPreference = 'Stop'; " + hostInstallCommand(release),
-      ], { timeoutMs: 3_600_000, onLine: (text) => line(text) });
-      if (result.failure !== null || result.code !== 0) {
-        throw new Error(result.failure ?? `Crucible installer exited ${result.code}: ${result.stderr.trim()}`);
-      }
-    } else if (runner.platform === 'darwin' || runner.platform === 'linux') {
-      line(`Crucible ${release}`);
+      /*
+       * ── ONE CALL DOES BOTH HALVES ON WINDOWS NOW (PHASE19 §2.6) ──────────
+       *
+       * This used to spawn PowerShell here with `hostInstallCommand(release)`
+       * — the channel's `irm … | iex` — because the SDK on win32 refused to
+       * run an installer of its own accord. §2.6 changed that: `install()`
+       * runs `install.ps1` when the host pack is absent and then
+       * `watchInstall()`s the move the TRAY started, replaying the ring so a
+       * late attacher sees the step it joined at. It never POSTs the move
+       * itself, which is the whole reason there is no second owner of it.
+       *
+       * So the sequence below is the SDK's, and this file's job shrank to
+       * narrating it. On darwin and linux nothing changed: there is no host,
+       * the machine is the server, and the same call walks the steps directly.
+       */
       await install({
         release, jobTypes: ['echo'],
         onLine: (text, _stream, step) => line(`${step}: ${text}`),
-      }, runner);
+        onHostEvent: (event) => narrate.hostEvent(event),
+      }, runner).catch(async (error: unknown) => {
+        /*
+         * A TERMINAL OUTCOME THAT IS NOT `done` IS NOT A FAILED INSTALL.
+         *
+         * `install()` promises an {@link InstallResult} and refuses when there
+         * is none, carrying the outcome's OWN 4c code — so `cannot`,
+         * `reboot-pending` and `declined` all arrive here as exceptions. None
+         * of them means the install failed: §0 says a machine that cannot host
+         * WSL2 ends on the native Windows engine and the app says so in one
+         * sentence, and §2.3 says a `reboot-pending` machine is waiting for a
+         * person to press Restart now. Each is a READOUT (§2.2), drawn from the
+         * outcome by the screens, and the sequence carries on to start and
+         * register the engine that IS there.
+         *
+         * `host_install_unwitnessed` lands here too and is the same shape: the
+         * outcome says `done`, the tray's ring simply no longer holds the
+         * `done` event that would have described the guest. The machine is on
+         * the Linux engine either way.
+         *
+         * EVERYTHING ELSE IS RAISED. A `failed` outcome is NOT terminal — the
+         * tray retries it once — and install.ps1 dying leaves no outcome at
+         * all; both reach the door as the refusal they are.
+         */
+        if (runner.platform !== 'win32') throw error;
+        /*
+         * THE PROBE MUST NOT REPLACE THE THING IT IS PROBING.
+         *
+         * Measured here, 2026-09-19: an `install.ps1` that exited 9 refused
+         * `host_not_installed`, and this recovery then asked the tray for an
+         * outcome — on a machine that has no tray, no config.toml and no token,
+         * because the installer had just failed. `installStatus` refused
+         * `host_no_token`, and THAT is the sentence that reached the screen.
+         * The original failure, which is the only one that says what went
+         * wrong, was gone.
+         *
+         * So two guards, both about the same rule: ask only when there is
+         * something to ask, and let nothing this recovery does become the
+         * error it is recovering from.
+         */
+        if (!hostInstalled(runner)) throw error;
+        let outcome;
+        try {
+          outcome = (await installStatus({}, runner)).outcome;
+        } catch {
+          throw error;
+        }
+        if (outcome === null || !TERMINAL_OUTCOME_STATES.includes(outcome.state)) throw error;
+        line(outcome.sentence ?? `The engine move ended as ${outcome.state}.`);
+      });
     } else {
       throw new Error('Crucible does not support this platform.');
     }
     /*
-     * THE SECOND ROW IS WINDOWS'S ALONE (§2.8: the native engine answers first
-     * and the move runs behind it). Elsewhere the service that just installed
-     * IS the engine, so starting and registering it is the tail of row one and
-     * a second row would be this screen counting the same fact twice.
+     * §3.1's SECOND ROW IS WINDOWS'S ALONE (§2.8: the native engine answers
+     * first and the move runs behind it). Elsewhere the service that just
+     * installed IS the engine, so starting and registering it is the tail of
+     * row one and a second row would be this screen counting the same fact
+     * twice. The door has usually drawn it already, off the tray's first move
+     * step; this is the machine that had no move to prove it with.
      */
-    if (runner.platform === 'win32') onEvent({ event: 'step', row: 'windows-engine', jobType: null });
+    if (runner.platform === 'win32') narrate.windowsEngineUp();
     const status = await startLocal({}, runner);
     if (status.state !== 'running') throw new Error(status.detail);
     const connected = await addLocalCrucible('');

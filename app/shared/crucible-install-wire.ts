@@ -36,11 +36,11 @@
  *
  * Every row starts `waiting`. A `done` event turns every row that never ran
  * into `skipped`, and the renderer draws no `skipped` row. That is one rule
- * with two uses: on a Mac there is no Windows engine and no Linux engine to
- * set up, and on a Windows machine whose move has not shipped yet (the pre-SDK
- * seam — electron/crucible-install-door.ts) the two move rows never start. In
- * both cases a grey row sitting under the word "Done" forever would be the
- * screen lying about what it knows.
+ * with three uses: on a Mac there is no Windows engine and no Linux engine to
+ * set up; on a Windows machine that DECLINED the move (`wsl = "never"`) the
+ * three guest rows never start; and on one that `cannot` host WSL2 they stop
+ * where the state table stopped. In every case a grey row sitting under the
+ * word "Done" forever would be the screen lying about what it knows.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
