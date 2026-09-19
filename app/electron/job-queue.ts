@@ -510,6 +510,35 @@ function placedBy(kind: JobKind, chosen?: string): Pick<Job, 'waitFor'> {
     return {};
   }
   if (chosen !== undefined) return { waitFor: chosen };
+  /*
+   * ── HOSTED, A SILENCE IS `any` AND NEVER THIS APP'S SETTING ───────────────
+   *
+   * Owen, 2026-09-19: *"the server is chosen when it's in the queue. if it isnt
+   * chosen or cant be for some reason, it should be 'any'."*
+   *
+   * THE DEFECT HE HIT. A hosted read arrived with no machine named, fell through
+   * to `waitForOfNewJob`, and was answered by `newJobsWaitFor` — which clamps to
+   * `top`, so the row was stamped with the NAME of the top-ranked slot. BookForge
+   * drew it in the Mac Studio's lane, an engine he had switched off, while the
+   * card's own progress line read `crucible@example-pc-wsl` and the PC slot said
+   * "Free · Nothing queued wants this slot". Both screens were telling the truth:
+   * the row was filed on one machine and the work ran on another.
+   *
+   * THIS IS THE OTHER HALF OF THE SENTENCE FOUR LINES UP. A host that registers
+   * `hostQueue` does the DECIDING (electron/mount.ts; docs/PLAN.md Wave 16: *"we
+   * need to centralize the queue in bookforge"*), and that argument does not stop
+   * applying because the host happened to say nothing — a setting on a screen
+   * nobody opened is no more an answer to the host's question when the host is
+   * silent than when it is not. `any` is the reserved word that means *"decide
+   * later"*, which is the truth: nobody has chosen, the walk will, and `ranOn`
+   * will say where it went. A NAME here is the only answer that can be WRONG.
+   *
+   * AND UN-HOSTED IS UNTOUCHED, because there the setting is not a stray default
+   * — it is the person's own answer, given on the Servers card, to exactly this
+   * question. `waitForOfNewJob` carries the rest of that argument, including why
+   * `top` becomes a name at the press rather than travelling as the word.
+   */
+  if (hostQueue() !== null) return { waitFor: ANY_SLOT };
   const waitFor = waitForOfNewJob();
   return waitFor === undefined ? {} : { waitFor };
 }
