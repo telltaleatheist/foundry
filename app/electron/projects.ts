@@ -5873,7 +5873,7 @@ export async function recordReading(
  * sat in it, and the run asked about the other book archived a finished bank and
  * paid for a hundred pages again.
  */
-function completionMarkerFor(bankPath: string): string {
+export function completionMarkerFor(bankPath: string): string {
   return `${path.resolve(bankPath).replace(/\.jsonl$/i, '')}.completed.json`;
 }
 

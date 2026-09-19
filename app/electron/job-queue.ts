@@ -178,6 +178,7 @@ import { foundryHost, type FoundryHostQueue, hostMintMeta } from './host';
 import {
   bookAtPosition,
   generatedRoleFor,
+  completionMarkerFor,
   imagesDirFor,
   ledgerOf,
   metadataForProduct,
@@ -2687,6 +2688,105 @@ export function cancelHere(id: string): void {
     // A cancel can be the thing that empties the queue, and the drain signal
     // lives in pump()'s nothing-to-do branch — which nothing else would visit.
     void pump();
+  }
+}
+
+/**
+ * A CANCELLED READING KEEPS NOTHING — the pages go with the press.
+ *
+ * ── Owen's ruling, 2026-09-18 ───────────────────────────────────────────────
+ *
+ * *"when i fully cancel a read, i want nothing kept — back to Pending, same
+ * settings, start over from page one."* Put to him with the cost stated plainly
+ * (a stop on page 140 of 156 re-buys the whole book, and there is no undo) and
+ * reaffirmed. So this is the ending that destroys, and it is the only one in this
+ * file that does.
+ *
+ * A FAILURE IS NOT A CANCEL AND IS NOT TOUCHED. `--fresh` aside, the whole bank
+ * lifecycle exists so that a run that DIED leaves its pages resumable
+ * (docs/BANK-LIFECYCLE.md §2: *"a dead run leaves the old bank untouched and the
+ * pending file as resumable debris. That is the entire point."*). A crashed read
+ * that threw away three hours because the engine segfaulted would be the same
+ * defect this feature is meant to fix, pointed the other way. Only `cancelled`
+ * reaches here, which is a person's press and nothing else.
+ *
+ * ── THE TWO GUARDS, AND WHY THEY ARE NOT PARANOIA ───────────────────────────
+ *
+ * A re-read with the same params does NOT write a new bank — `bankForReading`
+ * aims it at the existing step's payload and the engine protects the finished
+ * answers by writing a PENDING bank beside them and swapping on success
+ * (docs/BANK-LIFECYCLE.md §2.2). So at the moment a re-read is cancelled there
+ * are two banks on disk and exactly one of them is this run's. Deleting by the
+ * name on the request would destroy a COMPLETED reading somebody already paid
+ * hours for, to satisfy a gesture about the run that had not finished.
+ *
+ * So: A PENDING FILE MEANS THE REAL BANK IS SOMEBODY ELSE'S FINISHED WORK. Only
+ * the pending pair goes, and the completed reading is left exactly as it was —
+ * which is also precisely what "start over from page one" means in that case,
+ * because the next re-read opens a fresh pending.
+ *
+ * AND A COMPLETION MARKER WITH NO PENDING IS A FINISHED BANK THIS RUN WAS NOT
+ * WRITING. That pair should be unreachable — §2.2 sends every re-read of a
+ * completed bank down the pending path — so it is a state this file does not
+ * understand, and the answer to not understanding the disk is to touch none of
+ * it and say so. The cost of being wrong in the other direction is somebody's
+ * book.
+ *
+ * ── THE PATH IS THE REQUEST'S AND IS NEVER COMPOSED ─────────────────────────
+ *
+ * `request.readingsPath`, resolved at the plan by `bankForReading`. Composing
+ * `readings/<key>.jsonl` here is the exact defect `readingBank` exists to fix —
+ * a project holds two banks the moment a re-read branches — and composing it in
+ * order to DELETE it is that bug with the consequence turned up.
+ *
+ * Best effort and never a throw: the row has already settled as cancelled, and a
+ * file that will not unlink must not turn a person's stop into a failure.
+ */
+async function discardCancelledReading(request: EngineRequest | undefined): Promise<void> {
+  if (request === undefined || request.kind !== 'read') return;
+  const bank = request.readingsPath;
+  /*
+   * `<bank>.jsonl.pending` and its sidecar — the ENGINE's spelling
+   * (`pendingPath`/`pendingRequestPath`, src/vlm/readings.ts), mirrored here on
+   * `shared/records.ts`' grow-together rule because the app never imports the
+   * engine. Suffixed rather than renamed so a pending file can never be mistaken
+   * for a bank; if that spelling moves, it moves in the same commit as this.
+   */
+  const pending = `${bank}.pending`;
+  const pendingRequest = `${pending}.request`;
+
+  try {
+    if (existsSync(pending) || existsSync(pendingRequest)) {
+      await fsp.rm(pending, { force: true });
+      await fsp.rm(pendingRequest, { force: true });
+      console.log(
+        `[queue] the cancelled re-reading's pending pages were discarded; the finished reading at `
+        + `${path.basename(bank)} is untouched, because that one is not what was cancelled.`,
+      );
+      return;
+    }
+    if (existsSync(completionMarkerFor(bank))) {
+      console.error(
+        `[queue] ${path.basename(bank)} carries a completion marker and has no pending beside it, `
+        + 'so a finished reading is sitting where this cancelled run was supposed to be writing. '
+        + 'Nothing was discarded — that state is one this build does not understand, and the '
+        + 'cautious answer is the only safe one.',
+      );
+      return;
+    }
+    await fsp.rm(bank, { force: true });
+    await fsp.rm(completionMarkerFor(bank), { force: true });
+    await fsp.rm(imagesDirFor(bank), { force: true, recursive: true });
+    console.log(
+      `[queue] the cancelled reading kept nothing: ${path.basename(bank)}, its marker and its page `
+      + 'crops are gone, and the next read starts at page one (Owen, 2026-09-18).',
+    );
+  } catch (err) {
+    console.error(
+      `[queue] the cancelled reading's pages could not all be discarded `
+      + `(${err instanceof Error ? err.message : String(err)}). A re-read will resume from `
+      + 'whatever survived rather than starting over.',
+    );
   }
 }
 
@@ -5835,6 +5935,12 @@ async function carry(
     } else if (result.code === -1) {
       next.state = 'cancelled';
       next.message = 'Cancelled.';
+      // AND A CANCELLED READING KEEPS NOTHING — Owen's ruling, and the one
+      // ending in this file that destroys. `discardCancelledReading` carries the
+      // whole argument, including the two guards that keep a finished reading
+      // out of it. Awaited so the row does not settle while its pages are still
+      // on disk: a re-read enqueued the instant the ✕ lands must not find them.
+      await discardCancelledReading(request);
       // Nothing was written, so nothing moved: `landed` is still false and the
       // `finally` below brings the previous output home and points the chain
       // back at it. See `restoreRotation` for what "nothing" has to include —
