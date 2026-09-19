@@ -68,7 +68,16 @@ export function pinnedVersion(parsed) {
   const found = new Set();
   for (const name of PACKAGES) {
     const specifier = parsed.dependencies[name];
-    const match = /crucible-(?:client|bootstrap)-(\d+\.\d+\.\d+)\.tgz$/.exec(specifier);
+    /*
+     * A TRAILING LABEL IS ALLOWED AND THE VERSION IS STILL THE VERSION.
+     * `crucible-bootstrap-1.0.5-phase19.tgz` is a pack cut from a crucible
+     * BRANCH while an app is built against a phase that has not been released
+     * yet (app/package.json's `_cruciblePhase19Pack` says which). It carries
+     * the same version string as the release it will become, so the filename
+     * is the only thing that tells them apart -- which is exactly why the
+     * label is in the filename and not only in a note.
+     */
+    const match = /crucible-(?:client|bootstrap)-(\d+\.\d+\.\d+)(?:-[A-Za-z0-9.]+)?\.tgz$/.exec(specifier);
     if (!match) die(`${name} is pinned as ${specifier}, which is not a vendored release tarball`);
     found.add(match[1]);
   }
