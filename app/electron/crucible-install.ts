@@ -8,6 +8,7 @@ import { pairingFileRead } from './crucible-pairing';
 import { hosted } from './host';
 import { probeSystem } from './system-probe';
 import type { CrucibleInstallPlan, CrucibleInstallStep, InstallPlatform } from '../shared/slots';
+import type { CrucibleInstallEvent } from '../shared/crucible-install-wire';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WHICH Crucible: the release channel, and never an older one
@@ -31,9 +32,21 @@ import type { CrucibleInstallPlan, CrucibleInstallStep, InstallPlatform } from '
  */
 export const CRUCIBLE_CHANNEL_URL = `https://api.github.com/repos/${RELEASE_REPO}/releases/latest`;
 
-/** The line a person runs by hand — the channel's own, carrying no version. */
-export const CRUCIBLE_LATEST_PS1 =
-  `irm https://github.com/${RELEASE_REPO}/releases/latest/download/install.ps1 | iex`;
+/*
+ * ── THE COPYABLE LINE IS GONE (PHASE19 §0) ────────────────────────────────
+ *
+ * `CRUCIBLE_LATEST_PS1` used to live here — the channel's own
+ * `irm … | iex` — and the install door printed it for somebody to paste.
+ * Owen, 2026-09-18: *"we should assume they have no idea how to do it and it
+ * should do it automatically."* PHASE19 makes the rule absolute: **nobody is
+ * ever shown a command.** A command a person could run is a step the app
+ * should be running, and this app has run this one since `@crucible/bootstrap`
+ * landed — the constant was a second, worse door beside the button.
+ *
+ * The line itself still exists inside the SDK (`hostInstallCommand`), which is
+ * what {@link driveCrucibleInstall} hands to PowerShell below. It is a command
+ * this app RUNS; it is not a string any screen reads.
+ */
 
 /** A refusal with a name, because a sentence in a log has to be searchable. */
 export class CrucibleInstallRefusal extends Error {
@@ -191,24 +204,64 @@ export async function releaseToInstall(
   return latest;
 }
 
+/**
+ * §3.1's PROGRESS LIST, as a skeleton with every row still waiting.
+ *
+ * ── It is a list of ROWS now, not a list of instructions ───────────────────
+ *
+ * What stood here was two steps with a command under the first, because the
+ * door was a printed document: "here is the line, here is what to do after
+ * it". PHASE19 §3.1 replaces the document with the progress of the thing the
+ * button already does, so these titles are the rows that fill in while it
+ * runs (shared/crucible-install-wire.ts) rather than a sequence anybody
+ * performs. `command` is null on every row and stays null: §0's rule is that
+ * no screen shows a command, so the field survives only because
+ * {@link CrucibleInstallStep} is also the (empty) `elevated` list's shape.
+ *
+ * ── THE PLATFORM DECIDES WHICH ROWS EXIST, NOT THE EVENTS ──────────────────
+ *
+ * A Mac has no native-Windows engine and no guest to move into, so it has
+ * neither row — and a `windows-engine` event arriving there is dropped by the
+ * reducer rather than drawn. Windows has both, because §2.8 is explicit that
+ * the native engine answers first and the move runs behind it: those are two
+ * rows because they are two facts a person watching wants separately.
+ *
+ * The last two rows are the COORDINATE step's (§2.8), which runs against
+ * whichever engine is left standing once the move is terminal.
+ */
 export function installationSteps(platform: InstallPlatform): CrucibleInstallStep[] {
   if (platform === 'other') return [];
-  return [{
-    title: 'Install Crucible',
-    detail: platform === 'win32'
-      ? 'Crucible installs its native Windows engine and the tray that manages it. WSL is an optional upgrade in Crucible.'
-      : 'Crucible installs its runtime, service and desktop controls. Models are prepared after you choose where work runs.',
-    // THE CHANNEL'S OWN LINE, carrying no version. This used to be
-    // `hostInstallCommand(BOOTSTRAP_VERSION)`, which put the VENDORED LIBRARY's
-    // number in front of a person to copy — right on the day it was written and
-    // wrong every day after (INSTALL-UNINSTALL.md §6.5.2).
-    command: platform === 'win32' ? CRUCIBLE_LATEST_PS1 : null,
-    done: false,
-  }, {
-    title: 'Connect Foundry',
-    detail: 'Verify the service, then read the connection Crucible publishes on this computer.',
+  const rows: CrucibleInstallStep[] = [{
+    id: 'install',
+    title: 'Installing Crucible',
+    detail: 'Crucible installs its own runtime and the service that manages it.',
     command: null, done: false,
   }];
+  if (platform === 'win32') {
+    rows.push({
+      id: 'windows-engine',
+      title: 'Starting the Windows engine',
+      detail: 'This engine answers within seconds and keeps answering while the rest happens.',
+      command: null, done: false,
+    }, {
+      id: 'linux-engine',
+      title: 'Setting up the Linux engine',
+      detail: 'Crucible sets this up by itself. Windows may ask for permission, and may ask for a restart.',
+      command: null, done: false,
+    });
+  }
+  rows.push({
+    id: 'job-types',
+    title: 'Installing what Foundry needs',
+    detail: 'The environments this app asks the engine for.',
+    command: null, done: false,
+  }, {
+    id: 'models',
+    title: 'Downloading models',
+    detail: 'The weights the engine runs. Several gigabytes on a first install.',
+    command: null, done: false,
+  });
+  return rows;
 }
 
 export async function crucibleInstallPlan(): Promise<CrucibleInstallPlan> {
@@ -226,11 +279,23 @@ export async function crucibleInstallPlan(): Promise<CrucibleInstallPlan> {
 
 let installing = false;
 
+/**
+ * THE DRIVEN INSTALL, narrating itself in §3.1's rows.
+ *
+ * It takes an EVENT sink and not a line sink, because this function is the one
+ * thing that knows which row it is on. The old signature handed out prose and
+ * the door printed the last sentence of it; a screen that had to recover "we
+ * are past the installer and verifying now" from English would be guessing
+ * about our own control flow. Lines still travel — as `line` events under
+ * whichever row is running, which is exactly what pip's output is for (§2.12:
+ * pip has no byte total, so the line IS the progress).
+ */
 export async function driveCrucibleInstall(
-  onLine: (line: string) => void,
+  onEvent: (event: CrucibleInstallEvent) => void,
   runner: Runner = processRunner(),
   sources: CrucibleReleaseSources = processReleaseSources(),
 ): Promise<void> {
+  const line = (text: string) => onEvent({ event: 'line', text, stream: 'stdout' });
   if (hosted()) throw new Error('Install Crucible from BookForge.');
   if (installing) throw new Error('A Crucible installation is already running.');
   /*
@@ -251,28 +316,36 @@ export async function driveCrucibleInstall(
      * the `try`, so the `finally` releases the flag over a refusal too.
      */
     const release = await releaseToInstall(sources);
+    onEvent({ event: 'step', row: 'install', jobType: null });
     if (runner.platform === 'win32') {
-      onLine(`Installing Crucible ${release} — the native Windows engine and its tray…`);
+      line(`Crucible ${release}`);
       const result = await runner.stream([
         'powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
         "$ErrorActionPreference = 'Stop'; " + hostInstallCommand(release),
-      ], { timeoutMs: 3_600_000, onLine: (line) => onLine(line) });
+      ], { timeoutMs: 3_600_000, onLine: (text) => line(text) });
       if (result.failure !== null || result.code !== 0) {
         throw new Error(result.failure ?? `Crucible installer exited ${result.code}: ${result.stderr.trim()}`);
       }
     } else if (runner.platform === 'darwin' || runner.platform === 'linux') {
-      onLine(`Installing Crucible ${release}…`);
+      line(`Crucible ${release}`);
       await install({
         release, jobTypes: ['echo'],
-        onLine: (line, _stream, step) => onLine(`${step}: ${line}`),
+        onLine: (text, _stream, step) => line(`${step}: ${text}`),
       }, runner);
     } else {
       throw new Error('Crucible does not support this platform.');
     }
-    onLine('Verifying Crucible…');
+    /*
+     * THE SECOND ROW IS WINDOWS'S ALONE (§2.8: the native engine answers first
+     * and the move runs behind it). Elsewhere the service that just installed
+     * IS the engine, so starting and registering it is the tail of row one and
+     * a second row would be this screen counting the same fact twice.
+     */
+    if (runner.platform === 'win32') onEvent({ event: 'step', row: 'windows-engine', jobType: null });
     const status = await startLocal({}, runner);
     if (status.state !== 'running') throw new Error(status.detail);
     const connected = await addLocalCrucible('');
+    let backend: string | null = null;
     if (connected.outcome !== 'added') {
       if (connected.code !== 'already_registered') throw new Error(connected.message);
       /*
@@ -280,12 +353,15 @@ export async function driveCrucibleInstall(
        * carries no server name, because nothing was added to name. The row it is
        * talking about was checked when it was added and is checked again by the
        * Servers card's own Test, which is where somebody looking at a suspicious
-       * engine goes.
+       * engine goes. It also leaves `backend` null, and the last row then says
+       * the engine is running without naming which one — there is nothing here
+       * that measured it, and guessing from the platform is the fallback this
+       * codebase does not write.
        */
     } else {
-      await verifyInstalled(status.name, connected.serverName, onLine);
+      backend = await verifyInstalled(status.name, connected.serverName, line);
     }
-    onLine('Crucible is running and connected.');
+    onEvent({ event: 'done', backend });
   } finally {
     installing = false;
   }
@@ -332,7 +408,7 @@ async function verifyInstalled(
   installedName: string | null,
   registeredName: string,
   onLine: (line: string) => void,
-): Promise<void> {
+): Promise<string | null> {
   if (installedName !== null && installedName !== registeredName) {
     onLine(
       `Note: Crucible installed an engine calling itself "${installedName}", but the connection `
@@ -343,7 +419,7 @@ async function verifyInstalled(
   const probe = await probeCrucible(registeredName);
   if (probe.outcome !== 'ok') {
     onLine(`Note: "${registeredName}" was registered but did not answer: ${probe.message}`);
-    return;
+    return null;
   }
   if (probe.serverName !== registeredName) {
     onLine(
@@ -365,4 +441,12 @@ async function verifyInstalled(
       + 'the Crucible now on this computer.',
     );
   }
+  /*
+   * AND THE ONE THING THE LAST ROW NEEDS. §3.1 ends "Done — running on the
+   * Linux engine" or "on the Windows engine", and this is where that is
+   * MEASURED: the engine on the socket said what it is. Returned rather than
+   * re-probed by the caller so the sentence and the check above it are looking
+   * at the same answer.
+   */
+  return probe.backend;
 }

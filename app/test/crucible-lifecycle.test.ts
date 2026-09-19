@@ -98,7 +98,18 @@ test('Windows installation uses the native installer and refuses a second concur
   // The CHANNEL's release, not the vendored library's: that swap is the fix.
   expect(argv.at(-1)).toContain(bootstrap.hostInstallCommand('9.9.9'));
   expect(argv.join(' ')).not.toContain('wsl.exe');
-  expect(installer.installationSteps('win32')[0]!.detail).toContain('native Windows');
+  /*
+   * AND THE ROWS IT NARRATES. This line used to assert the first step's detail
+   * said "native Windows", which was true of a step list that DESCRIBED the
+   * install to a reader. PHASE19 §3.1 makes the list the install's own
+   * progress, so the fact worth pinning is that Windows has the two engine
+   * rows — the native one answering first (§2.8) and the move behind it — and
+   * that the run above narrates them rather than printing prose.
+   */
+  expect(installer.installationSteps('win32').map((step) => step.id))
+    .toContain('windows-engine');
+  expect(installer.installationSteps('win32').map((step) => step.id))
+    .toContain('linux-engine');
 });
 
 test('published local pairing refreshes a token without moving the preferred server', async () => {

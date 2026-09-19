@@ -125,11 +125,45 @@ test('releases order by their three numbers, so 1.0.10 is newer than 1.0.2', () 
   expect(() => installer.compareCrucibleVersions('nightly', '1.0.2')).toThrow(/release_channel_unreadable/);
 });
 
-test('the step a person is shown names the channel, and no version at all', () => {
-  const [first] = installer.installationSteps('win32');
-  expect(first?.command).toContain('releases/latest/download/install.ps1');
-  // A baked version in the line somebody copies is the same defect one layer
-  // out: the copy would still be right on the day it was written and wrong
-  // every day after.
-  expect(first?.command).not.toContain(bootstrap.BOOTSTRAP_VERSION);
+/*
+ * ── THIS ASSERTION WAS INVERTED BY PHASE19 §0, ON PURPOSE ─────────────────
+ *
+ * It used to read `expect(first?.command).toContain('releases/latest/download/
+ * install.ps1')` — the channel's line, with no version baked into it, which
+ * was the right shape for a door that printed a command to copy. There is no
+ * such door: *"Nobody is ever shown a command … A command a person could run
+ * is a step the app should be running."* So the same fact is now checked from
+ * the other side, and the version clause it carried is checked where the
+ * version is actually used — `hostInstallCommand(release)` in the run below,
+ * which `crucible-lifecycle.test.ts` pins against the CHANNEL's release.
+ */
+test('no step a person is shown carries a command, on any platform', () => {
+  for (const platform of ['win32', 'darwin', 'linux'] as const) {
+    const steps = installer.installationSteps(platform);
+    expect(steps.length).toBeGreaterThan(0);
+    for (const step of steps) {
+      expect(step.command).toBeNull();
+      // And no step NAMES an installer either: the door is a progress list of
+      // what is happening, not a manual for Crucible's own front door.
+      expect(`${step.title} ${step.detail}`).not.toContain('install.ps1');
+      expect(`${step.title} ${step.detail}`).not.toContain('install.sh');
+    }
+  }
+  // The copyable constant is gone from the module, not merely unreferenced.
+  expect(Object.keys(installer)).not.toContain('CRUCIBLE_LATEST_PS1');
+  expect(JSON.stringify(installer.installationSteps('win32')))
+    .not.toContain(bootstrap.BOOTSTRAP_VERSION);
+});
+
+/*
+ * §3.1's ROWS, IN ITS ORDER, and the platform decides which exist. The reducer
+ * matches `id` and never a label, so this is the one place the two lists are
+ * compared — a row added to the wire with no label here would draw nothing.
+ */
+test('the progress list is PHASE19 3.1, and Windows is the only platform with a move', () => {
+  expect(installer.installationSteps('win32').map((step) => step.id))
+    .toEqual(['install', 'windows-engine', 'linux-engine', 'job-types', 'models']);
+  expect(installer.installationSteps('darwin').map((step) => step.id))
+    .toEqual(['install', 'job-types', 'models']);
+  expect(installer.installationSteps('other')).toEqual([]);
 });
