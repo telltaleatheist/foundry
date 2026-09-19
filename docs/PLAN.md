@@ -5216,7 +5216,7 @@ moved from a flat `refuse`, whose ending was right and whose scope was wrong,
 since it failed an `any` row on the first machine with no key while the second
 could work), both orchestrator refusals, and a cloud slot stepped past by `any`
 (SLOTS.md §3's ruling is permanent, so that walk answers identically for ever).
-TRANSIENT and untouched: busy, `engine_in_use`, `model_leased`,
+TRANSIENT and untouched: busy, `engine_in_use`, `leased`,
 `model_not_resident`, unreachable, `capability_undecided`, both upstream network
 refusals, a cancelled load, and a slot switched off. The walk steps past both
 alike; `placeJob` answers `refuse` when the PINNED slot gave a standing wait or
