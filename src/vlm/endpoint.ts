@@ -20,9 +20,14 @@
  * violation. What is sacred is that the model gets the shape it was trained on.
  * On this route that shape is a chat turn.
  *
- * TEMPERATURE ZERO, always. A layout answer is a measurement of a page; the
- * same page read twice has one right answer, and sampling would make a book
- * that cannot be reproduced from the PDF it came from.
+ * TEMPERATURE COMES FROM THE SERVER'S CONTRACT and is zero on every reader
+ * there is. A layout answer is a measurement of a page; the same page read
+ * twice has one right answer, and sampling would make a book that cannot be
+ * reproduced from the PDF it came from. What changed is WHERE the number is
+ * written down: it sits beside the prompt and the pixel budget in
+ * `pages_engine.request`, because all three are facts about the weights, and a
+ * pinned zero here would be this file quietly overriding the one side that
+ * knows (`contract.ts`).
  *
  * CONCURRENCY IS TWELVE by default, which is the measured knee on the machine
  * this was built against — the server keeps its batch full and per-page latency
@@ -79,6 +84,17 @@ export interface VlmEndpointOptions {
   model: string;
   /** The model card's prompt, verbatim. Never built here. */
   prompt: string;
+  /**
+   * What to sample at, from the server's published contract.
+   *
+   * It was pinned at zero in this file and is not any more, for the reason the
+   * prompt was never built here: the number belongs to whoever owns the
+   * weights. Zero is still what a page reader publishes — a layout is not a
+   * thing to be creative about — and the difference is that the day it is not,
+   * this program sends what the server asked for instead of quietly
+   * disagreeing with it.
+   */
+  temperature: number;
   /**
    * The token cap for a page — a NUMBER, or a question asked at the send.
    *
@@ -169,7 +185,7 @@ async function readOnePage(
       headers: { ...(opts.headers ?? {}), 'content-type': 'application/json' },
       body: JSON.stringify({
         model: opts.model,
-        temperature: 0,
+        temperature: opts.temperature,
         max_tokens: capOf(opts.maxTokens, page),
         messages: [{
           role: 'user',

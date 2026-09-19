@@ -49,8 +49,30 @@
  *    to the Jinja template. A template that does not take the argument ignores
  *    it, so this costs nothing where it does not apply — and it is still sent
  *    only for the family that has it, on `takesThinkField`'s own prefix rule.
- *    The server is growing per-model defaults for this; until they land the
- *    switch is sent, and nothing new is built on it.
+ *  - AND THE PER-MODEL DEFAULTS LANDED, so this door reads them. Crucible
+ *    publishes a `defaults` block per row on `/openai/v1/models` — temperature,
+ *    top_p, top_k, max_tokens, repetition_penalty, thinking — and it added it
+ *    BY NAME for this program (PHASE2-LLM.md section 9). The sentence that used
+ *    to stand here said the switch was sent "until they land"; they have.
+ *
+ *    THE PRECEDENCE IS THE SERVER'S AND IT IS ONE LINE: *a field the request
+ *    STATES wins; a field the request omits takes the manifest's; a field
+ *    neither states is the engine's.* So the question this file has to answer
+ *    is which fields it has a REASON to state, and the answer is written beside
+ *    each one rather than inferred from a pinned number:
+ *      · `temperature` — measured per act (0.2 for a translation, 0 for a
+ *        closed question). A reason, stated, and it wins.
+ *      · `max_tokens` — sized from THIS request and the server's window by
+ *        `capFor`. A reason, stated, and it wins.
+ *      · `thinking` — `takesThinkField`'s family rule. A reason, stated, and
+ *        the switch still goes for the family that takes the argument.
+ *      · `top_p`, `top_k`, `repetition_penalty` — this program has no opinion
+ *        about any of them and never has. So the server's number goes on the
+ *        wire where the server published one, and nothing goes where it did
+ *        not. `null` in the block means "the engine's own" and is NOT sent:
+ *        a stated field with no value is a worse request than no field.
+ *    What this buys is that the request says what it was asked with, rather
+ *    than three of six knobs being visible and the rest happening off-wire.
  *  - AND BECAUSE THAT SWITCH IS ADVISORY, THE ANSWER IS CHECKED. A template
  *    argument is a request to a Jinja file, and a model or a build that thinks
  *    anyway would put a `<think>…</think>` block in front of every answer in the
@@ -137,12 +159,41 @@ export function normaliseVllmEndpoint(endpoint: string): string {
   return /\/v\d+$/.test(base) ? base : `${base}/v1`;
 }
 
+/**
+ * The sampling knobs a listing row published a default for.
+ *
+ * Crucible's `[defaults]` table, verbatim in shape: all six keys are present
+ * and `null` means THE ENGINE'S OWN, never a number Crucible picked. The
+ * distinction is load-bearing — an absent key and a key set to the engine's
+ * value are different manifests, and only the second is a decision somebody
+ * made — so nothing here turns a null into a value.
+ */
+export interface ServedDefaults {
+  temperature: number | null;
+  topP: number | null;
+  topK: number | null;
+  maxTokens: number | null;
+  repetitionPenalty: number | null;
+  /** Not a wire field: it becomes `chat_template_kwargs.enable_thinking`. */
+  thinking: boolean | null;
+}
+
 /** What a server said it is serving, as much of it as this program reads. */
 export interface ServedModel {
   /** The id to send back on every request — an HF path, usually. */
   id: string;
   /** `--max-model-len`, when the server reports it. Null when it does not. */
   maxModelLen: number | null;
+  /**
+   * What this server will answer a silent request with, or null where the row
+   * carried no `defaults` block at all.
+   *
+   * NULL IS "THIS SERVER STATED NOTHING", which is a plain vLLM, a llama-server
+   * or a cloud provider — not "every knob is the engine's", which is what a
+   * block of six nulls says. Collapsing the two would make a server that
+   * predates the field and a manifest that deliberately defers read the same.
+   */
+  defaults: ServedDefaults | null;
 }
 
 /**
@@ -177,24 +228,75 @@ export async function servedModels(
       + 'OpenAI-compatible server.',
     );
   }
-  let rows: { id?: unknown; max_model_len?: unknown }[];
+  let rows: ListingRow[];
   try {
-    const parsed = JSON.parse(response.body) as {
-      data?: { id?: unknown; max_model_len?: unknown }[];
-    };
+    const parsed = JSON.parse(response.body) as { data?: ListingRow[] };
     rows = parsed.data ?? [];
   } catch {
     throw new VllmError(`${base}/models answered 200 with something that is not JSON`);
   }
   return rows
-    .filter((row): row is { id: string; max_model_len?: unknown } =>
+    .filter((row): row is ListingRow & { id: string } =>
       typeof row.id === 'string' && row.id.length > 0)
     .map((row) => ({
       id: row.id,
       maxModelLen: typeof row.max_model_len === 'number' && row.max_model_len > 0
         ? row.max_model_len
         : null,
+      defaults: readDefaults(row.defaults),
     }));
+}
+
+interface ListingRow {
+  id?: unknown;
+  max_model_len?: unknown;
+  defaults?: unknown;
+}
+
+/**
+ * The `defaults` block of one listing row, or null where the row has none.
+ *
+ * NOTHING IS COERCED AND NOTHING IS GUESSED. A key whose value is not the type
+ * the block promises reads as null — "this server said nothing usable about
+ * that knob" — because the alternative is putting a string where a server
+ * expects a float and collecting a 400 three layers down. A block that is not
+ * an object at all is not a block.
+ */
+function readDefaults(block: unknown): ServedDefaults | null {
+  if (typeof block !== 'object' || block === null || Array.isArray(block)) return null;
+  const row = block as Record<string, unknown>;
+  const numberOf = (key: string): number | null =>
+    typeof row[key] === 'number' && Number.isFinite(row[key]) ? row[key] : null;
+  return {
+    temperature: numberOf('temperature'),
+    topP: numberOf('top_p'),
+    topK: numberOf('top_k'),
+    maxTokens: numberOf('max_tokens'),
+    repetitionPenalty: numberOf('repetition_penalty'),
+    thinking: typeof row['thinking'] === 'boolean' ? row['thinking'] : null,
+  };
+}
+
+/**
+ * The knobs this program states no opinion about, put on the wire with the
+ * server's own number where it published one.
+ *
+ * `temperature`, `max_tokens` and the thinking switch are deliberately NOT
+ * here: each of those is a decision Foundry made for a stated reason, and this
+ * file's header carries the three reasons. What is left is the set nothing in
+ * this program has ever had a view on, and for those the server's manifest is
+ * the only opinion in the room.
+ */
+function unstatedKnobs(
+  body: Record<string, unknown>,
+  defaults: ServedDefaults | null,
+): void {
+  if (defaults === null) return;
+  if (defaults.topP !== null) body['top_p'] = defaults.topP;
+  if (defaults.topK !== null) body['top_k'] = defaults.topK;
+  if (defaults.repetitionPenalty !== null) {
+    body['repetition_penalty'] = defaults.repetitionPenalty;
+  }
 }
 
 /**
@@ -350,6 +452,7 @@ export function completionsBody(
   user: string,
   tuning: ChatTuning,
   maxModelLen: number | null = null,
+  defaults: ServedDefaults | null = null,
 ): string {
   /*
    * THERE IS NO WINDOW FIELD AND NONE IS INVENTED. The window is fixed when the
@@ -410,6 +513,9 @@ export function completionsBody(
   if (takesThinkField(familyOf(model))) {
     body['chat_template_kwargs'] = { enable_thinking: false };
   }
+  // And the three this program has no opinion about. Last, so a reader sees
+  // the stated fields and the deferred ones as two separate decisions.
+  unstatedKnobs(body, defaults);
   return JSON.stringify(body);
 }
 
@@ -448,6 +554,7 @@ export function constrainedChatBody(
   schema: Record<string, unknown>,
   maxTokens: number,
   maxModelLen: number | null = null,
+  defaults: ServedDefaults | null = null,
 ): string {
   const body: Record<string, unknown> = {
     model,
@@ -463,6 +570,9 @@ export function constrainedChatBody(
   if (takesThinkField(familyOf(model))) {
     body['chat_template_kwargs'] = { enable_thinking: false };
   }
+  // The same three, for the same reason: constraining the DECODE says nothing
+  // about how the tokens inside the grammar are sampled.
+  unstatedKnobs(body, defaults);
   return JSON.stringify(body);
 }
 
@@ -575,7 +685,7 @@ export async function complete(
   const response = await withBusyWait(
     () => transport.post(
       `${base}/chat/completions`,
-      completionsBody(served.id, system, user, tuning, served.maxModelLen),
+      completionsBody(served.id, system, user, tuning, served.maxModelLen, served.defaults),
     ),
     { retryOn: BUSY_STATUSES, where: `${base}/chat/completions` },
   );

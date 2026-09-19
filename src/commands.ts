@@ -243,14 +243,15 @@ const VLM_ENDPOINT: OptionSpec = {
   name: 'vlm-endpoint',
   type: 'string',
   placeholder: '<url>',
-  describe: 'An OpenAI-compatible server reads the pages instead of MLX, e.g. http://host:8000/v1.',
+  describe: 'A Crucible reads the pages instead of MLX, e.g. http://host:7100/openai/v1. It '
+    + 'publishes the prompt, the dpi and the pixel budget; a server that does not is refused.',
 };
 
 const VLM_ENDPOINT_MODEL: OptionSpec = {
   name: 'vlm-endpoint-model',
   type: 'string',
   placeholder: '<name>',
-  describe: 'The name --vlm-endpoint\'s server was started with. Defaults to the registry entry\'s.',
+  describe: 'The name --vlm-endpoint\'s server was started with. Defaults to the contract\'s.',
 };
 
 const VLM_CONCURRENCY: OptionSpec = {
@@ -1389,7 +1390,7 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
   if (!replaying && endpoint === undefined && process.platform !== 'darwin') {
     throw new Error(
       'no reading backend for this run: the local MLX path is Apple silicon only, and no endpoint '
-      + 'was named. Pass --vlm-endpoint <url> (e.g. a vLLM server), or set backend.mode to '
+      + 'was named. Pass --vlm-endpoint <url> (a Crucible\'s OpenAI door), or set backend.mode to '
       + `"endpoint" with backend.endpointUrl in ${settingsPath()}. `
       + '`foundry doctor` reports what this machine has.',
     );
@@ -1553,7 +1554,7 @@ async function runVlmRead(args: ParsedArgs): Promise<void> {
   if (endpoint === undefined && process.platform !== 'darwin') {
     throw new Error(
       'no reading backend for this run: the local MLX path is Apple silicon only, and no endpoint '
-      + 'was named. Pass --vlm-endpoint <url> (e.g. a vLLM server), or set backend.mode to '
+      + 'was named. Pass --vlm-endpoint <url> (a Crucible\'s OpenAI door), or set backend.mode to '
       + `"endpoint" with backend.endpointUrl in ${settingsPath()}. `
       + '`foundry doctor` reports what this machine has.',
     );
@@ -2644,15 +2645,17 @@ export const COMMANDS: readonly Command[] = [
       '--vlm-endpoint: the pages still have to be rasterised, and PyMuPDF is what',
       'does it.',
       '',
-      '--vlm-endpoint sends the pages to an OpenAI-compatible server instead —',
-      'the same verbatim prompt, the same 200 dpi render, temperature 0, twelve',
-      'pages in flight. A chat endpoint is right here (ARCHITECTURE §4): a',
-      'document VLM\'s published interface IS the chat template, and the MLX path',
-      'reaches the same one through apply_chat_template. On MLX the pixel budget',
-      'is capped at 2,000,000, which halves the per-page cost and is the same',
-      'number the boxes are scaled with; a server uses its own processor config,',
-      'so the model\'s cap is assumed there and the run states the frame it',
-      'measured in.',
+      '--vlm-endpoint sends the pages to a Crucible instead, twelve at a time. A',
+      'chat endpoint is right here (ARCHITECTURE §4): a document VLM\'s published',
+      'interface IS the chat template, and the MLX path reaches the same one',
+      'through apply_chat_template. WHAT A PAGE REQUEST IS, THAT SERVER SAYS —',
+      'the prompt, the dpi, the pixel budget, the token ceiling and the dialect',
+      'all come off its GET /v1/info, because they are facts about the weights',
+      'and a second copy here would read the book worse the day it drifted. A',
+      'server that publishes no such contract is refused before the first page.',
+      'On MLX nothing is asked of anybody: this machine holds the weights, so the',
+      'pixel budget is capped at 2,000,000 — halving the per-page cost — and that',
+      'is the same number the boxes are scaled with.',
       '',
       '--readings banks every answer as it lands and re-reads only what is',
       'missing, so a killed run costs one page and a change to the parser or the',

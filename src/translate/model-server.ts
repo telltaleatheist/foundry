@@ -82,7 +82,8 @@ import type { ChatTuning, Transport } from './transport.js';
 import { forgetUsage, normaliseEndpoint, TRANSLATE_TUNING } from './transport.js';
 import { chat, OllamaError, requireModel, unloadModel } from './ollama.js';
 import {
-  complete, normaliseVllmEndpoint, requireServedModel, VllmError, type ServedModel,
+  complete, normaliseVllmEndpoint, requireServedModel, VllmError,
+  type ServedDefaults, type ServedModel,
 } from './vllm.js';
 import {
   AnthropicError, complete as anthropicComplete, MODEL_REQUIRED_ON_ANTHROPIC,
@@ -152,6 +153,18 @@ export interface ModelServer {
    * as (`capFor`, `fitsWindow`).
    */
   maxModelLen: number | null;
+  /**
+   * What this server publishes as its per-model sampling defaults, or null.
+   *
+   * Null on Ollama and on a provider, which publish no such block, and null on
+   * an OpenAI-shaped server that did not state one — all three are the same
+   * statement, "nothing was said", and `completionsBody` is where it is read
+   * (vllm.ts's header carries the precedence rule and which knobs Foundry has
+   * a reason of its own for). It rides here rather than being re-fetched at
+   * every request because it is a fact about the RESIDENT model, established
+   * once when the server was proved.
+   */
+  defaults: ServedDefaults | null;
 }
 
 /**
@@ -269,7 +282,7 @@ export async function openModelServer(options: {
     const model = options.model?.trim() ?? '';
     if (model.length === 0) throw new OllamaError(MODEL_REQUIRED_ON_OLLAMA);
     await requireModel(transport, endpoint, model);
-    return { kind, endpoint, model, maxModelLen: null };
+    return { kind, endpoint, model, maxModelLen: null, defaults: null };
   }
   if (kind === 'anthropic') {
     const endpoint = normaliseAnthropicEndpoint(options.endpoint);
@@ -288,7 +301,7 @@ export async function openModelServer(options: {
      * did not say" and let the request through, which is right — the provider
      * enforces its own limit and names the number when it refuses.
      */
-    return { kind, endpoint, model, maxModelLen: null };
+    return { kind, endpoint, model, maxModelLen: null, defaults: null };
   }
   const endpoint = normaliseVllmEndpoint(options.endpoint);
   const served: ServedModel = await requireServedModel(transport, endpoint, options.model);
@@ -306,7 +319,10 @@ export async function openModelServer(options: {
       + 'really does serve both.',
     );
   }
-  return { kind, endpoint, model: served.id, maxModelLen: served.maxModelLen };
+  return {
+    kind, endpoint, model: served.id, maxModelLen: served.maxModelLen,
+    defaults: served.defaults,
+  };
 }
 
 /** Ask the proved server for one block, in its own dialect. */
@@ -328,7 +344,7 @@ export async function askModel(
   return complete(
     transport,
     server.endpoint,
-    { id: server.model, maxModelLen: server.maxModelLen },
+    { id: server.model, maxModelLen: server.maxModelLen, defaults: server.defaults },
     system,
     user,
     tuning,

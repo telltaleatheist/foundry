@@ -318,7 +318,9 @@ export async function askConstrained(
       : await readChatAnswer(
         transport,
         server.endpoint,
-        constrainedChatBody(server.model, prompt, schema, predictTokens, server.maxModelLen),
+        constrainedChatBody(
+          server.model, prompt, schema, predictTokens, server.maxModelLen, server.defaults,
+        ),
       );
   if (answer.truncated === true) {
     return {

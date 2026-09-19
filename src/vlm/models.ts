@@ -57,38 +57,30 @@ export interface VlmModelDef {
   prompt: string;
   dialect: VlmDialect;
   /**
-   * Generation cap for one page.
+   * Generation cap for one page ON THE LOCAL MLX ROUTE.
    *
    * A page that hits the cap is a TRUNCATED page, and the bridge fails the run
    * naming it rather than writing half a page into a book (`bridge.ts`). So the
    * number is set well above a dense page's real length — a 4,000-character
    * page of prose is roughly 1,200 tokens — and its only job is to stop a model
    * that has started repeating itself.
+   *
+   * THE ENDPOINT ROUTE DOES NOT READ IT. There the ceiling is the server's,
+   * published beside the prompt (`contract.ts`), because a ceiling is a
+   * measurement over the pages THOSE weights have been asked to read. This
+   * one is the number for the weights mlx-vlm loads on this machine.
    */
   maxTokens: number;
   /**
-   * The processor's own pixel budget — the FRAME THE MODEL'S BOXES ARE IN.
+   * ANOTHER NAME THIS MODEL WEARS, for the "is this a page reader?" question.
    *
-   * A Qwen-family vision tower resizes its input to a multiple of 28 with the
-   * area inside `[min_pixels, max_pixels]`, and a model that answers with
-   * geometry answers in THAT space, not in the render's. Scaling a box back
-   * therefore needs the same number the processor used, which is why it is
-   * declared here beside the repo rather than read off a page — a preprocessor
-   * config that changed under us would move every box by a few per cent, which
-   * is a paragraph that loses its indent test and a picture cropped slightly
-   * wrong. Absent for the dialects that carry no geometry, because for them
-   * there is nothing to scale.
-   *
-   * `bridge.ts` OVERRIDES it downward on the MLX path (`MLX_MAX_PIXELS`) and
-   * hands the override to the dialect, so the two always agree.
-   */
-  maxPixels?: number;
-  /**
-   * The name an OpenAI-compatible server knows this model by (`--vlm-endpoint`).
-   *
-   * vLLM serves the upstream repo, not the MLX conversion, and the `model`
-   * field of a chat request has to match what the server was started with.
-   * `--vlm-endpoint-model` overrides it for a server started under another name.
+   * It used to be the name sent on the wire against `--vlm-endpoint`, and it
+   * is not any more: a server that reads pages publishes the id it wants
+   * beside the prompt and the pixel budget, and `contract.ts` reads it (a
+   * served name guessed out of THIS registry is the same class of stale copy
+   * as a prompt guessed out of it). What it is still for is
+   * `isPageReadingModel`, which has to recognise this model under every name
+   * it is served as so a TEXT act cannot accidentally send prose to it.
    */
   endpointModel?: string;
   /** What is known about this model's behaviour on books. Measured, or nothing. */
@@ -178,8 +170,14 @@ export const VLM_MODELS: readonly VlmModelDef[] = [
     // What stops a runaway earlier is not a smaller constant here but a ceiling
     // derived from the book being read: see `band.ts`, which asks this number
     // and clamps to it, so the densest books stay on it and never notice.
+    //
+    // AND IT IS THE MLX ROUTE'S CEILING ONLY. The endpoint route asks the
+    // server, which publishes the same 8,192 from the same measurement and
+    // owns it — `contract.ts`. The `maxPixels: 11289600` that used to sit on
+    // the next line is GONE for that reason and not because it was wrong: it
+    // was a copy of the processor config of weights this machine does not
+    // hold, and `MLX_MAX_PIXELS` is the budget for the ones it does.
     maxTokens: 8192,
-    maxPixels: 11289600,
     endpointModel: 'rednote-hilab/dots.ocr',
     notes:
       'THE DEFAULT (Aug 7 2026), and the only model here that answers with geometry. Its '

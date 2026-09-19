@@ -27,6 +27,7 @@ import * as path from 'node:path';
 
 import type { VlmPage, VlmRunOptions, VlmRunResult } from '../../src/vlm/bridge.js';
 import type { VlmEndpointOptions } from '../../src/vlm/endpoint.js';
+import { PageContractError, type PageReadContract } from '../../src/vlm/contract.js';
 import { findCommand, runCommand } from '../../src/commands.js';
 import { vlmConvert } from '../../src/vlm/convert.js';
 import { requireVlmModel } from '../../src/vlm/models.js';
@@ -45,6 +46,31 @@ import {
 
 const DOTS = requireVlmModel('dots-ocr');
 
+/**
+ * The OpenAI base a Crucible placement hands the engine, and the contract that
+ * server publishes at `<root>/v1/info`.
+ *
+ * The numbers are the ones `crucible/pages.py` ships, but they are deliberately
+ * NOT read from anything of Foundry's: what these tests are about is that the
+ * run uses what it was told rather than what it has.
+ */
+const CRUCIBLE = 'http://fake:7100/openai/v1';
+
+function contractOf(over: Partial<PageReadContract> = {}): PageReadContract {
+  return {
+    model: 'dots-ocr',
+    dpi: 200,
+    maxPixels: 11_289_600,
+    maxTokens: 8192,
+    temperature: 0,
+    prompt: DOTS.prompt,
+    dialect: 'dots-json',
+    truncatedFinishReason: 'length',
+    engine: 'vllm',
+    ...over,
+  };
+}
+
 /** What dots would answer for a page, in the shape the parser wants. */
 function answerFor(page: number): string {
   return JSON.stringify([
@@ -58,6 +84,10 @@ interface Watched {
   rendered: VlmRunOptions[];
   /** Every call to the server. An empty list is the point of half these tests. */
   posted: VlmEndpointOptions[];
+  /** Every endpoint the run asked for a page contract. Empty on a replay. */
+  asked: string[];
+  /** The cap each page was actually SENT under, resolved at send time. */
+  caps: number[];
 }
 
 /**
@@ -68,10 +98,17 @@ interface Watched {
  * is already banked comes back skipped too. Those two are the whole difference
  * between a run that costs GPU-minutes and one that costs none.
  */
-function watch(pageCount: number): Watched {
+function watch(pageCount: number, contract: PageReadContract | Error = contractOf()): Watched {
   const rendered: VlmRunOptions[] = [];
   const posted: VlmEndpointOptions[] = [];
+  const asked: string[] = [];
+  const caps: number[] = [];
   const bridge: VlmBridge = {
+    pageContract: async (endpoint): Promise<PageReadContract> => {
+      asked.push(endpoint);
+      if (contract instanceof Error) throw contract;
+      return contract;
+    },
     readPages: async (opts): Promise<VlmRunResult> => {
       rendered.push(opts);
       const excluded = new Set(opts.excludePages ?? []);
@@ -113,6 +150,10 @@ function watch(pageCount: number): Watched {
     fromEndpoint: async (opts): Promise<void> => {
       posted.push(opts);
       for (const page of opts.pages) {
+        // Resolved HERE and not by a test afterwards: the cap is a question
+        // asked at the send, and the band it answers from moves while pages
+        // are in flight (`VlmEndpointOptions.maxTokens`).
+        caps.push(typeof opts.maxTokens === 'function' ? opts.maxTokens(page) : opts.maxTokens);
         opts.onPage({
           number: page.number,
           text: answerFor(page.number),
@@ -124,7 +165,7 @@ function watch(pageCount: number): Watched {
       }
     },
   };
-  return { bridge, rendered, posted };
+  return { bridge, rendered, posted, asked, caps };
 }
 
 /** A directory with a bank in it, holding answers for `banked`. */
@@ -268,6 +309,136 @@ test('an interrupted bank against a server asks it only for what is missing', as
   assert.deepEqual(banked.render, { width: 1300, height: 2112 });
   assert.equal(banked.maxPixels, 11_289_600);
   assert.equal(banked.model, 'dots-ocr');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The page contract: a placement's request is the SERVER'S, not this program's
+//
+// `crucible/pages.py` owns the prompt, the dpi, the pixel budget, the ceiling,
+// the temperature and the dialect, and `/v1/info` publishes them — because all
+// six are facts about the weights and this program was keeping copies of them.
+// Copies agree until they do not, and the day they stop the run keeps working
+// and reads the book worse.
+//
+// So these ask the only two questions that matter: does what the server said
+// reach the wire, and what happens when it said nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('a placement\'s contract decides the prompt, the ceiling, the temperature and the name', async () => {
+  const readingsPath = bankOf([]);
+  // Deliberately NOT the numbers in this program's registry: a test built out
+  // of Foundry's own constants would pass whether or not the contract was read.
+  const watched = watch(2, contractOf({
+    model: 'dots-ocr-next',
+    prompt: 'READ THE PAGE, in the words of whoever owns the weights',
+    maxTokens: 4321,
+    temperature: 0.25,
+  }));
+
+  await readPagesIntoBank({
+    ...phaseOptions(readingsPath, watched),
+    endpoint: CRUCIBLE,
+    log: () => {},
+  });
+
+  assert.deepEqual(watched.asked, [CRUCIBLE], 'the contract is read once, from the placement');
+  assert.equal(watched.posted.length, 1);
+  const sent = watched.posted[0];
+  assert.equal(sent.model, 'dots-ocr-next');
+  assert.equal(sent.prompt, 'READ THE PAGE, in the words of whoever owns the weights');
+  assert.equal(sent.temperature, 0.25);
+  // The cap is a function of the band and the CEILING, and the ceiling is the
+  // server's: the first page of a book has no band yet, so it goes at the top.
+  assert.equal(watched.caps[0], 4321);
+});
+
+test('the render and the bank use the dpi and the budget the server published', async () => {
+  const readingsPath = bankOf([]);
+  const watched = watch(1, contractOf({ dpi: 144, maxPixels: 2_000_000 }));
+
+  const phase = await readPagesIntoBank({
+    ...phaseOptions(readingsPath, watched),
+    endpoint: CRUCIBLE,
+    log: () => {},
+  });
+
+  // The dpi is in the contract and the rasteriser runs FIRST, so a run that
+  // asked afterwards would have rendered at a resolution nobody wanted.
+  assert.equal(watched.rendered[0].dpi, 144);
+  assert.equal(watched.rendered[0].maxPixels, 2_000_000);
+  assert.equal(phase.maxPixels, 2_000_000);
+  // And banked beside the answer, so tomorrow's rendering scales the boxes by
+  // the frame they were measured in rather than by its own.
+  assert.equal(VlmReadings.open(readingsPath).get(1)!.maxPixels, 2_000_000);
+});
+
+test('--vlm-endpoint-model is a stated reason and beats the contract\'s name', async () => {
+  const readingsPath = bankOf([]);
+  const watched = watch(1);
+
+  await readPagesIntoBank({
+    ...phaseOptions(readingsPath, watched),
+    endpoint: CRUCIBLE,
+    endpointModel: 'a-name-somebody-typed',
+    log: () => {},
+  });
+
+  assert.equal(watched.posted[0].model, 'a-name-somebody-typed');
+});
+
+test('a server that publishes no contract is refused by name, and no page is sent', async () => {
+  const readingsPath = bankOf([]);
+  const watched = watch(2, new PageContractError(
+    'http://fake:7100/v1/info publishes no "pages_engine"',
+  ));
+
+  await assert.rejects(
+    readPagesIntoBank({
+      ...phaseOptions(readingsPath, watched),
+      endpoint: CRUCIBLE,
+      log: () => {},
+    }),
+    (error: unknown) => error instanceof PageContractError
+      && /publishes no "pages_engine"/.test((error as Error).message),
+  );
+  // Before the rasteriser, which is the point of asking first: a run with no
+  // request to send has not spent a minute of anybody's CPU finding out.
+  assert.deepEqual(watched.rendered, []);
+  assert.deepEqual(watched.posted, []);
+});
+
+test('a server answering in another dialect is refused rather than parsed as ours', async () => {
+  const readingsPath = bankOf([]);
+  const watched = watch(2, contractOf({ dialect: 'qwen-html' }));
+
+  await assert.rejects(
+    readPagesIntoBank({
+      ...phaseOptions(readingsPath, watched),
+      endpoint: CRUCIBLE,
+      log: () => {},
+    }),
+    (error: unknown) => /answers pages in "qwen-html"/.test((error as Error).message),
+  );
+  assert.deepEqual(watched.posted, []);
+});
+
+test('a replay asks no server what a page request is, because it sends none', async () => {
+  // The promise this file's header makes, extended to the new question. A run
+  // over a completed bank contacts nothing — and the budget each answer was
+  // produced under is banked beside it, so it needs nothing.
+  const readingsPath = bankOf([1, 2]);
+  markComplete(readingsPath, 2, path.join(path.dirname(readingsPath), 'book.epub'));
+  const watched = watch(2);
+
+  await readPagesIntoBank({
+    ...phaseOptions(readingsPath, watched),
+    endpoint: CRUCIBLE,
+    reuseReadings: true,
+    log: () => {},
+  });
+
+  assert.deepEqual(watched.asked, []);
+  assert.deepEqual(watched.posted, []);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -447,6 +618,7 @@ test('a re-read that dies leaves the finished reading untouched, and the retry p
       throw new Error('the model runner has crashed');
     },
     fromEndpoint: async () => {},
+    pageContract: async () => contractOf(),
   };
 
   await assert.rejects(
