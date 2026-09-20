@@ -2194,9 +2194,6 @@ export async function askAboutEach(
     return { decisions, parseFailed: 0, asked: 0 };
   }
 
-  // Everything the rules finished, settled and banked before a request goes out.
-  for (const one of asks) if (!inputs.has(one.key)) settleByRules(one);
-
   runner.pinContextTo?.(
     systemPrompt, [...inputs.values()].reduce((a, b) => (b.length > a.length ? b : a), ''));
 
@@ -2218,6 +2215,17 @@ export async function askAboutEach(
   let parseFailed = 0;
   let done = 0;
   try {
+    /*
+     * Everything the rules finished, settled and banked before a request goes
+     * out — there is nothing to wait for, and a run that died on block one
+     * should still keep what the rules alone had already decided.
+     *
+     * INSIDE THE `try`, so that a sink which throws still reaches the `finally`
+     * and gives the model's VRAM back. There is nothing here that can throw of
+     * its own; the sink is somebody else's code.
+     */
+    for (const one of asks) if (!inputs.has(one.key)) settleByRules(one);
+
     /*
      * `concurrency` workers pulling from one shared cursor. A THROWN PLACEMENT
      * ERROR STILL ENDS THE PASS: the worker rejects, `Promise.all` surfaces the
