@@ -135,6 +135,19 @@ BookForge, ruling owed to Owen:** an explicit lease on the resident model
 (`POST /v1/models/{id}/lease`, heartbeat, `DELETE` at run end); while leased,
 load/unload refuse `409 leased` naming the client, act and since.
 
+**A cancelled placement owns what its own load put there** (2026-09-20). The
+operator never unloads somebody else's model — the card belongs to whoever is
+next — but a `load-model` this app submitted for a run that has since been
+STOPPED is not somebody else's: it is 21 GB resident with `claim: None, lease:
+None, running: []`, and Crucible's settlement will not touch it, because
+settlement is a holder letting go and a load's own completion is deliberately
+not one. So a placement aborted after it submitted a load awaits the cancel's
+answer, reads the load job's terminal state, and — only if it ended `done` —
+gives the card back by taking a lease and releasing it at once, falling back to
+`unload-model`. The whole tidy-up is bounded (30 s) and never fails a run; a
+bound that fires logs the model and the server.
+(`releaseAbandonedLoad`, app/electron/crucible-dispatch.ts.)
+
 ## 5b. Weights on disk — one owner per capability per machine (Owen, 2026-09-14)
 
 Owen: *"id really rather not have multiple copies of gigantic models floating
