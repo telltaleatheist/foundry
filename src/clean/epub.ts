@@ -92,7 +92,7 @@ import { TranslationBank } from '../translate/bank.js';
 import {
   concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, type ServerKind,
 } from '../translate/model-server.js';
-import { fetchTransport, type Transport } from '../translate/transport.js';
+import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
 
 import { blockDigest } from './digest.js';
 import { narrationTextPrompt } from './prompt.js';
@@ -108,7 +108,7 @@ import {
   NORMALIZER_VERSION,
 } from './tts-number-normalizer.js';
 import type {
-  NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
+  AskOutcome, NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
 } from './tts-number-normalizer.js';
 import { PUNCTUATION_SPEC_VERSION } from './tts-punctuation.js';
 
@@ -363,7 +363,10 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
   const at = new Date().toISOString();
   const endpoint = opts.endpoint;
   const kind: ServerKind = opts.server ?? 'openai';
-  const transport = opts.transport ?? fetchTransport();
+  // Decided before the transport, because the deadline is a function of it —
+  // the book route's header (`src/clean/run.ts`) carries the whole argument.
+  const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_TEXT_CONCURRENCY, endpoint);
+  const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   /*
    * Resolved HERE and not at the runner, the book route's rule for the book
    * route's reason one step over: this route writes no records, but it does
@@ -562,6 +565,38 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
     ? NOTHING_TO_ASK
     : await openModelRunner({ model, endpoint, server: kind, transport, log: opts.log }));
 
+  /*
+   * ── BANKED THE MOMENT THE BLOCK HAS SETTLED, and now that is true ──────────
+   *
+   * This used to run in the loop BELOW the ask, under a comment that said
+   * exactly this sentence — `bank.append` is fsync-per-row for the reason
+   * bank.ts states, and the loop that called it could not run until every block
+   * in the book had an answer. A pass that threw on the last one banked none of
+   * them (BUG-HUNT-2026-09-20 §A F2, the twin of the book route's). It rides
+   * `askAboutEach`'s `onSettled` sink now, so a verdict is on disk before the
+   * next request goes out and a re-run asks only what is outstanding.
+   */
+  const blockByPosition = new Map(outstanding.map((block) => [block.position, block] as const));
+  const bankAnswer = (position: string, decision: AskOutcome): void => {
+    const block = blockByPosition.get(position);
+    if (block === undefined) {
+      throw new CleanTextError(
+        `clean-text settled a verdict about ${position}, which is not a block of ${epubPath} this `
+        + 'run asked about. The loop and the walk disagree about what this book holds, and nothing '
+        + 'was written.',
+      );
+    }
+    const written = applyToNodes(
+      cleanText.get(position)!, cleanSegments.get(position)!, decision.accepted, position);
+    cleanText.set(position, written.text);
+    cleanSegments.set(position, written.segments);
+    bank.append({
+      key: keyOf.get(position)!,
+      source: block.text,
+      answer: JSON.stringify(nodeTexts(written.text, written.segments, position)),
+    });
+  };
+
   const settled = await askAboutEach(
     asks,
     runner,
@@ -573,10 +608,14 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
     },
     'every-block',
     EVERY_CLASS,
-    opts.concurrency ?? concurrencyFor(kind, DEFAULT_TEXT_CONCURRENCY),
+    concurrency,
+    bankAnswer,
   );
 
-  // ── The verdicts, applied, and the answers banked as they land ────────────
+  // ── What the verdicts came to, for the units and the log ──────────────────
+  //
+  // The text was rewritten and the answers banked inside `bankAnswer`, as each
+  // verdict landed. This loop reports.
   const units: NumberUnitRecord[] = [];
   let modelRefused = 0;
 
@@ -588,12 +627,6 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
         + 'walk disagree about what this book holds, and nothing was written.',
       );
     }
-    const before = cleanText.get(block.position)!;
-    const written = applyToNodes(
-      before, cleanSegments.get(block.position)!, decision.accepted, block.position);
-    cleanText.set(block.position, written.text);
-    cleanSegments.set(block.position, written.segments);
-
     for (const record of decision.records) {
       if (!isRefusal(record.status)) continue;
       modelRefused += 1;
@@ -606,14 +639,6 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
       status: decision.status,
       text: block.text,
       edits: decision.records,
-    });
-
-    // Banked the moment the block has settled, never at the end of a document
-    // or a run — `bank.ts`'s rule, for the measurement that produced it.
-    bank.append({
-      key: keyOf.get(block.position)!,
-      source: block.text,
-      answer: JSON.stringify(nodeTexts(written.text, written.segments, block.position)),
     });
   }
 

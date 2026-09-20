@@ -99,7 +99,7 @@ import { spliceTableGrid, type TableGrid } from '../translate/tablecells.js';
 import {
   concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, type ServerKind,
 } from '../translate/model-server.js';
-import { fetchTransport, type Transport } from '../translate/transport.js';
+import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
 
 import { blockDigest, bookPositionTexts } from './digest.js';
 import { narrationTextPrompt } from './prompt.js';
@@ -114,7 +114,7 @@ import {
   NORMALIZER_VERSION,
 } from './tts-number-normalizer.js';
 import type {
-  NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
+  AskOutcome, NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
 } from './tts-number-normalizer.js';
 import { PUNCTUATION_SPEC_VERSION } from './tts-punctuation.js';
 
@@ -399,7 +399,16 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   const at = new Date().toISOString();
   const endpoint = opts.endpoint;
   const kind: ServerKind = opts.server ?? 'openai';
-  const transport = opts.transport ?? fetchTransport();
+  /*
+   * HOW MANY REQUESTS ARE IN FLIGHT IS DECIDED HERE, BEFORE THE TRANSPORT IS
+   * BUILT, because the deadline is a function of it: a pool of `n` against a
+   * server that queues gives the last request `n` requests' worth of waiting
+   * before its own clock starts (`deadlineForConcurrency`, transport.ts).
+   * `concurrencyFor` reads the endpoint so a Crucible chat door gets its
+   * measured knee of four instead of a vLLM's twelve.
+   */
+  const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_TEXT_CONCURRENCY, endpoint);
+  const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   /*
    * ── THE MODEL'S NAME IS NEEDED BEFORE ANY QUESTION IS ASKED ────────────────
    *
@@ -656,71 +665,20 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     ? NOTHING_TO_ASK
     : await openModelRunner({ model, endpoint, server: kind, transport, log: opts.log }));
 
-  const settled = await askAboutEach(
-    asks,
-    runner,
-    narrationTextPrompt(),
-    (done, total, label) => {
-      /*
-       * `clean-text: <done>/<total>`, per block, and BookForge mirrors the
-       * shape — so it stays exactly this, and both numbers count blocks
-       * FINISHED rather than a position, which is what keeps a progress bar
-       * drawn from it monotonic.
-       *
-       * THE RELEASE TICK IS NOT A BLOCK. `askAboutEach` calls this once more
-       * from its `finally`, at `(total, total, 'Releasing model')`, so that a
-       * desktop bar reaches its end even on the failure path. Printing it would
-       * put `7/7` on the log twice, and a reader counting lines would be told
-       * the book had eight blocks in it.
-       */
-      if (total > 0 && label !== 'Releasing model') opts.log(`clean-text: ${done}/${total}`);
-    },
-    'every-block',
-    EVERY_CLASS,
-    opts.concurrency ?? concurrencyFor(kind, DEFAULT_TEXT_CONCURRENCY),
-  );
-
-  // ── The verdicts, applied ─────────────────────────────────────────────────
-  const units: NumberUnitRecord[] = [];
-  const dispositions: Record<string, number> = {};
-  const appliedByClass: Record<string, number> = {};
-  let modelRefused = 0;
-
-  for (const block of outstanding) {
-    const decision = settled.decisions.get(block.target.key);
-    if (decision === undefined) {
-      throw new CleanTextError(
-        `clean-text reached no decision about ${block.target.key} of ${where}. The loop and the `
-        + 'plan disagree about what this book holds, and nothing was written.',
-      );
-    }
-    const before = cleanText.get(block.target.key)!;
-    cleanText.set(block.target.key, applySpans(before, decision.accepted, block.target.key));
-
-    for (const record of decision.records) {
-      dispositions[record.status] = (dispositions[record.status] ?? 0) + 1;
-      if (isRefusal(record.status)) {
-        modelRefused += 1;
-        sayRefusal(opts.log, block.target.key, record);
-        continue;
-      }
-      if (record.status === 'APPLIED' || record.status === 'APPLIED_RULE') {
-        const klass = record.editClass ?? classifyEdit(record.find);
-        appliedByClass[klass] = (appliedByClass[klass] ?? 0) + 1;
-      }
-    }
-    units.push({
-      key: block.target.key,
-      kind: block.target.kind,
-      file: fileName,
-      status: decision.status,
-      text: block.target.text,
-      edits: decision.records,
-      ...(decision.rawAnswer === undefined ? {} : { rawAnswer: decision.rawAnswer }),
-    });
-  }
-
-  // ── The rows ──────────────────────────────────────────────────────────────
+  /*
+   * ── THE ROWS, AND THEY ARE WRITTEN AS THEY LAND ────────────────────────────
+   *
+   * Everything below used to run AFTER `askAboutEach` had drained, which meant
+   * a pass that threw on the last block wrote none of the answers it had paid
+   * for — the exact opposite of the line this run logs above it (*"recorded
+   * there as it lands"*), and what BUG-HUNT-2026-09-20 §A F2 measured as 351 of
+   * 940 answers and forty-five minutes of GPU thrown away. `records.append` is
+   * fsync-per-row precisely so this does not have to happen; the durability was
+   * always here and this pass was the one caller not reaching it.
+   *
+   * So the writing moved onto `askAboutEach`'s `onSettled` sink and this is now
+   * defined BEFORE the ask. What remains after it is arithmetic for the receipt.
+   */
   let written = 0;
   let humanKept = 0;
   let changed = 0;
@@ -748,8 +706,43 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     written += 1;
   };
 
-  for (const table of tables) {
-    if (bankedTable.has(table.parts)) continue;
+  const blockByKey = new Map(outstanding.map((block) => [block.target.key, block] as const));
+  const tableByParts = new Map(tables.map((table) => [table.parts, table] as const));
+  /*
+   * HOW MANY OF A TABLE'S CELLS ARE STILL OUT, because a table's RECORD is the
+   * whole grid and half a grid is not one (the `bankedTable` rule above says
+   * the same thing from the reading side). The row is spliced and banked by
+   * whichever cell settles last — which under a pool is not the last cell in
+   * the grid, and does not need to be.
+   */
+  const cellsOutstanding = new Map<string, number>();
+  for (const block of outstanding) {
+    if (block.cell === undefined) continue;
+    cellsOutstanding.set(block.parts, (cellsOutstanding.get(block.parts) ?? 0) + 1);
+  }
+
+  const bankAnswer = (key: string, decision: AskOutcome): void => {
+    const block = blockByKey.get(key);
+    if (block === undefined) {
+      throw new CleanTextError(
+        `clean-text settled a verdict about ${key}, which is not a block of ${where} this run `
+        + 'asked about. The loop and the plan disagree about what this book holds, and nothing '
+        + 'was written.',
+      );
+    }
+    cleanText.set(key, applySpans(cleanText.get(key)!, decision.accepted, key));
+
+    if (block.cell === undefined) {
+      const text = cleanText.get(key)!;
+      if (text !== block.target.text) changed += 1;
+      appendRecord(block.parts, keyOf.get(key)!, text);
+      return;
+    }
+
+    const left = (cellsOutstanding.get(block.parts) ?? 0) - 1;
+    cellsOutstanding.set(block.parts, left);
+    if (left > 0) return;
+    const table = tableByParts.get(block.parts)!;
     for (const cell of table.cells) {
       table.words.set(cell, cleanText.get(`${table.parts}#c${cell}`)!);
     }
@@ -762,17 +755,75 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
        * table would throw away everything else the run paid for.
        */
       opts.log(`clean-text: LEFT AS PRINTED — ${table.where}: ${spliced.complaint}`);
-      continue;
+      return;
     }
     if (spliced.text !== table.source) changed += 1;
     appendRecord(table.parts, tableKey.get(table.parts)!, spliced.text);
-  }
+  };
+
+  const settled = await askAboutEach(
+    asks,
+    runner,
+    narrationTextPrompt(),
+    (done, total, label) => {
+      /*
+       * `clean-text: <done>/<total>`, per block, and BookForge mirrors the
+       * shape — so it stays exactly this, and both numbers count blocks
+       * FINISHED rather than a position, which is what keeps a progress bar
+       * drawn from it monotonic.
+       *
+       * THE RELEASE TICK IS NOT A BLOCK. `askAboutEach` calls this once more
+       * from its `finally`, at `(total, total, 'Releasing model')`, so that a
+       * desktop bar reaches its end even on the failure path. Printing it would
+       * put `7/7` on the log twice, and a reader counting lines would be told
+       * the book had eight blocks in it.
+       */
+      if (total > 0 && label !== 'Releasing model') opts.log(`clean-text: ${done}/${total}`);
+    },
+    'every-block',
+    EVERY_CLASS,
+    concurrency,
+    bankAnswer,
+  );
+
+  // ── What the verdicts came to, for the receipt ────────────────────────────
+  //
+  // The book was rewritten and the rows were written inside `bankAnswer`, as
+  // each verdict landed. This loop counts.
+  const units: NumberUnitRecord[] = [];
+  const dispositions: Record<string, number> = {};
+  const appliedByClass: Record<string, number> = {};
+  let modelRefused = 0;
 
   for (const block of outstanding) {
-    if (block.cell !== undefined) continue;
-    const text = cleanText.get(block.target.key)!;
-    if (text !== block.target.text) changed += 1;
-    appendRecord(block.parts, keyOf.get(block.target.key)!, text);
+    const decision = settled.decisions.get(block.target.key);
+    if (decision === undefined) {
+      throw new CleanTextError(
+        `clean-text reached no decision about ${block.target.key} of ${where}. The loop and the `
+        + 'plan disagree about what this book holds, and nothing was written.',
+      );
+    }
+    for (const record of decision.records) {
+      dispositions[record.status] = (dispositions[record.status] ?? 0) + 1;
+      if (isRefusal(record.status)) {
+        modelRefused += 1;
+        sayRefusal(opts.log, block.target.key, record);
+        continue;
+      }
+      if (record.status === 'APPLIED' || record.status === 'APPLIED_RULE') {
+        const klass = record.editClass ?? classifyEdit(record.find);
+        appliedByClass[klass] = (appliedByClass[klass] ?? 0) + 1;
+      }
+    }
+    units.push({
+      key: block.target.key,
+      kind: block.target.kind,
+      file: fileName,
+      status: decision.status,
+      text: block.target.text,
+      edits: decision.records,
+      ...(decision.rawAnswer === undefined ? {} : { rawAnswer: decision.rawAnswer }),
+    });
   }
 
   // ── The receipt and the stamp ─────────────────────────────────────────────

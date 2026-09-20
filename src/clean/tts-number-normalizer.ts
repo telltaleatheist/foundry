@@ -1825,9 +1825,43 @@ export function buildNormalizerInput(
     + `NEXT (context only, never edit this):\n${shown(next)}`;
 }
 
-/** Is this failure input-independent — worth exactly one re-roll? */
-function isTransportFailure(message: string): boolean {
-  return /fetch|network|ECONNREFUSED|ECONNRESET|socket|timeout|EHOSTUNREACH|ENOTFOUND/i.test(message);
+/**
+ * The words a FOREIGN error uses for the same thing.
+ *
+ * Kept only as the fallback below: a runner this pass did not write — BookForge
+ * binds its own `ai-bridge` to this seam, and a test binds a stub — throws
+ * whatever it throws, and reading its prose is the only thing left to do.
+ */
+const TRANSPORT_PROSE =
+  /fetch|network|ECONNREFUSED|ECONNRESET|socket|timeout|EHOSTUNREACH|ENOTFOUND/i;
+
+/** The three things `TransportError.cause` can say, all of them re-rollable. */
+const TRANSPORT_CAUSES = new Set(['timeout', 'network', 'http']);
+
+/**
+ * Is this failure input-independent — worth exactly one re-roll?
+ *
+ * ── THE FIELD IS READ FIRST AND THE PROSE IS THE FALLBACK ───────────────────
+ *
+ * This used to be the regex alone, and the one failure it did not recognise was
+ * the one this program raises itself: `fetchTransport` composes *"<url> — no
+ * answer in 300s"* for its own deadline, and "no answer in 300s" contains none
+ * of the words above. So a dropped socket was re-rolled and a TIMEOUT — the
+ * commoner failure by far against a queueing server — ended the pass on attempt
+ * one, taking every answer the run had paid for with it (BUG-HUNT-2026-09-20
+ * §A F3b; F2 is why that cost the whole book).
+ *
+ * `transport.ts` now states the cause as a field where the sentence is
+ * composed, and this reads the field. It is read off the VALUE rather than
+ * through `instanceof TransportError` deliberately: this module owns no HTTP
+ * call and imports no transport — its whole contract is the four-member
+ * `NumberNormalizerRunner` — and a structural read also survives the case an
+ * `instanceof` quietly fails, a second copy of the class in another bundle.
+ */
+function isTransportFailure(err: unknown): boolean {
+  const cause = (err as { cause?: unknown } | null | undefined)?.cause;
+  if (typeof cause === 'string' && TRANSPORT_CAUSES.has(cause)) return true;
+  return TRANSPORT_PROSE.test(err instanceof Error ? err.message : String(err));
 }
 
 /**
@@ -1854,7 +1888,8 @@ async function askForEdits(
       answer = await runner.generate(input, systemPrompt);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (attempt === 1 && isTransportFailure(message)) continue;
+      // THE ERROR, NOT ITS MESSAGE. The cause is a field on it; see above.
+      if (attempt === 1 && isTransportFailure(err)) continue;
       throw new Error(
         `The number-normalization pass could not reach the model '${runner.model}': ${message}`
       );
@@ -1920,6 +1955,44 @@ export interface AskOutcome {
    * what the abbreviation rule is for.
    */
   ruled: NumberRuleOutcome;
+}
+
+/**
+ * WHERE A VERDICT IS WRITTEN DOWN, THE MOMENT THERE IS ONE.
+ *
+ * ── THE DEFECT THIS ENDS ────────────────────────────────────────────────────
+ *
+ * `askAboutEach` used to hand its whole `decisions` map back and let the caller
+ * write, so a pass that threw on block 940 wrote NONE of the 939 answers it had
+ * already paid for — around forty-five minutes of GPU, garbage-collected, on a
+ * run whose own log line promised the opposite (*"every block is asked of the
+ * model and recorded there as it lands"*, run.ts). `translate` never had the
+ * defect because it appends inside its `accept` callback, and both durable
+ * stores this pass writes to — `records.append` and `bank.append` — are already
+ * fsync-per-row for exactly this reason. The durability existed; the clean pass
+ * was the one caller that did not reach it (BUG-HUNT-2026-09-20 §A F2).
+ *
+ * ── WHEN IT FIRES, AND WHY THAT IS SAFE UNDER A POOL ────────────────────────
+ *
+ * Once per ask, the instant that ask's verdict is VALIDATED — inside the pool
+ * worker, before it takes the next block, and before the progress tick, so a
+ * bar can never be ahead of what is on disk. A block the rules finished settles
+ * before the pool starts at all, since there is nothing to wait for.
+ *
+ * ORDER IS NOT A PROPERTY OF THIS SINK and callers must not treat it as one.
+ * The `decisions` map handed back is still filled in the book's own order (see
+ * the pool's header); what arrives here arrives as the network answers. Both
+ * stores are keyed by position and read newest-row-wins, so file order is
+ * irrelevant to every reader — which is what makes writing out of order safe.
+ *
+ * It is SYNCHRONOUS because both writes are: an `fs.writeSync`/`fsyncSync` pair
+ * from open to close, which is also what keeps several workers from interleaving
+ * a line into the middle of another's. A throw from here rejects the worker and
+ * ends the pass, which is right: a verdict that could not be written down is not
+ * an answer this run has.
+ */
+export interface NumberAskSettled {
+  (key: string, outcome: AskOutcome): void;
 }
 
 /**
@@ -2004,7 +2077,8 @@ function ruleRewrites(ruled: NumberRuleOutcome): NarrationTextRewrite[] {
  * The whole model-facing contract lives here: the context window pinned ONCE to
  * the longest request, the two retry rules in `askForEdits`, the validation wall
  * in `validateNumberEdits`, the parse-failure share that declares a model broken
- * rather than narrating a book of digits, and the `release()` in `finally` —
+ * rather than narrating a book of digits, `onSettled` — which is where a verdict
+ * becomes durable, the moment there is one — and the `release()` in `finally` —
  * which runs on the failure path too, because a pass that threw still left 6-17
  * GB of weights resident and e2a takes the GPU next either way.
  */
@@ -2053,6 +2127,15 @@ export async function askAboutEach(
    * function has always been, call for call.
    */
   concurrency: number = 1,
+  /**
+   * Where each verdict is written down as it lands. See `NumberAskSettled`.
+   *
+   * Optional because a caller that keeps nothing — a test asserting the map, a
+   * reconciliation that only wants the decisions — should not have to pass an
+   * empty function. Every caller that writes a RECORD passes one, and that is
+   * the whole of what makes an interrupted pass resumable.
+   */
+  onSettled?: NumberAskSettled,
 ): Promise<{ decisions: Map<string, AskOutcome>; parseFailed: number; asked: number }> {
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new Error(
@@ -2084,11 +2167,21 @@ export async function askAboutEach(
   const total = inputs.size;
 
   const decisions = new Map<string, AskOutcome>();
+  /*
+   * The rules-only verdicts, held aside until `decisions` is filled in the
+   * book's order — the same reason the pool writes into a scratch map. They are
+   * SETTLED (and so written down) before the pool starts, because a block no
+   * request is owed has nothing to wait for and a run that died on block one
+   * should still have banked everything the rules alone finished.
+   */
+  const byRules = new Map<string, AskOutcome>();
   const settleByRules = (ask: NormalizerAsk): void => {
     const ruled = ruledOf.get(ask.key)!;
-    decisions.set(ask.key, {
+    const outcome: AskOutcome = {
       status: 'RULES_ONLY', accepted: ruleRewrites(ruled), records: ruleRecords(ruled), ruled,
-    });
+    };
+    byRules.set(ask.key, outcome);
+    onSettled?.(ask.key, outcome);
   };
 
   // A book the rules read entirely never loads a model at all — no context to
@@ -2096,9 +2189,13 @@ export async function askAboutEach(
   // Ollama that is down must not fail a pass that had nothing to ask it.
   if (total === 0) {
     for (const ask of asks) settleByRules(ask);
+    for (const ask of asks) decisions.set(ask.key, byRules.get(ask.key)!);
     onProgress?.(0, 0, 'Releasing model');
     return { decisions, parseFailed: 0, asked: 0 };
   }
+
+  // Everything the rules finished, settled and banked before a request goes out.
+  for (const one of asks) if (!inputs.has(one.key)) settleByRules(one);
 
   runner.pinContextTo?.(
     systemPrompt, [...inputs.values()].reduce((a, b) => (b.length > a.length ? b : a), ''));
@@ -2126,8 +2223,14 @@ export async function askAboutEach(
      * ERROR STILL ENDS THE PASS: the worker rejects, `Promise.all` surfaces the
      * first rejection, and the `finally` below still gives the VRAM back. The
      * other workers' requests are already out and cannot be cancelled — nothing
-     * in `NumberNormalizerRunner` can — but the pass is over either way and
-     * nothing is written.
+     * in `NumberNormalizerRunner` can — but the pass is over either way.
+     *
+     * WHAT IS ALREADY ANSWERED IS ALREADY ON DISK. That was not true until
+     * 2026-09-20, and it is the difference between a pass that dies at block 940
+     * costing forty-five minutes of GPU and one that costs the handful of
+     * requests that were in flight: `onSettled` writes each verdict where it
+     * lands, and the next run asks only what is outstanding. See
+     * `NumberAskSettled`.
      */
     let next = 0;
     const worker = async (): Promise<void> => {
@@ -2141,12 +2244,13 @@ export async function askAboutEach(
         const ruled = ruledOf.get(one.key)!;
         const fromRules = ruleRewrites(ruled);
         const answer = await askForEdits(runner, systemPrompt, input);
+        let outcome: AskOutcome;
         if ('parseFail' in answer) {
           parseFailed++;
-          answered.set(one.key, {
+          outcome = {
             status: 'UNIT_PARSE_FAIL', accepted: fromRules, records: ruleRecords(ruled),
             rawAnswer: answer.parseFail, ruled,
-          });
+          };
         } else {
           // Validated against the text the model was SHOWN, then moved back onto
           // the original: the two differ by exactly the rules' own length deltas.
@@ -2163,13 +2267,24 @@ export async function askAboutEach(
             }
             return { find: edit.find, replace: edit.replace, at };
           });
-          answered.set(one.key, {
+          outcome = {
             status: 'ANSWERED',
             accepted: [...fromRules, ...mapped].sort((a, b) => a.at - b.at),
             records: [...ruleRecords(ruled), ...records],
             ruled,
-          });
+          };
         }
+        answered.set(one.key, outcome);
+        /*
+         * WRITTEN DOWN HERE — before the next ask and before the progress tick.
+         *
+         * This is the line the whole resume story rests on: an interrupted pass
+         * keeps every verdict it reached, and the next run asks only what is
+         * outstanding. Before the tick so a bar is never ahead of the disk, and
+         * a throw from the sink ends the pass rather than being swallowed — a
+         * verdict that could not be recorded is not one this run has.
+         */
+        onSettled?.(one.key, outcome);
         // A COUNT, NOT A POSITION. Out of order the index of the block that just
         // landed says nothing about how much of the book is done, and two of them
         // can name the same fraction twice.
@@ -2179,10 +2294,13 @@ export async function askAboutEach(
     };
     await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, () => worker()));
 
-    // The book's order, restored. See the comment above the pool.
+    // The book's order, restored. See the comment above the pool. Nothing is
+    // SETTLED here any more — every verdict was settled and written down as it
+    // landed; this loop only decides what order the returned map remembers.
     for (const one of asks) {
-      if (!inputs.has(one.key)) { settleByRules(one); continue; }
-      decisions.set(one.key, answered.get(one.key)!);
+      decisions.set(one.key, inputs.has(one.key)
+        ? answered.get(one.key)!
+        : byRules.get(one.key)!);
     }
 
     if (parseFailed > total * MAX_PARSE_FAIL_SHARE) {

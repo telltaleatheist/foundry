@@ -96,6 +96,30 @@ export interface PageReadContract {
  */
 const OPENAI_DOOR = '/openai/v1';
 
+/**
+ * IS THIS ENDPOINT A CRUCIBLE'S CHAT DOOR? — the one place that answers it.
+ *
+ * The fact lives here because `OPENAI_DOOR` lives here: a Crucible mounts its
+ * OpenAI-shaped routes at `<root>/openai/v1` and nothing else this program
+ * speaks to does. Every reader asks this function rather than matching the
+ * string itself, so the day Crucible moves the mount there is one edit.
+ *
+ * BOTH SPELLINGS OF THE SAME DOOR ARE ACCEPTED, and that is not looseness. The
+ * placement composes `<engine.url>/openai` and the caller appends `/v1`
+ * (`job-queue.ts`), while a person who types `--endpoint http://host:7100/openai`
+ * gets the `/v1` appended for them by `normaliseVllmEndpoint`. The two strings
+ * name one door, and a predicate that recognised only the longer one would
+ * treat a typed endpoint as an anonymous vLLM — which is exactly the mistake
+ * that puts twelve requests into a serial engine's queue (`concurrencyFor`).
+ *
+ * MATCHED AS A SUFFIX, for `pagesInfoUrl`'s reason: a path prefix that happened
+ * to contain these characters is not this door.
+ */
+export function isCrucibleOpenAiDoor(endpoint: string): boolean {
+  const base = endpoint.trim().replace(/\/+$/, '');
+  return base.endsWith(OPENAI_DOOR) || base.endsWith('/openai');
+}
+
 export function pagesInfoUrl(endpoint: string): string {
   const base = endpoint.trim().replace(/\/+$/, '');
   if (!base.endsWith(OPENAI_DOOR)) {

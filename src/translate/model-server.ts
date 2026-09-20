@@ -77,6 +77,7 @@
  * at all. Ollama batches far less well, which is the whole of why
  * `concurrencyFor` answers a smaller number there.
  */
+import { isCrucibleOpenAiDoor } from '../vlm/contract.js';
 import { isPageReadingModel } from '../vlm/models.js';
 import type { ChatTuning, Transport } from './transport.js';
 import { forgetUsage, normaliseEndpoint, TRANSLATE_TUNING } from './transport.js';
@@ -178,6 +179,11 @@ export interface ModelServer {
  * in its KV cache and QUEUES the rest, so extra requests wait in the server
  * instead of thrashing a card. `--concurrency` overrides it, and on a small
  * card it is the flag to reach for first.
+ *
+ * THAT SAFETY IS A FACT ABOUT A vLLM AND NOT ABOUT THIS DOOR. Behind a Crucible
+ * chat proxy the queued requests are not batched — they wait on a serial engine
+ * with their deadlines already running — so this number is not reached there.
+ * `CRUCIBLE_CHAT_CONCURRENCY` below, and `concurrencyFor` is where the two meet.
  */
 export const DEFAULT_TEXT_CONCURRENCY = 12;
 
@@ -215,6 +221,28 @@ export const DEFAULT_OLLAMA_CONCURRENCY = 4;
 export const DEFAULT_CLOUD_CONCURRENCY = 4;
 
 /**
+ * And a Crucible chat proxy's, which is four because of what is BEHIND it.
+ *
+ * `DEFAULT_TEXT_CONCURRENCY`'s docblock states the assumption that makes twelve
+ * safe — *"the server admits what fits in its KV cache and QUEUES the rest"* —
+ * and that assumption is a fact about a vLLM, not about the OpenAI door. A
+ * Crucible chat door is a PROXY in front of a serial engine (`mlx_lm` answers
+ * one request at a time), so requests past the first are not batched, they wait
+ * in a queue with their deadlines already running. Twelve in flight there buys
+ * no throughput at all and costs the tail of every pool a timeout — the defect
+ * BUG-HUNT-2026-09-20 §A F3a measured, where the observed failure was the
+ * queueing and not the model.
+ *
+ * FOUR IS THE MEASURED KNEE (2026-09-08, clean-text against a Crucible chat
+ * proxy: flat throughput past four, and the Mac's own MLX runner batches
+ * decode-only) and it is Owen's interim ruling (§F.4): four in flight on the
+ * Crucible chat door until the server states a number of its own. When it does,
+ * the number will arrive on the placement and `--concurrency` will carry it,
+ * which is why this is a DEFAULT and not a ceiling.
+ */
+export const CRUCIBLE_CHAT_CONCURRENCY = 4;
+
+/**
  * The default for this door, given what THIS ACT wants on the OpenAI one.
  *
  * The act passes its own OpenAI-door number rather than reading a shared one
@@ -230,9 +258,29 @@ export const DEFAULT_CLOUD_CONCURRENCY = 4;
  * they name `--endpoint` and `--model`. `anthropic` is a kind of its own, so on
  * that one the smaller number IS the default.
  */
-export function concurrencyFor(kind: ServerKind, openaiDefault: number): number {
+/**
+ * ── AND THE ONE PLACE THE ENDPOINT IS READ, WHICH IS AN EXCEPTION ON PURPOSE ─
+ *
+ * The header above says this program does not sniff a URL to learn which door
+ * it is, and that still holds: `endpoint` here changes no DIALECT and no
+ * protocol — the request is OpenAI-shaped either way, and a wrong answer costs
+ * speed rather than a book read by a model nobody chose. What it recognises is
+ * one specific server this project ships and runs (`isCrucibleOpenAiDoor`,
+ * vlm/contract.ts), whose door shape is composed by this project's own app, and
+ * what it buys is that a Crucible does not have to be told its own knee on
+ * every command line. `--concurrency` still wins over all of it.
+ *
+ * It is OPTIONAL so that a caller with no endpoint in hand — a test, a door
+ * proved elsewhere — gets exactly the behaviour this function always had.
+ */
+export function concurrencyFor(
+  kind: ServerKind,
+  openaiDefault: number,
+  endpoint?: string,
+): number {
   if (kind === 'ollama') return DEFAULT_OLLAMA_CONCURRENCY;
   if (kind === 'anthropic') return DEFAULT_CLOUD_CONCURRENCY;
+  if (endpoint !== undefined && isCrucibleOpenAiDoor(endpoint)) return CRUCIBLE_CHAT_CONCURRENCY;
   return openaiDefault;
 }
 

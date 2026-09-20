@@ -68,10 +68,46 @@
 
 import { resolveEndpointHeaders } from '../backend/endpoint-headers.js';
 
+/**
+ * WHY A FAILURE THIS PROGRAM COMPOSED IS RE-READ OUT OF ITS OWN PROSE, AND WAS.
+ *
+ * `fetchTransport` turns an `AbortError` into the sentence *"<url> — no answer
+ * in 300s"*, and until 2026-09-20 that sentence was the ONLY record of what
+ * happened: the clean pass's `isTransportFailure` regexed the words back out
+ * (`fetch|network|ECONNRESET|timeout|…`) to decide whether a failure was worth
+ * one re-roll. The engine's own deadline matched none of those words, so the
+ * one failure this program raises itself was the one failure it did not
+ * recognise — a dropped socket re-rolled and a timeout ended the book.
+ *
+ * So the cause is a FIELD, set where the sentence is composed, and the prose is
+ * for people. Three values, and every one of them means the same thing to a
+ * caller deciding whether to ask again — the failure is a property of the
+ * MOMENT, not of the input, so asking the same question again is worth doing
+ * exactly once:
+ *
+ *  - `timeout` — this program's own deadline fired. Nothing came back at all.
+ *  - `network` — `fetch` itself failed: a refused connection, a reset socket,
+ *    a name that did not resolve.
+ *  - `http` — the door turned a refusing STATUS into a throw. Nothing in this
+ *    file composes one; it is here so a door that does never has to invent a
+ *    fourth spelling of "the transport failed" for a reader to regex.
+ */
+export type TransportFailure = 'timeout' | 'network' | 'http';
+
 /** The server did not do its job. Always names the endpoint. */
 export class TransportError extends Error {
-  constructor(message: string) {
-    super(message);
+  /**
+   * WHAT went wrong, as a value. See `TransportFailure` for why it is a field.
+   *
+   * It rides on `cause` — the name the language already gave this — rather than
+   * on a second one of our own, so a reader who knows Error knows where to look
+   * and a caller in another module can read it off a plain object without
+   * importing this class.
+   */
+  declare readonly cause: TransportFailure;
+
+  constructor(message: string, cause: TransportFailure) {
+    super(message, { cause });
     this.name = 'TransportError';
   }
 }
@@ -136,7 +172,35 @@ export interface Transport {
  * was built for. What it protects against is a request that will never answer
  * at all, which without a deadline hangs a job that has already run for hours.
  */
-const REQUEST_TIMEOUT_MS = 300_000;
+export const REQUEST_TIMEOUT_MS = 300_000;
+
+/**
+ * THE DEADLINE A POOL OF `n` REQUESTS NEEDS, AND WHY IT IS NOT 300 SECONDS.
+ *
+ * `REQUEST_TIMEOUT_MS` is armed at SEND (`fetchTransport`'s `setTimeout` runs
+ * before `fetch` resolves anything), so it is a TOTAL deadline and not an
+ * inactivity one — and it cannot be an inactivity one, because this transport
+ * does not stream: it awaits `response.text()` in one piece, and a response
+ * that has not started has no activity to time. So the only honest way to make
+ * the deadline agree with the pool is to scale it.
+ *
+ * What that fixes, measured against a Crucible chat door on 2026-09-08: twelve
+ * blocks in flight against a SERIAL backend are not twelve requests being
+ * worked on — one is, and eleven are in the server's queue with their clocks
+ * already running. The twelfth's 300 s therefore covers the eleven ahead of it,
+ * so any per-block time above ~27 s times out the tail of every pool. The
+ * failure looks like a slow model and is a queueing deadline.
+ *
+ * `concurrency × per-request budget` is the floor stated in the bug hunt
+ * (BUG-HUNT-2026-09-20 §A F3a: *"pool depth and deadline must at least agree"*)
+ * and it is what this returns. It is NOT capped: a cap would be the same
+ * disagreement written smaller, and the deadline's whole job is to catch a
+ * request that will never answer AT ALL — which stays true however long the
+ * queue in front of it is.
+ */
+export function deadlineForConcurrency(concurrency: number): number {
+  return REQUEST_TIMEOUT_MS * Math.max(1, Math.floor(concurrency));
+}
 
 /**
  * The real transport, and the one place the endpoint's headers are attached.
@@ -175,10 +239,15 @@ export function fetchTransport(
       response.headers.forEach((value, name) => { seen[name.toLowerCase()] = value; });
       return { status: response.status, body: await response.text(), headers: seen };
     } catch (error) {
-      const reason = (error as Error).name === 'AbortError'
+      // THE CAUSE IS STATED HERE, where the sentence is composed and the abort
+      // is still distinguishable from anything else `fetch` can throw. One line
+      // later it is prose, and prose is what `isTransportFailure` used to have
+      // to guess from. See `TransportFailure`.
+      const timedOut = (error as Error).name === 'AbortError';
+      const reason = timedOut
         ? `no answer in ${(timeoutMs / 1000).toFixed(0)}s`
         : (error as Error).message;
-      throw new TransportError(`${url} — ${reason}`);
+      throw new TransportError(`${url} — ${reason}`, timedOut ? 'timeout' : 'network');
     } finally {
       clearTimeout(timer);
     }
@@ -252,6 +321,10 @@ const RETRY_AFTER_CAP_MS = 60_000;
 function busyReason(status: number): string {
   if (status === 429) return 'rate limited';
   if (status === 529) return 'overloaded';
+  // A Crucible's two ways of saying the card is busy rather than broken; the
+  // list a door waits on is the door's own (`BUSY_STATUSES`, vllm.ts).
+  if (status === 503) return 'no lane free';
+  if (status === 409) return 'the lane is leased';
   return `busy (${status})`;
 }
 

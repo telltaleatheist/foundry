@@ -36,7 +36,9 @@ import {
   concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel,
   type ModelServer, type ServerKind,
 } from '../translate/model-server.js';
-import { fetchTransport, usageLine, type Transport } from '../translate/transport.js';
+import {
+  deadlineForConcurrency, fetchTransport, usageLine, type Transport,
+} from '../translate/transport.js';
 import { parseBookFile } from '../vlm/book-file.js';
 import { NliWorker, NLI_MODEL_ID, type NliWorkerOptions } from './nli-bridge.js';
 import {
@@ -265,8 +267,13 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
   log(opened.sentence);
   const report = opened.report;
 
-  const transport = opts.transport ?? fetchTransport();
   const kind: ServerKind = opts.server ?? 'openai';
+  // Decided before the transport, because the deadline is a function of it: a
+  // pool of `n` against a server that queues gives the last request `n`
+  // requests' worth of waiting before its own clock starts. `src/clean/run.ts`
+  // carries the whole argument; `deadlineForConcurrency` is transport.ts's.
+  const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_ANALYZE_CONCURRENCY, opts.endpoint);
+  const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   /*
    * PROVED FIRST, and it also RESOLVES: on the OpenAI door an absent model means
    * the served one, and the answer has to be in hand before the verdict keys are
@@ -399,7 +406,7 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
     const windows = await rankWindows(sentences, plan, scoreTexts, log);
     result = await verifyStage({
       windows, sentences, plan, report, transport, server,
-      concurrency: opts.concurrency ?? concurrencyFor(kind, DEFAULT_ANALYZE_CONCURRENCY),
+      concurrency,
       hypotheses, bankSha, generation, log,
       nliRevision: startedWorker()?.revision ?? report.priorHeader?.nliRevision ?? null,
     });

@@ -59,6 +59,7 @@ import {
 } from './translate/run.js';
 import {
   DEFAULT_CLOUD_CONCURRENCY, DEFAULT_OLLAMA_CONCURRENCY, DEFAULT_OLLAMA_ENDPOINT,
+  CRUCIBLE_CHAT_CONCURRENCY,
   DEFAULT_TEXT_CONCURRENCY, isServerKind, MODEL_REQUIRED_ON_ANTHROPIC, MODEL_REQUIRED_ON_OLLAMA,
   SERVER_KINDS, type ServerKind,
 } from './translate/model-server.js';
@@ -848,7 +849,7 @@ const TR_CONCURRENCY: OptionSpec = {
   name: 'concurrency',
   type: 'string',
   placeholder: '<n>',
-  describe: `Requests in flight at once. Default ${DEFAULT_TRANSLATE_CONCURRENCY} on openai, ${DEFAULT_OLLAMA_CONCURRENCY} on ollama, ${DEFAULT_CLOUD_CONCURRENCY} on anthropic — a starting point, not a measurement.`,
+  describe: `Requests in flight at once. Default ${DEFAULT_TRANSLATE_CONCURRENCY} on openai (${CRUCIBLE_CHAT_CONCURRENCY} on a Crucible's /openai door, the measured knee), ${DEFAULT_OLLAMA_CONCURRENCY} on ollama, ${DEFAULT_CLOUD_CONCURRENCY} on anthropic — a starting point, not a measurement.`,
 };
 
 // ── epub-final ───────────────────────────────────────────────────────────────
@@ -1064,7 +1065,7 @@ const AN_CONCURRENCY: OptionSpec = {
   name: 'concurrency',
   type: 'string',
   placeholder: '<n>',
-  describe: `Verify calls in flight. Default ${DEFAULT_TEXT_CONCURRENCY} on openai, ${DEFAULT_OLLAMA_CONCURRENCY} on ollama, ${DEFAULT_CLOUD_CONCURRENCY} on anthropic. Changes speed, never a verdict.`,
+  describe: `Verify calls in flight. Default ${DEFAULT_TEXT_CONCURRENCY} on openai (${CRUCIBLE_CHAT_CONCURRENCY} on a Crucible's /openai door), ${DEFAULT_OLLAMA_CONCURRENCY} on ollama, ${DEFAULT_CLOUD_CONCURRENCY} on anthropic. Changes speed, never a verdict.`,
 };
 
 const AN_FRESH: OptionSpec = {
@@ -1138,7 +1139,7 @@ const CT_CONCURRENCY: OptionSpec = {
   name: 'concurrency',
   type: 'string',
   placeholder: '<n>',
-  describe: `Blocks in flight at once. Default ${DEFAULT_TEXT_CONCURRENCY} on openai, ${DEFAULT_OLLAMA_CONCURRENCY} on ollama, ${DEFAULT_CLOUD_CONCURRENCY} on anthropic. Changes the speed, never the text.`,
+  describe: `Blocks in flight at once. Default ${DEFAULT_TEXT_CONCURRENCY} on openai (${CRUCIBLE_CHAT_CONCURRENCY} on a Crucible's /openai door), ${DEFAULT_OLLAMA_CONCURRENCY} on ollama, ${DEFAULT_CLOUD_CONCURRENCY} on anthropic. Changes the speed, never the text.`,
 };
 
 /**

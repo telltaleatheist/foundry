@@ -126,15 +126,40 @@ import {
 } from './transport.js';
 
 /**
- * The status that means "not yet" on this door.
+ * The statuses that mean "not yet" on this door.
  *
- * Just the standard 429: a 5xx from an OpenAI-compatible server is a server
- * that is broken, and this program's rule about those has never changed — it is
- * the end of the run. Anthropic's 529 is not read here, because 529 is not a
- * standard status and an endpoint that meant something else by it would be
- * waited on for nothing (anthropic.ts declares its own list).
+ * 429 is the standard one and has always been here: a rate limit is a busy
+ * signal, and the run waits it out (`withBusyWait`, transport.ts).
+ *
+ * ── 503 AND 409 JOINED IT ON 2026-09-20, AND THEY ARE NOT A 5xx RELAXATION ──
+ *
+ * The old rule — *"a 5xx from an OpenAI-compatible server is a server that is
+ * broken, and that is the end of the run"* — was written when the only thing on
+ * this door was a vLLM, which is its model and is either up or not. It is now
+ * also a Crucible, an ORCHESTRATOR in front of a card it lends out one lane at a
+ * time, and those two statuses are the two sentences it says when the card is
+ * busy rather than broken:
+ *
+ *  - **503** — no lane free right now. A vLLM that is genuinely unwell says 500
+ *    or stops answering; 503 is *service unavailable*, which is the status for
+ *    "ask again", and that is what a Crucible means by it.
+ *  - **409** — the lane is LEASED, to another client or to another act of this
+ *    same book. `crucible-dispatch.ts` already treats a 409 as a holder line and
+ *    parks the row; a book that reached the chat door instead had the identical
+ *    condition end it.
+ *
+ * What the old rule cost is not an error somebody reads once: a Crucible that
+ * was mid-render when a clean pass started failed the whole book on request
+ * one, hours of answers thrown away (F2's twin), where waiting four seconds
+ * would have finished it. The wait is BOUNDED — `BUSY_ATTEMPTS` refusals and
+ * the provider's own answer is returned — so a server that really is down still
+ * ends the run, just with its own status in the sentence.
+ *
+ * Anthropic's 529 is still not read here: it is not a standard status, an
+ * endpoint that meant something else by it would be waited on for nothing, and
+ * `anthropic.ts` declares its own list.
  */
-const BUSY_STATUSES = [429] as const;
+const BUSY_STATUSES = [429, 503, 409] as const;
 
 /** The server did not do its job. Always names the endpoint. */
 export class VllmError extends Error {

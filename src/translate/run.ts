@@ -175,7 +175,9 @@ import {
   askModel, concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel,
   type ServerKind,
 } from './model-server.js';
-import { fetchTransport, usageLine, type Transport } from './transport.js';
+import {
+  deadlineForConcurrency, fetchTransport, usageLine, type Transport,
+} from './transport.js';
 import {
   chapterPosition, openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
 } from './records.js';
@@ -1576,7 +1578,8 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     );
   }
   const kind: ServerKind = opts.server ?? 'openai';
-  const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_TRANSLATE_CONCURRENCY);
+  const concurrency =
+    opts.concurrency ?? concurrencyFor(kind, DEFAULT_TRANSLATE_CONCURRENCY, opts.endpoint);
 
   /*
    * THE MODEL IS NOT RESOLVED YET, and the doors read its absence differently.
@@ -1590,7 +1593,13 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    */
   const wanted = opts.model;
   const endpoint = opts.endpoint;
-  const transport = opts.transport ?? fetchTransport();
+  /*
+   * THE DEADLINE AGREES WITH THE POOL, which it did not until 2026-09-20: a
+   * total 300 s armed at SEND gives the last of `n` requests the `n - 1` ahead
+   * of it out of its own budget against a server that queues rather than
+   * batches. `deadlineForConcurrency` (transport.ts) carries the measurement.
+   */
+  const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   const to = readLanguage(opts.to, '--to');
   const from = opts.from === undefined ? null : readLanguage(opts.from, '--from');
 
