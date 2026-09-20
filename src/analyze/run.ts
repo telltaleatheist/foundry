@@ -33,7 +33,7 @@ import * as fs from 'node:fs';
 
 import { stripBom } from '../bom.js';
 import {
-  concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel,
+  DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel, resolveConcurrency,
   type ModelServer, type ServerKind,
 } from '../translate/model-server.js';
 import {
@@ -272,7 +272,14 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
   // pool of `n` against a server that queues gives the last request `n`
   // requests' worth of waiting before its own clock starts. `src/clean/run.ts`
   // carries the whole argument; `deadlineForConcurrency` is transport.ts's.
-  const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_ANALYZE_CONCURRENCY, opts.endpoint);
+  const concurrency = await resolveConcurrency({
+    asked: opts.concurrency,
+    kind,
+    openaiDefault: DEFAULT_ANALYZE_CONCURRENCY,
+    endpoint: opts.endpoint,
+    transport: opts.transport,
+    log,
+  });
   const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   /*
    * PROVED FIRST, and it also RESOLVES: on the OpenAI door an absent model means

@@ -97,7 +97,7 @@ import type { BookBlock } from '../translate/bookrows.js';
 import { TranslationRecords } from '../translate/records.js';
 import { spliceTableGrid, type TableGrid } from '../translate/tablecells.js';
 import {
-  concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, type ServerKind,
+  DEFAULT_TEXT_CONCURRENCY, openModelServer, resolveConcurrency, type ServerKind,
 } from '../translate/model-server.js';
 import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
 
@@ -404,10 +404,14 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * BUILT, because the deadline is a function of it: a pool of `n` against a
    * server that queues gives the last request `n` requests' worth of waiting
    * before its own clock starts (`deadlineForConcurrency`, transport.ts).
-   * `concurrencyFor` reads the endpoint so a Crucible chat door gets its
-   * measured knee of four instead of a vLLM's twelve.
+   * `resolveConcurrency` asks a Crucible chat door what it ADMITS
+   * (`chat.max_in_flight`) and falls back to the measured knee of four; a vLLM
+   * states nothing and keeps its twelve. `--concurrency` wins over both, unasked.
    */
-  const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_TEXT_CONCURRENCY, endpoint);
+  const concurrency = await resolveConcurrency({
+    asked: opts.concurrency, kind, openaiDefault: DEFAULT_TEXT_CONCURRENCY, endpoint,
+    transport: opts.transport, log: opts.log,
+  });
   const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   /*
    * ── THE MODEL'S NAME IS NEEDED BEFORE ANY QUESTION IS ASKED ────────────────
@@ -764,6 +768,9 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   const settled = await askAboutEach(
     asks,
     runner,
+    // The act's own name, so a failure names the pass that was running rather
+    // than the pass this function was lifted out of (`askForEdits`).
+    'clean-text',
     narrationTextPrompt(),
     (done, total, label) => {
       /*

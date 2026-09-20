@@ -95,7 +95,7 @@ describe('F3b — the engine\'s own deadline says so in a field', () => {
       async release(): Promise<void> { /* nothing was loaded. */ },
     };
 
-    const settled = await askAboutEach(asks, runner, 'system', undefined, 'every-block');
+    const settled = await askAboutEach(asks, runner, 'clean-text', 'system', undefined, 'every-block');
 
     expect(calls).toBe(2);
     expect(settled.decisions.get('b1-1')!.status).toBe('ANSWERED');
@@ -116,7 +116,7 @@ describe('F3b — the engine\'s own deadline says so in a field', () => {
       async release(): Promise<void> { /* nothing was loaded. */ },
     };
 
-    await expect(askAboutEach(asks, runner, 'system', undefined, 'every-block'))
+    await expect(askAboutEach(asks, runner, 'clean-text', 'system', undefined, 'every-block'))
       .rejects.toThrow(/could not reach the model/);
     expect(calls).toBe(2);
   });
@@ -136,7 +136,7 @@ describe('F3b — the engine\'s own deadline says so in a field', () => {
       async release(): Promise<void> { /* nothing was loaded. */ },
     };
 
-    const settled = await askAboutEach(asks, runner, 'system', undefined, 'every-block');
+    const settled = await askAboutEach(asks, runner, 'clean-text', 'system', undefined, 'every-block');
     expect(calls).toBe(2);
     expect(settled.decisions.get('b1-1')!.status).toBe('ANSWERED');
   });
@@ -155,7 +155,7 @@ describe('F3b — the engine\'s own deadline says so in a field', () => {
       async release(): Promise<void> { /* nothing was loaded. */ },
     };
 
-    await expect(askAboutEach(asks, runner, 'system', undefined, 'every-block'))
+    await expect(askAboutEach(asks, runner, 'clean-text', 'system', undefined, 'every-block'))
       .rejects.toThrow(/no model named/);
     expect(calls).toBe(1);
   });

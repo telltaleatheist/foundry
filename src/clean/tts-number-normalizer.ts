@@ -1877,6 +1877,18 @@ function isTransportFailure(err: unknown): boolean {
  */
 async function askForEdits(
   runner: NumberNormalizerRunner,
+  /**
+   * WHICH PASS IS ASKING — the only thing in this function that is not true of
+   * every caller, and until 2026-09-20 the one thing it got wrong.
+   *
+   * The sentence below used to say *"The number-normalization pass could not
+   * reach the model"* to everybody, because this function was lifted out of that
+   * pass and the label came with it. `askAboutEach` has served the clean-text
+   * pass for months; the night the clean pass died against a busy Crucible, the
+   * failure it printed named a pass that was not running. A label that names the
+   * wrong act is worse than no label: somebody goes and looks at the wrong code.
+   */
+  pass: string,
   systemPrompt: string,
   input: string,
 ): Promise<{ edits: Array<{ find?: unknown; replace?: unknown }> } | { parseFail: string }> {
@@ -1891,7 +1903,7 @@ async function askForEdits(
       // THE ERROR, NOT ITS MESSAGE. The cause is a field on it; see above.
       if (attempt === 1 && isTransportFailure(err)) continue;
       throw new Error(
-        `The number-normalization pass could not reach the model '${runner.model}': ${message}`
+        `The ${pass} pass could not reach the model '${runner.model}': ${message}`
       );
     }
     lastRaw = answer;
@@ -2085,6 +2097,18 @@ function ruleRewrites(ruled: NumberRuleOutcome): NarrationTextRewrite[] {
 export async function askAboutEach(
   asks: readonly NormalizerAsk[],
   runner: NumberNormalizerRunner,
+  /**
+   * THE ACT'S OWN NAME, for the one sentence this function's failure path
+   * composes. `'clean-text'`, `'number-normalization'` — whatever the act calls
+   * itself in its own log lines.
+   *
+   * It is a PARAMETER and not a field on the runner because it is a property of
+   * the CALL: the same runner, opened once against one server, serves whichever
+   * pass asks it, and a name carried on the runner would be the opening act's
+   * name printed for the failure of another. See `askForEdits`, which is where
+   * the wrong name was printed and why.
+   */
+  pass: string,
   systemPrompt: string,
   onProgress: NumberNormalizationProgress | undefined,
   /**
@@ -2251,7 +2275,7 @@ export async function askAboutEach(
 
         const ruled = ruledOf.get(one.key)!;
         const fromRules = ruleRewrites(ruled);
-        const answer = await askForEdits(runner, systemPrompt, input);
+        const answer = await askForEdits(runner, pass, systemPrompt, input);
         let outcome: AskOutcome;
         if ('parseFail' in answer) {
           parseFailed++;
@@ -2573,7 +2597,8 @@ export async function normalizeTextBlocks(
   }));
 
   const { decisions, parseFailed, asked: targetsAsked } =
-    await askAboutEach(asks, runner, options.systemPrompt, options.onProgress);
+    await askAboutEach(
+      asks, runner, 'number-normalization', options.systemPrompt, options.onProgress);
 
   // The record and the rewritten text, built from the SAME settled decisions.
   const rewritten = [...blocks];

@@ -77,10 +77,10 @@
  * at all. Ollama batches far less well, which is the whole of why
  * `concurrencyFor` answers a smaller number there.
  */
-import { isCrucibleOpenAiDoor } from '../vlm/contract.js';
+import { chatActivityUrl, isCrucibleOpenAiDoor } from '../vlm/contract.js';
 import { isPageReadingModel } from '../vlm/models.js';
 import type { ChatTuning, Transport } from './transport.js';
-import { forgetUsage, normaliseEndpoint, TRANSLATE_TUNING } from './transport.js';
+import { fetchTransport, forgetUsage, normaliseEndpoint, TRANSLATE_TUNING } from './transport.js';
 import { chat, OllamaError, requireModel, unloadModel } from './ollama.js';
 import {
   complete, normaliseVllmEndpoint, requireServedModel, VllmError,
@@ -236,9 +236,24 @@ export const DEFAULT_CLOUD_CONCURRENCY = 4;
  * FOUR IS THE MEASURED KNEE (2026-09-08, clean-text against a Crucible chat
  * proxy: flat throughput past four, and the Mac's own MLX runner batches
  * decode-only) and it is Owen's interim ruling (§F.4): four in flight on the
- * Crucible chat door until the server states a number of its own. When it does,
- * the number will arrive on the placement and `--concurrency` will carry it,
- * which is why this is a DEFAULT and not a ceiling.
+ * Crucible chat door until the server states a number of its own.
+ *
+ * ── AND ON 2026-09-20 IT DOES, SO THIS IS NOW THE **UNSTATED** FALLBACK ─────
+ *
+ * Crucible 1.0.10 admits `chat.max_in_flight` chats per engine and publishes
+ * that number on `/v1/activity`; on the Mac's serial `mlx-lm` it is 2 (engine
+ * concurrency 1, plus one), and a thirteenth — or a fifth — request is not
+ * queued, it is REFUSED `503 chat_queue_full`. So four stopped being a
+ * conservative guess and became an over-send: the night this is written, four
+ * requests went out, two were admitted, and the two that were refused spent the
+ * whole pass being re-asked while the admitted pair generated.
+ *
+ * A measurement of a knee is a statement about throughput; an admission limit is
+ * a statement about what the server will ACCEPT. The second beats the first
+ * whenever the server makes it, which is why `askChatDepth` is asked first and
+ * this is what answers when nothing was said (a vLLM behind the same door states
+ * nothing and is not bounded — there, four is still the Sep 8 knee).
+ * `--concurrency` still wins over both.
  */
 export const CRUCIBLE_CHAT_CONCURRENCY = 4;
 
@@ -282,6 +297,219 @@ export function concurrencyFor(
   if (kind === 'anthropic') return DEFAULT_CLOUD_CONCURRENCY;
   if (endpoint !== undefined && isCrucibleOpenAiDoor(endpoint)) return CRUCIBLE_CHAT_CONCURRENCY;
   return openaiDefault;
+}
+
+/**
+ * ── THE SERVER'S OWN NUMBER, READ OUT OF A `/v1/activity` DOCUMENT ──────────
+ *
+ * `chat.max_in_flight` is how many chat completions a Crucible will ADMIT at
+ * once, which is not the same kind of fact as a throughput knee and beats one:
+ * a request past it is not queued, it is refused `503 chat_queue_full`. On a
+ * serial `mlx-lm` it is 2; a vLLM behind the same door states nothing, because
+ * it batches and is not bounded.
+ *
+ * NULL IS "IT DID NOT SAY" AND IS NEVER A ZERO, on the same rule the header
+ * gives `Retry-After` and `maxModelLen`: a server that published nothing, a
+ * server with no engine resident, and a server too old to know the field all
+ * mean one thing to a caller, and that thing is "choose for yourself". A number
+ * below one would be a document saying it admits nothing, which no client can
+ * act on and which this reads as silence rather than as a refusal to work.
+ *
+ * PURE, AND SEPARATE FROM THE FETCH, so a test proves the parse on the bytes a
+ * real server sent rather than on a mock of the reading.
+ */
+export function chatDepthStated(document: unknown): number | null {
+  if (typeof document !== 'object' || document === null) return null;
+  const chat = (document as Record<string, unknown>)['chat'];
+  if (typeof chat !== 'object' || chat === null) return null;
+  const stated = (chat as Record<string, unknown>)['max_in_flight'];
+  if (typeof stated !== 'number' || !Number.isFinite(stated) || stated < 1) return null;
+  return Math.floor(stated);
+}
+
+/** What the server said the number is DERIVED from, for the line. '' = it did not say. */
+function chatDepthBasis(document: unknown): string {
+  const chat = (document as { chat?: Record<string, unknown> } | null)?.chat;
+  const basis = chat?.['max_in_flight_basis'];
+  return typeof basis === 'string' && basis.trim() !== '' ? basis.trim() : '';
+}
+
+/**
+ * ASK THE DOOR'S SERVER HOW DEEP ITS CHAT POOL MAY BE. Null = it did not say.
+ *
+ * ── Why this is one GET and not a subscription ─────────────────────────────
+ *
+ * The pool is sized ONCE, before the transport is built, because the deadline is
+ * a function of it (`deadlineForConcurrency`). So this is asked once a run, at
+ * the same moment `openModelServer` proves the server, and what it costs is one
+ * round trip against a machine the run is about to spend an hour talking to.
+ *
+ * ── Why every failure is null and not a throw ──────────────────────────────
+ *
+ * This read is an OPTIMISATION of a number that already has a defensible
+ * default. A server that is not there will be named by `openModelServer` one
+ * line later, with a better sentence than anything this function could compose;
+ * ending the run here would mean a book refused because a courtesy read failed.
+ * Every arm therefore says what happened out loud and answers null — silence
+ * would be the one unacceptable outcome, because then a run at four against a
+ * server admitting two would look exactly like a run that had asked.
+ *
+ * ── The credential is the endpoint's, and is attached where it always is ────
+ *
+ * `/v1/activity` is authenticated. `fetchTransport` puts the endpoint's header
+ * map on every request it makes (`resolveEndpointHeaders`, backend/endpoint-
+ * headers.ts) — the same map the chat door itself is spoken to with, since it is
+ * a property of the ENDPOINT and not of the route — so this function neither
+ * sees nor handles a token. That is the whole reason it goes through the
+ * transport rather than calling `fetch` itself.
+ */
+export async function askChatDepth(
+  endpoint: string,
+  options: {
+    /** Injected so a test proves this without a server. Default: the real one. */
+    transport?: Transport;
+    log?: (line: string) => void;
+  } = {},
+): Promise<number | null> {
+  const url = chatActivityUrl(endpoint);
+  if (url === null) return null;
+  const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`));
+  /*
+   * A SHORT CLOCK OF ITS OWN, and deliberately not the run's. `REQUEST_TIMEOUT_MS`
+   * is sized for a 32b model on a long paragraph; a status read that takes five
+   * minutes is a server that will not serve this book either, and waiting the
+   * run's full budget for it would put five silent minutes in front of every
+   * pass against a wedged machine.
+   */
+  const transport = options.transport ?? fetchTransport(CHAT_DEPTH_TIMEOUT_MS);
+  let body: string;
+  try {
+    const response = await transport.get(url);
+    if (response.status !== 200) {
+      log(
+        `${url} answered ${response.status} rather than publishing what it admits, so this run `
+        + `keeps ${CRUCIBLE_CHAT_CONCURRENCY} requests in flight. A Crucible older than 1.0.10 `
+        + 'states no chat depth, which is this answer.',
+      );
+      return null;
+    }
+    body = response.body;
+  } catch (error) {
+    log(
+      `${url} could not be read (${error instanceof Error ? error.message : String(error)}), so `
+      + `this run keeps ${CRUCIBLE_CHAT_CONCURRENCY} requests in flight. Whether the server is `
+      + 'there at all is answered next, by the model proof.',
+    );
+    return null;
+  }
+  let document: unknown;
+  try {
+    document = JSON.parse(body);
+  } catch {
+    log(
+      `${url} did not answer with JSON, so this run keeps ${CRUCIBLE_CHAT_CONCURRENCY} requests `
+      + 'in flight.',
+    );
+    return null;
+  }
+  const stated = chatDepthStated(document);
+  if (stated === null) {
+    log(
+      `${url} states no chat depth — no engine resident, or a server that does not bound chats `
+      + `(a vLLM batches and is not bounded) — so this run keeps ${CRUCIBLE_CHAT_CONCURRENCY} `
+      + 'requests in flight.',
+    );
+    return null;
+  }
+  const basis = chatDepthBasis(document);
+  log(
+    `${url} admits ${stated} chat${stated === 1 ? '' : 's'} at once`
+    + `${basis === '' ? '' : ` (${basis})`}, so this run keeps ${stated} request`
+    + `${stated === 1 ? '' : 's'} in flight. A request past that is refused, not queued.`,
+  );
+  return stated;
+}
+
+/**
+ * How long the depth read may take before the run stops waiting for it. See
+ * `askChatDepth` — this is a status read in front of a book, not a generation.
+ */
+const CHAT_DEPTH_TIMEOUT_MS = 10_000;
+
+/**
+ * ── HOW MANY REQUESTS THIS RUN KEEPS IN FLIGHT — THE WHOLE RULE, ONE PLACE ──
+ *
+ * What a run WANTS is asked for in two rungs:
+ *
+ *  1. `--concurrency`, when the run named one — a person, or the app's placement
+ *     (`Placement.concurrency`, app/electron/crucible-dispatch.ts), stating a
+ *     preference about hardware they know something about.
+ *  2. `concurrencyFor` otherwise, which is where a vLLM, an Ollama, a provider
+ *     and a Crucible that states nothing all land. It STAYS PURE and stays the
+ *     owner of that rung, because it is a rule about DOORS with no network in
+ *     it; this function is the one that knows there is a server to ask.
+ *
+ * ── AND THEN THE SERVER'S ADMISSION LIMIT CLAMPS IT, FLAG OR NO FLAG ───────
+ *
+ * `chat.max_in_flight` is not a preference and is not a throughput opinion: it
+ * is what the other end will ACCEPT. Past it a request is not queued, it is
+ * refused `503 chat_queue_full` — so a pool above it is never right, whoever
+ * asked for it. It cost a whole clean pass on 2026-09-20 (BUG-HUNT §A): four
+ * went out against an admission of two, and the two refused requests spent the
+ * run being re-asked while the admitted two generated.
+ *
+ * SO THE FLAG DOES NOT WIN UPWARDS, AND THAT IS DELIBERATE. The usual rule in
+ * this program is that an explicit number is the last word, and the exception is
+ * paid for: the number arriving on `--concurrency` is most often not a person at
+ * all but a PLACEMENT composed by a build of the app that may be older than the
+ * server it is placing against — which is exactly the shape of the night this
+ * closes, where a running app kept sending 4 at a server admitting 2 and could
+ * not be corrected without restarting it. A stale number about somebody else's
+ * backend must not outrank that backend's own answer.
+ *
+ * IT DOES WIN DOWNWARDS. A flag below the stated maximum is honoured untouched:
+ * "fewer than the server would allow" is a preference the server has no opinion
+ * about, and a person throttling a run they are watching means it.
+ *
+ * WHEN THE SERVER STATES NOTHING, the flag or the door's default stands whole —
+ * null is "it did not say" and never a limit of zero (`chatDepthStated`).
+ */
+export async function resolveConcurrency(options: {
+  /**
+   * `--concurrency`, if the run named one. Honoured below the server's stated
+   * admission limit and CLAMPED to it above — see the header.
+   */
+  asked?: number;
+  kind: ServerKind;
+  /** This act's own OpenAI-door number — see `concurrencyFor`'s header. */
+  openaiDefault: number;
+  endpoint?: string;
+  transport?: Transport;
+  log?: (line: string) => void;
+}): Promise<number> {
+  const wanted =
+    options.asked ?? concurrencyFor(options.kind, options.openaiDefault, options.endpoint);
+  /*
+   * NOTHING IS ASKED OF A DOOR THAT PUBLISHES NO SUCH THING. Ollama, a cloud
+   * provider and an anonymous vLLM have no `/v1/activity` to read, and a round
+   * trip in front of every run of theirs would buy a null.
+   */
+  if (options.kind !== 'openai' || options.endpoint === undefined) return wanted;
+  if (!isCrucibleOpenAiDoor(options.endpoint)) return wanted;
+  const stated = await askChatDepth(options.endpoint, {
+    transport: options.transport,
+    log: options.log,
+  });
+  if (stated === null || wanted <= stated) return wanted;
+  const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`));
+  log(
+    `This run asked for ${wanted} requests in flight and the server admits ${stated}, so it will `
+    + `keep ${stated}. A request past a server's admission limit is refused (503 chat_queue_full) `
+    + 'rather than queued, so a deeper pool buys nothing and spends the run retrying; the number '
+    + 'asked for may also have been composed by a build older than the server. Ask for fewer than '
+    + `${stated} and that is honoured.`,
+  );
+  return stated;
 }
 
 /**

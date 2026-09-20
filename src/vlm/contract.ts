@@ -120,6 +120,31 @@ export function isCrucibleOpenAiDoor(endpoint: string): boolean {
   return base.endsWith(OPENAI_DOOR) || base.endsWith('/openai');
 }
 
+/**
+ * `<root>/v1/activity` FOR A CRUCIBLE CHAT DOOR, or null when this is not one.
+ *
+ * The same composition `pagesInfoUrl` makes and for the same reason it lives
+ * here: the suffix a Crucible mounts its OpenAI routes at is declared in this
+ * file once (`OPENAI_DOOR`), so the day the mount moves there is one edit rather
+ * than two functions in two packages quietly disagreeing about where the root is.
+ *
+ * IT ANSWERS NULL RATHER THAN THROWING, which is the difference between this and
+ * `pagesInfoUrl`. A reading cannot proceed without the contract at `/v1/info`, so
+ * an endpoint that is not a Crucible is an error there. This one is asked by
+ * `concurrencyFor` about ANY OpenAI-shaped endpoint — an anonymous vLLM, a cloud
+ * provider — and "that server does not publish a chat depth" is the ordinary
+ * answer for most of them, not a fault.
+ *
+ * BOTH SPELLINGS, for `isCrucibleOpenAiDoor`'s reason: the placement composes
+ * `<url>/openai` and a person types either.
+ */
+export function chatActivityUrl(endpoint: string): string | null {
+  const base = endpoint.trim().replace(/\/+$/, '');
+  if (base.endsWith(OPENAI_DOOR)) return `${base.slice(0, -OPENAI_DOOR.length)}/v1/activity`;
+  if (base.endsWith('/openai')) return `${base.slice(0, -'/openai'.length)}/v1/activity`;
+  return null;
+}
+
 export function pagesInfoUrl(endpoint: string): string {
   const base = endpoint.trim().replace(/\/+$/, '');
   if (!base.endsWith(OPENAI_DOOR)) {

@@ -464,6 +464,17 @@ thrashed card; an Ollama pinned to one parallel slot (`OLLAMA_NUM_PARALLEL=1`)
 queues them and gains nothing, which is a setting on the server rather than a
 reason to type a different number here.
 
+**AND ON A CRUCIBLE CHAT DOOR THE SERVER STATES THE NUMBER (2026-09-20).**
+`chat.max_in_flight` on `/v1/activity` is how many chat completions that server
+will ADMIT — 2 on the Mac's serial `mlx-lm`, nothing at all from a vLLM, which
+batches — and past it a request is refused `503 chat_queue_full` rather than
+queued. So the pool is the server's number when it states one, **4 is the
+unstated fallback** (`CRUCIBLE_CHAT_CONCURRENCY`, the Sep 8 knee), and
+`--concurrency` is honoured below the stated maximum and CLAMPED DOWN to it
+above — the number on that flag is usually a placement composed by a build of
+the app older than the server it is placing against. `resolveConcurrency` owns
+the whole rule; docs/VLLM.md §2b carries the argument and the night it is about.
+
 **IT CHANGES NOTHING ABOUT WHAT THE PASS DECIDES.** Not the transform, not the
 prompt, not `NORMALIZER_VERSION`, not `PUNCTUATION_SPEC_VERSION`, not the records
 key, and not one record already written — **a book cleaned at any concurrency is

@@ -302,17 +302,40 @@ function stderrLine(line: string): void {
  * thirty, which is long enough to outlast a token bucket refilling and short
  * enough that six attempts is under two minutes rather than an afternoon.
  *
- * AND IT IS BOUNDED. Six attempts, then the response is handed back EXACTLY as
- * it arrived and the caller's normal failure path runs — the block is refused
- * with the provider's own words in it. A limit that retried forever would turn
- * "your key is over its monthly cap" into a job that never finishes and never
- * says why.
+ * ── AND IT IS BOUNDED BY A CLOCK, WHICH IS NOT WHAT IT USED TO BE ──────────
+ *
+ * It was SIX ATTEMPTS. That is the right shape for a token bucket, whose refill
+ * is a property of a key and has nothing to do with how long this program is
+ * willing to wait, and it is the WRONG shape for a serial engine: a `503
+ * chat_queue_full` from a Crucible means *"a slot frees when the block in front
+ * of you finishes"*, and the block in front takes as long as it takes. On
+ * 2026-09-20 four requests went out against a server admitting two; the two
+ * refused ones burned their six attempts at the server's own 4 s `Retry-After`
+ * — twenty-four seconds — while the admitted two were a third of the way
+ * through ~30 s blocks, and the whole pass then failed on a condition that was
+ * about to clear. Six attempts is not a budget; it is six attempts.
+ *
+ * So the bound is TIME, and it is the SAME time a request gets to be answered
+ * in: `REQUEST_TIMEOUT_MS`. Waiting for a slot and waiting for an answer are the
+ * same wait from the caller's side — a block that takes five minutes to come
+ * back is a block that takes five minutes, and it should not matter whether the
+ * minutes went on a queue or on decode. One clock, stated once, and a pool's
+ * transport deadline (`deadlineForConcurrency`) is already `n` times it, so the
+ * wait can never outlast the request that contains it.
+ *
+ * THE ATTEMPT CAP SURVIVES AS A GUARD AND NOT AS THE BOUND. A server answering
+ * `retry-after: 0` for ever would otherwise spin this loop as fast as the
+ * network allows; sixty attempts is far past any honest wait and cheap to carry.
+ *
+ * When either bound is reached the response is handed back EXACTLY as it
+ * arrived and the caller's normal failure path runs, with a line naming how long
+ * this program waited and what the server said while it did.
  *
  * ONE COPY, AND THE CALLERS DO NOT KNOW ABOUT IT. Both cloud doors send through
  * here; Ollama does not, because a local Ollama queues rather than refusing and
  * a wait there would be a wait for nothing.
  */
-const BUSY_ATTEMPTS = 6;
+const BUSY_ATTEMPTS = 60;
 const BUSY_FIRST_WAIT_MS = 2_000;
 const BUSY_MAX_WAIT_MS = 30_000;
 const RETRY_AFTER_CAP_MS = 60_000;
@@ -350,6 +373,20 @@ export function retryAfterMs(headers: Readonly<Record<string, string>> | undefin
   return wait <= 0 ? 0 : Math.min(wait, RETRY_AFTER_CAP_MS);
 }
 
+/**
+ * THE SERVER'S OWN WORDS, TRIMMED, for the one line that ends a busy wait.
+ *
+ * Quoted rather than summarised because a `503` from a queue and a `503` from a
+ * misconfiguration wear the same status and are told apart only by what the
+ * body says. Bounded at 200 characters: this goes in a log line beside a number,
+ * not into a report, and an HTML error page pasted whole would bury it.
+ */
+function saidBy(body: string): string {
+  const said = body.trim().replace(/\s+/g, ' ');
+  if (said === '') return '(it said nothing)';
+  return said.length > 200 ? `${said.slice(0, 200)}…` : said;
+}
+
 /** Send, and wait out the statuses this door declares to mean "not yet". */
 export async function withBusyWait(
   send: () => Promise<HttpResponse>,
@@ -358,28 +395,55 @@ export async function withBusyWait(
     retryOn: readonly number[];
     /** The URL the wait is about, for the line. Never carries a credential. */
     where: string;
+    /**
+     * HOW LONG THIS REQUEST MAY SPEND WAITING FOR A SLOT, in milliseconds.
+     *
+     * Defaults to `REQUEST_TIMEOUT_MS` — the same budget the request gets to be
+     * ANSWERED in — because from the caller's side the two waits are one wait;
+     * the header above carries the argument. A caller with a different clock
+     * states it; nothing in this program does today, and a door that starts to
+     * should say why in its own file rather than here.
+     */
+    budgetMs?: number;
     log?: (line: string) => void;
   },
 ): Promise<HttpResponse> {
   const log = options.log ?? stderrLine;
+  const budgetMs = options.budgetMs ?? REQUEST_TIMEOUT_MS;
+  const startedAt = Date.now();
+  const deadline = startedAt + budgetMs;
   let backoff = BUSY_FIRST_WAIT_MS;
   for (let attempt = 1; ; attempt += 1) {
     const response = await send();
     if (!options.retryOn.includes(response.status)) return response;
-    if (attempt >= BUSY_ATTEMPTS) {
+    const said = retryAfterMs(response.headers);
+    const wait = said ?? backoff;
+    const waited = Date.now() - startedAt;
+    /*
+     * THE NEXT WAIT IS MEASURED AGAINST THE BUDGET, not the last one. Sleeping
+     * past the deadline and only then noticing would spend time this request was
+     * never allowed to spend, and would report a wait longer than the budget it
+     * was refused for.
+     */
+    const overBudget = Date.now() + wait > deadline;
+    if (overBudget || attempt >= BUSY_ATTEMPTS) {
       log(
-        `${options.where} answered ${response.status} (${busyReason(response.status)}) on attempt `
-        + `${attempt} of ${BUSY_ATTEMPTS} — that is the last one, so this request is refused with `
-        + 'the provider\'s own answer.',
+        `${options.where} answered ${response.status} (${busyReason(response.status)}) and was `
+        + `still refusing after ${(waited / 1000).toFixed(1)}s of waiting for a slot`
+        + (overBudget
+          ? ` — the next wait of ${(wait / 1000).toFixed(1)}s would outrun this request's `
+            + `${(budgetMs / 1000).toFixed(0)}s budget`
+          : ` and ${attempt} attempts, which is this loop's guard against a server that says `
+            + `${response.status} for ever`)
+        + `, so it is refused with the server's own answer: ${saidBy(response.body)}`,
       );
       return response;
     }
-    const said = retryAfterMs(response.headers);
-    const wait = said ?? backoff;
     log(
       `${options.where} answered ${response.status} (${busyReason(response.status)}) — waiting `
       + `${(wait / 1000).toFixed(1)}s${said === null ? '' : ' (its own retry-after)'} and asking `
-      + `again, attempt ${attempt + 1} of ${BUSY_ATTEMPTS}.`,
+      + `again; ${(waited / 1000).toFixed(1)}s of this request's `
+      + `${(budgetMs / 1000).toFixed(0)}s slot budget spent so far.`,
     );
     await new Promise<void>((resolve) => { setTimeout(resolve, wait); });
     backoff = Math.min(backoff * 2, BUSY_MAX_WAIT_MS);

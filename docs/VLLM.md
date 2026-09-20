@@ -85,7 +85,7 @@ on every line it composes, so a job never depends on the engine's fallback.
 | The constrained answer (`analyze`) | `response_format: {type:'json_schema', json_schema:{…, strict:true}` | `format: <the schema object>` on `/api/generate` | one tool whose `input_schema` IS that schema, forced with `tool_choice: {type:'tool', name}`; the verdict is read from the `tool_use` block's `input` |
 | Truncation signal | `finish_reason === 'length'` | `done_reason === 'length'` | `stop_reason === 'max_tokens'` |
 | A 429 | **waited out**, not the end of the run (§2a) | never asked for — Ollama queues instead | **waited out**, and a 529 "overloaded" with it |
-| `--concurrency` default | 12 (`DEFAULT_TEXT_CONCURRENCY`) | 4 (`DEFAULT_OLLAMA_CONCURRENCY`) | 4 (`DEFAULT_CLOUD_CONCURRENCY`) |
+| `--concurrency` default | 12 (`DEFAULT_TEXT_CONCURRENCY`) on an anonymous vLLM; on a **Crucible chat door** the server's own stated `chat.max_in_flight`, and 4 (`CRUCIBLE_CHAT_CONCURRENCY`) when it states none — §2b | 4 (`DEFAULT_OLLAMA_CONCURRENCY`) | 4 (`DEFAULT_CLOUD_CONCURRENCY`) |
 | Loading | **never** — the operator makes a model resident before a pass is spawned (§5) | **never** — foundry does not pull and does not warm | **never** — there is nothing to load |
 | End of the run | **nothing** — a pass ending is not a reason to take a model off a card somebody else owns | **unloaded, always** (`keep_alive: 0`), success or failure, and there is no flag to keep it | **nothing** — there was never a card |
 
@@ -166,6 +166,52 @@ a number invented here would be wrong in a way that looks authoritative. The app
 multiplies. The tally is reset by `openModelServer`, which every run calls
 exactly once before its first request, and a door that reported no usage at all
 prints nothing rather than a line of zeroes.
+
+### 2b. How many requests are in flight — the SERVER states it (2026-09-20)
+
+**The number is `chat.max_in_flight`, published by the server on `/v1/activity`,
+and 4 is the fallback for a server that states none.** Crucible 1.0.10 ADMITS
+that many chat completions per engine and refuses the rest `503
+chat_queue_full`, with `details.max_in_flight`, `details.max_in_flight_basis`,
+`details.retry_after` and a `Retry-After` header. On the Mac's serial `mlx-lm`
+it is 2 (engine concurrency 1, plus one). A vLLM behind the same door states
+nothing — it batches and is not bounded — and `null` there means *"it did not
+say"*, never a limit of zero.
+
+`resolveConcurrency` (src/translate/model-server.ts) owns the whole rule and
+every text act calls it:
+
+| what | number |
+|---|---|
+| `--concurrency` given | that, **clamped down** to the stated maximum if it is higher |
+| nothing given, Crucible states a depth | the stated depth |
+| nothing given, nothing stated | `concurrencyFor` — 12 on a vLLM, 4 on a Crucible chat door, 4 on Ollama and on a provider |
+
+**The flag does not win upwards, and that exception is paid for.** The number
+arriving on `--concurrency` is most often not a person: it is
+`Placement.concurrency`, composed by whatever build of the app is running, and a
+running dist cannot be corrected without a restart. An admission limit is not an
+opinion about throughput to be weighed against the Sep 8 knee — it is what the
+other end will ACCEPT, and a pool above it is never right whoever asked for it.
+A flag BELOW the stated maximum is honoured untouched: fewer is a preference the
+server has no view on.
+
+**Why it matters, measured the hard way.** On 2026-09-20 the clean pass sent
+four at a server admitting two. Two were admitted and generated ~30 s blocks;
+the two refused burned six attempts at the server's 4 s `Retry-After` and then
+failed the whole pass on a condition seconds from clearing. Both halves are
+fixed: the pool now comes from the server, and the busy wait is a CLOCK
+(`REQUEST_TIMEOUT_MS`, the same budget a request gets to be answered in) rather
+than six attempts — 60 attempts survives only as a guard against a server
+answering `retry-after: 0` for ever. Tests:
+`test/translate/chat-pool-from-server.test.ts`, and the placement's own over
+real HTTP in `app/test/crucible-http.test.ts`.
+
+**The app reads the same field for the placement** (`chatDepthFor`,
+app/electron/crucible-dispatch.ts), and does so with a raw authenticated GET
+rather than through the SDK: `@crucible/client` 1.0.10's `Activity.chat` parses
+`in_flight` and `rows` and drops `max_in_flight`. The day the SDK carries it,
+that function is one line of `client.activity()`.
 
 ### analyze asks a different KIND of question
 
@@ -479,7 +525,8 @@ starts from the right mechanism.
   number `DEFAULT_VLM_CONCURRENCY` was measured at against a vLLM on this
   project's own hardware, borrowed because it is the same scheduler being fed.
   `--concurrency` overrides it, and on a small card that is the first flag to
-  reach for.
+  reach for. It is also only reached now when no server states a depth of its
+  own — see §2b.
 - **No tests were added** (house rule: none unasked). None was invalidated —
   823 still pass.
 

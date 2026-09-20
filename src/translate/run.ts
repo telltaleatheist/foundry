@@ -172,7 +172,7 @@ import {
   type MarkerCounter, type MaskedBlock,
 } from './markers.js';
 import {
-  askModel, concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel,
+  askModel, DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel, resolveConcurrency,
   type ServerKind,
 } from './model-server.js';
 import {
@@ -1578,8 +1578,19 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     );
   }
   const kind: ServerKind = opts.server ?? 'openai';
-  const concurrency =
-    opts.concurrency ?? concurrencyFor(kind, DEFAULT_TRANSLATE_CONCURRENCY, opts.endpoint);
+  /*
+   * A CRUCIBLE CHAT DOOR IS ASKED WHAT IT ADMITS before the pool is sized —
+   * `resolveConcurrency` (model-server.ts) carries the three rungs and the night
+   * they are about. `--concurrency` wins, and when it is given nothing is asked.
+   */
+  const concurrency = await resolveConcurrency({
+    asked: opts.concurrency,
+    kind,
+    openaiDefault: DEFAULT_TRANSLATE_CONCURRENCY,
+    endpoint: opts.endpoint,
+    transport: opts.transport,
+    log: opts.log,
+  });
 
   /*
    * THE MODEL IS NOT RESOLVED YET, and the doors read its absence differently.

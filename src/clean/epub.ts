@@ -90,7 +90,7 @@ import { BookError, readFoundryBook, type BookDocument } from '../translate/book
 import { findBlocks, spliceAll, type BlockSite } from '../translate/blocks.js';
 import { TranslationBank } from '../translate/bank.js';
 import {
-  concurrencyFor, DEFAULT_TEXT_CONCURRENCY, openModelServer, type ServerKind,
+  DEFAULT_TEXT_CONCURRENCY, openModelServer, resolveConcurrency, type ServerKind,
 } from '../translate/model-server.js';
 import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
 
@@ -364,8 +364,12 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
   const endpoint = opts.endpoint;
   const kind: ServerKind = opts.server ?? 'openai';
   // Decided before the transport, because the deadline is a function of it —
-  // the book route's header (`src/clean/run.ts`) carries the whole argument.
-  const concurrency = opts.concurrency ?? concurrencyFor(kind, DEFAULT_TEXT_CONCURRENCY, endpoint);
+  // the book route's header (`src/clean/run.ts`) carries the whole argument, and
+  // `resolveConcurrency` (translate/model-server.ts) owns the three rungs.
+  const concurrency = await resolveConcurrency({
+    asked: opts.concurrency, kind, openaiDefault: DEFAULT_TEXT_CONCURRENCY, endpoint,
+    transport: opts.transport, log: opts.log,
+  });
   const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   /*
    * Resolved HERE and not at the runner, the book route's rule for the book
@@ -600,6 +604,8 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
   const settled = await askAboutEach(
     asks,
     runner,
+    // The act's own name — src/clean/run.ts carries the argument.
+    'clean-text',
     narrationTextPrompt(),
     (done, total, label) => {
       // `clean-text: <done>/<total>` — BookForge mirrors the shape, so it stays
