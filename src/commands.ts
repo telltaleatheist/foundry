@@ -3380,7 +3380,9 @@ export const COMMANDS: readonly Command[] = [
       'THREE KINDS OF SERVER. --server openai (the default) asks each verdict of an',
       'OpenAI-compatible server with the schema as response_format, and that',
       'server batches the calls in flight together — so --concurrency defaults to',
-      `${DEFAULT_TEXT_CONCURRENCY} there. --server ollama asks the same question on /api/generate`,
+      `${DEFAULT_TEXT_CONCURRENCY} there — ${CRUCIBLE_CHAT_CONCURRENCY} when that server is a`,
+      'Crucible, whose /openai door fronts one engine that answers one request at a',
+      'time, so a deeper pool only queues. --server ollama asks the same question on /api/generate',
       `with the same schema as \`format\`, at ${DEFAULT_OLLAMA_ENDPOINT} unless`,
       `--endpoint says otherwise, ${DEFAULT_OLLAMA_CONCURRENCY} in flight, and with one num_ctx pinned for`,
       'the whole stage because Ollama reloads the model on any change to it. The',
@@ -3760,7 +3762,8 @@ export const COMMANDS: readonly Command[] = [
       'the result.',
       '',
       `--concurrency puts N of those calls in flight at once, default `
-      + `${DEFAULT_TEXT_CONCURRENCY} on openai, ${DEFAULT_OLLAMA_CONCURRENCY} on ollama and `
+      + `${DEFAULT_TEXT_CONCURRENCY} on openai (${CRUCIBLE_CHAT_CONCURRENCY} on a Crucible's `
+      + `/openai door, which fronts a serial engine), ${DEFAULT_OLLAMA_CONCURRENCY} on ollama and `
       + `${DEFAULT_CLOUD_CONCURRENCY} on anthropic —`,
       'translate\'s numbers for translate\'s reason: a server batches concurrent',
       'requests and a serial run leaves the GPU idle between blocks, which on a',
@@ -3887,7 +3890,10 @@ export const COMMANDS: readonly Command[] = [
       'THREE KINDS OF SERVER, SAID OUT LOUD. --server openai (the default) speaks',
       '/v1/chat/completions, which batches the requests in flight together instead',
       `of running them one behind another, so --concurrency defaults to ${DEFAULT_TEXT_CONCURRENCY}`,
-      'there and the URL defaults to backend.endpointUrl in settings. --model may',
+      `there — ${CRUCIBLE_CHAT_CONCURRENCY} when the URL is a Crucible's /openai door, which fronts`,
+      'one engine answering one request at a time, so a deeper pool only queues',
+      'with its deadlines already running. The URL defaults to backend.endpointUrl',
+      'in settings. --model may',
       'be left off on that door: the server holds one resident model and the served',
       'id is used and recorded. Its context window is the server\'s own, so nothing',
       'is pinned and a book whose longest block cannot fit it beside a full answer',
