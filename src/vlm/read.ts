@@ -55,7 +55,9 @@ import { requireVlmModel, type VlmModelDef } from './models.js';
 import {
   openReadingsBank,
   readCompletionMarker,
+  readRenderMode,
   swapPendingIntoPlace,
+  writeRenderMode,
   type ReadingsBankAction,
   type VlmCompletion,
   type VlmReadings,
@@ -476,6 +478,22 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
    */
   const maxPixels = contract !== null ? contract.maxPixels : opts.maxPixels;
 
+  /*
+   * THE BOOK'S CANONICAL RENDER SIZE, so a batching server sees one grid.
+   *
+   * A recorded mode is one an EARLIER run of this book chose — read here, keyed
+   * by the bank (the PDF's sha), and handed to the helper so a RESUME snaps to
+   * the SAME grid rather than recomputing the mode off whatever page subset it
+   * renders this time (`readings.ts`, `vlm_page.py`). On a first run there is
+   * none: the helper computes it, reports it in the document event, and it is
+   * recorded there and then — before pages are rendered, so an interrupted first
+   * run still leaves it for its resume. A run with no bank never records one and
+   * lets the helper compute it fresh each time, which is deterministic anyway.
+   */
+  const recordedMode = opts.readingsPath !== undefined
+    ? readRenderMode(opts.readingsPath)
+    : null;
+
   const run = await bridge.readPages({
     source: opts.source,
     model,
@@ -483,6 +501,21 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
     ...(opts.python ? { python: opts.python } : {}),
     ...(geometric || viaEndpoint || opts.keepRenders ? { rendersDir } : {}),
     ...(maxPixels !== undefined ? { maxPixels } : {}),
+    // Snap near-identical pages onto one grid so a batching server sees one deep
+    // batch rather than jitter split across adjacent grids. The bank-producing
+    // route asks for it; the helper snaps to `renderMode` when this run was handed
+    // one (a resume) or computes the book's mode and snaps to that (a first run).
+    snap: true,
+    ...(recordedMode !== null ? { renderMode: [recordedMode.width, recordedMode.height] as const } : {}),
+    onDocument: (document) => {
+      // First run only: bank the mode the helper chose the moment it lands, so
+      // the resume of an interrupted read is handed it. A run with a recorded
+      // mode passed it IN and the helper echoed the same number, so there is
+      // nothing new to write; a run with no bank has nowhere to write it.
+      if (opts.readingsPath === undefined || recordedMode !== null) return;
+      const mode = document.renderMode;
+      if (mode != null) writeRenderMode(opts.readingsPath, { width: mode[0], height: mode[1] });
+    },
     ...(viaEndpoint || replaying ? { renderOnly: true } : {}),
     ...(geometric ? { grayscale: true, unreadablePages: 'record' as const } : {}),
     ...(readings !== null ? { skipPages: banked } : {}),

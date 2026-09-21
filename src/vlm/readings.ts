@@ -379,6 +379,73 @@ export function writeCompletionMarker(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The canonical render size
+//
+// The snap "mode": the one pixel grid this book's near-identical pages are all
+// rasterised to, so a batching VLM server collapses them into one deep batch
+// instead of splitting jitter across adjacent grids (`vlm_page.py`, "ONE GRID
+// FOR A BOOK OF NEARLY-IDENTICAL PAGES"). It is a property of the WHOLE book, so
+// it is recorded once, beside the bank, keyed by the same PDF sha the bank is:
+//
+//   readings/<key>.render-mode.json    the size every page of this book snaps to
+//
+// It is written the moment the helper reports it — before pages are rendered, so
+// even an interrupted first run leaves it — and read back on the next run, so a
+// RESUME snaps to the SAME grid rather than recomputing the mode off whatever
+// page subset it happens to render. Recomputation is deterministic over the same
+// pages, so this is belt-and-braces against a subset that differs; it is not
+// load-bearing for correctness, which is why a malformed one degrades to a
+// recompute rather than failing a ninety-minute run (see `readRenderMode`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A book's canonical render size, in render pixels. */
+export interface VlmRenderMode {
+  width: number;
+  height: number;
+}
+
+/** `<bank>.render-mode.json`, beside the bank and named for it. */
+export function renderModePath(readingsPath: string): string {
+  const resolved = path.resolve(readingsPath);
+  return `${resolved.replace(/\.jsonl$/i, '')}.render-mode.json`;
+}
+
+/**
+ * The recorded mode, or null where there is none to read.
+ *
+ * UNLIKE THE BANK'S OTHER SIDECARS, a file here that will not parse is NOT a
+ * refusal — it is treated as absent and the mode is recomputed. The completion
+ * marker and the pending request refuse a malformed file because believing a
+ * wrong one deletes GPU-hours; this one only chooses a pixel grid, the helper
+ * recomputes the same grid deterministically over the same pages, and a wrong
+ * grid costs at most some batch depth, never a page's correctness (every page
+ * banks the geometry it was actually read at). So a corrupt optimisation sidecar
+ * is weather, reconciled by recomputing, not a fault that stops the book.
+ */
+export function readRenderMode(readingsPath: string): VlmRenderMode | null {
+  const modePath = renderModePath(readingsPath);
+  if (!fs.existsSync(modePath)) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stripBom(fs.readFileSync(modePath, 'utf8')));
+  } catch {
+    return null;
+  }
+  const record = parsed as { width?: unknown; height?: unknown };
+  if (typeof record.width !== 'number' || typeof record.height !== 'number') return null;
+  return { width: record.width, height: record.height };
+}
+
+/** Write the mode atomically — temp file beside the target, then rename. */
+export function writeRenderMode(readingsPath: string, mode: VlmRenderMode): void {
+  const modePath = renderModePath(readingsPath);
+  ensureDir(path.dirname(modePath));
+  const tmp = `${modePath}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(mode, null, 2)}\n`, 'utf8');
+  fs.renameSync(tmp, modePath);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The pending bank
 //
 // A reading in progress that is not allowed to destroy the reading already

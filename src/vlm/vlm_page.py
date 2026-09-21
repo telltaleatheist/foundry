@@ -291,6 +291,33 @@ class PdfPages(object):
     def render(self, index, dpi):
         return self.doc[index].get_pixmap(dpi=dpi)
 
+    def render_size(self, index, dpi):
+        """This page's TRUE render size in pixels, WITHOUT drawing it.
+
+        The RENDER size the snap is judged on: the page box in points times
+        dpi/72, which is exactly the pixel grid `get_pixmap(dpi=dpi)` produces.
+        Cheap — it reads the page rectangle and multiplies, nothing is
+        rasterised — so the pre-pass over a whole book costs no GPU and no paint.
+        """
+        rect = self.doc[index].rect
+        return rect.width * dpi / 72.0, rect.height * dpi / 72.0
+
+    def render_to(self, index, width, height):
+        """Draw the page onto an EXACT width x height pixel grid.
+
+        `get_pixmap(dpi=dpi)` scales the page by dpi/72 on both axes; a Matrix
+        that scales the page box onto (width, height) draws the SAME page at the
+        pixel grid we name instead. This is the whole of the snap: dpi and
+        maxPixels are untouched — only the page box a snapped page is drawn to
+        moves, by at most the 4% band, and a Qwen-family processor resizes its
+        input to a multiple of PATCH anyway. The pixmap PyMuPDF returns is the
+        size then EMITTED for the page, so the box-to-render mapping downstream
+        (`renderScale`, dots.ts) stays exact whether a page was snapped or not.
+        """
+        rect = self.doc[index].rect
+        matrix = self.fitz.Matrix(width / rect.width, height / rect.height)
+        return self.doc[index].get_pixmap(matrix=matrix)
+
 
 class ImagePages(object):
     """Pages that are ALREADY pictures -- the photographs a capture project made.
@@ -485,6 +512,87 @@ def run_textlayer(config):
     emit({'event': 'done'})
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ONE GRID FOR A BOOK OF NEARLY-IDENTICAL PAGES
+#
+# A batching VLM server groups pages of the SAME processor grid together, and a
+# processor grid is the page's pixel size rounded to a multiple of PATCH (28) —
+# `smartResize`, in dots.ts. A scanned book has +/-1-2% page-size jitter, so two
+# leaves that are the same page of the same book resize to ADJACENT grids (122 vs
+# 124 patch-rows) and land in different batches. The batches go shallow and the
+# run runs about twice as slow, for a difference no reader could see.
+#
+# THE FIX IS TO RASTER THE NEAR-IDENTICAL PAGES TO ONE SIZE. The book's dominant
+# render size — its "mode" — is computed once, over every page's true render
+# size, and any page within the snap band of it on BOTH axes is drawn AT the mode
+# instead of at its own size. A page further out than the band — a genuinely
+# different leaf, a fold-out, the +8% outlier below — is drawn TRUE and keeps its
+# own grid. dpi and maxPixels never move; only the page box a snapped page is
+# drawn to. The size EMITTED for a page is always the pixmap's own size, so the
+# coordinate invariant (`renderScale`, dots.ts) holds whichever path a page took.
+#
+# The mode is computed on the RENDER size — page box in points x dpi/72, POST-dpi
+# and PRE-smartResize — which is what `PdfPages.render_size` returns.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 4%, per axis, INDEPENDENT (anisotropic): a page snaps only when it is within 4%
+# of the mode on width AND on height, and a page close on one axis but far on the
+# other is drawn true. Derivation: measured jitter on a real scanned book was
+# +/-1.5% on both axes (widths 1683-1749, heights 1058-1098) with one true
+# outlier at +8% (a 1163-tall page among ~1078). 4% is twice the jitter —
+# comfortably inside it, so the cluster collapses to one grid — and a quarter of
+# the outlier — comfortably outside it, so the outlier keeps its own grid.
+SNAP_BAND = 0.04
+
+
+def _median(values):
+    ordered = sorted(values)
+    n = len(ordered)
+    mid = n // 2
+    if n % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def within_band(value, mode):
+    """Is `value` within SNAP_BAND of `mode` — the band measured against the mode."""
+    return abs(value - mode) <= SNAP_BAND * mode
+
+
+def snaps_to(size, mode):
+    """Does a page of `size` (w, h) collapse onto the canonical `mode` (w, h)?
+
+    Both axes, independently: within the band on width AND on height. A page
+    close on one axis and far on the other keeps its own grid.
+    """
+    return within_band(size[0], mode[0]) and within_band(size[1], mode[1])
+
+
+def dominant_render_size(sizes):
+    """The book's dominant render size (the snap "mode"), or None for no pages.
+
+    Most pages of a book are ~one size, and this is a representative of that
+    dominant cluster: the median of the pages that sit within the band of the
+    book's overall median, per axis. Two medians rather than one number because
+    the band is anisotropic — a book can jitter more on one axis than the other.
+
+    The overall median centres the cluster and is itself immune to a handful of
+    outliers; taking the median AGAIN over only the in-band pages drops the +8%
+    fold-out out of the number entirely, so the mode is the clean centre of the
+    pages that actually agree with one another rather than an average dragged
+    toward a page nothing else looks like.
+    """
+    if not sizes:
+        return None
+    med_w = _median([w for w, _h in sizes])
+    med_h = _median([h for _w, h in sizes])
+    cluster = [(w, h) for (w, h) in sizes if within_band(w, med_w) and within_band(h, med_h)]
+    if not cluster:
+        return None
+    return (int(round(_median([w for w, _h in cluster]))),
+            int(round(_median([h for _w, h in cluster]))))
+
+
 def main():
     config = json.loads(sys.stdin.read())
     mode = config.get('mode', 'read')
@@ -543,6 +651,36 @@ def main():
         fail('--skip-pages names every page of the %d-page document, so there would be no book '
              'left to write' % source.count)
 
+    # The book's canonical render size — see "ONE GRID FOR A BOOK OF NEARLY-
+    # IDENTICAL PAGES" above. Only for a PDF: a page image arrives at pixels
+    # somebody already chose (ImagePages), and resampling it to shave a 4% jitter
+    # is exactly the second opinion that class exists to refuse. A RESUMED run is
+    # HANDED the mode its first run chose (`renderMode` in the config, recorded on
+    # the TypeScript side beside the readings bank, keyed by the PDF's sha) so it
+    # snaps to the SAME grid — recomputing the mode off a different page subset
+    # could land the resume on an adjacent grid halfway through the book.
+    #
+    # SNAPPING IS OPT-IN, and `blocks-dump` is why. That tool re-measures a page
+    # off the PDF to recover the render frame a box was measured in for a bank so
+    # old it recorded no geometry — and a bank that old predates snapping, so its
+    # boxes were measured against the page's TRUE render. Snapping there would
+    # reproduce a frame the model was never shown and put every one of those boxes
+    # up to 4% off. So a caller that wants the collapse asks for it (`snap`), and
+    # a caller that wants the true frame back — blocks-dump — simply does not.
+    render_mode = None
+    if isinstance(source, PdfPages):
+        given = config.get('renderMode')
+        if given is not None:
+            # Handed the mode an earlier run of this book chose — snap to exactly it.
+            render_mode = (int(given[0]), int(given[1]))
+        elif config.get('snap', False):
+            render_sizes = [
+                source.render_size(index, dpi)
+                for index in range(source.count)
+                if (index + 1) not in exclude_pages
+            ]
+            render_mode = dominant_render_size(render_sizes)
+
     title, author = source.credits()
     width_pt, height_pt = source.frame()
     emit({
@@ -556,6 +694,11 @@ def main():
         'author': author,
         'widthPt': width_pt,
         'heightPt': height_pt,
+        # The canonical render size near-identical pages are snapped onto, as a
+        # list [width, height] in render pixels — or null where nothing is snapped
+        # (a page-image source, or a PDF with no pages left after exclusions). The
+        # TypeScript side records it beside the bank so a resume is handed it back.
+        'renderMode': list(render_mode) if render_mode is not None else None,
     })
 
     # Is there a page left that this run will actually pay a model for? An
@@ -596,7 +739,16 @@ def main():
             continue
 
         render_start = time.time()
-        pixmap = source.render(index, dpi)
+        # Snap this page onto the book's canonical grid when it is within the band
+        # on both axes; draw it true otherwise. `render_mode` is None for a page-
+        # image source and for a PDF with no pages, so those keep the exact render
+        # path they always had. The width/height EMITTED below is the pixmap's own
+        # size either way, so a snapped page and a true page map their boxes back
+        # to the render frame by the same rule (dots.ts) — the coordinate invariant.
+        if render_mode is not None and snaps_to(source.render_size(index, dpi), render_mode):
+            pixmap = source.render_to(index, render_mode[0], render_mode[1])
+        else:
+            pixmap = source.render(index, dpi)
         image_path = os.path.join(scratch, 'page-%04d.png' % number)
         # Through the same writer as the crops: a kept renders directory is
         # overwritten on every re-read, which is the exact exposure.

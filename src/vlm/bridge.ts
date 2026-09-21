@@ -104,6 +104,14 @@ export interface VlmDocumentInfo {
   author: string;
   widthPt: number;
   heightPt: number;
+  /**
+   * The canonical render size this run snapped near-identical pages onto, in
+   * render pixels — the "mode" the helper computed over every page's true size,
+   * or was handed for a resume. NULL where nothing was snapped: a page-image
+   * source, or a PDF with no pages left after exclusions. See the render snap in
+   * `vlm_page.py`. Optional because a mock or an older helper carries no field.
+   */
+  renderMode?: readonly [number, number] | null;
 }
 
 export interface VlmRunResult {
@@ -194,6 +202,28 @@ export interface VlmRunOptions {
    */
   maxPixels?: number;
   /**
+   * The book's canonical render size to snap near-identical pages onto, from an
+   * EARLIER run of this same book — recorded beside the readings bank, keyed by
+   * the PDF's sha (`readings.ts`). Absent on a first run: the helper computes the
+   * mode itself and reports it in the document event, and the caller records it.
+   * Present on a RESUME so the resumed run snaps to the SAME grid rather than
+   * recomputing the mode off a different page subset. Ignored for a page-image
+   * source, which is never snapped. It changes only the page box a snapped page
+   * is rendered to — never dpi, never `maxPixels`.
+   */
+  renderMode?: readonly [number, number];
+  /**
+   * Collapse near-identical pages onto ONE render grid — the snap.
+   *
+   * OPT-IN, because not every render wants it: `blocks-dump` re-measures a page
+   * to recover the TRUE frame an old bank's boxes were measured in, and snapping
+   * there would hand it a frame the model never saw. The bank-producing route
+   * (`read.ts`) sets it; the helper then either snaps to `renderMode` when one is
+   * given or computes the book's mode and snaps to that. Ignored for a page-image
+   * source and when `renderMode` is given (an explicit mode is itself the ask).
+   */
+  snap?: boolean;
+  /**
    * Render every page and read NONE of them — no model is loaded at all.
    *
    * The endpoint path (`endpoint.ts`) does its own inference over HTTP but
@@ -251,6 +281,14 @@ export interface VlmRunOptions {
   /** Called as each page lands, for progress. */
   onPage?: (page: VlmPage, total: number) => void;
   onLoaded?: (seconds: number) => void;
+  /**
+   * The document event, as it lands — before a single page is rendered.
+   *
+   * The caller records `renderMode` HERE, not at the end of the run, so that
+   * even an interrupted first read leaves the snap size on disk for the resume
+   * that follows it (`readings.ts`).
+   */
+  onDocument?: (document: VlmDocumentInfo) => void;
 }
 
 /**
@@ -369,6 +407,8 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
     skipPages: opts.skipPages ?? [],
     excludePages: opts.excludePages ?? [],
     ...(opts.maxPixels !== undefined ? { maxPixels: opts.maxPixels } : {}),
+    ...(opts.renderMode !== undefined ? { renderMode: opts.renderMode } : {}),
+    ...(opts.snap === true ? { snap: true } : {}),
     ...(opts.rendersDir ? { rendersDir: path.resolve(opts.rendersDir) } : {}),
   });
 
@@ -407,6 +447,7 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
           switch (event['event']) {
             case 'document':
               document = event as unknown as VlmDocumentInfo;
+              opts.onDocument?.(document);
               break;
             case 'loaded':
               loadSeconds = event['seconds'] as number;
