@@ -154,6 +154,31 @@ function capOf(cap: VlmEndpointOptions['maxTokens'], page: EndpointRequest): num
  */
 export const DEFAULT_VLM_CONCURRENCY = 12;
 
+/**
+ * The total deadline on ONE page's request, and why it is generous rather than
+ * tight.
+ *
+ * A page sent to a batching server gets NO bytes back until its batch finishes,
+ * and its batch can sit behind one already running — up to ~2 full batches of
+ * silence, which Crucible measured at ~350 s at twelve in flight on a
+ * 3,895-token paperback page. Bun's `fetch` has a default idle timeout, and an
+ * default fetch timeout cannot tell that silence apart from a dead socket: it
+ * trips inside the NORMAL wait and fails the page. That is what killed a
+ * 384-page book at page 73 — a page that would have landed a few seconds later.
+ *
+ * So the fetch carries an EXPLICIT deadline (an `AbortSignal.timeout`, which
+ * replaces Bun's default) set where only a hung or dead server reaches it: the
+ * number of pages that can be queued ahead of this one (the concurrency) times
+ * a per-page ceiling well above even a runaway page. A page waiting for its
+ * batch is weather and waits; a server that has genuinely stopped answering
+ * fails by name after the deadline. See Owen's transient-vs-misconfiguration
+ * rule — a wait, not a kill.
+ */
+const PER_PAGE_DEADLINE_MS = 60_000;
+function requestDeadlineMs(concurrency: number): number {
+  return Math.max(1, concurrency) * PER_PAGE_DEADLINE_MS;
+}
+
 export async function readPagesFromEndpoint(opts: VlmEndpointOptions): Promise<void> {
   const url = `${opts.endpoint.replace(/\/+$/, '')}/chat/completions`;
   const queue = [...opts.pages];
@@ -182,6 +207,12 @@ async function readOnePage(
   try {
     response = await fetch(url, {
       method: 'POST',
+      // An EXPLICIT deadline, which replaces Bun's default fetch timeout — the
+      // one that fired inside a normal batch wait and failed a page that would
+      // have landed seconds later. A page gets no bytes until its batch
+      // completes, so the only honest limit is this total deadline, generous
+      // enough that only a hung server reaches it. See PER_PAGE_DEADLINE_MS.
+      signal: AbortSignal.timeout(requestDeadlineMs(opts.concurrency)),
       headers: { ...(opts.headers ?? {}), 'content-type': 'application/json' },
       body: JSON.stringify({
         model: opts.model,
