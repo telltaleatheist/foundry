@@ -114,7 +114,7 @@ import {
   NORMALIZER_VERSION,
 } from './tts-number-normalizer.js';
 import type {
-  AskOutcome, NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
+  AskOutcome, ModelServerFacts, NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
 } from './tts-number-normalizer.js';
 import { PUNCTUATION_SPEC_VERSION } from './tts-punctuation.js';
 
@@ -190,6 +190,8 @@ export interface CleanTextReceipt {
   unitsAsked: number;
   /** How many of those came back with an answer nothing could parse. */
   unitsParseFailed: number;
+  /** The server, window and sampling this run was produced against. Null when nothing was asked. */
+  server?: ModelServerFacts | null;
 }
 
 export interface CleanTextOptions {
@@ -846,6 +848,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     appliedByClass,
     unitsAsked: settled.asked,
     unitsParseFailed: settled.parseFailed,
+    server: runner.serverFacts?.() ?? null,
   };
   const receiptOut = receiptPath(recordsPath);
   ensureDir(path.dirname(receiptOut));

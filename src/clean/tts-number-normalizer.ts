@@ -401,6 +401,8 @@ export interface NumberNormalizationRecord {
   /** How many of the selected spans still had a digit after the rules ran. */
   targetsAsked: number;
   unitsParseFailed: number;
+  /** The server, window and sampling this record was produced against. See {@link ModelServerFacts}. */
+  server?: ModelServerFacts | null;
   appliedSpans: number;
   /** Of `appliedSpans`, how many a deterministic rule read. */
   appliedByRules: number;
@@ -1791,9 +1793,42 @@ export function validateNumberEdits(
  * `<answer>` extraction. A test binds it to a function returning canned strings
  * and reaches every disposition above without a GPU.
  */
+/**
+ * WHAT THE PASS WAS RUN AGAINST — for the receipt, not for the log.
+ *
+ * Owen, 2026-09-20, reading the queue row: *"clean-text: qwen3.5-9b at
+ * http://…/openai/v1 (openai), temperature 0. The context window is the
+ * server's own … NOTHING IS PINNED here (16384 tokens); this book's longest
+ * request is 7892 characters and fits. — i dont think that text is necessary.
+ * it can just say what its doing generically. it doesnt need to give insight
+ * into the inner workings, like temperature or api endpoints."*
+ *
+ * He is right about the audience: a log line is what a person WATCHING reads,
+ * and BookForge draws the last one on the slot. The facts themselves are not
+ * noise — a receipt that cannot say which server, which window and what
+ * sampling produced a book is a receipt nobody can compare — so they live here,
+ * structured, in the receipt JSON, and the log says what is being done.
+ */
+export interface ModelServerFacts {
+  /** `ollama`, `openai`, `anthropic` — which dialect answered. */
+  kind: string;
+  endpoint: string;
+  model: string;
+  /** Always 0 on this pass — an answer is a function of its input (docs/CLEAN-TEXT.md). */
+  temperature: number;
+  /** The window in tokens; null when the provider publishes none. */
+  contextWindow: number | null;
+  /** True on Ollama, where the window is `num_ctx`, pinned once for the book. */
+  contextPinned: boolean;
+  /** The longest request this book sends, in characters, measured before request one. */
+  longestRequestChars: number | null;
+}
+
 export interface NumberNormalizerRunner {
   /** The model tag: in the cache path, in the log, and in every error message. */
   model: string;
+  /** What this runner is speaking to, for the receipt. Absent on a runner that asks nothing. */
+  serverFacts?(): ModelServerFacts;
   /**
    * Called once, before the first request, with the LONGEST input this pass will
    * send. Ollama fully reloads the runner on any `num_ctx` change, so the window
@@ -2664,6 +2699,7 @@ export async function normalizeTextBlocks(
     targetsSelected: selected.length,
     targetsAsked,
     unitsParseFailed: parseFailed,
+    server: runner.serverFacts?.() ?? null,
     appliedSpans,
     appliedByRules: dispositions.APPLIED_RULE ?? 0,
     appliedByModel: dispositions.APPLIED ?? 0,

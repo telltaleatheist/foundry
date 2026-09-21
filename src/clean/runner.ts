@@ -78,7 +78,7 @@ import {
   fetchTransport, usageLine, type ChatTuning, type Transport,
 } from '../translate/transport.js';
 import { fitsWindow, promptTokens, VllmError } from '../translate/vllm.js';
-import type { NumberNormalizerRunner } from './tts-number-normalizer.js';
+import type { ModelServerFacts, NumberNormalizerRunner } from './tts-number-normalizer.js';
 
 /**
  * How much answer one block may generate, in tokens.
@@ -172,19 +172,39 @@ export async function openModelRunner(options: ModelRunnerOptions): Promise<Numb
     log: options.log,
   });
   let tuning: ChatTuning = { temperature: 0, numPredict: EDIT_LIST_NUM_PREDICT };
+  /*
+   * THE FACTS GO IN THE RECEIPT; THE LOG SAYS WHAT IS BEING DONE.
+   *
+   * Until 2026-09-20 `pinContextTo` wrote a paragraph to the log — endpoint,
+   * dialect, temperature, the window and why it was or was not pinned, the
+   * longest request — and BookForge draws the last log line on the queue slot,
+   * so a person watching a book read "NOTHING IS PINNED here (16384 tokens)".
+   * Owen: *"it can just say what its doing generically."* The paragraph was
+   * provenance, and provenance belongs in the receipt where it can be compared
+   * across books; it is kept there in full (`ModelServerFacts`). What the log
+   * says now is the one thing a watcher wants: which model is cleaning.
+   */
+  const facts: ModelServerFacts = {
+    kind: server.kind,
+    endpoint: server.endpoint,
+    model: server.model,
+    temperature: 0,
+    contextWindow: server.kind === 'ollama' ? null : server.maxModelLen,
+    contextPinned: false,
+    longestRequestChars: null,
+  };
 
   return {
     model: server.model,
+    serverFacts: () => ({ ...facts }),
     pinContextTo(systemPrompt: string, longestInput: string): void {
+      facts.longestRequestChars = longestInput.length;
       if (server.kind === 'ollama') {
         const numCtx = contextWindowFor(systemPrompt, longestInput);
         tuning = { ...tuning, numCtx };
-        options.log(
-          `clean-text: ${server.model} at ${server.endpoint} (ollama), temperature 0, context `
-          + `${numCtx} tokens — PINNED here, once, from the longest of this book's requests at `
-          + `${longestInput.length} characters, because Ollama reloads the runner on any change `
-          + 'to it and a per-block estimate would churn the model between paragraphs.',
-        );
+        facts.contextWindow = numCtx;
+        facts.contextPinned = true;
+        options.log(`clean-text: cleaning with ${server.model}`);
         return;
       }
       /*
@@ -206,18 +226,7 @@ export async function openModelRunner(options: ModelRunnerOptions): Promise<Numb
           + 'asked. Make the model resident with a longer context, or split the block.',
         );
       }
-      options.log(
-        `clean-text: ${server.model} at ${server.endpoint} (${server.kind}), temperature 0. The `
-        + 'context window is '
-        + (server.kind === 'anthropic'
-          ? 'the provider\'s own and it publishes no number, so NOTHING IS PINNED here and '
-            + 'nothing was measured against it; this book\'s longest request is '
-            + `${longestInput.length} characters, and a provider that cannot hold one will say so `
-            + 'by name.'
-          : 'the server\'s own, fixed when the model was made resident, so NOTHING IS '
-            + `PINNED here${server.maxModelLen === null ? '' : ` (${server.maxModelLen} tokens)`}; `
-            + `this book's longest request is ${longestInput.length} characters and fits.`),
-      );
+      options.log(`clean-text: cleaning with ${server.model}`);
     },
     async generate(input: string, systemPrompt: string): Promise<string> {
       return askModel(transport, server, systemPrompt, input, tuning);
