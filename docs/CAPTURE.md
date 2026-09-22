@@ -491,6 +491,26 @@ read as covering it.
   guard, and both sides import it. P1 lands the shared move (its file,
   its main-side caller); P2 switches its import on rebase and deletes
   sameShape.
+- **The shape is NO LONGER ASKED BY ANY GLOBAL (2026-09-21).** The
+  aspect rule was a camera's rule: every frame one of two shapes, and
+  the odd landscape frame a different photograph. A scanner's auto-crop
+  gives every page its own size -- the fragebogen scan's 271 landscape
+  spreads run from 1.15 to 1.33 -- and two percent is narrower than the
+  spread of one scan, so the *Two pages* tick on one spread reached
+  forty-seven and the rest had to be ticked one at a time. Owen: *"any
+  action i take with the global button checked should apply that action
+  to every page uniformly."* So the live propagation, both Finalizes,
+  the turn, the tick taking the book's cut and a late arrival inheriting
+  its neighbour's lines all reach every page in scope; completeness is
+  the one thing that spares a page, and the rail's third count ("N a
+  different shape") and `StampCost.shape` are gone. `sameShape` stays
+  in `app/shared/capture.ts` with one reader, intake's `handsRead`,
+  which reconstructs what an OLD recipe's stamp had reached and must ask
+  the question the stamp asked then. The IMG_0238 boundary above still
+  holds in spirit: a page the book's fractions fit badly is the page a
+  person unticks *Global* to set by hand, which is what makes it
+  complete. The ruling and the measurement are recorded under
+  `applyPopulations` in the renderer's capture service.
 - **Editor corners CLAMP to [0,1] at the drag site** (P2 seq 46, its
   own find against its own docblock): there is nothing outside the
   frame, so a crop hanging off the edge is not a crop of anything, and
@@ -3814,11 +3834,25 @@ scan is both, on different evenings — so:
 | Where it lands | What happens |
 | --- | --- |
 | A capture project's light table is in front | Straight to pages. No card: on a table of page cards a PDF has only ever had one possible meaning, and what it used to get was main's refusal — *".pdf is not a photograph this stage reads"* — which was the right answer to a question this side should never have let be asked. |
-| Anywhere else, standalone | One card, once for the whole drop: **Open it** / **Make a book from its pages**. Dismissing does nothing at all. |
+| Anywhere else, standalone | One card, once for the whole drop: **Open book** / **Edit book**. Dismissing does nothing at all. |
 | Hosted | Unchanged — it opens. `IntakeWorkspaceService.available` is the one place that decides it, for the reason images fall through there too: a project born in a hosted window would land in a library the host is not keeping. |
 
 The card is raised once per DROP and not once per file: somebody handing
 over four scans at a time means the same thing by all four.
+
+**The buttons were renamed on 2026-09-21, and the walk below still quotes
+the old ones** — it is a record of a session, not a spec. They said *Open
+it* and *Make a book from its pages*, and Owen retired both: *"maybe we
+can rename those buttons to make sense for somebody who doesnt know what
+theyre for exactly. maybe it can just be 'edit book' or 'open book'. that
+might be more logical."* The sentence that settles it is the one beside
+it — *"that makes sense to me because i know what i programmed it to
+do"*. "Make a book from its pages" names the MACHINERY (an explosion, a
+table, a selection, a mint) to somebody who has met none of it; *Edit
+book* names the outcome, and the card's two paragraphs now say in plain
+words what each one does to the file. The same two words name the door
+inside an open book (§ *Edit book, from inside the book*), deliberately:
+one gesture, one name, wherever it is reached from.
 
 **The dismissal does nothing, ruled.** Falling back to opening was
 considered — it is what the window did before the card existed, and a tab
@@ -3953,3 +3987,119 @@ OS-level file drag (`Input.dispatchDragEvent`):
   are these? · Open them / Make books from their pages*. Letting both run
   landed 6 + 4 = 10 cards; pressing *Stop* during the first ended the
   whole gesture — no second pass started, nothing landed, one toast.
+
+## Edit book, from inside the book (Owen, 2026-09-21) — BUILT
+
+### Owen's ask, verbatim
+
+> *"im thinking we should have an 'edit book' option in the normal
+> foundry window. after we open a pdf, and we have the step workflow on
+> the left side and the tiles and everything, maybe the user can be given
+> the option of editing the book directly (if it's a pdf), which would
+> take them to the crop/page split/etc screen. they can rebuild the book
+> and itll have a new set of steps starting from the edited version they
+> create from the original."*
+
+The gesture already existed and only at the DOOR: drop a PDF on the
+window and the card offers *Edit book* (§ above). What was missing was
+the same offer one moment later — after the book is open, the steps are
+down the left, and the person has just discovered that every second page
+is upside down. Until now the only way there was to find the file on disk
+and drag it in again, which is a person working around their own library.
+
+### It makes a SECOND book. It does not edit the open one.
+
+This is the ruling the feature hangs on, and Owen's own sentence is the
+argument: *"itll have a NEW SET OF STEPS starting from the edited version
+they create from the original."* A project is a ledger — an ordered
+account of what was done to one document, with readings, overlays and
+corrections hanging off particular steps. Re-founding an open project on
+a different PDF would orphan all of it in silence: the bank would still
+be on disk, still keyed to pages that no longer exist, and nothing on
+screen would say so.
+
+So the original is not touched at all. What is made is a NEW capture
+project whose photographs happen to be the old book's pages — and from
+that moment it is an ordinary light table: the crop, the split and the
+turn are the ones that were always there, and its mint founds its own
+document with its own steps (`catalogueMint`, electron/projects.ts, Wave
+41 — *"from that moment the project is ORDINARY"*). Nothing had to be
+built for that half; it was verified.
+
+**The new project is named `<the original's title> (edited)`.** Two books
+made from one scan sit on one shelf for as long as both exist, and
+`createCaptureProject` keys the FOLDER off a random suffix — so the title
+is the only thing distinguishing them at a glance. Editing an edit stacks
+the word (*"… (edited) (edited)"*) rather than counting, which is honest
+about what happened where *"(edited 2)"* would invite the question of
+what the first one was.
+
+### It is the drop card's own two doors, in sequence
+
+`BookEditService` (app/src/app/core/book-edit.service.ts) is the whole of
+the new code and it rasterizes nothing. `capture:create` makes a named
+empty project; `CaptureService.intake` copies files into one — and intake
+is ALREADY the door that knows a PDF in the list means *explode it
+first*, because the light table's own drop needed exactly that. "Take
+this book apart into a new book" is those two calls one after the other,
+and the service is the word *then*. No second staging, no second release,
+and no second opinion about either.
+
+The one thing it does itself is that **a path is not a `File`**. The drop
+card is handed `File` objects by the browser; a book on the shelf is a
+path, and pdf.js runs in the renderer — so the bytes cross on
+`document:read-bytes` (the door the scan pane beside a book already
+reads its page from) and a `File` is composed over them, re-viewed rather
+than copied, so the door below receives what it already accepts. That
+read is gated by `admitted`, whose refusal is *"was never opened in this
+app"*; it is admitted by the two things that put the book in front of
+somebody — opening the document, and loading a BOOK, which admits the
+scan behind it so the original pane can draw (electron/book.ts records
+that trap after measuring it). A refusal is still said out loud: this is
+minutes of work about to not happen, and silence would read as a dead
+button.
+
+### Where the door is, and why there
+
+The action menu's NAVIGATION strip, beside Home, Documents and the light
+table — an icon square with its sentence on the hover, the shape and
+length argument of the *Edit the photographs* square it sits next to.
+Both are there for that square's own reason: **the light table is a
+place**, and a control naming somewhere you can go is a different kind of
+entry from one that performs something.
+
+**The two squares are mutually exclusive by construction.** *Edit the
+photographs* is drawn for a project that ARRIVED as photographs, and such
+a project already HAS a table — with the very crops and turns this would
+go and make a second copy of. So `editable()` asks `photographs()` as
+well as the catalogue, and at most one of the two is ever drawn:
+
+| The open book | What the strip offers |
+| --- | --- |
+| Arrived as photographs (a capture project, minted or not) | *Edit the photographs* — its own table, where the crops already are. |
+| Arrived as a PDF | *Edit book* — a second book, from its pages. |
+| Arrived as an EPUB | Neither. There is no paper to crop. |
+| A loose file no project claims | Neither. It has no founding document and no title to derive a second one from — and the drop card's own *Edit book* is one gesture away, on the file itself. |
+
+**Greyed while a pass is running**, which breaks this strip's
+hidden-not-disabled habit on purpose: the reason the door is shut is
+temporary and is visible three inches away on the progress card, so a
+tile that vanished mid-rasterize would read as the offer being withdrawn.
+The gate is asked of the rasterizing pass rather than of the service's
+own flag, because the pass is the shared resource either way — one
+canvas, one worker, one *Stop*.
+
+**A pass that was stopped still leaves the table.** `createBook`'s rule,
+for its reason: the project *"was named, it exists, and its light table
+is the surface the images can be dragged onto directly"*. Pressing *Stop*
+halfway through a 600-page scan therefore lands on an empty or partial
+table rather than on nothing — an outcome the person who stopped it can
+see and act on, where a project deleted silently underneath them would be
+this app throwing away a folder it made on their behalf.
+
+### Not hand-tested
+
+Typechecked (renderer and electron) and both surface gates run. The walk
+— open a scanned PDF, press the square, watch the pass, land on the new
+table, crop and mint, and confirm the minted book's steps start from the
+minted PDF — has not been driven in the running app.
