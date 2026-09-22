@@ -675,6 +675,9 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
         maxTokens: capForPage,
         concurrency,
         ...(headers !== undefined ? { headers } : {}),
+        // Weather is said, never silent: each failed try and the wait before the
+        // next lands in the run's log with the page and the endpoint named.
+        onWeather: (sentence) => opts.log(`${label}: ${sentence}`),
         pages: wanted.map((p) => ({ number: p.number, imagePath: renderPath(rendersDir, p.number) })),
         onPage: (page) => {
           done += 1;
@@ -750,6 +753,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
           maxTokens: contract.maxTokens,
           concurrency,
           ...(headers !== undefined ? { headers } : {}),
+          onWeather: (sentence) => opts.log(`${label}: ${sentence}`),
           pages: misjudged.map((number) => ({ number, imagePath: renderPath(rendersDir, number) })),
           onPage: (page) => {
             const render = sizes.get(page.number);

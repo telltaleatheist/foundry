@@ -105,5 +105,14 @@ main(process.argv.slice(2)).catch((err: unknown) => {
   if (process.env['FOUNDRY_STACK'] && err instanceof Error && err.stack) {
     process.stderr.write(`${err.stack}\n`);
   }
-  process.exit(1);
+  /*
+   * A PARK IS NOT A FAILURE, and the exit code is how a dispatcher can tell.
+   * A throw that carries its own exit code (`VlmParkedError`, exit 75: the
+   * server's weather outlasted its budget, every page that landed is banked,
+   * run the same command again) exits by it; everything else is 1. Read off
+   * the error rather than by class so this file does not import the reader's
+   * vocabulary to learn one number.
+   */
+  const carried = err instanceof Error ? (err as { exitCode?: unknown }).exitCode : undefined;
+  process.exit(typeof carried === 'number' ? carried : 1);
 });

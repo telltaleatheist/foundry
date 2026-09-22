@@ -34,9 +34,49 @@
  * has not started climbing. It is an option because the number is a property of
  * somebody else's GPU, not of this program.
  *
- * NOTHING IS RETRIED. A page that failed is named and the run stops, and
- * `--readings` is what makes that cheap: every page that landed is already on
- * disk, so the re-run pays for the pages that did not.
+ * WEATHER IS RETRIED, MISCONFIGURATION IS NAMED, AND A RUN IS NEVER FAILED BY
+ * THE SERVER'S WEATHER (Owen's rule, BookForge, 2026-09-20; landed here
+ * 2026-09-21 after Everyday Denazification lost eleven in-flight pages to one
+ * 502).
+ *
+ * ── What happened ─────────────────────────────────────────────────────────
+ *
+ * Page 32 of a 329-page book got `502 Bad Gateway {"error":{"code":
+ * "engine_unreachable", ... "ReadError: ."}}` from Crucible's proxy: a stale
+ * keep-alive socket between the proxy and vLLM, with vLLM itself healthy and
+ * answering. This file threw, `read.ts` let the throw out, the CLI printed it
+ * and exited 1, the hosted dispatcher released the Crucible lease, Crucible's
+ * settlement unloaded the engine, and the eleven pages that were in flight
+ * beside page 32 -- answers already computed on the card -- were thrown away
+ * with the process. One socket hiccup cost a lease, an engine load and twelve
+ * pages of GPU time. The old header said "NOTHING IS RETRIED ... the re-run
+ * pays for the pages that did not [land]", and that sentence was true and was
+ * the defect: it priced a socket reset as a page that did not land.
+ *
+ * ── The rule ──────────────────────────────────────────────────────────────
+ *
+ * A transient fault from the model server -- 502, 503, 504, 429, a connect
+ * timeout, a reset, a ReadError, anything the socket rather than the server's
+ * CONTRACT said -- is WEATHER. It is retried within a STATED budget
+ * (`WEATHER_WAITS_MS`: three quick tries at 2/5/10 s, then longer waits with
+ * the process alive so whatever lease it holds stays held), each wait said out
+ * loud through `onWeather`. If the weather outlasts the budget the run is
+ * PARKED: the page and the endpoint are named, the pages in flight are allowed
+ * to LAND (see `readPagesFromEndpoint`), and the process exits with
+ * `PARKED_EXIT_CODE` rather than 1 -- a dispatcher can tell a park from a
+ * failure, and `--readings` makes the resume free because every page that
+ * landed is on disk.
+ *
+ * FAIL-BY-NAME STAYS for what a person has to repair: a bad URL (404), a
+ * credential (401/403), a model the server is not holding, a 400 from a
+ * request the server will never accept. Retrying those would be a band-aid
+ * over a sentence somebody needs to read.
+ *
+ * THE PAGE DEADLINE IS A PARK, NOT A RETRY. A request that hit
+ * `requestDeadlineMs` waited a dozen minutes for a server that never spoke;
+ * sending the same page again for another dozen is not a budget, it is an
+ * evening. It is weather all the same -- nothing about it is a
+ * misconfiguration -- so it parks by name rather than failing.
  */
 import * as fs from 'node:fs';
 
@@ -48,6 +88,64 @@ export class VlmEndpointError extends Error {
     this.name = 'VlmEndpointError';
   }
 }
+
+/**
+ * THE EXIT CODE OF A PARKED RUN -- sysexits' EX_TEMPFAIL, "temporary failure;
+ * the user is invited to retry", which is exactly the sentence. A dispatcher
+ * reading the CLI's exit sees 0 (done), 75 (parked: resume later, nothing is
+ * lost) or 1 (failed: read the message). Before this every non-zero exit was
+ * a failure, and the hosted dispatcher's only honest answer to one was to let
+ * the lease go.
+ */
+export const PARKED_EXIT_CODE = 75;
+
+/**
+ * THE RUN IS PARKED: the server's weather outlasted the budget on one page.
+ *
+ * It is a `VlmEndpointError` so every catch that names endpoint trouble still
+ * catches it, and it carries the exit code so the CLI can tell a park from a
+ * failure without importing this file's vocabulary. `page` and `endpoint` are
+ * the two nouns Owen's rule says a park owes.
+ */
+export class VlmParkedError extends VlmEndpointError {
+  readonly exitCode = PARKED_EXIT_CODE;
+  constructor(
+    readonly endpoint: string,
+    readonly page: number,
+    detail: string,
+  ) {
+    super(
+      `parked: ${endpoint} did not answer page ${page} -- ${detail} `
+      + 'Every page that landed is banked; run the same command again to read the rest.',
+    );
+    this.name = 'VlmParkedError';
+  }
+}
+
+/**
+ * THE WEATHER BUDGET, as the waits between tries, in milliseconds.
+ *
+ * Three quick tries (2, 5, 10 s) catch the fault that page 32 hit -- a stale
+ * socket the proxy drops and reopens on the next request -- and the longer
+ * waits (30 s, 1, 2, 4 min) hold the process, and with it any lease it is
+ * running under, through an engine restart or a card that is briefly busy.
+ * Eight tries over about eight minutes; the ninth failure parks. The numbers
+ * are stated here because a budget nobody can read is a hang.
+ */
+export const WEATHER_WAITS_MS: readonly number[] = [2_000, 5_000, 10_000, 30_000, 60_000, 120_000, 240_000];
+
+/**
+ * HTTP statuses that are weather: the server is there and is not saying no,
+ * it is saying not now. 429 is the card being busy; the 5xx three are a proxy
+ * or an engine between restarts.
+ */
+const WEATHER_STATUSES: ReadonlySet<number> = new Set([429, 502, 503, 504]);
+
+/** What one failed try was, for the retry loop to decide on and the sentences to say. */
+type Fault =
+  | { kind: 'weather'; said: string }
+  | { kind: 'deadline'; said: string }
+  | { kind: 'refused'; said: string };
 
 /** One page, read over HTTP. Same shape the MLX path reports. */
 export interface EndpointPageResult {
@@ -125,6 +223,19 @@ export interface VlmEndpointOptions {
    * and `backend/endpoint-headers.ts` explains why it must not.
    */
   headers?: Readonly<Record<string, string>>;
+  /**
+   * A sentence about weather -- a try that failed and the wait before the
+   * next -- for the run's log. Optional because the reader has no log of its
+   * own; a caller that passes nothing waits in silence, which is the one
+   * thing Owen's rule forbids, so `read.ts` always passes one.
+   */
+  onWeather?: (sentence: string) => void;
+  /**
+   * The waits between tries, overriding `WEATHER_WAITS_MS`. For tests, which
+   * cannot spend eight minutes proving a park, and for a caller with a stated
+   * budget of its own. An empty list means one try and then a park.
+   */
+  weatherWaitsMs?: readonly number[];
 }
 
 /** The cap for this page, whether the caller fixed one or answers per page. */
@@ -184,22 +295,96 @@ export async function readPagesFromEndpoint(opts: VlmEndpointOptions): Promise<v
   const queue = [...opts.pages];
   const workers = Math.max(1, Math.min(opts.concurrency, queue.length));
 
-  const next = (): EndpointRequest | undefined => queue.shift();
+  /*
+   * THE FIRST THROW STOPS THE HANDING-OUT, NOT THE PAGES IN FLIGHT.
+   *
+   * `Promise.all` rejects on the first worker that throws, and the caller then
+   * throws out of the run -- while the other eleven workers are still waiting
+   * on answers the card is in the middle of computing. Those answers used to
+   * arrive at an `onPage` nobody was listening to, or not at all, because the
+   * CLI had already exited. So a throw is HELD: the worker that hit it stops,
+   * `next` hands out nothing more, every other worker finishes the page it is
+   * on and banks it through `onPage` as if nothing had happened, and only when
+   * the last of them is done is the held throw let out. Eleven pages of GPU
+   * time land instead of being thrown away; the resume reads twelve fewer.
+   *
+   * Every kind of throw is held this way, not only a park. A misconfiguration
+   * named on one worker is the same misconfiguration the others are about to
+   * name, and the in-flight pages are lost either way -- but a page that DOES
+   * land in that window is banked, and the first sentence is the one said.
+   */
+  let held: unknown = null;
+  const next = (): EndpointRequest | undefined => (held === null ? queue.shift() : undefined);
 
   const run = async (): Promise<void> => {
     for (let page = next(); page !== undefined; page = next()) {
-      opts.onPage(await readOnePage(url, page, opts));
+      try {
+        opts.onPage(await readOnePage(url, page, opts));
+      } catch (err) {
+        if (held === null) held = err;
+        return;
+      }
     }
   };
 
   await Promise.all(Array.from({ length: workers }, run));
+  if (held !== null) throw held;
 }
 
+/**
+ * ONE PAGE, THROUGH THE WEATHER: try, and on weather wait and try again until
+ * the budget is spent, then park by name. A refusal that is not weather is
+ * thrown at once, as it always was.
+ */
 async function readOnePage(
   url: string,
   page: EndpointRequest,
   opts: VlmEndpointOptions,
 ): Promise<EndpointPageResult> {
+  const waits = opts.weatherWaitsMs ?? WEATHER_WAITS_MS;
+  const tries = waits.length + 1;
+  const started = Date.now();
+  for (let attempt = 1; ; attempt += 1) {
+    const outcome = await tryOnePage(url, page, opts);
+    if (!('fault' in outcome)) return outcome;
+    const { fault } = outcome;
+    if (fault.kind === 'refused') throw new VlmEndpointError(`page ${page.number}: ${fault.said}`);
+    if (fault.kind === 'deadline') {
+      throw new VlmParkedError(opts.endpoint, page.number, `${fault.said}.`);
+    }
+    const wait = waits[attempt - 1];
+    if (wait === undefined) {
+      const minutes = ((Date.now() - started) / 60_000).toFixed(1);
+      throw new VlmParkedError(
+        opts.endpoint,
+        page.number,
+        `${tries} tries over ${minutes} min all met weather; the last: ${fault.said}`,
+      );
+    }
+    opts.onWeather?.(
+      `page ${page.number}: ${fault.said} That is weather, not a refusal -- trying again in `
+      + `${wait >= 60_000 ? `${wait / 60_000} min` : `${wait / 1000} s`} (${attempt} of ${tries}).`,
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, wait));
+  }
+}
+
+/**
+ * ONE TRY AT ONE PAGE: the answer, or the fault, classified.
+ *
+ * The classification is the whole of Owen's rule in one place. A throw out of
+ * `fetch` is the socket speaking -- a connect timeout, a reset, a proxy's
+ * ReadError re-thrown as "could not be reached" -- and the socket cannot
+ * misconfigure anything, so it is weather; except the deadline's own abort,
+ * which is its own kind (see the header). A status in `WEATHER_STATUSES` is
+ * weather. Every other refusal is a sentence for a person, explained by
+ * `explainHttpRefusal` exactly as before.
+ */
+async function tryOnePage(
+  url: string,
+  page: EndpointRequest,
+  opts: VlmEndpointOptions,
+): Promise<EndpointPageResult | { fault: Fault }> {
   const image = fs.readFileSync(page.imagePath).toString('base64');
   const started = Date.now();
 
@@ -228,16 +413,17 @@ async function readOnePage(
       }),
     });
   } catch (err) {
-    throw new VlmEndpointError(
-      `page ${page.number}: ${url} could not be reached (${err instanceof Error ? err.message : String(err)})`,
-    );
+    const why = err instanceof Error ? err.message : String(err);
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      const minutes = Math.round(requestDeadlineMs(opts.concurrency) / 60_000);
+      return { fault: { kind: 'deadline', said: `${url} gave no answer within the ${minutes} min deadline` } };
+    }
+    return { fault: { kind: 'weather', said: `${url} could not be reached (${why}).` } };
   }
 
   if (!response.ok) {
-    throw new VlmEndpointError(
-      `page ${page.number}: ${url} `
-      + explainHttpRefusal(response.status, response.statusText, await response.text()),
-    );
+    const said = `${url} ${explainHttpRefusal(response.status, response.statusText, await response.text())}`;
+    return { fault: { kind: WEATHER_STATUSES.has(response.status) ? 'weather' : 'refused', said } };
   }
 
   /*
