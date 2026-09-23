@@ -5,9 +5,8 @@
  * ── What this is (Owen, 2026-09-22) ─────────────────────────────────────────
  *
  * *"the new tile will be used to categorize blocks as section header, chapter
- * header, list, body text, etc. we'll hand snap a list of possible categories,
- * we'll send in the entire epub, and we'll ask it which one it should be … chapter
- * headers get chapter markers."*
+ * header, list, body text, etc. we'll hand snap a list of possible categories …
+ * and we'll ask it which one it should be … chapter headers get chapter markers."*
  *
  * snap (C:\Users\tellt\Projects\snap, its README) answers a closed question with
  * ONE forward pass: it reads the model's next-token probabilities over lettered
@@ -15,20 +14,31 @@
  * and a block the model was unsure of is left as it was rather than guessed at.
  *
  * AN EXPERIMENT, run outside Crucible on purpose: Crucible's chat door cannot
- * return the letter probabilities snap reads (no logprobs, no raw completion,
- * no prompt-cache reuse), and Owen ruled "not through crucible yet — good call".
- * If it earns its place it becomes a Crucible job, which is where a GPU feature
- * lives (the 2026-09-17 ruling that deleted the local page reader).
+ * return the letter probabilities snap reads, and Owen ruled "not through
+ * crucible yet — good call". If it earns its place it becomes a Crucible job.
  *
- * ── Context: as much of the book as fits, with the contents as a hint ────────
+ * ── The second design, after the first run (2026-09-22) ─────────────────────
  *
- * Owen: *"the more context it has for surrounding data, the better decision it
- * would make (i assume) … we could feed it the table of contents (if it exists)
- * and suggest it might use that. though sometimes TOCs dont exist."* Every window
- * therefore opens with the book's title and its navigation entries (the EPUB's own
- * contents), marked as a hint, and then as many consecutive blocks as the engine's
- * window holds. A book that fits is sent whole; a longer one is cut into windows
- * that prefer to break where a chapter starts.
+ * The first version sent the WHOLE BOOK as one state with bare lines
+ * ("[e-54] 1. Introduction") and short options. On *Evolution: Still a Theory in
+ * Crisis* it changed 399 blocks, mostly wrongly, and put chapter markers on the
+ * contents page. Every failure was one kind: it could not tell WHERE in the book
+ * a line sits — "1. Introduction" in the contents list, the chapter's own
+ * heading and the first endnote ("1. See Chapters Five and Six…") are the same
+ * shape once flattened to a line. Owen: *"a small window with a descriptive
+ * prompt so it knows what its choosing from and what to look for, and the
+ * markup would be fine, too … we have to assume the markup will be wrong. thats
+ * why we're doing this."* So now:
+ *
+ *  - SMALL GROUPS: a few dozen blocks judged together, each seen with the blocks
+ *    around it (`buildGroups`). It is also the speed: the whole-book window made
+ *    every question attend over ~117,000 tokens (~0.4 s a block, measured).
+ *  - A GUIDE (`SNAP_GUIDE`): what each kind is and what gives it away, what the
+ *    contents, notes and index sections look like, and that the markup is a
+ *    weak hint.
+ *  - EVERY LINE CARRIES ITS SECTION (from the book's own navigation) and the
+ *    publisher's markup (`BookRow.markup`), and a picture says it is one — a
+ *    caption's best evidence is the picture beside it.
  *
  * ── What the answers become ─────────────────────────────────────────────────
  *
@@ -43,38 +53,67 @@ import type { CategoryOp, ChapterSetOp } from './ops';
  * The categories snap chooses between, as each QUESTION shows them: the engine's
  * spelling and a few words.
  *
- * SHORT ON PURPOSE, MEASURED (2026-09-22, the first real run): snap renders every
- * option as "A. name: text" inside EACH question, and the question is the part
- * that is read afresh for every block — the book before it is cached. With a
- * sentence per option each question was 197 tokens and ~0.33 s, so a
- * 2,520-block book took about fourteen minutes. The full definitions moved into
- * the book header (`SNAP_CATEGORY_GUIDE`), which is read once per window.
+ * SHORT ON PURPOSE, MEASURED: snap renders every option as "A. name: text"
+ * inside EACH question, the one part read afresh for every block. With a
+ * sentence per option each question was 197 tokens; the definitions live once,
+ * in the guide.
  */
 export const SNAP_CATEGORY_OPTIONS: Readonly<Record<string, string>> = {
   Title: 'chapter or part heading',
   'Section-header': 'section heading',
   Text: 'body paragraph',
-  'List-item': 'list item',
+  'List-item': 'list, contents or index entry',
   Quote: 'block quotation or epigraph',
-  Caption: 'caption',
+  Caption: 'caption of a picture or table',
   Footnote: 'footnote or endnote',
 };
 
-/** What each category means, stated once in the header — see `SNAP_CATEGORY_OPTIONS`. */
-export const SNAP_CATEGORY_GUIDE: readonly string[] = [
-  'Title — a chapter or part heading: the title that opens a chapter, a part or another major division of the book, including a chapter number printed on its own line.',
-  'Section-header — a heading inside a chapter that names a section or a subsection.',
-  'Text — ordinary body text: a paragraph of the book\'s own prose.',
-  'List-item — one item of a bulleted or numbered list.',
-  'Quote — a block quotation or an epigraph, set apart from the body text.',
-  'Caption — a caption for a picture, a map, a figure or a table.',
-  'Footnote — the text of a footnote or an endnote, usually beginning with its number.',
-];
+/**
+ * THE GUIDE — what the model is choosing between, and what gives each one away.
+ * Read once per group, cached with it; the questions stay short.
+ */
+export const SNAP_GUIDE = [
+  'You are sorting the blocks of a book into kinds, one block at a time. Each block below is one',
+  'line: its id in brackets, then in parentheses the section of the book it sits in and how the',
+  'publisher\'s files marked it up, then its text (long blocks are cut short with "…").',
+  '',
+  'THE KINDS:',
+  '- Title: the heading that OPENS a chapter or a part of the book, in the chapter itself. It is',
+  '  usually the first block of its section and matches a table of contents entry. It may be split',
+  '  over two lines: a number ("3" or "Chapter 3") and then the words.',
+  '- Section-header: a heading inside a chapter, over a stretch of its text. In a notes section, the',
+  '  heading over one chapter\'s notes ("Chapter 3" or "3. The Hierarchy of Nature") is a',
+  '  Section-header, not a Title.',
+  '- Text: an ordinary paragraph of the book\'s prose.',
+  '- List-item: one item of a list, including every line of a table of contents and every entry of',
+  '  an index ("Darwin, Charles 12, 45-47"). A contents line is never a Title, even though it names one.',
+  '- Quote: a passage quoted from someone else and set apart from the paragraphs (a block',
+  '  quotation), or an epigraph under a chapter heading.',
+  '- Caption: the short line that labels a picture, a map, a figure or a table. It very often begins',
+  '  "Figure 3-2.", "Fig. 1-1", "Map 2" or "Table 4", and sits right after or right before a',
+  '  (picture) block.',
+  '- Footnote: the text of a footnote or an endnote. In a notes or endnotes section these are the',
+  '  numbered notes ("12. Ibid., 9-10.", "1. See Chapters Five and Six of..."), each one a Footnote.',
+  '',
+  'HOW TO JUDGE: read the block\'s words first, then where it sits (its section and the blocks around',
+  'it), then the table of contents. The markup in parentheses is a WEAK hint and is often wrong:',
+  'publishers mark captions and quotations as plain paragraphs all the time, so never choose a kind',
+  'because of the markup alone. A line in the contents section is a List-item. A numbered line in',
+  'an endnotes section is a Footnote unless it is the heading over a chapter\'s notes.',
+].join('\n');
+
+/** The longest text a block line shows; a block's kind is in its opening words. */
+export const LINE_CHARS = 280;
+
+/** How many blocks a group asks about, and how many it shows on either side of them. */
+export const GROUP_ASK = 24;
+export const GROUP_RADIUS = 12;
 
 /**
  * Categories snap is NOT asked about, and why: a picture, a formula and a table
  * are what the markup says they are — their shape is structural, not a reading
  * of the words — and page furniture does not occur in a book that has no pages.
+ * They are still SHOWN, as context: a caption's best evidence is its picture.
  */
 export const SNAP_SKIPPED_CATEGORIES: ReadonlySet<string> = new Set([
   'Picture', 'Formula', 'Table', 'Page-header', 'Page-footer',
@@ -85,6 +124,8 @@ export interface SnapRow {
   id: string;
   category: string;
   text: string;
+  /** The publisher's element (`BookRow.markup`) — shown as a weak hint; absent on older imports. */
+  markup?: string;
 }
 
 /** The one chapter shape this module needs — a subset of `BookChapter`. */
@@ -93,105 +134,76 @@ export interface SnapChapter {
   title: string;
 }
 
-/** A run of consecutive rows sent to snap as one state: `rows.slice(start, end)`. */
-export interface SnapWindow {
-  start: number;
-  end: number;
-}
-
 /**
- * A token estimate for text, deliberately HIGH.
- *
- * Qwen's tokenizer averages near four characters a token on English prose; this
- * counts one per 3.2 so a window sized by it cannot overrun the engine's context
- * on a book of short words or many numbers. An overrun is a refusal from the
- * engine; an underrun is only a slightly smaller window.
+ * Which section of the book each row sits in: the title of the last navigation
+ * entry at or before it. Rows before the first entry are the front of the book.
  */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3.2);
+export function sectionsOf(rows: readonly SnapRow[], chapters: readonly SnapChapter[]): Map<string, string> {
+  const opens = new Map(chapters.map((chapter) => [chapter.id, chapter.title] as const));
+  const out = new Map<string, string>();
+  let current = chapters.length > 0 ? 'front of the book, before the first contents entry' : 'the book';
+  for (const row of rows) {
+    const title = opens.get(row.id);
+    if (title !== undefined) current = title;
+    out.set(row.id, current);
+  }
+  return out;
 }
 
-/** One block as snap sees it: its id in brackets, then its text on one line. */
-export function blockLine(row: SnapRow): string {
-  return `[${row.id}] ${row.text.replace(/\s+/g, ' ').trim()}`;
+/** One block as snap sees it: id, (section · markup), then its text — a picture says so. */
+export function blockLine(row: SnapRow, section: string): string {
+  const where = row.markup !== undefined && row.markup.length > 0 ? `${section} · ${row.markup}` : section;
+  const flat = row.text.replace(/\s+/g, ' ').trim();
+  const text = row.category === 'Picture'
+    ? `(picture) ${flat}`
+    : flat.length > LINE_CHARS ? `${flat.slice(0, LINE_CHARS)}…` : flat;
+  return `[${row.id}] (${where}) ${text}`;
 }
 
-/** The part of every window that is the same: the book, and its contents as a hint. */
+/** What every group's state opens with: the guide, the book, and its contents. */
 export function bookHeader(title: string, chapters: readonly SnapChapter[]): string {
-  const lines = [`BOOK: ${title}`, '', 'BLOCK KINDS (every block below is exactly one of these):'];
-  for (const line of SNAP_CATEGORY_GUIDE) lines.push(`- ${line}`);
-  lines.push('');
+  const lines = [SNAP_GUIDE, '', `BOOK: ${title}`];
   if (chapters.length > 0) {
-    lines.push(
-      'TABLE OF CONTENTS (the book\'s own navigation — a hint: a chapter heading usually '
-      + 'matches one of these entries, but the list can be incomplete or wrong):',
-    );
+    lines.push('TABLE OF CONTENTS (from the book\'s own navigation; it can be incomplete):');
     for (const chapter of chapters) lines.push(`- ${chapter.title}`);
   } else {
-    lines.push('TABLE OF CONTENTS: none — this book has no navigation to go by.');
+    lines.push('TABLE OF CONTENTS: none; this book has no navigation to go by.');
   }
   return lines.join('\n');
 }
 
-/**
- * CUT THE BOOK INTO WINDOWS THAT EACH FIT `budget` TOKENS, header included.
- *
- * Greedy, and it prefers a chapter boundary: when a window is full it ends at the
- * last chapter start inside it, if that start is past the window's middle —
- * otherwise at the row where it filled, because a window half the size it could
- * be costs more context than a mid-chapter cut does. A single block longer than a
- * whole window is still sent alone rather than dropped: the engine refuses it by
- * name if it truly cannot hold it, which is a sentence rather than a silent gap.
- */
-export function buildWindows(
-  rows: readonly SnapRow[],
-  chapterStarts: ReadonlySet<string>,
-  headerTokens: number,
-  budget: number,
-): SnapWindow[] {
-  const room = budget - headerTokens;
-  if (room <= 0) {
-    throw new Error(
-      `The engine's window (${budget} tokens) cannot even hold the book's title and contents `
-      + `(${headerTokens} tokens). Start it with a larger context.`,
-    );
-  }
-  const windows: SnapWindow[] = [];
-  let start = 0;
-  while (start < rows.length) {
-    let used = 0;
-    let end = start;
-    while (end < rows.length) {
-      const cost = estimateTokens(blockLine(rows[end]!)) + 1;
-      if (end > start && used + cost > room) break;
-      used += cost;
-      end += 1;
-    }
-    if (end < rows.length) {
-      for (let cut = end - 1; cut > start + (end - start) / 2; cut -= 1) {
-        if (chapterStarts.has(rows[cut]!.id)) { end = cut; break; }
-      }
-    }
-    windows.push({ start, end });
-    start = end;
-  }
-  return windows;
+/** A group: `rows.slice(from, to)` shown, `rows.slice(askFrom, askTo)` asked about. */
+export interface SnapGroup {
+  from: number;
+  to: number;
+  askFrom: number;
+  askTo: number;
 }
 
-/** The state snap is handed for one window: the header, where this window sits, and its blocks. */
-export function windowState(
+/** Consecutive groups of `ask` rows, each shown with `radius` rows on either side. */
+export function buildGroups(rowCount: number, ask: number = GROUP_ASK, radius: number = GROUP_RADIUS): SnapGroup[] {
+  if (ask < 1 || radius < 0) {
+    throw new Error(`a group asks about at least one block (asked for ${ask}, radius ${radius})`);
+  }
+  const groups: SnapGroup[] = [];
+  for (let at = 0; at < rowCount; at += ask) {
+    const askTo = Math.min(rowCount, at + ask);
+    groups.push({ from: Math.max(0, at - radius), to: Math.min(rowCount, askTo + radius), askFrom: at, askTo });
+  }
+  return groups;
+}
+
+/** The state snap is handed for one group: the header, then the shown blocks in reading order. */
+export function groupState(
   header: string,
   rows: readonly SnapRow[],
-  window: SnapWindow,
-  index: number,
-  count: number,
+  sections: ReadonlyMap<string, string>,
+  group: SnapGroup,
 ): string {
-  const where = count === 1
-    ? 'BLOCKS (the whole book, in reading order; each line is one block: its id in brackets, then its text):'
-    : `BLOCKS (part ${index + 1} of ${count} of the book, in reading order; the blocks before and after `
-      + 'this part are not shown; each line is one block: its id in brackets, then its text):';
-  const body = rows.slice(window.start, window.end).map(blockLine).join('\n');
-  return `${header}\n\n${where}\n${body}`;
+  const body = rows.slice(group.from, group.to)
+    .map((row) => blockLine(row, sections.get(row.id) ?? 'the book'))
+    .join('\n');
+  return `${header}\n\nBLOCKS (a stretch of the book, in reading order):\n${body}`;
 }
 
 /** The question asked about one block — snap's `choice` question shape. */
@@ -238,6 +250,9 @@ export interface SnapReportRow {
   probabilities: Record<string, number>;
   /** `changed`, `same`, or why a different answer was not applied. */
   outcome: 'changed' | 'same' | 'low-confidence' | 'low-label-mass';
+  /** The block's section and opening words, so the report can be read without the book open. */
+  section: string;
+  text: string;
 }
 
 export interface SnapDecision {
@@ -267,6 +282,7 @@ export function decide(
   chapters: readonly SnapChapter[],
   policy: SnapPolicy = DEFAULT_SNAP_POLICY,
 ): SnapDecision {
+  const sections = sectionsOf(rows, chapters);
   const categoryOps: CategoryOp[] = [];
   const report: SnapReportRow[] = [];
   const finalCategory = new Map<string, string>();
@@ -294,6 +310,8 @@ export function decide(
       labelMass: answer.label_mass,
       probabilities: answer.probabilities,
       outcome,
+      section: sections.get(row.id) ?? 'the book',
+      text: row.text.replace(/\s+/g, ' ').trim().slice(0, 120),
     });
   }
 
@@ -336,7 +354,7 @@ export function runTitle(lines: readonly string[]): string {
 export interface SnapCategorizeSettings {
   /** The snap checkout: `scripts/serve.ps1`, `.venv/Scripts/snap.exe`, `models/`. */
   snapHome: string;
-  /** The engine's context, in tokens, when this press starts it. */
+  /** The engine's context, in tokens, when this press starts it. A group needs only a few thousand. */
   contextTokens: number;
   minConfidence?: number;
   minLabelMass?: number;
@@ -355,11 +373,12 @@ export interface SnapCategorizeResult {
   changed: number;
   chapters: number;
   lowConfidence: number;
+  /** How many groups the book was asked in. */
   windows: number;
   /** The report of every answer, beside the book. */
   reportPath: string;
   /** Whether this press started the model — and so brought it down again. */
   startedModel: boolean;
-  /** Null when there was nothing to change, so no step was made. */
+  /** False when there was nothing to change, so no step was made. */
   applied: boolean;
 }

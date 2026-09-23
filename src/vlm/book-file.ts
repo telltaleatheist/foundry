@@ -295,6 +295,18 @@ export interface BookRow {
   shelf?: BookShelf;
   /** One sentence of evidence — set on a shelved row and on no other kind. */
   why?: string;
+  /**
+   * WHAT THE PUBLISHER'S FILES CALLED THIS BLOCK — an EPUB row's own element, as
+   * `<document> <tag>.<class>…[epub:type=…]` ("ch03.xhtml p.fig-caption").
+   *
+   * EVIDENCE, NEVER AUTHORITY. `category` is this importer's reading of the same
+   * markup, and the markup is routinely wrong — the reason this is kept at all is
+   * the Categorize tile (app/shared/snap-categorize.ts), which shows it to the
+   * model as a weak hint beside the words (Owen, 2026-09-22: *"we have to assume
+   * the markup will be wrong. thats why we're doing this"*). Optional, and absent
+   * on every row not exploded from an EPUB and on any EPUB exploded before it.
+   */
+  markup?: string;
 }
 
 /** One banked answer's contribution to a row's text. See `BookRow.parts`. */

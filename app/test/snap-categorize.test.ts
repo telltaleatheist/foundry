@@ -7,8 +7,8 @@ import { describe, expect, test } from 'bun:test';
 
 import { formatOpsFile, parseOpsFile } from '../shared/ops';
 import {
-  blockLine, bookHeader, buildWindows, decide, estimateTokens, isAsked, runTitle,
-  windowState, type SnapChoiceAnswer, type SnapRow,
+  blockLine, bookHeader, buildGroups, decide, groupState, isAsked, LINE_CHARS, runTitle,
+  sectionsOf, SNAP_GUIDE, type SnapChoiceAnswer, type SnapRow,
 } from '../shared/snap-categorize';
 
 const answer = (choice: string, confidence = 0.95, labelMass = 0.99): SnapChoiceAnswer => ({
@@ -43,6 +43,11 @@ describe('decide — what an answer does to a block', () => {
     expect(d.report.map((r) => r.outcome)).toEqual(['low-confidence', 'low-label-mass']);
   });
 
+  test('the report carries each block\'s section and opening words, so it reads without the book', () => {
+    const d = decide(rows, new Map([['e-4', answer('Text')]]), [{ id: 'e-2', title: 'Chapter 1' }]);
+    expect(d.report[0]).toMatchObject({ section: 'Chapter 1', text: 'It began on a Tuesday.' });
+  });
+
   test('a run of chapter-heading rows gets ONE chapter marker, at its first row, titled from the run', () => {
     const d = decide(rows, new Map([
       ['e-2', answer('Title')],
@@ -56,12 +61,6 @@ describe('decide — what an answer does to a block', () => {
       ['e-2', answer('Title')], ['e-3', answer('Title')],
       ['e-5', answer('Title')],
     ]), [{ id: 'e-1', title: 'Chapter 1' }, { id: 'e-5', title: 'The Long Road' }]);
-    expect(d.chapterOps).toEqual([]);
-  });
-
-  test('chapters are only ever ADDED: a publisher chapter the model reads as body text is kept', () => {
-    const d = decide(rows, new Map([['e-4', answer('Text')]]), [{ id: 'e-4', title: 'Odd entry' }]);
-    expect(d.chapterOps.every((op) => 'set' in op)).toBe(true);
     expect(d.chapterOps).toEqual([]);
   });
 
@@ -80,35 +79,50 @@ describe('what snap is shown', () => {
     expect(isAsked({ id: 'x', category: 'Text', text: '   ' })).toBe(false);
   });
 
-  test('the header carries the contents as a hint, and says so when there are none', () => {
-    expect(bookHeader('B', [{ id: 'e-2', title: '1: Killing America' }])).toContain('- 1: Killing America');
+  test('every block sits in the section of the last contents entry at or before it', () => {
+    const s = sectionsOf(rows, [{ id: 'e-2', title: 'Chapter 1' }, { id: 'e-5', title: 'Endnotes' }]);
+    expect([...s.values()]).toEqual([
+      'front of the book, before the first contents entry',
+      'Chapter 1', 'Chapter 1', 'Chapter 1', 'Endnotes', 'Endnotes',
+    ]);
+  });
+
+  test('a line shows the section, the markup as a hint, a picture as a picture, and cuts long text', () => {
+    expect(blockLine({ id: 'e-9', category: 'Text', text: 'Figure 1-1. Richard Owen.', markup: 'ch.html p.calibre_3' }, 'Chapter 1'))
+      .toBe('[e-9] (Chapter 1 · ch.html p.calibre_3) Figure 1-1. Richard Owen.');
+    expect(blockLine({ id: 'e-8', category: 'Picture', text: 'portrait' }, 'Chapter 1'))
+      .toBe('[e-8] (Chapter 1) (picture) portrait');
+    const long = blockLine({ id: 'e-7', category: 'Text', text: 'x'.repeat(LINE_CHARS + 50) }, 'S');
+    expect(long.endsWith('…')).toBe(true);
+    expect(long.length).toBeLessThan(LINE_CHARS + 20);
+  });
+
+  test('the header is the guide, the book and its contents — or says there are none', () => {
+    const h = bookHeader('B', [{ id: 'e-2', title: '1. Introduction' }]);
+    expect(h.startsWith(SNAP_GUIDE)).toBe(true);
+    expect(h).toContain('- 1. Introduction');
     expect(bookHeader('B', [])).toContain('none');
   });
 
-  test('a book that fits is one window — "the whole book"', () => {
-    const windows = buildWindows(rows, new Set(), 50, 100_000);
-    expect(windows).toEqual([{ start: 0, end: rows.length }]);
-    expect(windowState('H', rows, windows[0]!, 0, 1)).toContain('the whole book');
+  test('the guide names the three failures of the first run: contents lines, first endnotes, captions', () => {
+    expect(SNAP_GUIDE).toContain('A contents line is never a Title');
+    expect(SNAP_GUIDE).toContain('1. See Chapters Five and Six');
+    expect(SNAP_GUIDE).toContain('Figure 3-2.');
+    expect(SNAP_GUIDE).toContain('WEAK hint');
   });
 
-  test('a longer book is cut into windows that cover every row once, in order', () => {
-    const many: SnapRow[] = Array.from({ length: 200 }, (_, i) => ({ id: `e-${i}`, category: 'Text', text: 'word '.repeat(40) }));
-    const per = estimateTokens(blockLine(many[0]!)) + 1;
-    const windows = buildWindows(many, new Set(), 10, 10 + per * 30);
-    expect(windows[0]).toEqual({ start: 0, end: 30 });
-    expect(windows.map((w) => w.end - w.start).reduce((a, b) => a + b, 0)).toBe(200);
-    for (let i = 1; i < windows.length; i += 1) expect(windows[i]!.start).toBe(windows[i - 1]!.end);
+  test('groups ask every row exactly once, and show each asked row with its neighbours', () => {
+    const groups = buildGroups(60, 24, 12);
+    expect(groups.map((g) => [g.askFrom, g.askTo])).toEqual([[0, 24], [24, 48], [48, 60]]);
+    expect(groups.map((g) => [g.from, g.to])).toEqual([[0, 36], [12, 60], [36, 60]]);
   });
 
-  test('a full window ends at a chapter start past its middle rather than mid-chapter', () => {
-    const many: SnapRow[] = Array.from({ length: 100 }, (_, i) => ({ id: `e-${i}`, category: 'Text', text: 'word '.repeat(40) }));
-    const per = estimateTokens(blockLine(many[0]!)) + 1;
-    const windows = buildWindows(many, new Set(['e-22']), 10, 10 + per * 30);
-    expect(windows[0]).toEqual({ start: 0, end: 22 });
-  });
-
-  test('a window too small for the header is refused by name', () => {
-    expect(() => buildWindows(rows, new Set(), 500, 400)).toThrow(/cannot even hold/);
+  test('a group\'s state is the header and only its own stretch of the book', () => {
+    const state = groupState('H', rows, sectionsOf(rows, []), { from: 1, to: 4, askFrom: 2, askTo: 3 });
+    expect(state).toContain('[e-2]');
+    expect(state).toContain('[e-4]');
+    expect(state).not.toContain('[e-1]');
+    expect(state).not.toContain('[e-5]');
   });
 });
 

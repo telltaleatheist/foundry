@@ -304,6 +304,17 @@ function classes(el: XmlElement): string[] {
   return said === undefined ? [] : said.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
 }
 
+/**
+ * The element a row was minted from, as its `markup` says it (`BookRow.markup`):
+ * the document's file name, the tag, its classes and its `epub:type`.
+ */
+function markupOf(el: XmlElement, walk: DocumentWalk): string {
+  const file = walk.docPath.split('/').pop() ?? walk.docPath;
+  const types = epubTypes(el);
+  return `${file} ${el.tag}${classes(el).map((name) => `.${name}`).join('')}`
+    + (types.length > 0 ? `[epub:type=${types.join(' ')}]` : '');
+}
+
 /** Is this element the publisher's own declaration of a note? */
 function isNote(el: XmlElement): boolean {
   const types = epubTypes(el);
@@ -730,6 +741,7 @@ function explodeElement(el: XmlElement, walk: DocumentWalk, book: Explosion): vo
   const found: FoundRef[] = [];
   const row = (category: DotsCategory, text: string): BookRow => {
     const made = mint(book, category, text);
+    made.markup = markupOf(el, walk);
     bindAnchors([el], walk, book, made);
     keepRefs(found, made, book);
     return made;
@@ -904,6 +916,8 @@ function descendInto(
     book.inlineImages += pictures.length;
     if (text.length === 0) return;
     const made = mint(book, inherited ?? 'Text', text);
+    // Loose text directly inside a container: the container is what the files said.
+    made.markup = `${markupOf(el, walk)} (loose text)`;
     bindAnchors(carried, walk, book, made);
     keepRefs(found, made, book);
   };

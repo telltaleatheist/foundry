@@ -32,8 +32,8 @@ import { existsSync, promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 
 import {
-  blockQuestion, bookHeader, buildWindows, decide, DEFAULT_SNAP_POLICY, estimateTokens,
-  isAsked, windowState, type SnapCategorizeResult, type SnapCategorizeSettings,
+  blockQuestion, bookHeader, buildGroups, decide, DEFAULT_SNAP_POLICY, groupState,
+  isAsked, sectionsOf, type SnapCategorizeResult, type SnapCategorizeSettings,
   type SnapChoiceAnswer, type SnapPolicy, type SnapProgress, type SnapReportRow,
 } from '../shared/snap-categorize';
 import type { BookOp } from '../shared/ops';
@@ -45,13 +45,6 @@ const SNAP_PORT = 8480;
 const ENGINE_PORT = 8481;
 const SNAP_URL = `http://127.0.0.1:${SNAP_PORT}`;
 const ENGINE_URL = `http://127.0.0.1:${ENGINE_PORT}`;
-
-/**
- * Questions per `/v1/decide` request. snap primes the shared state once per
- * request and llama-server keeps it cached between requests, so the size only
- * bounds how long one HTTP call runs and how much a cancel has to wait for.
- */
-const QUESTIONS_PER_REQUEST = 48;
 
 /** How long the engine may take to load, and how long one request may run. */
 const ENGINE_READY_MS = 5 * 60_000;
@@ -260,37 +253,39 @@ export async function snapCategorize(
     stack = await bringUp(settings, abort.signal, projectDir);
 
     const header = bookHeader(loaded.title, loaded.chapters);
-    const windows = buildWindows(
-      rows,
-      new Set(loaded.chapters.map((chapter) => chapter.id)),
-      estimateTokens(header) + 64,
-      stack.contextTokens - QUESTION_RESERVE_TOKENS,
-    );
+    const sections = sectionsOf(rows, loaded.chapters);
+    const groups = buildGroups(rows.length);
     const total = rows.filter(isAsked).length;
     const answers = new Map<string, SnapChoiceAnswer>();
-    for (let w = 0; w < windows.length; w += 1) {
-      const window = windows[w]!;
-      const state = windowState(header, rows, window, w, windows.length);
-      const asked = rows.slice(window.start, window.end).filter(isAsked);
-      for (let at = 0; at < asked.length; at += QUESTIONS_PER_REQUEST) {
-        if (abort.signal.aborted) throw new SnapCategorizeError('Cancelled.');
-        const batch = asked.slice(at, at + QUESTIONS_PER_REQUEST);
-        say({
-          projectDir, phase: 'asking',
-          message: windows.length === 1
-            ? `Categorizing blocks (${answers.size.toLocaleString()} of ${total.toLocaleString()})…`
-            : `Categorizing blocks, part ${w + 1} of ${windows.length} (${answers.size.toLocaleString()} of ${total.toLocaleString()})…`,
-          done: answers.size, total,
-        });
-        const questions = Object.fromEntries(batch.map((row) => [row.id, blockQuestion(row)]));
-        const got = await ask(state, questions, abort.signal);
-        for (const row of batch) {
-          const answer = got[row.id];
-          if (answer === undefined) {
-            throw new SnapCategorizeError(`snap answered the batch without an answer for block ${row.id}.`);
-          }
-          answers.set(row.id, answer);
+    for (let g = 0; g < groups.length; g += 1) {
+      if (abort.signal.aborted) throw new SnapCategorizeError('Cancelled.');
+      const group = groups[g]!;
+      const asked = rows.slice(group.askFrom, group.askTo).filter(isAsked);
+      if (asked.length === 0) continue;
+      const state = groupState(header, rows, sections, group);
+      // Refused BY NAME rather than sent to fail inside the engine: a group's
+      // state is a few thousand tokens, and a window too small to hold one is a
+      // setting to change, not something to retry.
+      const needed = Math.ceil(state.length / 3.2) + QUESTION_RESERVE_TOKENS;
+      if (needed > stack.contextTokens) {
+        throw new SnapCategorizeError(
+          `One group of blocks needs about ${needed.toLocaleString()} tokens and the model's window is `
+          + `${stack.contextTokens.toLocaleString()}. Choose a larger window.`,
+        );
+      }
+      say({
+        projectDir, phase: 'asking',
+        message: `Categorizing blocks (${answers.size.toLocaleString()} of ${total.toLocaleString()})…`,
+        done: answers.size, total,
+      });
+      const questions = Object.fromEntries(asked.map((row) => [row.id, blockQuestion(row)]));
+      const got = await ask(state, questions, abort.signal);
+      for (const row of asked) {
+        const answer = got[row.id];
+        if (answer === undefined) {
+          throw new SnapCategorizeError(`snap answered the group without an answer for block ${row.id}.`);
         }
+        answers.set(row.id, answer);
       }
     }
 
@@ -300,7 +295,7 @@ export async function snapCategorize(
     stack = null;
 
     const decision = decide(rows, answers, loaded.chapters, policy);
-    const reportPath = await writeReport(projectDir, decision.report, { windows: windows.length, policy });
+    const reportPath = await writeReport(projectDir, decision.report, { groups: groups.length, policy });
     const ops: BookOp[] = [...decision.categoryOps, ...decision.chapterOps];
     if (ops.length > 0) {
       say({ projectDir, phase: 'applying', message: `Applying ${decision.categoryOps.length} category change(s) and ${decision.chapterOps.length} chapter marker(s)…` });
@@ -311,7 +306,7 @@ export async function snapCategorize(
       changed: decision.categoryOps.length,
       chapters: decision.chapterOps.length,
       lowConfidence: decision.report.filter((row) => row.outcome === 'low-confidence' || row.outcome === 'low-label-mass').length,
-      windows: windows.length,
+      windows: groups.length,
       reportPath,
       startedModel,
       applied: ops.length > 0,
@@ -340,7 +335,7 @@ export async function snapCategorize(
 async function writeReport(
   projectDir: string,
   report: readonly SnapReportRow[],
-  meta: { windows: number; policy: SnapPolicy },
+  meta: { groups: number; policy: SnapPolicy },
 ): Promise<string> {
   const dir = path.join(projectDir, 'snap');
   await fsp.mkdir(dir, { recursive: true });

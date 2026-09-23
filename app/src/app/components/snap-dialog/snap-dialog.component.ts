@@ -12,10 +12,15 @@ import { api } from '../../core/foundry';
 
 /** Where the snap folder and the chosen window are remembered, per machine. */
 const HOME_KEY = 'foundry.snap.home';
-const CONTEXT_KEY = 'foundry.snap.context';
+const CONTEXT_KEY = 'foundry.snap.window';
 
-/** The windows offered. 262k is the model's trained limit; whether it fits the card is the test. */
-const CONTEXTS: readonly number[] = [32_768, 65_536, 131_072, 262_144];
+/**
+ * The model windows offered. A group of blocks with its guide and contents is a
+ * few thousand tokens (shared/snap-categorize.ts, buildGroups), so a small
+ * window is enough — and a model started with one loads faster and leaves the
+ * card freer. The run refuses by name if one group will not fit.
+ */
+const CONTEXTS: readonly number[] = [8_192, 16_384, 32_768];
 
 function remembered(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -55,8 +60,9 @@ function remember(key: string, value: string): void {
         } @else {
           <p class="lead">
             Brings up Qwen3.5 9B on this machine's graphics card, asks it what every block of the book is —
-            chapter heading, section heading, body text, list item, quotation, caption or note — and brings it
-            back down. Confident changes land as one edit step; chapter headings get chapter markers.
+            chapter heading, section heading, body text, list or contents entry, quotation, caption or note —
+            and brings it back down. Confident changes land as one edit step; chapter headings get chapter
+            markers.
           </p>
 
           <label class="field">
@@ -79,7 +85,8 @@ function remember(key: string, value: string): void {
           </label>
 
           <p class="note">
-            A book larger than the window is read in parts, each opening with the book's table of contents.
+            Blocks are judged a couple of dozen at a time, each seen with the blocks around it, the section it
+            sits in, the publisher's markup (as a weak hint) and the book's table of contents.
             This takes the graphics card for the length of the run.
           </p>
         }
@@ -93,7 +100,7 @@ function remember(key: string, value: string): void {
 
         @if (result(); as r) {
           <ul class="tally">
-            <li>{{ r.asked.toLocaleString() }} blocks asked{{ r.windows > 1 ? ', in ' + r.windows + ' parts' : '' }}</li>
+            <li>{{ r.asked.toLocaleString() }} blocks asked{{ ', in ' + r.windows + ' groups' }}</li>
             <li>{{ r.changed.toLocaleString() }} recategorized, {{ r.chapters }} chapter marker(s) added</li>
             <li>{{ r.lowConfidence.toLocaleString() }} left as they were because the model was unsure</li>
             <li>{{ r.startedModel ? 'The model was started and brought back down.' : 'An already-running model was used and left running.' }}</li>
@@ -166,7 +173,7 @@ export class SnapDialogComponent implements OnDestroy {
 
   protected readonly contexts = CONTEXTS;
   protected snapHome = remembered(HOME_KEY) ?? '';
-  protected contextTokens = Number(remembered(CONTEXT_KEY) ?? 131_072);
+  protected contextTokens = Number(remembered(CONTEXT_KEY) ?? 16_384);
   protected minConfidence = 0.6;
 
   protected readonly busy = signal(false);
