@@ -480,6 +480,45 @@ step id the press was aimed at); no channel was added, renamed or removed, so
 docs/IPC-CHANNELS.md owed no regeneration. Everything else is derivation over the rows
 push that already exists — do not add an event for it.
 
+### 8c. The cleanup's triage — a fourth request shape (2026-09-23)
+
+> Owen, 2026-09-23: *"we create a list of blocks that need to be cleaned with snap and
+> then we bring snap down and load the full normal cleaning logic"* — *"a cleanup-triage
+> stage that runs before cleanup."*
+
+With the Clean text dialog's box ticked (the default, when an engine serves the
+`decide` class), one press calls `FoundryHostQueue.enqueue` **twice**:
+
+1. `CleanTriageRequest` — kind **`clean-triage`**: `{inputPath, outputPath, at?,
+   deferred?, after?, concurrency?}`. `outputPath` is the verdicts file
+   (`<key>.clean[.<id8>].triage.json`, beside the cleanup's records) and is the row's
+   product and identity. No `stepId`, no `mints`: it lands nothing in the tree.
+2. The ordinary `CleanRequest`, now carrying **`triagePath`** (that same file) and
+   **`after`** = the host's own id for the row returned by call 1.
+
+**WHAT THE HOST HAS TO LEARN** (the promised-chain contract of §8b already covers the
+`after` half — a host that honours it has the ordering and the cascade):
+
+- **The kind.** A GPU row: it is placed on a Crucible's `decide` class, loaded and
+  leased, and holds that card for the length of the book. Its label (Foundry's row
+  says "Clean text — triage"; the queue page's column says "Finding the text that
+  needs cleaning"), its crucible class (`decide`, and it is not routable upstream),
+  and its act word for `X-Crucible-Act` (`decide`).
+- **Its progress line**: `clean-triage: <n>/<m>` on stderr, anchored at both ends —
+  `JobProgress.phase` is **`triage`**. The run's other lines (`clean-triage: 2081
+  position(s) in 90 group(s)…`, `clean-triage: 312 of 2081 position(s) need
+  cleaning…`) are notes, not counts.
+- **That it lands nothing.** `runJob` settles it `done` with no ledger write; the
+  cleanup behind it is the step.
+- **A version gate.** The pair needs an engine carrying `clean-triage` and
+  `clean-text --triage` (Foundry c7bcb1a), and a Crucible serving `decide`
+  (1.0.24). The dialog only offers the box when an engine the press would go to
+  answers a `decide` row, so an older fleet sees today's cleanup.
+
+A host that ignores `after` runs the two side by side: the cleanup then starts
+without its verdicts file and `clean-text` refuses `--triage` by name, which is a
+failed row rather than a wrong book.
+
 ## 9. Ground rules worth inheriting
 
 Whatever route you take, these are the invariants the formats promise:
