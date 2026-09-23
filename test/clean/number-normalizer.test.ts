@@ -96,9 +96,10 @@ test('NOT_FOUND — the find is not verbatim in the target, and there is no ladd
   assert.strictEqual(only('On 23  March 1933 he spoke.', '23 March 1933', 'x'), 'NOT_FOUND');
 });
 
-test('AMBIGUOUS_FIND — the same span twice, so which one was meant is unknown', () => {
-  assert.strictEqual(
-    only('In 1933 and again in 1933.', '1933', 'nineteen thirty-three'), 'AMBIGUOUS_FIND');
+test('a number printed twice is read at BOTH places (n7 — AMBIGUOUS_FIND no longer applies)', () => {
+  const { accepted } = check('In 1933 and again in 1933.',
+    [{ find: '1933', replace: 'nineteen thirty-three' }]);
+  assert.deepStrictEqual(accepted.map((a) => a.at), [3, 21]);
 });
 
 test('NO_DIGIT_IN_FIND — prose tidying cannot ride in on a number edit', () => {
@@ -214,8 +215,8 @@ test('AMBIGUOUS_FIND is DIGIT-BOUNDED — "1." is not found inside "11."', () =>
     'the only occurrence sits inside another number, so there is none');
   assert.strictEqual(only('1. Amulet and 11. Charm', '1.', 'one.'), 'APPLIED',
     'the real marker is found, and the one inside "11." is not a second one');
-  assert.strictEqual(only('1. Amulet and 1. Charm', '1.', 'one.'), 'AMBIGUOUS_FIND',
-    'two real occurrences are still ambiguous');
+  assert.strictEqual(check('1. Amulet and 1. Charm', [{ find: '1.', replace: 'one.' }])
+    .accepted.length, 2, 'two real occurrences are both read');
   // And the same boundary the other way: the "19" inside "1944" is not a second
   // occurrence, so the real one is found instead of being called ambiguous.
   const { accepted } = check('In 1944 he was 19.', [{ find: '19', replace: 'nineteen' }]);

@@ -76,8 +76,8 @@ import {
 import { ordinalToWords } from './number-expansion.js';
 import {
   ABBREVIATION_READINGS, abbreviationContextRefusal, abbreviationKey, bracketRemovalRefusal,
-  capsReadingRefusal, gluedAmpersandReadings, hasGluedAmpersand, isEmphasisWord, isRomanContext,
-  prefixesAName, romanReadingRefusal, romanValue,
+  capsReadingRefusal, gluedAmpersandReadings, hasGluedAmpersand, isEmphasisWord, isEnglishWord,
+  isRomanContext, prefixesAName, romanReadingRefusal, romanValue,
 } from './tts-spoken-forms.js';
 import type { ReadingRefusal } from './tts-spoken-forms.js';
 import type { NumberRuleOutcome } from './tts-number-rules.js';
@@ -120,11 +120,17 @@ export { sitsInCitation, bareWord };
  * become a name. Every book-anchored reference in a book reads differently than
  * it did under n5, and a bare `c:v` reads exactly as it did.
  *
+ *
+ * n6 → n7 (2026-09-22, Owen: *"i dont think we should be throwing fixes
+ * away"*): an edit aimed at a neighbour is CARRIED there and judged against it;
+ * a number printed more than once is read at each place (no longer
+ * AMBIGUOUS_FIND); a word split by a space may be joined (`rejoinsSplitWord`).
+ *
  * A BUMP HERE IS A CROSS-REPO EVENT. These rules are vendored byte-for-byte into
  * orpheus-finetune's `pipeline/normalization/vendor/` and drift-checked on every
  * training build — see docs/NARRATION_TEXT_PASS.md.
  */
-export const NORMALIZER_VERSION = 'n6';
+export const NORMALIZER_VERSION = 'n7';
 
 /**
  * The model this pass uses when the setting is absent.
@@ -258,6 +264,13 @@ export type NumberEditStatus =
   | 'WORDS_ADDED'
   /** The heading and its contents entry could not take the SAME edit. */
   | 'TOC_MISMATCH'
+  /**
+   * NOT A VERDICT HERE — the edit names text this block does not print and its
+   * neighbour does, so it was handed to that neighbour and judged THERE, by the
+   * same wall, where its own record says what became of it. See
+   * `carriedAcross` in `askAboutEach`.
+   */
+  | 'CARRIED'
   /** A deterministic rule read it, before the model was asked anything. */
   | 'APPLIED_RULE'
   | 'APPLIED';
@@ -285,6 +298,8 @@ export type NumberEditClass =
   | 'ampersand'
   /** A roman numeral naming a person or a part. */
   | 'roman'
+  /** A word the page broke with a space, joined again — "fini sh". See `rejoinsSplitWord`. */
+  | 'split-word'
   /** Anything else. The class the receipt watches hardest. */
   | 'other';
 
@@ -1291,6 +1306,16 @@ export interface NumberEditPolicy {
    * number edit. True is the narration text pass.
    */
   allowTextEdits: boolean;
+  /**
+   * Is this a word a reader recognises standing on its own? What
+   * `rejoinsSplitWord` asks of the joined word and of each piece.
+   *
+   * Absent, it is this build's English list alone. `askAboutEach` supplies the
+   * list PLUS the book's own vocabulary, because a list of fifteen hundred
+   * common words does not carry "constitution" and the book that prints it
+   * forty times does.
+   */
+  knownWord?: (word: string) => boolean;
 }
 
 /** The number pass's own policy — the behaviour every caller had before 2026-09-04. */
@@ -1353,6 +1378,71 @@ const MAX_TEXT_EDIT_SHARE = 0.25;
 const MIN_TEXT_EDIT_BUDGET = 60;
 
 /**
+ * How often the book must print a word for `rejoinsSplitWord` to count it as
+ * one. TWO, so the split being repaired — which prints each piece once — does
+ * not make its own pieces into words.
+ */
+const BOOK_WORD_MIN = 2;
+
+/**
+ * Is this edit a word the page broke with a space, joined again — and nothing
+ * else?
+ *
+ * ── Why this is a class of its own (Owen, 2026-09-22) ───────────────────────
+ *
+ * *"i dont think we should be throwing fixes away … i dont see what
+ * justification there could possibly be for valid fixes being thrown out."*
+ * Pursuit of Power's run refused "fini sh" → "finish" as `NOT_A_CLASS`, beside
+ * 536 other prose refusals — and most of THOSE the wall exists to refuse: the
+ * model re-spacing numbers already spelled ("nineteenth" → "nineteen th"),
+ * "per cent" → "percent", hyphens flipped. So the answer is not a looser wall;
+ * it is one more narrow shape with a proof, the way every class here has one.
+ *
+ * The proof: the two sides differ ONLY in whitespace, and only by removing it;
+ * every word the join makes is a known word; and EVERY piece it was made from
+ * is not one. "fini" + "sh" → "finish" passes. "per" + "cent", "every" +
+ * "one", "a" + "lone" do not — a piece that is a word on its own means the
+ * space may be the author's, and joining it can change what the sentence says.
+ * A split repeated often enough in the book to make its pieces look like words
+ * is refused too, which is the safe direction.
+ */
+export function rejoinsSplitWord(
+  find: string,
+  replace: string,
+  knownWord: (word: string) => boolean = isEnglishWord,
+): boolean {
+  if (DIGIT.test(find) || DIGIT.test(replace)) return false;
+  if (find.replace(/\s+/g, '') !== replace.replace(/\s+/g, '')) return false;
+  const pieces = find.trim().split(/\s+/);
+  const joined = replace.trim().split(/\s+/);
+  if (joined.length >= pieces.length) return false;
+  const bare = (token: string): string =>
+    token.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
+  // Walk the joined tokens, consuming the pieces each one is made of.
+  let next = 0;
+  for (const token of joined) {
+    const made: string[] = [];
+    let built = '';
+    while (next < pieces.length && built.length < token.length) {
+      built += pieces[next];
+      made.push(pieces[next]);
+      next += 1;
+    }
+    if (built !== token) return false;
+    if (made.length === 1) continue;
+    const word = bare(token);
+    if (!/^\p{L}+$/u.test(word) || !knownWord(word)) return false;
+    // The punctuation stays at the ends: "fini sh," may join, "fini, sh" may not.
+    if (made.slice(0, -1).some((piece) => bare(piece) !== piece.replace(/^[^\p{L}]+/u, ''))) {
+      return false;
+    }
+    if (made.slice(1).some((piece) => /^[^\p{L}]/u.test(piece))) return false;
+    if (made.some((piece) => bare(piece) === '' || knownWord(bare(piece)))) return false;
+  }
+  return next === pieces.length;
+}
+
+/**
  * Check one target's proposed edits and return the ones that may be applied.
  *
  * EVERY outcome is recorded, and a rejection means the printed digits stand for
@@ -1371,7 +1461,7 @@ const MIN_TEXT_EDIT_BUDGET = 60;
 export function validateNumberEdits(
   target: string,
   segments: readonly number[],
-  edits: ReadonlyArray<{ find?: unknown; replace?: unknown }>,
+  edits: ReadonlyArray<{ find?: unknown; replace?: unknown; from?: string }>,
   /**
    * Spans of `target` a deterministic rule already read. An edit reaching into
    * one is refused `OVERLAPS_APPLIED`, the same way an edit reaching into a span
@@ -1400,11 +1490,19 @@ export function validateNumberEdits(
 
   const accepted: NarrationTextRewrite[] = [];
   const records: NumberEditRecord[] = [];
+  /** The block whose answer named the edit being judged, when it was not this one. */
+  let carriedFrom: string | undefined;
+  const said = (detail: string | undefined): string | undefined => {
+    if (carriedFrom === undefined) return detail;
+    const whence = `carried from ${carriedFrom}, whose answer named text only this block prints`;
+    return detail === undefined ? whence : `${detail}; ${whence}`;
+  };
   const reject = (find: string, replace: string, status: NumberEditStatus, detail?: string): void => {
     const editClass = classifyEdit(find);
-    records.push(detail === undefined
+    const why = said(detail);
+    records.push(why === undefined
       ? { find, replace, status, editClass }
-      : { find, replace, status, editClass, detail });
+      : { find, replace, status, editClass, detail: why });
   };
 
   // How many characters the accepted TEXT edits have replaced so far. Number
@@ -1413,10 +1511,55 @@ export function validateNumberEdits(
   const textBudget = Math.max(
     MIN_TEXT_EDIT_BUDGET, Math.floor(target.length * MAX_TEXT_EDIT_SHARE));
 
+  /*
+   * ── A NUMBER PRINTED MORE THAN ONCE IS READ AT EACH PLACE IT IS PRINTED ────
+   *
+   * Owen, 2026-09-22: valid fixes are never thrown away. Pursuit of Power's run
+   * refused 498 number edits AMBIGUOUS_FIND — "1815" → "eighteen fifteen" in a
+   * paragraph that prints 1815 three times — and every one of them left digits
+   * for the voice. Which occurrence was meant does not matter when the reading
+   * is the same at all of them: the edit becomes one POSITIONED edit per
+   * occurrence, and each is judged by the whole wall on its own (a citation, a
+   * markup boundary, a span the rules already read — each at its own place).
+   *
+   * NUMBERS ONLY. A text find's reading turns on where it sits — "St." is Saint
+   * before a name and Street after one — so a text find printed twice is still
+   * AMBIGUOUS_FIND, and the model has to widen it.
+   *
+   * AND A PROPOSAL REPEATED VERBATIM IS ONE PROPOSAL. The model often names the
+   * same edit twice; judging the copy would refuse it OVERLAPS_APPLIED against
+   * its own twin and count a refusal that refused nothing.
+   */
+  const seen = new Set<string>();
+  const positioned: Array<{ find?: unknown; replace?: unknown; at?: number; from?: string }> = [];
   for (const proposed of edits) {
     const find = typeof proposed?.find === 'string' ? proposed.find : '';
     const replace = typeof proposed?.replace === 'string' ? proposed.replace : '';
+    const said = JSON.stringify([find, replace]);
+    if (find !== '' && find !== replace && seen.has(said)) {
+      records.push({
+        find, replace, status: 'NOOP', editClass: classifyEdit(find),
+        detail: 'the answer names this edit more than once; it is judged once',
+      });
+      continue;
+    }
+    seen.add(said);
+    const everywhere = DIGIT.test(find) && replace.trim() !== ''
+      ? digitBoundedOccurrences(target, find) : [];
+    if (everywhere.length > 1) {
+      for (const at of everywhere) positioned.push({ find, replace, at, from: proposed.from });
+    } else {
+      positioned.push(proposed);
+    }
+  }
+
+  for (const proposed of positioned) {
+    const find = typeof proposed?.find === 'string' ? proposed.find : '';
+    const replace = typeof proposed?.replace === 'string' ? proposed.replace : '';
     const editClass = classifyEdit(find);
+    /** What the record calls it — the class, unless a narrower shape proved it. */
+    let recordClass: NumberEditClass = editClass;
+    carriedFrom = proposed.from;
     // WHICH INVARIANTS APPLY, asked directly rather than read off the class: a
     // bracketed insertion carrying a page number is both a bracket and a number,
     // and the two questions have different answers. A digit-bearing find with a
@@ -1438,7 +1581,8 @@ export function validateNumberEdits(
       continue;
     }
 
-    const occurrences = digitBoundedOccurrences(target, find);
+    const occurrences = typeof proposed.at === 'number'
+      ? [proposed.at] : digitBoundedOccurrences(target, find);
     if (occurrences.length === 0) { reject(find, replace, 'NOT_FOUND'); continue; }
     if (occurrences.length > 1) { reject(find, replace, 'AMBIGUOUS_FIND'); continue; }
     const at = occurrences[0];
@@ -1480,7 +1624,11 @@ export function validateNumberEdits(
       }
       textBudgetSpent += ampSpends;
       accepted.push({ find, replace, at });
-      records.push({ find, replace, status: 'APPLIED', editClass: 'ampersand' });
+      const whence = said(undefined);
+      records.push({
+        find, replace, status: 'APPLIED', editClass: 'ampersand',
+        ...(whence === undefined ? {} : { detail: whence }),
+      });
       continue;
     }
     if (hyphenToDash(find) === replace) {
@@ -1504,7 +1652,11 @@ export function validateNumberEdits(
       }
       textBudgetSpent += dashSpends;
       accepted.push({ find, replace, at });
-      records.push({ find, replace, status: 'APPLIED', editClass: 'spaced-hyphen' });
+      const whence = said(undefined);
+      records.push({
+        find, replace, status: 'APPLIED', editClass: 'spaced-hyphen',
+        ...(whence === undefined ? {} : { detail: whence }),
+      });
       continue;
     }
     if (DIGIT.test(replace)) { reject(find, replace, 'DIGIT_IN_REPLACE'); continue; }
@@ -1638,6 +1790,11 @@ export function validateNumberEdits(
             + '[interpolation] may have its brackets dropped');
           continue;
         }
+      } else if (rejoinsSplitWord(find, replace, policy.knownWord)) {
+        // A WORD THE PAGE BROKE, joined again. Its proof is the whole of
+        // `rejoinsSplitWord`; the budget, markup and overlap checks below still
+        // apply to it as to every other reading.
+        recordClass = 'split-word';
       } else {
         // Which class this span belongs to, with the brackets set aside: a
         // parenthesis around an acronym is still an acronym edit.
@@ -1775,7 +1932,10 @@ export function validateNumberEdits(
 
     if (!isNumber) textBudgetSpent += Math.max(find.length, replace.length);
     accepted.push({ find, replace, at });
-    records.push({ find, replace, status: 'APPLIED', editClass });
+    const why = said(undefined);
+    records.push(why === undefined
+      ? { find, replace, status: 'APPLIED', editClass: recordClass }
+      : { find, replace, status: 'APPLIED', editClass: recordClass, detail: why });
   }
   return { accepted, records };
 }
@@ -2257,6 +2417,28 @@ export async function askAboutEach(
     systemPrompt, [...inputs.values()].reduce((a, b) => (b.length > a.length ? b : a), ''));
 
   /*
+   * THE BOOK AS ITS OWN DICTIONARY, for `rejoinsSplitWord`. The English list
+   * carries fifteen hundred common words; a word this book prints at least
+   * `BOOK_WORD_MIN` times is a word too. A caller that states its own
+   * `knownWord` keeps it.
+   */
+  const bookWords = new Map<string, number>();
+  if (policy.allowTextEdits && policy.knownWord === undefined) {
+    for (const one of asks) {
+      for (const word of one.text.toLowerCase().match(/\p{L}+/gu) ?? []) {
+        bookWords.set(word, (bookWords.get(word) ?? 0) + 1);
+      }
+    }
+  }
+  const judged: NumberEditPolicy = !policy.allowTextEdits || policy.knownWord !== undefined
+    ? policy
+    : {
+      ...policy,
+      knownWord: (word) => isEnglishWord(word)
+        || (bookWords.get(word.toLowerCase()) ?? 0) >= BOOK_WORD_MIN,
+    };
+
+  /*
    * ── THE POOL, AND WHY THE ANSWERS ARE NOT WRITTEN WHERE THEY LAND ──────────
    *
    * `decisions` is a Map, and a Map remembers the order things were put into it.
@@ -2273,6 +2455,147 @@ export async function askAboutEach(
   const answered = new Map<string, AskOutcome>();
   let parseFailed = 0;
   let done = 0;
+
+  /*
+   * ── AN EDIT AIMED AT THE NEIGHBOUR IS JUDGED BY THE NEIGHBOUR ──────────────
+   *
+   * Owen, 2026-09-22: *"i dont think we should be throwing fixes away."* Every
+   * request shows the model the blocks either side of its target, because
+   * whether 1200 is a year is often said a paragraph earlier — and a 9b model
+   * shown three paragraphs answers for the ones it was told not to touch.
+   * Pursuit of Power's run measured it: 1,071 of 1,116 NOT_FOUND edits named
+   * text that IS in the book, almost always in the NEXT block ("Preface" carried
+   * the Preface paragraph's dates), and 289 of those were never read by the
+   * neighbour's own answer, so the voice read digits.
+   *
+   * So an edit whose find this block does not print, and exactly ONE of the two
+   * neighbours it was shown does, is CARRIED there and judged by the same wall
+   * against that block's own text, after that block's own edits — its own
+   * answer always wins a span both name. The source block records `CARRIED`,
+   * and the neighbour records the verdict with where it came from. A find both
+   * neighbours print is not carried: which one was meant is not knowable.
+   *
+   * WHAT THIS COSTS IS A SHORT WAIT, NOT A WRITE. A block is settled once its
+   * own answer AND the answers of every block that could carry into it are in.
+   * Under a pool walking the book in order that is a request or two behind; if
+   * the pass dies, what is answered but not yet settled is asked again next
+   * run, exactly as anything in flight is.
+   */
+  const jobKeys = new Set(jobs.map((one) => one.key));
+  const askIndex = new Map(asks.map((one, index) => [one.key, index] as const));
+  /** The jobs this job's request SHOWED as context — the text its answer could have named. */
+  const shownBeside = (key: string): string[] => {
+    const at = askIndex.get(key)!;
+    const one = asks[at]!;
+    const out: string[] = [];
+    const before = asks[at - 1];
+    if (before !== undefined && one.previous === before.text && jobKeys.has(before.key)) {
+      out.push(before.key);
+    }
+    const after = asks[at + 1];
+    if (after !== undefined && one.next === after.text && jobKeys.has(after.key)) {
+      out.push(after.key);
+    }
+    return out;
+  };
+  /** The jobs whose requests showed this one, and so could carry an edit into it. */
+  const carriers = new Map<string, string[]>();
+  for (const one of jobs) {
+    for (const other of shownBeside(one.key)) {
+      carriers.set(other, [...(carriers.get(other) ?? []), one.key]);
+    }
+  }
+  const carriersInto = (key: string): string[] => carriers.get(key) ?? [];
+  /** Where an edit this job's answer named belongs, when it is not here: one neighbour, or none. */
+  const carriedTo = (key: string, find: string): string | null => {
+    if (find === '' || digitBoundedOccurrences(ruledOf.get(key)!.text, find).length > 0) return null;
+    const holders = shownBeside(key)
+      .filter((other) => digitBoundedOccurrences(ruledOf.get(other)!.text, find).length > 0);
+    return holders.length === 1 ? holders[0]! : null;
+  };
+  const rawAnswers = new Map<string, Array<{ find?: unknown; replace?: unknown }>>();
+  const rawParseFail = new Map<string, string>();
+  const said = (value: unknown): string => (typeof value === 'string' ? value : '');
+
+  const settleAnswered = (one: NormalizerAsk): void => {
+    const ruled = ruledOf.get(one.key)!;
+    const fromRules = ruleRewrites(ruled);
+    const failed = rawParseFail.get(one.key);
+    const own = rawAnswers.get(one.key) ?? [];
+    const ownSaid = new Set(own.map((e) => JSON.stringify([said(e.find), said(e.replace)])));
+    const incoming: Array<{ find: string; replace: string; from: string }> = [];
+    for (const other of carriersInto(one.key)) {
+      for (const edit of rawAnswers.get(other) ?? []) {
+        const find = said(edit.find);
+        const replace = said(edit.replace);
+        if (carriedTo(other, find) !== one.key) continue;
+        // The block's own answer already named it: nothing was lost.
+        if (ownSaid.has(JSON.stringify([find, replace]))) continue;
+        incoming.push({ find, replace, from: other });
+      }
+    }
+    if (failed !== undefined && incoming.length === 0) {
+      const outcome: AskOutcome = {
+        status: 'UNIT_PARSE_FAIL', accepted: fromRules, records: ruleRecords(ruled),
+        rawAnswer: failed, ruled,
+      };
+      answered.set(one.key, outcome);
+      onSettled?.(one.key, outcome);
+      return;
+    }
+    // Validated against the text the model was SHOWN, then moved back onto
+    // the original: the two differ by exactly the rules' own length deltas.
+    const spans = ruleSpansInApplied(ruled);
+    const { accepted, records } = validateNumberEdits(
+      ruled.text, ruled.segments, [...own, ...incoming], spans, judged);
+    for (const record of records) {
+      if (record.status !== 'NOT_FOUND') continue;
+      const home = carriedTo(one.key, record.find);
+      if (home === null) continue;
+      record.status = 'CARRIED';
+      record.detail = `this block does not print it and ${home} does, so it was judged there`;
+    }
+    const mapped = accepted.map((edit) => {
+      const at = toOriginalOffset(spans, edit.at);
+      if (one.text.slice(at, at + edit.find.length) !== edit.find) {
+        throw new Error(
+          `The number-normalization pass could not place "${edit.find}" back into ${one.key}: `
+          + `the original text at ${at} reads "${one.text.slice(at, at + edit.find.length)}". `
+          + 'Nothing was written.');
+      }
+      return { find: edit.find, replace: edit.replace, at };
+    });
+    const outcome: AskOutcome = {
+      status: failed === undefined ? 'ANSWERED' : 'UNIT_PARSE_FAIL',
+      accepted: [...fromRules, ...mapped].sort((a, b) => a.at - b.at),
+      records: [...ruleRecords(ruled), ...records],
+      ...(failed === undefined ? {} : { rawAnswer: failed }),
+      ruled,
+    };
+    answered.set(one.key, outcome);
+    /*
+     * WRITTEN DOWN HERE — before the progress tick.
+     *
+     * This is the line the whole resume story rests on: an interrupted pass
+     * keeps every verdict it reached, and the next run asks only what is
+     * outstanding. Before the tick so a bar is never ahead of the disk, and
+     * a throw from the sink ends the pass rather than being swallowed — a
+     * verdict that could not be recorded is not one this run has.
+     */
+    onSettled?.(one.key, outcome);
+  };
+  const isIn = (key: string): boolean => rawAnswers.has(key) || rawParseFail.has(key);
+  /** Settle this job if it, and every job that could carry into it, has answered. */
+  const settleIfReady = (key: string): void => {
+    if (answered.has(key) || !isIn(key) || !carriersInto(key).every(isIn)) return;
+    settleAnswered(asks[askIndex.get(key)!]!);
+    // A COUNT, NOT A POSITION. Out of order the index of the block that just
+    // landed says nothing about how much of the book is done, and two of them
+    // can name the same fraction twice.
+    done++;
+    onProgress?.(done, total, 'Normalizing numbers');
+  };
+
   try {
     /*
      * Everything the rules finished, settled and banked before a request goes
@@ -2308,58 +2631,29 @@ export async function askAboutEach(
         if (one === undefined) return;
         const input = inputs.get(one.key)!;
 
-        const ruled = ruledOf.get(one.key)!;
-        const fromRules = ruleRewrites(ruled);
         const answer = await askForEdits(runner, pass, systemPrompt, input);
-        let outcome: AskOutcome;
         if ('parseFail' in answer) {
           parseFailed++;
-          outcome = {
-            status: 'UNIT_PARSE_FAIL', accepted: fromRules, records: ruleRecords(ruled),
-            rawAnswer: answer.parseFail, ruled,
-          };
+          rawParseFail.set(one.key, answer.parseFail);
         } else {
-          // Validated against the text the model was SHOWN, then moved back onto
-          // the original: the two differ by exactly the rules' own length deltas.
-          const spans = ruleSpansInApplied(ruled);
-          const { accepted, records } =
-            validateNumberEdits(ruled.text, ruled.segments, answer.edits, spans, policy);
-          const mapped = accepted.map((edit) => {
-            const at = toOriginalOffset(spans, edit.at);
-            if (one.text.slice(at, at + edit.find.length) !== edit.find) {
-              throw new Error(
-                `The number-normalization pass could not place "${edit.find}" back into ${one.key}: `
-                + `the original text at ${at} reads "${one.text.slice(at, at + edit.find.length)}". `
-                + 'Nothing was written.');
-            }
-            return { find: edit.find, replace: edit.replace, at };
-          });
-          outcome = {
-            status: 'ANSWERED',
-            accepted: [...fromRules, ...mapped].sort((a, b) => a.at - b.at),
-            records: [...ruleRecords(ruled), ...records],
-            ruled,
-          };
+          rawAnswers.set(one.key, answer.edits);
         }
-        answered.set(one.key, outcome);
-        /*
-         * WRITTEN DOWN HERE — before the next ask and before the progress tick.
-         *
-         * This is the line the whole resume story rests on: an interrupted pass
-         * keeps every verdict it reached, and the next run asks only what is
-         * outstanding. Before the tick so a bar is never ahead of the disk, and
-         * a throw from the sink ends the pass rather than being swallowed — a
-         * verdict that could not be recorded is not one this run has.
-         */
-        onSettled?.(one.key, outcome);
-        // A COUNT, NOT A POSITION. Out of order the index of the block that just
-        // landed says nothing about how much of the book is done, and two of them
-        // can name the same fraction twice.
-        done++;
-        onProgress?.(done, total, 'Normalizing numbers');
+        // This answer may complete its own block, or a neighbour it carries into.
+        settleIfReady(one.key);
+        for (const other of shownBeside(one.key)) settleIfReady(other);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, () => worker()));
+    try {
+      await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, () => worker()));
+    } catch (err) {
+      // A PASS THAT DIES STILL WRITES WHAT IT WAS ANSWERED. A block waiting on
+      // a neighbour that will now never answer is settled with what did come
+      // in — nothing can be carried from a request that never landed.
+      for (const one of jobs) {
+        if (!answered.has(one.key) && isIn(one.key)) settleAnswered(one);
+      }
+      throw err;
+    }
 
     // The book's order, restored. See the comment above the pool. Nothing is
     // SETTLED here any more — every verdict was settled and written down as it

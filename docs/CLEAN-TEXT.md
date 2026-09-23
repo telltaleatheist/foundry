@@ -559,7 +559,7 @@ compare the two sides word for word. What guards it instead:
 
 | invariant | disposition |
 |---|---|
-| the find is verbatim in the block and occurs exactly once | `NOT_FOUND` / `AMBIGUOUS_FIND` |
+| the find is verbatim in the block and occurs exactly once — except a **number** printed more than once, which since n7 is read at every place it is printed, each judged on its own | `NOT_FOUND` / `AMBIGUOUS_FIND` |
 | the find is at most 200 characters — a span, not a clause | `EDIT_TOO_LONG` |
 | the replacement is spoken words, and carries no digit | `REPLACE_NOT_WORDS` / `DIGIT_IN_REPLACE` |
 | the replacement is at most `4 × find + 40` characters | `REPLACE_TOO_LONG` |
@@ -568,6 +568,14 @@ compare the two sides word for word. What guards it instead:
 | at most 24 edits are accepted per block | `TOO_MANY_EDITS` |
 | the edit may not touch a span the deterministic rules already rewrote | `OVERLAPS_APPLIED` |
 | the span may not cross a text node — an `<em>`, a `<sup>`, a link | `SPANS_MARKUP` |
+
+**An edit aimed at a neighbour is carried to it (n7).** Every request shows the
+model the blocks either side as context, and a 9b model answers for them —
+Pursuit of Power measured 1,071 NOT_FOUND edits that named the next or previous
+block's text. An edit whose find this block does not print and exactly one of
+the two neighbours it was shown does is recorded `CARRIED` here and judged by
+the same wall against that neighbour, after the neighbour's own edits. A block
+is therefore settled once its own answer and its neighbours' answers are in.
 
 A block whose answer will not parse is retried once at the same settings
 (temperature is pinned to 0 for every request), then recorded `UNIT_PARSE_FAIL`
@@ -597,7 +605,11 @@ How it is enforced:
 
 * the span's class is derived from the span (`classifyEdit`), never declared by
   the model;
-* a span whose class is **other** — ordinary prose — is `NOT_A_CLASS`;
+* a span whose class is **other** — ordinary prose — is `NOT_A_CLASS`, with one
+  exception since n7: a word the page broke with a space and the model joined
+  ("fini sh" → "finish"), where only whitespace was removed, the joined word is
+  known and **no** piece is (`rejoinsSplitWord`; known = the English list, or
+  printed at least twice in the book);
 * at most **one** word token of the find may be missing from the replacement, and
   that one must be the class's own: a dotted abbreviation, a run of capitals, a
   roman numeral. Anything else is `WORDS_DROPPED`;
