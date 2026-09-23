@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, OnDestroy, signal
 import { FormsModule } from '@angular/forms';
 
 import { canCleanFrom } from '@shared/stages';
-import type { SnapCategorizeResult, SnapProgress } from '@shared/snap-categorize';
+import type { SnapCategorizeResult, SnapEngine, SnapProgress } from '@shared/snap-categorize';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';
@@ -13,6 +13,7 @@ import { api } from '../../core/foundry';
 /** Where the snap folder and the chosen window are remembered, per machine. */
 const HOME_KEY = 'foundry.snap.home';
 const CONTEXT_KEY = 'foundry.snap.window';
+const ENGINE_KEY = 'foundry.snap.engine';
 
 /**
  * The model windows offered. A group of blocks with its guide and contents is a
@@ -59,10 +60,9 @@ function remember(key: string, value: string): void {
           <p class="lead">Open a book first. Categorizing needs a book at the position you are standing on.</p>
         } @else {
           <p class="lead">
-            Brings up Qwen3.5 9B on this machine's graphics card, asks it what every block of the book is —
-            chapter heading, section heading, body text, list or contents entry, quotation, caption or note —
-            and brings it back down. Confident changes land as one edit step; chapter headings get chapter
-            markers.
+            Brings up a model, asks it what every block of the book is — chapter heading, section heading,
+            body text, list or contents entry, quotation, caption or note — and lets it go. Confident changes
+            land as one edit step; a book with no table of contents gets chapter markers too.
           </p>
 
           <label class="field">
@@ -71,13 +71,23 @@ function remember(key: string, value: string): void {
           </label>
 
           <label class="field">
-            <span>Model window (tokens)</span>
-            <select [(ngModel)]="contextTokens" [disabled]="busy()">
-              @for (size of contexts; track size) {
-                <option [ngValue]="size">{{ size.toLocaleString() }}</option>
-              }
+            <span>Where the model runs</span>
+            <select [(ngModel)]="engine" [disabled]="busy()">
+              <option ngValue="crucible">A Crucible server (vLLM) — the server's analysis model, leased for the run</option>
+              <option ngValue="local">This machine (llama.cpp) — Qwen3.5 9B from the snap folder</option>
             </select>
           </label>
+
+          @if (engine === 'local') {
+            <label class="field">
+              <span>Model window (tokens)</span>
+              <select [(ngModel)]="contextTokens" [disabled]="busy()">
+                @for (size of contexts; track size) {
+                  <option [ngValue]="size">{{ size.toLocaleString() }}</option>
+                }
+              </select>
+            </label>
+          }
 
           <label class="field">
             <span>Change a block only when at least this sure</span>
@@ -103,7 +113,8 @@ function remember(key: string, value: string): void {
             <li>{{ r.asked.toLocaleString() }} blocks asked{{ ', in ' + r.windows + ' groups' }}</li>
             <li>{{ r.changed.toLocaleString() }} recategorized, {{ r.chapters }} chapter marker(s) added</li>
             <li>{{ r.lowConfidence.toLocaleString() }} left as they were because the model was unsure</li>
-            <li>{{ r.startedModel ? 'The model was started and brought back down.' : 'An already-running model was used and left running.' }}</li>
+            <li>Answered by {{ r.answeredBy }}.</li>
+            <li>{{ r.startedModel ? 'The model was let go when the run finished.' : 'An already-running model was used and left running.' }}</li>
             <li class="path">Every answer: {{ r.reportPath }}</li>
           </ul>
         }
@@ -174,6 +185,7 @@ export class SnapDialogComponent implements OnDestroy {
   protected readonly contexts = CONTEXTS;
   protected snapHome = remembered(HOME_KEY) ?? '';
   protected contextTokens = Number(remembered(CONTEXT_KEY) ?? 16_384);
+  protected engine: SnapEngine = remembered(ENGINE_KEY) === 'local' ? 'local' : 'crucible';
   protected minConfidence = 0.6;
 
   protected readonly busy = signal(false);
@@ -207,11 +219,13 @@ export class SnapDialogComponent implements OnDestroy {
     if (dir === null || !api) return;
     remember(HOME_KEY, this.snapHome.trim());
     remember(CONTEXT_KEY, String(this.contextTokens));
+    remember(ENGINE_KEY, this.engine);
     this.busy.set(true);
     this.result.set(null);
     this.progress.set({ projectDir: dir, phase: 'starting', message: 'Starting…' });
     try {
       const done = await api.snap.categorize(dir, {
+        engine: this.engine,
         snapHome: this.snapHome.trim(),
         contextTokens: this.contextTokens,
         minConfidence: this.minConfidence,

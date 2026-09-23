@@ -432,10 +432,24 @@ export function runTitle(lines: readonly string[]): string {
 
 // ── The tile's wire: what the renderer sends, hears and gets back ─────────────
 
+/**
+ * WHERE THE MODEL RUNS. `local` is snap's own llama-server on this machine's card
+ * (scripts/serve.ps1); `crucible` places the run like any `analysis` act — a
+ * registered Crucible, its selected model, loaded and LEASED for the run — and
+ * points snap's openai-chat engine at that server's chat door, which passes
+ * `logprobs` through to vLLM.
+ */
+export type SnapEngine = 'local' | 'crucible';
+
 export interface SnapCategorizeSettings {
+  engine: SnapEngine;
   /** The snap checkout: `scripts/serve.ps1`, `.venv/Scripts/snap.exe`, `models/`. */
   snapHome: string;
-  /** The engine's context, in tokens, when this press starts it. A group needs only a few thousand. */
+  /**
+   * The engine's context, in tokens, when this press starts a LOCAL one. A group
+   * needs only a few thousand. Unread for `crucible`: that window is the server's
+   * `max_model_len`, read off its listing.
+   */
   contextTokens: number;
   minConfidence?: number;
   minLabelMass?: number;
@@ -460,6 +474,8 @@ export interface SnapCategorizeResult {
   reportPath: string;
   /** Whether this press started the model — and so brought it down again. */
   startedModel: boolean;
+  /** Which model answered, and where — "qwen3.5-9b on 3090 Ti", "Qwen3.5 9B on this machine". */
+  answeredBy: string;
   /** False when there was nothing to change, so no step was made. */
   applied: boolean;
 }

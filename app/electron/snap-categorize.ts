@@ -9,14 +9,17 @@
  * `shared/snap-categorize.ts`; this file owns the processes, the HTTP and the
  * landing.
  *
- * ── An experiment outside Crucible, deliberately ────────────────────────────
+ * ── Two engines: a Crucible's vLLM, or this machine's llama.cpp ────────────
  *
- * Foundry deleted its local model server on 2026-09-17 (*"foundry shouldn't assume
- * there even is a local system … foundry does all ai work through crucible"*).
- * This brings one back for ONE tile, on Owen's word — *"not through crucible yet —
- * good call"* — because Crucible cannot return the letter probabilities snap
- * reads. It starts only on a press, only what it needs, and stops what it
- * started. If it earns its place it moves into Crucible as a job type.
+ * It began outside Crucible on Owen's word — *"not through crucible yet — good
+ * call"* — on the belief that Crucible could not return the letter probabilities
+ * snap reads. It can: the chat door forwards the body, `logprobs` included, to
+ * vLLM. So `crucible` places the run like any `analysis` act (the server's
+ * selected model, loaded and leased) and snap's openai-chat engine asks through
+ * that door; `local` is the original llama-server stack, kept while the two are
+ * compared. Owen, 2026-09-22: *"go ahead and integrate vllm."* snap itself still
+ * runs here — it is the thin question-asker, not a model — and becomes a
+ * Crucible job type if the tile earns its place.
  *
  * ── The stack: snap's own scripts, not a second spelling of them ────────────
  *
@@ -38,6 +41,7 @@ import {
 } from '../shared/snap-categorize';
 import type { BookOp } from '../shared/ops';
 import { applyBookOps, loadBook } from './book';
+import { CRUCIBLE_CHAT_CONCURRENCY, placeJob, type Lease, type Placement } from './crucible-dispatch';
 import { broadcast } from './window';
 
 /** Where snap listens, and where its engine does — snap's README defaults. */
@@ -133,42 +137,159 @@ interface Stack {
   snapChild: ChildProcess | null;
   /** The engine's actual context, read from it — never the one asked for. */
   contextTokens: number;
+  /**
+   * THE CRUCIBLE PATH'S HOLD on the model, or null for a local run. Releasing it
+   * IS the bring-down: the server clears the card the moment its last holder lets
+   * go (crucible/settle.py — *"models should always be unloaded when we're done
+   * with them"*), so this press never unloads a model somebody else still holds.
+   */
+  lease: Lease | null;
+  /** Which model answered, and where — for the tally and the report. */
+  answeredBy: string;
+}
+
+function checkSnapHome(home: string, needed: readonly string[]): void {
+  for (const file of needed) {
+    if (!existsSync(path.join(home, ...file.split('/')))) {
+      throw new SnapCategorizeError(`${path.join(home, ...file.split('/'))} is missing — is "${home}" the snap folder, set up per its README?`);
+    }
+  }
+}
+
+/** `snap serve` in front of whichever engine, answering once its health does. */
+async function startSnap(
+  stack: Stack,
+  home: string,
+  engineArgs: readonly string[],
+  env: Record<string, string>,
+  signal: AbortSignal,
+): Promise<void> {
+  if (await answers200(`${SNAP_URL}/v1/health`)) {
+    /*
+     * A snap already listening sits in front of an engine this press did not
+     * choose — the other path's, or one started by hand — and its answers would
+     * be that engine's. Refused by name rather than silently used.
+     */
+    throw new SnapCategorizeError(
+      `Something is already answering on port ${SNAP_PORT} (a snap server this press did not start). Stop it and press again.`,
+    );
+  }
+  stack.snapChild = spawn(path.join(home, '.venv', 'Scripts', 'snap.exe'), [
+    'serve', '--port', String(SNAP_PORT), ...engineArgs,
+  ], { cwd: home, windowsHide: true, stdio: 'ignore', env: { ...process.env, ...env } });
+  await waitFor(`${SNAP_URL}/v1/health`, SNAP_READY_MS, 'snap', signal);
 }
 
 async function bringUp(settings: SnapCategorizeSettings, signal: AbortSignal, projectDir: string): Promise<Stack> {
   const home = settings.snapHome;
-  for (const needed of ['scripts/serve.ps1', 'scripts/stop.ps1', '.venv/Scripts/snap.exe']) {
-    if (!existsSync(path.join(home, ...needed.split('/')))) {
-      throw new SnapCategorizeError(`${path.join(home, ...needed.split('/'))} is missing — is "${home}" the snap folder, set up per its README?`);
-    }
-  }
-  const stack: Stack = { startedEngine: false, snapChild: null, contextTokens: 0 };
+  const stack: Stack = { startedEngine: false, snapChild: null, contextTokens: 0, lease: null, answeredBy: '' };
   // Registered BEFORE anything starts, so a quit during the model's load still
-  // finds it — `startedEngine` is set the moment serve.ps1 has launched it.
+  // finds it — `startedEngine` and `lease` are set the moment each exists.
   broughtUp = { stack, home };
   try {
-    if (!await answers200(`${ENGINE_URL}/health`)) {
-      say({ projectDir, phase: 'starting', message: `Starting the model (Qwen3.5 9B, ${settings.contextTokens.toLocaleString()}-token window)…` });
-      await runScript(home, 'serve.ps1', [
-        '-Background', '-Ctx', String(settings.contextTokens), '-Checkpoints', '32',
-      ]);
-      stack.startedEngine = true;
-      await waitFor(`${ENGINE_URL}/health`, ENGINE_READY_MS, 'The model server', signal);
-    } else {
-      say({ projectDir, phase: 'starting', message: 'A model server is already running on this machine — using it, and leaving it running afterwards.' });
-    }
-    stack.contextTokens = await engineContext();
-    if (!await answers200(`${SNAP_URL}/v1/health`)) {
-      stack.snapChild = spawn(path.join(home, '.venv', 'Scripts', 'snap.exe'), [
-        'serve', '--port', String(SNAP_PORT), '--engine', ENGINE_URL,
-      ], { cwd: home, windowsHide: true, stdio: 'ignore' });
-      await waitFor(`${SNAP_URL}/v1/health`, SNAP_READY_MS, 'snap', signal);
-    }
+    if (settings.engine === 'crucible') await bringUpOnCrucible(stack, home, signal, projectDir);
+    else await bringUpLocal(stack, settings, signal, projectDir);
     return stack;
   } catch (err) {
     await bringDown(stack, home);
     throw err;
   }
+}
+
+async function bringUpLocal(stack: Stack, settings: SnapCategorizeSettings, signal: AbortSignal, projectDir: string): Promise<void> {
+  const home = settings.snapHome;
+  checkSnapHome(home, ['scripts/serve.ps1', 'scripts/stop.ps1', '.venv/Scripts/snap.exe']);
+  if (!await answers200(`${ENGINE_URL}/health`)) {
+    say({ projectDir, phase: 'starting', message: `Starting the model (Qwen3.5 9B, ${settings.contextTokens.toLocaleString()}-token window)…` });
+    await runScript(home, 'serve.ps1', [
+      '-Background', '-Ctx', String(settings.contextTokens), '-Checkpoints', '32',
+    ]);
+    stack.startedEngine = true;
+    await waitFor(`${ENGINE_URL}/health`, ENGINE_READY_MS, 'The model server', signal);
+  } else {
+    say({ projectDir, phase: 'starting', message: 'A model server is already running on this machine — using it, and leaving it running afterwards.' });
+  }
+  stack.contextTokens = await engineContext();
+  stack.answeredBy = 'Qwen3.5 9B on this machine (llama.cpp)';
+  await startSnap(stack, home, ['--engine', ENGINE_URL], {}, signal);
+}
+
+/** How long between placement attempts while a server says "not yet". */
+const PLACEMENT_RETRY_MS = 15_000;
+
+/**
+ * THE CRUCIBLE PATH — placed exactly like an `analysis` act from the queue.
+ *
+ * `placeJob` owns the walk: which registered server, its SELECTED model for
+ * analysis (the app stores no model — the server's capability record says), the
+ * `load-model` with the lease riding on it, and the header map. Its lane claim
+ * here says yes to everything, the precedent `runNow` set for a dialog's own
+ * run: the deciding already happened, at the button, and this run is not on the
+ * queue's board.
+ *
+ * A TRANSIENT wait (the card busy, a load cancelled) is weather: its sentence is
+ * shown and the placement asked again until it goes or Cancel is pressed. A
+ * STANDING wait or a refusal is something only a person can change, and ends
+ * the run with the server's own words.
+ */
+async function bringUpOnCrucible(stack: Stack, home: string, signal: AbortSignal, projectDir: string): Promise<void> {
+  checkSnapHome(home, ['.venv/Scripts/snap.exe']);
+  const line = (message: string): void => say({ projectDir, phase: 'starting', message });
+  let placement: Placement;
+  for (;;) {
+    const outcome = await placeJob('analysis', undefined, line, () => true, signal);
+    if (outcome.verdict === 'go') { placement = outcome.placement; break; }
+    if (outcome.verdict === 'refuse' || outcome.standing) throw new SnapCategorizeError(outcome.reason);
+    line(`Waiting: ${outcome.reason}. Asking again in ${PLACEMENT_RETRY_MS / 1000} s…`);
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, PLACEMENT_RETRY_MS);
+      signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
+    if (signal.aborted) throw new SnapCategorizeError('Cancelled while waiting for a server.');
+  }
+  stack.lease = placement.lease;
+  const where = placement.slot?.name ?? 'a Crucible';
+  if (placement.via !== null || placement.lease === null || placement.endpoint === null || placement.model === null) {
+    /*
+     * AN UPSTREAM ROUTE has no card and no logits this tile can read whole —
+     * snap reads the letter probabilities of a model it can see. For this tile
+     * that is misconfiguration, said by name.
+     */
+    throw new SnapCategorizeError(
+      `"${where}" sends analysis to ${placement.via ?? 'an upstream service'} rather than a model on its own card. `
+      + "Categorizing reads a model's letter probabilities; choose a server that runs analysis itself.",
+    );
+  }
+  const headersJson = placement.env['FOUNDRY_ENDPOINT_HEADERS'];
+  if (headersJson === undefined) throw new SnapCategorizeError(`The placement on "${where}" carried no header map.`);
+  const headers = JSON.parse(headersJson) as Record<string, string>;
+  // The engine's own rule (`normaliseVllmEndpoint`, src/translate/vllm.ts): an
+  // OpenAI-shaped server mounts `models` and `chat/completions` under `/v1`.
+  const base = `${placement.endpoint.replace(/\/+$/, '')}/v1`;
+  stack.contextTokens = await servedContext(base, placement.model, headers, where);
+  stack.answeredBy = `${placement.model} on ${where} (Crucible)`;
+  line(`Starting snap against ${placement.model} on ${where}…`);
+  // The token rides in the ENVIRONMENT, never on the command line — the
+  // `FOUNDRY_ENDPOINT_HEADERS` rule (crucible-dispatch.ts, Placement.env).
+  await startSnap(stack, home, [
+    '--engine-kind', 'openai-chat',
+    '--engine', `${base}/chat/completions`,
+    '--engine-model', placement.model,
+    '--concurrency', String(placement.concurrency ?? CRUCIBLE_CHAT_CONCURRENCY),
+  ], { SNAP_ENGINE_HEADERS: headersJson }, signal);
+}
+
+/** The context the resident model was started with — its listing row's `max_model_len`. */
+async function servedContext(base: string, model: string, headers: Record<string, string>, where: string): Promise<number> {
+  const res = await fetch(`${base}/models`, { headers, signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new SnapCategorizeError(`"${where}" answered ${res.status} for its model listing.`);
+  const body = await res.json() as { data?: { id?: unknown; max_model_len?: unknown }[] };
+  const row = body.data?.find((entry) => entry.id === model);
+  if (row === undefined) throw new SnapCategorizeError(`"${where}" does not list ${model} as resident after loading it.`);
+  if (typeof row.max_model_len !== 'number' || row.max_model_len <= 0) {
+    throw new SnapCategorizeError(`"${where}" did not say how large ${model}'s context is (no max_model_len).`);
+  }
+  return row.max_model_len;
 }
 
 /** The context the running engine was started with (llama-server `/props`). */
@@ -186,6 +307,11 @@ async function engineContext(): Promise<number> {
 async function bringDown(stack: Stack, home: string): Promise<void> {
   if (broughtUp?.stack === stack) broughtUp = null;
   if (stack.snapChild !== null && stack.snapChild.exitCode === null) stack.snapChild.kill();
+  if (stack.lease !== null) {
+    // Idempotent and never throws (`Lease.release`); the server settles the card.
+    await stack.lease.release();
+    stack.lease = null;
+  }
   if (stack.startedEngine) {
     try {
       await runScript(home, 'stop.ps1', []);
@@ -237,6 +363,9 @@ export async function snapCategorize(
 ): Promise<SnapCategorizeResult> {
   if (running !== null) {
     throw new SnapCategorizeError('A categorization is already running. Wait for it, or cancel it first.');
+  }
+  if (settings.engine !== 'local' && settings.engine !== 'crucible') {
+    throw new SnapCategorizeError(`Unknown engine "${String(settings.engine)}" — expected local or crucible.`);
   }
   const abort = new AbortController();
   running = { projectDir, abort };
@@ -309,13 +438,14 @@ export async function snapCategorize(
       }
     }
 
-    say({ projectDir, phase: 'stopping', message: stack.startedEngine ? 'Stopping the model…' : 'Done asking.' });
+    const startedModel = stack.startedEngine || stack.lease !== null;
+    const answeredBy = stack.answeredBy;
+    say({ projectDir, phase: 'stopping', message: startedModel ? 'Letting the model go…' : 'Done asking.' });
     await bringDown(stack, settings.snapHome);
-    const startedModel = stack.startedEngine;
     stack = null;
 
     const decision = decide(rows, answers, loaded.chapters, policy, titleConfirms);
-    const reportPath = await writeReport(projectDir, decision.report, { groups: groups.length, policy });
+    const reportPath = await writeReport(projectDir, decision.report, { groups: groups.length, policy, answeredBy });
     const ops: BookOp[] = [...decision.categoryOps, ...decision.chapterOps];
     if (ops.length > 0) {
       say({ projectDir, phase: 'applying', message: `Applying ${decision.categoryOps.length} category change(s) and ${decision.chapterOps.length} chapter marker(s)…` });
@@ -329,6 +459,7 @@ export async function snapCategorize(
       windows: groups.length,
       reportPath,
       startedModel,
+      answeredBy,
       applied: ops.length > 0,
     };
     say({
@@ -355,7 +486,7 @@ export async function snapCategorize(
 async function writeReport(
   projectDir: string,
   report: readonly SnapReportRow[],
-  meta: { groups: number; policy: SnapPolicy },
+  meta: { groups: number; policy: SnapPolicy; answeredBy: string },
 ): Promise<string> {
   const dir = path.join(projectDir, 'snap');
   await fsp.mkdir(dir, { recursive: true });
