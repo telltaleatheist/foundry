@@ -670,3 +670,92 @@ test('the model input labels the context and forbids editing it', () => {
   assert.ok(input.includes('NEXT (context only, never edit this):\n(none)'),
     'an absent neighbour says so, rather than being left blank');
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// n7 / n8 — valid fixes are not thrown away; years are spelled by code
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A runner that answers each request with the edits recorded for its TARGET. */
+function scriptedRunner(byTarget: Record<string, Array<{ find: string; replace: string }>>) {
+  return {
+    model: 'scripted',
+    generate: async (input: string) => {
+      const target = /TARGET \(edit ONLY this\):\n([\s\S]*?)\n\nNEXT/.exec(input)![1]!;
+      return JSON.stringify({ edits: byTarget[target] ?? [] });
+    },
+    release: async () => {},
+  };
+}
+
+test('CARRIED — an edit naming the NEXT block\'s text is judged there, after its own', async () => {
+  const blocks = ['Preface', 'Europe from 1815 to 1914 was Dr. Smith\'s period.'];
+  const asks = blocks.map((text, i) => ({
+    key: `b${i}`, text, segments: [text.length],
+    previous: i > 0 ? blocks[i - 1]! : null,
+    next: i + 1 < blocks.length ? blocks[i + 1]! : null,
+  }));
+  // The rules read both years before the model is asked; what the heading's
+  // answer carries is the abbreviation, which only the next block prints.
+  const { decisions } = await norm.askAboutEach(asks, scriptedRunner({
+    Preface: [{ find: 'Dr. Smith', replace: 'Doctor Smith' }],
+  }), 'test', 'prompt', undefined, 'every-block', norm.EVERY_CLASS);
+  const heading = decisions.get('b0')!;
+  assert.deepStrictEqual(heading.records.map((r) => r.status), ['CARRIED']);
+  assert.deepStrictEqual(heading.accepted, []);
+  const body = decisions.get('b1')!;
+  const carried = body.records.find((r) => r.find === 'Dr. Smith')!;
+  assert.strictEqual(carried.status, 'APPLIED');
+  assert.ok(carried.detail?.includes('carried from b0'));
+  assert.ok(body.accepted.some((a) => a.replace === 'Doctor Smith'));
+});
+
+test('CARRIED — the neighbour\'s own answer wins a span both name', async () => {
+  const blocks = ['Preface', 'It was Dr. Smith\'s.'];
+  const asks = blocks.map((text, i) => ({
+    key: `b${i}`, text, segments: [text.length],
+    previous: i > 0 ? blocks[i - 1]! : null,
+    next: i + 1 < blocks.length ? blocks[i + 1]! : null,
+  }));
+  const { decisions } = await norm.askAboutEach(asks, scriptedRunner({
+    Preface: [{ find: 'Dr. Smith\'s', replace: 'Drive Smith\'s' }],
+    'It was Dr. Smith\'s.': [{ find: 'Dr. Smith', replace: 'Doctor Smith' }],
+  }), 'test', 'prompt', undefined, 'every-block', norm.EVERY_CLASS);
+  const body = decisions.get('b1')!;
+  assert.deepStrictEqual(body.accepted.map((a) => a.replace), ['Doctor Smith']);
+});
+
+test('split word — "fini sh" is joined; a space that may be the author\'s is not', () => {
+  const policy = norm.EVERY_CLASS;
+  const status = (target: string, find: string, replace: string) =>
+    norm.validateNumberEdits(target, [target.length], [{ find, replace }], [], policy).records[0]!;
+  const joined = status('read it from start to fini sh; those who', 'fini sh', 'finish');
+  assert.strictEqual(joined.status, 'APPLIED');
+  assert.strictEqual(joined.editClass, 'split-word');
+  assert.strictEqual(status('the nineteenth century', 'nineteenth', 'nineteen th').status, 'NOT_A_CLASS');
+  assert.strictEqual(status('twenty per cent of it', 'per cent', 'percent').status, 'NOT_A_CLASS');
+  assert.strictEqual(status('every one of them', 'every one', 'everyone').status, 'NOT_A_CLASS');
+});
+
+test('a year the model reads is SPELLED by code; a quantity reading stands', () => {
+  const read = (target: string, find: string, replace: string) =>
+    check(target, [{ find, replace }]).accepted[0]?.replace;
+  // Beside a unit the rules decline, so these reach the model.
+  assert.strictEqual(read('built in 1863 miles away', '1863', 'one eight six three'),
+    'eighteen sixty-three');
+  assert.strictEqual(read('from 1847–1922 miles', '1847–1922', 'one eight forty seven to nineteen twenty two'),
+    'eighteen forty-seven to nineteen twenty-two');
+  assert.strictEqual(read('a road 1200 miles long', '1200', 'twelve hundred'), 'twelve hundred');
+  assert.strictEqual(read('a road 1250 miles long', '1250', 'one thousand two hundred fifty'),
+    'one thousand two hundred fifty');
+  assert.strictEqual(read('a road 1250 miles long', '1250', 'twelve hundred fifty'),
+    'twelve hundred fifty');
+});
+
+test('a cardinal reading of a year stands ONLY beside a unit or a currency sign', () => {
+  const read = (target: string, find: string, replace: string) =>
+    check(target, [{ find, replace }]).accepted[0]?.replace;
+  assert.strictEqual(read('under Act 1858 it was', '1858', 'one thousand eight hundred fifty-eight'),
+    'eighteen fifty-eight');
+  assert.strictEqual(read('it cost £ 1858 then', '1858', 'one thousand eight hundred fifty-eight'),
+    'one thousand eight hundred fifty-eight');
+});

@@ -71,7 +71,7 @@ import * as path from 'path';
 import { hasLetter } from './ai-cleanup-prepass.js';
 import {
   applyNumberRules, bareWord, CANONICAL_BOOK_NAMES, cardinalWords, scriptureSpans,
-  sitsInCitation, stillHasDigits,
+  isQuantityContext, sitsInCitation, stillHasDigits, yearQuantityReadings, yearReading,
 } from './tts-number-rules.js';
 import { ordinalToWords } from './number-expansion.js';
 import {
@@ -126,11 +126,17 @@ export { sitsInCitation, bareWord };
  * a number printed more than once is read at each place (no longer
  * AMBIGUOUS_FIND); a word split by a space may be joined (`rejoinsSplitWord`).
  *
+ * n7 → n8 (2026-09-22, Owen: the model judges a year, code spells it): a bare
+ * four-digit number in 1100–2099 with no thousands comma, no currency sign and
+ * no unit is a YEAR and a rule reads it, as are year ranges ("1844–79"); a
+ * model's reading of a year it was still asked about is re-spelled by
+ * `yearReading` unless it is a quantity reading.
+ *
  * A BUMP HERE IS A CROSS-REPO EVENT. These rules are vendored byte-for-byte into
  * orpheus-finetune's `pipeline/normalization/vendor/` and drift-checked on every
  * training build — see docs/NARRATION_TEXT_PASS.md.
  */
-export const NORMALIZER_VERSION = 'n7';
+export const NORMALIZER_VERSION = 'n8';
 
 /**
  * The model this pass uses when the setting is absent.
@@ -1266,6 +1272,13 @@ export function digitBoundedOccurrences(target: string, find: string): number[] 
   return out;
 }
 
+/** Two readings are the same words when case, hyphens, punctuation and "and" are set aside. */
+function sameReading(a: string, b: string): boolean {
+  const words = (text: string): string => text.toLowerCase().replace(/[^a-z]+/g, ' ').trim()
+    .split(' ').filter((word) => word !== 'and').join(' ');
+  return words(a) === words(b);
+}
+
 /** One span the writer will splice, plus the record that says why. */
 interface ValidatedEdits {
   accepted: NarrationTextRewrite[];
@@ -1930,12 +1943,36 @@ export function validateNumberEdits(
       continue;
     }
 
+    /*
+     * ── THE MODEL JUDGES A YEAR; CODE SPELLS IT (n8) ────────────────────────
+     *
+     * Owen, 2026-09-22. A find that is exactly a year or a year range is
+     * spelled by `yearReading`, not as the model wrote it: "one eight six
+     * three" is not refused (the number was read) and not accepted as written
+     * (the spelling was not). The ONE exception is the printed signal the rule
+     * itself uses — a currency sign in front or a unit after
+     * (`isQuantityContext`) — where a quantity reading (the cardinal, or the
+     * hundreds form) is the model's judgement that it is a count, and stands.
+     * A cardinal anywhere else is the long-form misspelling of a year.
+     */
+    let reading = replace;
+    let respelled: string | undefined;
+    if (isNumber) {
+      const spelled = yearReading(find);
+      if (spelled !== null && !sameReading(replace, spelled)
+        && !(isQuantityContext(target, at, at + find.length)
+          && yearQuantityReadings(find).some((quantity) => sameReading(replace, quantity)))) {
+        reading = spelled;
+        respelled = `the model read it "${replace}"; a year is spelled by code`;
+      }
+    }
+
     if (!isNumber) textBudgetSpent += Math.max(find.length, replace.length);
-    accepted.push({ find, replace, at });
-    const why = said(undefined);
+    accepted.push({ find, replace: reading, at });
+    const why = said(respelled);
     records.push(why === undefined
-      ? { find, replace, status: 'APPLIED', editClass: recordClass }
-      : { find, replace, status: 'APPLIED', editClass: recordClass, detail: why });
+      ? { find, replace: reading, status: 'APPLIED', editClass: recordClass }
+      : { find, replace: reading, status: 'APPLIED', editClass: recordClass, detail: why });
   }
   return { accepted, records };
 }

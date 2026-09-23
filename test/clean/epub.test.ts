@@ -118,10 +118,10 @@ describe('clean-text --epub, the failsafe', () => {
 
     // ── The chapter: the edited text node, and NOTHING else.
     const chapter = after.get(CHAPTER_PATH)!;
-    // The money is the number rules'; the bare year is the model's to judge and
-    // this stub proposed nothing, so it stands exactly as printed — which is the
-    // pass's own rule and is why it is asserted rather than worked around.
-    expect(chapter).toContain('They paid five thousand dollars for the <em>press</em> in 1914.');
+    // The money and the bare year are both the number rules' (the year since
+    // n8), so a stub that proposed nothing still leaves both read.
+    expect(chapter).toContain(
+      'They paid five thousand dollars for the <em>press</em> in nineteen fourteen.');
     // The markup around the edit is the book's own — no re-wrapping, no lost
     // attribute, no moved id.
     expect(chapter).toContain('<p id="p-1" data-bf-page="1" data-bf-cat="text">');
