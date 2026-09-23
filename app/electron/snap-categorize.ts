@@ -33,7 +33,7 @@ import * as path from 'node:path';
 
 import {
   blockQuestion, bookHeader, buildGroups, decide, DEFAULT_SNAP_POLICY, groupState,
-  isAsked, sectionsOf, type SnapCategorizeResult, type SnapCategorizeSettings,
+  isAsked, lineMarks, sectionsOf, titleConfirmQuestion, type SnapCategorizeResult, type SnapCategorizeSettings,
   type SnapChoiceAnswer, type SnapPolicy, type SnapProgress, type SnapReportRow,
 } from '../shared/snap-categorize';
 import type { BookOp } from '../shared/ops';
@@ -201,18 +201,18 @@ async function bringDown(stack: Stack, home: string): Promise<void> {
 }
 
 /** One `/v1/decide` call: a state and a batch of block questions. */
-async function ask(
+async function ask<A>(
   state: string,
-  questions: Record<string, ReturnType<typeof blockQuestion>>,
+  questions: Record<string, object>,
   signal: AbortSignal,
-): Promise<Record<string, SnapChoiceAnswer>> {
+): Promise<Record<string, A>> {
   const res = await fetch(`${SNAP_URL}/v1/decide`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ state, questions }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_MS)]),
   });
-  const body = await res.json() as { answers?: Record<string, SnapChoiceAnswer>; error?: { code: string; message: string } };
+  const body = await res.json() as { answers?: Record<string, A>; error?: { code: string; message: string } };
   if (!res.ok || body.answers === undefined) {
     throw new SnapCategorizeError(
       `snap refused the request (${res.status}): ${body.error ? `${body.error.code} — ${body.error.message}` : 'no answers in its reply'}`,
@@ -248,21 +248,24 @@ export async function snapCategorize(
     const policy: SnapPolicy = {
       minConfidence: settings.minConfidence ?? DEFAULT_SNAP_POLICY.minConfidence,
       minLabelMass: settings.minLabelMass ?? DEFAULT_SNAP_POLICY.minLabelMass,
+      minTitleConfirm: DEFAULT_SNAP_POLICY.minTitleConfirm,
     };
 
     stack = await bringUp(settings, abort.signal, projectDir);
 
     const header = bookHeader(loaded.title, loaded.chapters);
     const sections = sectionsOf(rows, loaded.chapters);
+    const marks = lineMarks(rows, loaded.chapters);
     const groups = buildGroups(rows.length);
     const total = rows.filter(isAsked).length;
     const answers = new Map<string, SnapChoiceAnswer>();
+    const titleConfirms = new Map<string, number>();
     for (let g = 0; g < groups.length; g += 1) {
       if (abort.signal.aborted) throw new SnapCategorizeError('Cancelled.');
       const group = groups[g]!;
       const asked = rows.slice(group.askFrom, group.askTo).filter(isAsked);
       if (asked.length === 0) continue;
-      const state = groupState(header, rows, sections, group);
+      const state = groupState(header, rows, sections, group, marks);
       // Refused BY NAME rather than sent to fail inside the engine: a group's
       // state is a few thousand tokens, and a window too small to hold one is a
       // setting to change, not something to retry.
@@ -279,13 +282,30 @@ export async function snapCategorize(
         done: answers.size, total,
       });
       const questions = Object.fromEntries(asked.map((row) => [row.id, blockQuestion(row)]));
-      const got = await ask(state, questions, abort.signal);
+      const got = await ask<SnapChoiceAnswer>(state, questions, abort.signal);
       for (const row of asked) {
         const answer = got[row.id];
         if (answer === undefined) {
           throw new SnapCategorizeError(`snap answered the group without an answer for block ${row.id}.`);
         }
         answers.set(row.id, answer);
+      }
+      // THE TITLE CONFIRMATION, against the same cached group: only the blocks
+      // answered Title that were not one already (`titleConfirmQuestion`).
+      const toConfirm = asked.filter((row) => got[row.id]!.choice === 'Title' && row.category !== 'Title');
+      if (toConfirm.length > 0) {
+        const confirmed = await ask<{ p: number }>(
+          state,
+          Object.fromEntries(toConfirm.map((row) => [row.id, titleConfirmQuestion(row)])),
+          abort.signal,
+        );
+        for (const row of toConfirm) {
+          const said = confirmed[row.id];
+          if (said === undefined || typeof said.p !== 'number') {
+            throw new SnapCategorizeError(`snap answered the Title confirmation without a p for block ${row.id}.`);
+          }
+          titleConfirms.set(row.id, said.p);
+        }
       }
     }
 
@@ -294,7 +314,7 @@ export async function snapCategorize(
     const startedModel = stack.startedEngine;
     stack = null;
 
-    const decision = decide(rows, answers, loaded.chapters, policy);
+    const decision = decide(rows, answers, loaded.chapters, policy, titleConfirms);
     const reportPath = await writeReport(projectDir, decision.report, { groups: groups.length, policy });
     const ops: BookOp[] = [...decision.categoryOps, ...decision.chapterOps];
     if (ops.length > 0) {

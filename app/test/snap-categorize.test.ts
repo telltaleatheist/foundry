@@ -7,8 +7,9 @@ import { describe, expect, test } from 'bun:test';
 
 import { formatOpsFile, parseOpsFile } from '../shared/ops';
 import {
-  blockLine, bookHeader, buildGroups, decide, groupState, isAsked, LINE_CHARS, runTitle,
-  sectionsOf, SNAP_GUIDE, type SnapChoiceAnswer, type SnapRow,
+  blockLine, bookHeader, buildGroups, decide, DEFAULT_SNAP_POLICY, groupState, isAsked, LINE_CHARS,
+  lineMarks, nameKey, runTitle, sectionsOf, SNAP_GUIDE, titleConfirmQuestion,
+  type SnapChoiceAnswer, type SnapRow,
 } from '../shared/snap-categorize';
 
 const answer = (choice: string, confidence = 0.95, labelMass = 0.99): SnapChoiceAnswer => ({
@@ -48,27 +49,37 @@ describe('decide — what an answer does to a block', () => {
     expect(d.report[0]).toMatchObject({ section: 'Chapter 1', text: 'It began on a Tuesday.' });
   });
 
-  test('a run of chapter-heading rows gets ONE chapter marker, at its first row, titled from the run', () => {
+  test('a Title needs its confirmation: unconfirmed, or confirmed below the bar, the block stays', () => {
+    const answers = new Map([['e-2', answer('Title')], ['e-3', answer('Title')], ['e-5', answer('Title')]]);
+    const d = decide(rows, answers, [], DEFAULT_SNAP_POLICY, new Map([['e-2', 0.95], ['e-3', 0.4]]));
+    expect(d.categoryOps).toEqual([{ op: 'category', id: 'e-2', category: 'Title' }]);
+    expect(d.report.map((r) => [r.id, r.outcome, r.titleConfirm])).toEqual([
+      ['e-2', 'changed', 0.95], ['e-3', 'title-unconfirmed', 0.4], ['e-5', 'title-unconfirmed', undefined],
+    ]);
+  });
+
+  test('WITHOUT a navigation, a run of confirmed chapter-heading rows gets ONE marker, titled from the run', () => {
     const d = decide(rows, new Map([
       ['e-2', answer('Title')],
       ['e-3', answer('Title')],
-    ]), []);
+    ]), [], DEFAULT_SNAP_POLICY, new Map([['e-2', 0.9], ['e-3', 0.9]]));
     expect(d.chapterOps).toEqual([{ op: 'chapter', set: 'e-2', title: '1: KILLING AMERICA' }]);
   });
 
-  test('no marker where the book already has a chapter at the heading or just above it', () => {
+  test('WITH a navigation, the model adds no chapter markers at all — the publisher said where they are', () => {
     const d = decide(rows, new Map([
-      ['e-2', answer('Title')], ['e-3', answer('Title')],
-      ['e-5', answer('Title')],
-    ]), [{ id: 'e-1', title: 'Chapter 1' }, { id: 'e-5', title: 'The Long Road' }]);
+      ['e-2', answer('Title')], ['e-3', answer('Title')], ['e-5', answer('Title')],
+    ]), [{ id: 'e-1', title: 'Cover' }], DEFAULT_SNAP_POLICY, new Map([['e-2', 0.99], ['e-3', 0.99], ['e-5', 0.99]]));
     expect(d.chapterOps).toEqual([]);
+    expect(d.categoryOps.map((op) => op.id)).toEqual(['e-2', 'e-3', 'e-5']);
   });
 
   test('the ops it produces are ones the ops file itself accepts (the Apply door re-parses them)', () => {
     const d = decide(rows, new Map([
       ['e-2', answer('Title')], ['e-3', answer('Title')], ['e-5', answer('Section-header')],
-    ]), []);
+    ]), [], DEFAULT_SNAP_POLICY, new Map([['e-2', 0.9], ['e-3', 0.9]]));
     const ops = [...d.categoryOps, ...d.chapterOps];
+    expect(d.chapterOps.length).toBe(1);
     expect(parseOpsFile(formatOpsFile(ops))).toEqual(ops);
   });
 });
@@ -123,6 +134,38 @@ describe('what snap is shown', () => {
     expect(state).toContain('[e-4]');
     expect(state).not.toContain('[e-1]');
     expect(state).not.toContain('[e-5]');
+  });
+});
+
+describe('the marks on a line', () => {
+  test('a chapter name is the same with or without its number, "Chapter N" or dashes', () => {
+    expect(nameKey('Chapter 5—Evo-Devo')).toBe(nameKey('5. Evo-Devo'));
+    expect(nameKey('7. Bridging Gaps: Cells and Proteins')).toBe('bridging gaps cells and proteins');
+  });
+
+  test('the contents page, the chapter opening and the endnotes heading are all marked as matching', () => {
+    const book: SnapRow[] = [
+      { id: 'c-1', category: 'Text', text: 'Chapter 5—Evo-Devo' },
+      { id: 'b-1', category: 'Text', text: '5. Evo-Devo' },
+      { id: 'b-2', category: 'Text', text: 'Some prose about limbs.' },
+      { id: 'n-1', category: 'Text', text: 'Chapter 5—Evo-Devo' },
+    ];
+    const marks = lineMarks(book, [{ id: 'b-1', title: '5. Evo-Devo' }]);
+    expect(marks.get('c-1')).toEqual(['matches contents entry "5. Evo-Devo"']);
+    expect(marks.get('b-1')).toEqual(['first in section', 'matches contents entry "5. Evo-Devo"']);
+    expect(marks.has('b-2')).toBe(false);
+    expect(marks.get('n-1')).toEqual(['matches contents entry "5. Evo-Devo"']);
+  });
+
+  test('the marks are printed on the line, between the section and the markup', () => {
+    expect(blockLine({ id: 'b-1', category: 'Text', text: '5. Evo-Devo', markup: 'x.html p.c2' }, '5. Evo-Devo', ['first in section']))
+      .toBe('[b-1] (5. Evo-Devo · first in section · x.html p.c2) 5. Evo-Devo');
+  });
+
+  test('the guide explains the three places a chapter name appears, and that blockquote markup counts', () => {
+    expect(SNAP_GUIDE).toContain('first in section');
+    expect(SNAP_GUIDE).toContain('blockquote is');
+    expect(titleConfirmQuestion({ id: 'x', category: 'Text', text: 't' }).type).toBe('yesno');
   });
 });
 

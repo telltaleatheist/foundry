@@ -95,11 +95,19 @@ export const SNAP_GUIDE = [
   '- Footnote: the text of a footnote or an endnote. In a notes or endnotes section these are the',
   '  numbered notes ("12. Ibid., 9-10.", "1. See Chapters Five and Six of..."), each one a Footnote.',
   '',
-  'HOW TO JUDGE: read the block\'s words first, then where it sits (its section and the blocks around',
-  'it), then the table of contents. The markup in parentheses is a WEAK hint and is often wrong:',
-  'publishers mark captions and quotations as plain paragraphs all the time, so never choose a kind',
-  'because of the markup alone. A line in the contents section is a List-item. A numbered line in',
-  'an endnotes section is a Footnote unless it is the heading over a chapter\'s notes.',
+  'MARKS ON A LINE: "first in section" means the block is the first one of its section. "matches',
+  'contents entry …" means its words repeat a chapter name from the table of contents. A chapter name',
+  'appears in three places, and each is a different kind: in the table of contents page it is a',
+  'List-item; where the chapter itself begins (usually "first in section") it is a Title; in the',
+  'notes or endnotes section, over that chapter\'s notes, it is a Section-header.',
+  '',
+  'HOW TO JUDGE: read the block\'s words first, then where it sits (its section, its marks and the',
+  'blocks around it), then the table of contents. The markup in parentheses is a WEAK hint for',
+  'headings and captions: publishers mark captions and headings as plain paragraphs all the time,',
+  'and style names like "calibre_3" mean nothing by themselves. But markup that says blockquote is',
+  'real evidence of a Quote: a publisher rarely sets a quotation apart by mistake. A line in the',
+  'contents page is a List-item. A numbered line in an endnotes section is a Footnote unless it is',
+  'the heading over a chapter\'s notes.',
 ].join('\n');
 
 /** The longest text a block line shows; a block's kind is in its opening words. */
@@ -150,9 +158,53 @@ export function sectionsOf(rows: readonly SnapRow[], chapters: readonly SnapChap
   return out;
 }
 
-/** One block as snap sees it: id, (section · markup), then its text — a picture says so. */
-export function blockLine(row: SnapRow, section: string): string {
-  const where = row.markup !== undefined && row.markup.length > 0 ? `${section} · ${row.markup}` : section;
+/**
+ * A chapter name reduced to its words: case folded, a leading "Chapter 5", "5." or
+ * "V" and every dash and punctuation mark gone. "Chapter 5—Evo-Devo" and
+ * "5. Evo-Devo" are the same name, which is the whole test.
+ */
+export function nameKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/^\s*(chapter|part|book)?\s*([0-9]+|[ivxlcdm]+)\b\s*[.:—–-]?\s*/i, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+/**
+ * THE MARKS ON EACH LINE — facts about where a block sits that its words alone
+ * cannot say, measured once per book (second run, 2026-09-22: the model put the
+ * contents page's lines and the endnotes' chapter headings down as chapter
+ * titles, because "Chapter 5—Evo-Devo" reads the same in all three places).
+ *
+ * `first in section`: the first row of a section of the navigation.
+ * `matches contents entry "…"`: the row's words are a chapter name from the
+ * navigation (`nameKey`). EVIDENCE, not a verdict — the guide tells the model
+ * what a match means in each place, and the model decides.
+ */
+export function lineMarks(rows: readonly SnapRow[], chapters: readonly SnapChapter[]): Map<string, string[]> {
+  const starts = new Set(chapters.map((chapter) => chapter.id));
+  const names = new Map<string, string>();
+  for (const chapter of chapters) {
+    const key = nameKey(chapter.title);
+    if (key.length >= 3) names.set(key, chapter.title);
+  }
+  const out = new Map<string, string[]>();
+  for (const row of rows) {
+    const marks: string[] = [];
+    if (starts.has(row.id)) marks.push('first in section');
+    const named = names.get(nameKey(row.text));
+    if (named !== undefined) marks.push(`matches contents entry "${named}"`);
+    if (marks.length > 0) out.set(row.id, marks);
+  }
+  return out;
+}
+
+/** One block as snap sees it: id, (section · marks · markup), then its text — a picture says so. */
+export function blockLine(row: SnapRow, section: string, marks: readonly string[] = []): string {
+  const parts = [section, ...marks];
+  if (row.markup !== undefined && row.markup.length > 0) parts.push(row.markup);
+  const where = parts.join(' · ');
   const flat = row.text.replace(/\s+/g, ' ').trim();
   const text = row.category === 'Picture'
     ? `(picture) ${flat}`
@@ -199,11 +251,30 @@ export function groupState(
   rows: readonly SnapRow[],
   sections: ReadonlyMap<string, string>,
   group: SnapGroup,
+  marks: ReadonlyMap<string, readonly string[]> = new Map(),
 ): string {
   const body = rows.slice(group.from, group.to)
-    .map((row) => blockLine(row, sections.get(row.id) ?? 'the book'))
+    .map((row) => blockLine(row, sections.get(row.id) ?? 'the book', marks.get(row.id) ?? []))
     .join('\n');
   return `${header}\n\nBLOCKS (a stretch of the book, in reading order):\n${body}`;
+}
+
+/**
+ * THE SECOND QUESTION, asked only of blocks answered `Title` — snap's `yesno`.
+ *
+ * A Title is the one answer with consequences beyond its own block (it marks
+ * where a chapter begins), and on the second run every wrong chapter call was a
+ * confident one (0.63-0.97). A sharper question about just that decision costs
+ * one more short prefill against the cached group, for the few blocks that need
+ * it. An unconfirmed Title leaves the block as it was (`decide`).
+ */
+export function titleConfirmQuestion(row: SnapRow): { type: 'yesno'; instructions: string } {
+  return {
+    type: 'yesno',
+    instructions: `Block [${row.id}] is where a chapter or part of the book's main text begins — its own `
+      + 'heading, not a line of the table of contents, not a heading over notes in an endnotes section, '
+      + 'and not a heading inside a chapter.',
+  };
 }
 
 /** The question asked about one block — snap's `choice` question shape. */
@@ -236,9 +307,11 @@ export interface SnapPolicy {
   minConfidence: number;
   /** The letters' share of ALL probability — below it the model wanted to say something else. */
   minLabelMass: number;
+  /** p(yes) the Title confirmation (`titleConfirmQuestion`) must reach for a block to become a Title. */
+  minTitleConfirm: number;
 }
 
-export const DEFAULT_SNAP_POLICY: SnapPolicy = { minConfidence: 0.6, minLabelMass: 0.9 };
+export const DEFAULT_SNAP_POLICY: SnapPolicy = { minConfidence: 0.6, minLabelMass: 0.9, minTitleConfirm: 0.7 };
 
 /** One row of the report written beside the step: what was asked, answered and done. */
 export interface SnapReportRow {
@@ -249,7 +322,9 @@ export interface SnapReportRow {
   labelMass: number;
   probabilities: Record<string, number>;
   /** `changed`, `same`, or why a different answer was not applied. */
-  outcome: 'changed' | 'same' | 'low-confidence' | 'low-label-mass';
+  outcome: 'changed' | 'same' | 'low-confidence' | 'low-label-mass' | 'title-unconfirmed';
+  /** p(yes) of the Title confirmation, for a block answered Title; absent otherwise. */
+  titleConfirm?: number;
   /** The block's section and opening words, so the report can be read without the book open. */
   section: string;
   text: string;
@@ -267,20 +342,27 @@ export interface SnapDecision {
  * A category changes only when snap chose a different one confidently
  * (`SnapPolicy`); everything else stays exactly as it was and the report says why.
  *
- * CHAPTERS ARE ADDED, NEVER TAKEN AWAY. A run of consecutive `Title` rows (after
- * the changes) is one heading — a number line and a title line are one chapter
- * opening — and it gets a chapter marker at its first row, titled with the run's
- * text, unless a chapter already starts at that row or within the three rows
- * before it (an EPUB's navigation often lands on the ornament or the number just
- * above the words). The publisher's own divisions are left alone: a nav entry the
- * model reads differently is still the publisher's statement, and removing one
- * is a person's call.
+ * A BLOCK BECOMES A TITLE ONLY WHEN THE CONFIRMATION AGREES: `titleConfirms`
+ * holds p(yes) of `titleConfirmQuestion` for every block answered Title, and
+ * below `policy.minTitleConfirm` the block is left as it was
+ * (`title-unconfirmed`). A block that already was a Title is not re-judged.
+ *
+ * CHAPTER MARKERS COME FROM THE MODEL ONLY WHEN THE BOOK HAS NO NAVIGATION. On
+ * the second run (a book whose navigation already listed all fourteen chapters)
+ * every marker the model added was wrong — the contents page, a numbered
+ * sub-section, the endnotes' headings. Where the publisher said where the
+ * chapters are, that stands; the model's Title calls still relabel the blocks.
+ * Where there is no navigation, a run of consecutive `Title` rows (after the
+ * changes) is one heading — a number line and a title line are one chapter
+ * opening — and gets one marker at its first row, titled with the run's text.
+ * Chapters are only ever ADDED.
  */
 export function decide(
   rows: readonly SnapRow[],
   answers: ReadonlyMap<string, SnapChoiceAnswer>,
   chapters: readonly SnapChapter[],
   policy: SnapPolicy = DEFAULT_SNAP_POLICY,
+  titleConfirms: ReadonlyMap<string, number> = new Map(),
 ): SnapDecision {
   const sections = sectionsOf(rows, chapters);
   const categoryOps: CategoryOp[] = [];
@@ -291,12 +373,15 @@ export function decide(
     const answer = answers.get(row.id);
     if (answer === undefined) continue;
     let outcome: SnapReportRow['outcome'];
+    const confirm = titleConfirms.get(row.id);
     if (answer.choice === row.category) {
       outcome = 'same';
     } else if (answer.label_mass < policy.minLabelMass) {
       outcome = 'low-label-mass';
     } else if (answer.confidence < policy.minConfidence) {
       outcome = 'low-confidence';
+    } else if (answer.choice === 'Title' && (confirm === undefined || confirm < policy.minTitleConfirm)) {
+      outcome = 'title-unconfirmed';
     } else {
       outcome = 'changed';
       categoryOps.push({ op: 'category', id: row.id, category: answer.choice });
@@ -310,23 +395,19 @@ export function decide(
       labelMass: answer.label_mass,
       probabilities: answer.probabilities,
       outcome,
+      ...(confirm === undefined ? {} : { titleConfirm: confirm }),
       section: sections.get(row.id) ?? 'the book',
       text: row.text.replace(/\s+/g, ' ').trim().slice(0, 120),
     });
   }
 
-  const starts = new Set(chapters.map((chapter) => chapter.id));
   const chapterOps: ChapterSetOp[] = [];
+  if (chapters.length > 0) return { categoryOps, chapterOps, report };
   for (let i = 0; i < rows.length; i += 1) {
     if (finalCategory.get(rows[i]!.id) !== 'Title') continue;
     if (i > 0 && finalCategory.get(rows[i - 1]!.id) === 'Title') continue;
     let end = i;
     while (end + 1 < rows.length && finalCategory.get(rows[end + 1]!.id) === 'Title') end += 1;
-    let covered = false;
-    for (let back = i; back >= Math.max(0, i - 3); back -= 1) {
-      if (starts.has(rows[back]!.id)) { covered = true; break; }
-    }
-    if (covered) continue;
     const title = runTitle(rows.slice(i, end + 1).map((row) => row.text));
     if (title.length === 0) continue;
     chapterOps.push({ op: 'chapter', set: rows[i]!.id, title });
