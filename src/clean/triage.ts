@@ -234,8 +234,42 @@ function unitLine(unit: StageOneUnit, asked: boolean): string {
  * `TRIAGE_GUIDE` so the two can never list different things, and a block run's
  * state stays byte-identical to what it was.
  */
-const SENTENCE_TRIAGE_STATE =
-  'You are checking the sentences of a book, one at a time, before a text-to-speech voice reads them aloud.';
+/**
+ * The state every sentence question shares: one line of framing, then WORKED
+ * EXAMPLES — the criteria shown, not only stated.
+ *
+ * Measured 2026-09-24 on Working Towards the Führer (qwen3.5-2b, the question
+ * alone): AUC 0.69, and of the 41 sentences printing something to read it
+ * flagged 14; nearly every miss was a sentence whose only target was a year or a
+ * decade ("After 1933, as head of government …", "the mid-1980s"), which the
+ * criteria name in so many words. No cut-off rescues it — 95 % recall flags 196
+ * of 212. Owen: *"we're using the probablistic solution with determinstic
+ * examples provided"*. So the model is shown each criterion as a sentence and
+ * its answer. The examples are written for this and are NOT that book's
+ * sentences, so a measurement on it still measures the model.
+ *
+ * In the state because the state is the shared prefix the door primes once per
+ * group: the examples cost one read, not one per question.
+ */
+const SENTENCE_TRIAGE_STATE = [
+  'You are checking the sentences of a book, one at a time, before a text-to-speech voice reads them aloud.',
+  'A sentence needs to be cleaned when something in it is printed one way and spoken another. Examples, with the right answer:',
+  '',
+  '"After 1871, the new empire was governed from Berlin." -> A (Yes): a year.',
+  '"By the mid-1890s the movement had lost its way." -> A (Yes): a decade.',
+  '"On 3 May 1905 the strike began." -> A (Yes): a date.',
+  '"The war cost the treasury 4.5 million pounds." -> A (Yes): a decimal number.',
+  '"The crowd numbered some 300 people." -> A (Yes): a number.',
+  '"It is reprinted in The Letters, ed. John Smith, with notes." -> A (Yes): an abbreviation said in full.',
+  '"The KPD refused to join the coalition." -> A (Yes): a run of capitals.',
+  '"He wrote to Weber [the finance minister] that night." -> A (Yes): a bracketed insertion.',
+  '"The plan failed - as everyone expected - within a week." -> A (Yes): a hyphen with spaces used as a dash.',
+  '"Frederick III reigned for only ninety-nine days." -> A (Yes): a roman numeral after a ruler\'s name.',
+  '"What had seemed impossible now looked merely difficult." -> B (No): ordinary prose.',
+  '"The ministers never met again as a body.²⁷" -> B (No): a superscript note number does not count.',
+  '"In this sense the *idea* mattered more than the man." -> B (No): asterisks marking emphasis do not count.',
+  '"She left the city in the spring and did not return." -> B (No): ordinary prose, even with no punctuation to speak of.',
+].join('\n');
 
 /**
  * The criteria, as they are listed in `TRIAGE_GUIDE` — its bullet lines and the
