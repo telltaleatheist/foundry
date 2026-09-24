@@ -1149,6 +1149,25 @@ const CT_TRIAGE: OptionSpec = {
   describe: 'A clean-triage verdicts file. Blocks it found clean are recorded as examined and clean, with no model request; only the flagged ones are asked.',
 };
 
+/** `--unit`, shared by clean-triage and clean-text: they must name the same one. */
+const CT_UNIT: OptionSpec = {
+  name: 'unit',
+  type: 'string',
+  placeholder: '<sentence|block>',
+  describe: 'What one question is about: a sentence (default) or a whole block. clean-text --triage must name the unit its verdicts were made at.',
+};
+
+/** Read `--unit`, refusing anything but the two units by name. */
+async function cleanUnit(args: ParsedArgs): Promise<import('./clean/blocks.js').CleanUnit | undefined> {
+  const unit = optionalString(args, 'unit');
+  if (unit === undefined) return undefined;
+  const { CLEAN_UNITS } = await import('./clean/blocks.js');
+  if (!(CLEAN_UNITS as readonly string[]).includes(unit)) {
+    throw new UsageError(`--unit takes ${CLEAN_UNITS.join(' or ')}, not "${unit}"`);
+  }
+  return unit as import('./clean/blocks.js').CleanUnit;
+}
+
 const CTR_OUT: OptionSpec = {
   name: 'out',
   type: 'string',
@@ -1183,8 +1202,10 @@ async function runCleanTriageCommand(args: ParsedArgs): Promise<void> {
   if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
     throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
   }
+  const unit = await cleanUnit(args);
   const { runCleanTriage } = await import('./clean/triage.js');
   await runCleanTriage({
+    ...(unit === undefined ? {} : { unit }),
     bookPath: requireString(args, 'book', 'the book file whose blocks are judged'),
     outPath: requireString(args, 'out', 'where the verdicts are written'),
     endpoint: requireString(args, 'endpoint', 'the Crucible whose decide door is asked'),
@@ -1227,9 +1248,10 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
   if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
     throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
   }
+  const unit = await cleanUnit(args);
   const epubIn = optionalString(args, 'epub');
   if (epubIn !== undefined) {
-    const bookRoute = (['book', 'records', 'stamp', 'generation', 'triage'] as const)
+    const bookRoute = (['book', 'records', 'stamp', 'generation', 'triage', 'unit'] as const)
       .filter((name) => optionalString(args, name) !== undefined);
     if (bookRoute.length > 0) {
       throw new UsageError(
@@ -1280,6 +1302,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
       ? {} : { generation: optionalString(args, 'generation')! }),
     ...(optionalString(args, 'triage') === undefined
       ? {} : { triagePath: optionalString(args, 'triage')! }),
+    ...(unit === undefined ? {} : { unit }),
     log,
   });
 }
@@ -3773,7 +3796,7 @@ export const COMMANDS: readonly Command[] = [
     summary: 'Clean a book\'s text for a narrator: punctuation, numbers as words, the model on every block.',
     usage: '--book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
       + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--server <openai|ollama|anthropic>]'
-      + ' [--concurrency <n>] [--triage <verdicts.json>]'
+      + ' [--concurrency <n>] [--triage <verdicts.json>] [--unit <sentence|block>]'
       + '  |  --epub <in.epub> --out <out.epub> [--endpoint <url>] [--model <name>]'
       + ' [--server <openai|ollama|anthropic>] [--concurrency <n>]',
     detail: [
@@ -3972,7 +3995,7 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_EPUB_IN, CT_EPUB_OUT,
-      CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION, CT_TRIAGE,
+      CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION, CT_TRIAGE, CT_UNIT,
     ],
     run: runCleanText,
   },
@@ -3980,7 +4003,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'clean-triage',
     summary: 'Judge which blocks of a book need cleaning at all, before clean-text is run.',
     usage: '--book <book.jsonl> --out <verdicts.json> --endpoint <crucible url> --model <decide model>'
-      + ' [--concurrency <n>]',
+      + ' [--concurrency <n>] [--unit <sentence|block>]',
     detail: [
       'THE FIRST HALF OF A TRIAGED CLEANUP. Owen, 2026-09-23: "we create a list of',
       'blocks that need to be cleaned with snap and then we bring snap down and load',
@@ -4006,7 +4029,7 @@ export const COMMANDS: readonly Command[] = [
       'A busy door (chat_queue_full) is waited out; a model that is not resident is',
       'refused by name.',
     ].join('\n'),
-    options: [CT_BOOK_IN, CTR_OUT, CTR_ENDPOINT, CTR_MODEL, CTR_CONCURRENCY],
+    options: [CT_BOOK_IN, CTR_OUT, CTR_ENDPOINT, CTR_MODEL, CTR_CONCURRENCY, CT_UNIT],
     run: runCleanTriageCommand,
   },
   {

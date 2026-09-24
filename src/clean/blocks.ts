@@ -23,6 +23,7 @@ import type { TableGrid } from '../translate/tablecells.js';
 import { punctuateBlocks } from './punctuate.js';
 import type { PunctuationStageRecord } from './punctuate.js';
 import { markerSegments } from './segments.js';
+import { cleanSentences } from './sentences.js';
 import type { NarrationNumberTarget } from './targets.js';
 
 /**
@@ -168,4 +169,44 @@ export function punctuateAll(blocks: readonly Block[]): {
   record: PunctuationStageRecord;
 } {
   return punctuateBlocks(blocks.map((b) => b.target));
+}
+
+/**
+ * WHAT ONE QUESTION IS ABOUT — a sentence (the default since 2026-09-24) or a
+ * whole block. `block` is kept so a run can flip back (Owen: *"we'll test it. if
+ * it isnt right, we can flip back"*). src/clean/sentences.ts carries the why.
+ */
+export type CleanUnit = 'sentence' | 'block';
+export const DEFAULT_CLEAN_UNIT: CleanUnit = 'sentence';
+export const CLEAN_UNITS: readonly CleanUnit[] = ['sentence', 'block'];
+
+/** A sentence's position: its block's key, then `#s<index>`. */
+export function sentenceKey(blockKey: string, index: number): string {
+  return `${blockKey}#s${index}`;
+}
+
+/**
+ * The units a triage judges, in the plan's order.
+ *
+ * `block` is `stageOneUnits` exactly. `sentence` splits every block that is not
+ * a table into its sentences (`cleanSentences`), each its own position
+ * `<parts>#s<i>` bound to its own stage-1 text; a TABLE is still judged whole,
+ * because its cells are asked whole and a grid is never half asked.
+ */
+export function triageUnits(
+  blocks: readonly Block[],
+  punctuated: ReadonlyMap<string, string>,
+  unit: CleanUnit,
+): StageOneUnit[] {
+  const whole = stageOneUnits(blocks, punctuated);
+  if (unit === 'block') return whole;
+  const tables = new Set(blocks.filter((b) => b.cell !== undefined).map((b) => b.parts));
+  const out: StageOneUnit[] = [];
+  for (const one of whole) {
+    if (tables.has(one.parts)) { out.push(one); continue; }
+    cleanSentences(one.text).forEach((sentence, i) => {
+      out.push({ parts: sentenceKey(one.parts, i), text: sentence.text, category: one.category });
+    });
+  }
+  return out;
 }

@@ -100,7 +100,10 @@ import {
 } from '../translate/model-server.js';
 import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
 
-import { cleanBlocks, stageOneUnits } from './blocks.js';
+import {
+  cleanBlocks, DEFAULT_CLEAN_UNIT, sentenceKey, stageOneUnits, triageUnits, type CleanUnit,
+} from './blocks.js';
+import { cleanSentences, reassemble, type SentenceSpan } from './sentences.js';
 import { readTriageFile } from './triage.js';
 import { blockDigest, bookPositionTexts } from './digest.js';
 import { narrationTextPrompt } from './prompt.js';
@@ -131,6 +134,14 @@ export { CleanTextError };
  */
 const KEY_FORMAT = 'clean/dialect/v1';
 
+/**
+ * A block cleaned SENTENCE BY SENTENCE is a different question from the same
+ * block cleaned whole — the model was shown different text — so its answer is
+ * filed under its own format and a flip between the two re-asks rather than
+ * reading one unit's answer as the other's.
+ */
+const SENTENCE_KEY_FORMAT = 'clean/sentence/v1';
+
 /** Fields are NUL-joined so no field's content can spell another's boundary. */
 const NUL = String.fromCharCode(0);
 
@@ -146,9 +157,11 @@ const NUL = String.fromCharCode(0);
 export function cleanKey(request: {
   text: string;
   model: string;
+  /** Default `block`: the key every record written before 2026-09-24 was filed under. */
+  unit?: CleanUnit;
 }): string {
   const fields = [
-    KEY_FORMAT,
+    request.unit === 'sentence' ? SENTENCE_KEY_FORMAT : KEY_FORMAT,
     request.model.trim(),
     NORMALIZER_VERSION,
     PUNCTUATION_SPEC_VERSION,
@@ -305,6 +318,14 @@ export interface CleanTextOptions {
    * every block is asked, as before.
    */
   triagePath?: string;
+  /**
+   * `--unit`: what one question is about — a SENTENCE (the default, 2026-09-24)
+   * or a whole block. A sentence run asks about each sentence of a block with
+   * its neighbouring sentences as context, and writes the block back whole, each
+   * sentence's edits at their own offsets inside it (src/clean/sentences.ts). A
+   * `--triage` file must have judged the same unit.
+   */
+  unit?: CleanUnit;
   /** Injected so the tests drive the whole pass with no server and no GPU. */
   transport?: Transport;
   /** Injected so a test can settle every block without a transport at all. */
@@ -469,7 +490,15 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     ?? opts.runner?.model
     ?? (await openModelServer({ kind, transport, endpoint, log: opts.log })).model;
 
+  const unit = opts.unit ?? DEFAULT_CLEAN_UNIT;
   const triage = opts.triagePath === undefined ? null : readTriageFile(opts.triagePath);
+  if (triage !== null && (triage.unit ?? 'block') !== unit) {
+    throw new CleanTextError(
+      `--triage ${path.resolve(opts.triagePath!)} judged ${triage.unit ?? 'block'}s, and this run asks about `
+      + `${unit}s. Its verdicts name positions this run does not have. Run clean-triage with `
+      + `--unit ${unit}, or clean-text with --unit ${triage.unit ?? 'block'}.`,
+    );
+  }
   const { text: bookText, where } = openBook(opts.bookPath);
   const book = readBookFile(bookText, where);
 
@@ -552,9 +581,9 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * a Table row holds the whole grid and half a grid is not one.
    */
   const keyOf = new Map<string, string>();
-  for (const block of blocks) keyOf.set(block.target.key, cleanKey({ text: block.target.text, model }));
+  for (const block of blocks) keyOf.set(block.target.key, cleanKey({ text: block.target.text, model, unit }));
   const tableKey = new Map<string, string>();
-  for (const table of tables) tableKey.set(table.parts, cleanKey({ text: table.source, model }));
+  for (const table of tables) tableKey.set(table.parts, cleanKey({ text: table.source, model, unit }));
 
   /*
    * A TRIAGE'S "CLEAN" ROW ANSWERS THE BLOCK FOR A RUN GIVEN THE SAME TRIAGE —
@@ -613,19 +642,52 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * nothing to clean. Tables are judged and kept whole (`stageOneUnits`), so a
    * grid is never half asked. Everything else is asked, exactly as before.
    */
+  /*
+   * ── THE PIECES A QUESTION IS ABOUT ─────────────────────────────────────────
+   *
+   * At `--unit block` a piece is a block, as it always was. At `--unit sentence`
+   * every block that is not a table cell is cut into its sentences
+   * (`cleanSentences`, over the SAME stage-1 text `clean-triage` cut), each a
+   * piece keyed `<block key>#s<i>`; a table cell stays one piece, because its
+   * grid is spliced back from whole cells. The pieces are listed in the book's
+   * order, so a piece's neighbours are the sentences either side of it.
+   */
+  interface Piece {
+    key: string;
+    text: string;
+    block: typeof outstanding[number];
+    /** Which sentence of its block — absent for a piece that IS its block (or cell). */
+    sentence?: number;
+  }
+  const pieces: Piece[] = [];
+  const sentencesOf = new Map<string, SentenceSpan[]>();
+  for (const block of outstanding) {
+    const text = cleanText.get(block.target.key)!;
+    if (unit === 'block' || block.cell !== undefined) {
+      pieces.push({ key: block.target.key, text, block });
+      continue;
+    }
+    const spans = cleanSentences(text);
+    sentencesOf.set(block.target.key, spans);
+    spans.forEach((span, i) => pieces.push({
+      key: sentenceKey(block.target.key, i), text: span.text, block, sentence: i,
+    }));
+  }
+
   let triageSummary: CleanTriageSummary | undefined;
+  /** Pieces the triage found clean — and, at `--unit block`, tables it kept whole by their parts. */
   const keptClean = new Set<string>();
   if (triage !== null) {
     const summary: CleanTriageSummary = {
       file: path.resolve(opts.triagePath!), model: triage.model.id, clean: [], flagged: 0, stale: [], unjudged: [],
     };
-    for (const unit of stageOneUnits(outstanding, cleanText)) {
-      const verdict = triage.blocks[unit.parts];
-      if (verdict === undefined) { summary.unjudged.push(unit.parts); continue; }
-      if (verdict.digest !== blockDigest(unit.text)) { summary.stale.push(unit.parts); continue; }
+    for (const one of unit === 'block' ? stageOneUnits(outstanding, cleanText) : triageUnits(outstanding, cleanText, unit)) {
+      const verdict = triage.blocks[one.parts];
+      if (verdict === undefined) { summary.unjudged.push(one.parts); continue; }
+      if (verdict.digest !== blockDigest(one.text)) { summary.stale.push(one.parts); continue; }
       if (verdict.needsCleaning) { summary.flagged += 1; continue; }
-      keptClean.add(unit.parts);
-      summary.clean.push(unit.parts);
+      keptClean.add(one.parts);
+      summary.clean.push(one.parts);
     }
     opts.log(
       `clean-text: triage by ${triage.model.id} — ${summary.clean.length} position(s) examined and `
@@ -635,35 +697,38 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     );
     triageSummary = summary;
   }
-  const asked = outstanding.filter((block) => !keptClean.has(block.parts));
-  const keptBlocks = outstanding.filter((block) => keptClean.has(block.parts));
+  /** A piece is kept when the triage found it clean — a table cell, when its whole table was. */
+  const pieceKept = (piece: Piece): boolean => keptClean.has(piece.key)
+    || (piece.block.cell !== undefined && keptClean.has(piece.block.parts));
+  const askedPieces = pieces.filter((piece) => !pieceKept(piece));
+  /** A block is ASKED when any piece of it is; a block none of whose pieces is asked is kept whole. */
+  const blocksAsked = new Set(askedPieces.map((piece) => piece.block.target.key));
+  const asked = outstanding.filter((block) => blocksAsked.has(block.target.key));
+  const keptBlocks = outstanding.filter((block) => !blocksAsked.has(block.target.key));
   /*
-   * The neighbours come from the FULL outstanding order, not from `asked`: a
-   * block kept clean still sits beside the one asked, in the same dialect
-   * (stage-1 text), and the model is owed the paragraph that says 1200 is a year.
+   * The neighbours come from the FULL piece order, not from the asked pieces: a
+   * piece kept clean still sits beside the one asked, in the same dialect
+   * (stage-1 text), and the model is owed the sentence that says 1200 is a year.
    */
-  const orderOf = new Map(outstanding.map((block, index) => [block.target.key, index] as const));
+  const orderOf = new Map(pieces.map((piece, index) => [piece.key, index] as const));
 
-  const asks = asked.map((block) => {
-    const index = orderOf.get(block.target.key)!;
-    const text = cleanText.get(block.target.key)!;
+  const asks = askedPieces.map((piece) => {
+    const index = orderOf.get(piece.key)!;
     return {
-      key: block.target.key,
-      text,
-      segments: segmentsAfter(text),
+      key: piece.key,
+      text: piece.text,
+      segments: segmentsAfter(piece.text),
       /*
-       * The neighbours are the blocks either side IN THE PLAN'S OWN ORDER, and
-       * they are taken from the outstanding list rather than from the whole
-       * book. Context is shown so the model can tell a year from a quantity —
-       * "the paragraph before a date is usually digit-free, and that is exactly
-       * the paragraph that says whether 1200 is a year" — and a neighbour that
-       * was answered on an earlier run is one this run has no cleaned text for,
-       * so showing the book's own words for it would show two dialects at once.
+       * The neighbours are the pieces either side IN THE PLAN'S OWN ORDER — the
+       * sentences either side at `--unit sentence`, crossing into the next block
+       * at a block's edge — taken from the outstanding list rather than from the
+       * whole book. Context is shown so the model can tell a year from a
+       * quantity, and a neighbour answered on an earlier run is one this run has
+       * no cleaned text for, so showing the book's own words for it would show
+       * two dialects at once.
        */
-      previous: index > 0 ? cleanText.get(outstanding[index - 1]!.target.key)! : null,
-      next: index + 1 < outstanding.length
-        ? cleanText.get(outstanding[index + 1]!.target.key)!
-        : null,
+      previous: index > 0 ? pieces[index - 1]!.text : null,
+      next: index + 1 < pieces.length ? pieces[index + 1]!.text : null,
     };
   });
 
@@ -759,7 +824,28 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     }
   }
 
-  const blockByKey = new Map(asked.map((block) => [block.target.key, block] as const));
+  const pieceByKey = new Map(askedPieces.map((piece) => [piece.key, piece] as const));
+  /*
+   * ── A BLOCK ASKED SENTENCE BY SENTENCE IS WRITTEN BY ITS LAST SENTENCE ─────
+   *
+   * Each sentence's answer is applied to THAT sentence, at offsets inside it,
+   * and kept here; a sentence the triage found clean starts out as its own
+   * stage-1 text. When the last asked sentence of a block settles, the block is
+   * put back — `reassemble`, the block's own text between the sentences byte for
+   * byte — and ONE row is written for it, exactly as a block answered whole
+   * writes one. The records format does not know sentences exist.
+   */
+  const sentenceOut = new Map<string, string[]>();
+  const sentencesLeft = new Map<string, number>();
+  for (const [blockKey, spans] of sentencesOf) {
+    if (!blocksAsked.has(blockKey)) continue;
+    sentenceOut.set(blockKey, spans.map((span) => span.text));
+  }
+  for (const piece of askedPieces) {
+    if (piece.sentence === undefined) continue;
+    const blockKey = piece.block.target.key;
+    sentencesLeft.set(blockKey, (sentencesLeft.get(blockKey) ?? 0) + 1);
+  }
   /*
    * HOW MANY OF A TABLE'S CELLS ARE STILL OUT, because a table's RECORD is the
    * whole grid and half a grid is not one (the `bankedTable` rule above says
@@ -774,14 +860,28 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   }
 
   const bankAnswer = (key: string, decision: AskOutcome): void => {
-    const block = blockByKey.get(key);
-    if (block === undefined) {
+    const piece = pieceByKey.get(key);
+    if (piece === undefined) {
       throw new CleanTextError(
         `clean-text settled a verdict about ${key}, which is not a block of ${where} this run `
         + 'asked about. The loop and the plan disagree about what this book holds, and nothing '
         + 'was written.',
       );
     }
+    const block = piece.block;
+
+    if (piece.sentence !== undefined) {
+      const blockKey = block.target.key;
+      sentenceOut.get(blockKey)![piece.sentence] = applySpans(piece.text, decision.accepted, key);
+      const left = sentencesLeft.get(blockKey)! - 1;
+      sentencesLeft.set(blockKey, left);
+      if (left > 0) return;
+      const text = reassemble(cleanText.get(blockKey)!, sentencesOf.get(blockKey)!, sentenceOut.get(blockKey)!);
+      if (text !== block.target.text) changed += 1;
+      appendRecord(block.parts, keyOf.get(blockKey)!, text);
+      return;
+    }
+
     cleanText.set(key, applySpans(cleanText.get(key)!, decision.accepted, key));
 
     if (block.cell === undefined) {
@@ -850,11 +950,14 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   const appliedByClass: Record<string, number> = {};
   let modelRefused = 0;
 
-  for (const block of asked) {
-    const decision = settled.decisions.get(block.target.key);
+  // One receipt unit per piece asked: a sentence at `--unit sentence` (keyed
+  // `<block>#s<i>`, carrying the sentence it was shown), a block at `--unit block`.
+  for (const piece of askedPieces) {
+    const block = piece.block;
+    const decision = settled.decisions.get(piece.key);
     if (decision === undefined) {
       throw new CleanTextError(
-        `clean-text reached no decision about ${block.target.key} of ${where}. The loop and the `
+        `clean-text reached no decision about ${piece.key} of ${where}. The loop and the `
         + 'plan disagree about what this book holds, and nothing was written.',
       );
     }
@@ -862,7 +965,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
       dispositions[record.status] = (dispositions[record.status] ?? 0) + 1;
       if (isRefusal(record.status)) {
         modelRefused += 1;
-        sayRefusal(opts.log, block.target.key, record);
+        sayRefusal(opts.log, piece.key, record);
         continue;
       }
       if (record.status === 'APPLIED' || record.status === 'APPLIED_RULE') {
@@ -871,11 +974,13 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
       }
     }
     units.push({
-      key: block.target.key,
+      key: piece.key,
       kind: block.target.kind,
       file: fileName,
       status: decision.status,
-      text: block.target.text,
+      // A block keeps what it always recorded, its source text; a sentence records
+      // the stage-1 sentence it was shown, since it has no source text of its own.
+      text: piece.sentence === undefined ? block.target.text : piece.text,
       edits: decision.records,
       ...(decision.rawAnswer === undefined ? {} : { rawAnswer: decision.rawAnswer }),
     });

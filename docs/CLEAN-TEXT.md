@@ -706,6 +706,34 @@ when it is next cleaned through `Qwen/Qwen3.5-9B`. That is correct — two serve
 at two precisions are two answers — and it is the reason to pick one server per
 machine.
 
+## The unit is a sentence — `--unit sentence` (2026-09-24, n10)
+
+Owen, after Pursuit of Power's n8 run left ~330 regnal numerals, 39 decimals and a
+"fini sh" unread in blocks the model HAD been shown: *"it seems like its being given
+too many things to fix at once. if we went to the sentence level … it would be able
+to focus on a single unit at a time. but we'd have to write it back to the block that
+it came out of, in the exact same place."*
+
+So both halves ask about SENTENCES by default:
+
+- `src/clean/sentences.ts` cuts each block's stage-1 text into half-open ranges,
+  leaning toward NOT cutting (never after "Dr.", "ed.", "c.", an initial or a dotted
+  run), and joins anything shorter than **30 characters** to the next sentence
+  (Owen: *"at least 30 characters. if its less, combine with the next sentence"*).
+- `clean-triage` asks one yes/no per sentence, keyed `<block>#s<i>`; the file says
+  `"unit": "sentence"`, and `clean-text` refuses a triage made at the other unit.
+- `clean-text` asks each flagged sentence with the sentences either side as context.
+  Each answer is applied to its own sentence; when a block's last sentence settles
+  the block is put back (`reassemble`: the text between sentences byte for byte) and
+  ONE record is written, as before. The records, the stamp and the materialized book
+  do not know sentences exist. A table's cells are still asked whole.
+- The receipt lists one unit per sentence asked. Its key is filed under
+  `clean/sentence/v1`, so switching units asks again instead of reusing the other
+  unit's answers.
+
+`--unit block` is the old behaviour, unchanged, kept so a run can flip back
+(*"we'll test it. if it isnt right, we can flip back"*).
+
 ## A triaged run — `clean-triage`, then `clean-text --triage` (2026-09-23)
 
 Owen, 2026-09-23: *"we create a list of blocks that need to be cleaned with snap

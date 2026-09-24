@@ -131,9 +131,14 @@ function targetsShown(seen: readonly string[], texts: readonly string[] = TEXTS)
 
 const noSleep = async (): Promise<void> => {};
 
-async function triage(dir: string, door: Transport): Promise<{ out: string; file: TriageFile }> {
+async function triage(
+  dir: string,
+  door: Transport,
+  unit: 'sentence' | 'block' = 'block',
+): Promise<{ out: string; file: TriageFile }> {
   const out = path.join(dir, 'triage.json');
   const done = await runCleanTriage({
+    unit,
     bookPath: path.join(dir, 'book.jsonl'),
     outPath: out,
     endpoint: 'http://crucible:7100',
@@ -195,7 +200,7 @@ describe('clean-triage', () => {
   });
 });
 
-describe('clean-text --triage', () => {
+describe('clean-text --triage (unit: block)', () => {
   test('asks the cleaner only the flagged blocks, and records the rest as examined and clean', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'triage-'));
     const bookPath = bookFile(dir);
@@ -205,7 +210,7 @@ describe('clean-text --triage', () => {
 
     await runCleanText({
       bookPath, recordsPath, stampPath: path.join(dir, 'stamp.json'),
-      endpoint: 'http://fake/v1', runner: cleaner, concurrency: 1, triagePath: out, log: () => {},
+      endpoint: 'http://fake/v1', runner: cleaner, concurrency: 1, triagePath: out, unit: 'block', log: () => {},
     });
 
     expect(targetsShown(cleaner.seen)).toEqual([2, 4]);
@@ -232,7 +237,7 @@ describe('clean-text --triage', () => {
     const recordsPath = path.join(dir, 'records.jsonl');
     const run = (cleaner: NumberNormalizerRunner, triagePath?: string) => runCleanText({
       bookPath, recordsPath, stampPath: path.join(dir, 'stamp.json'), endpoint: 'http://fake/v1',
-      runner: cleaner, concurrency: 1, ...(triagePath === undefined ? {} : { triagePath }), log: () => {},
+      runner: cleaner, concurrency: 1, ...(triagePath === undefined ? {} : { triagePath }), unit: 'block', log: () => {},
     });
     await run(stubCleaner(), out);
 
@@ -256,7 +261,7 @@ describe('clean-text --triage', () => {
     const cleaner = stubCleaner();
     await runCleanText({
       bookPath, recordsPath: path.join(dir, 'records.jsonl'), stampPath: path.join(dir, 'stamp.json'),
-      endpoint: 'http://fake/v1', runner: cleaner, concurrency: 1, triagePath: out, log: () => {},
+      endpoint: 'http://fake/v1', runner: cleaner, concurrency: 1, triagePath: out, unit: 'block', log: () => {},
     });
     expect(targetsShown(cleaner.seen, edited)).toEqual([1]);
   });
@@ -266,5 +271,101 @@ describe('clean-text --triage', () => {
     const bad = path.join(dir, 'x.json');
     fs.writeFileSync(bad, JSON.stringify({ format: 'something-else' }));
     expect(() => readTriageFile(bad)).toThrow(/not a clean-triage file/);
+  });
+});
+
+/**
+ * ── SENTENCE BY SENTENCE (Owen, 2026-09-24) ─────────────────────────────────
+ *
+ * The model is asked about one sentence at a time, and the block is written
+ * back whole with every sentence's edits in the exact place they were made.
+ */
+const PARAGRAPHS = [
+  // b1-1: three sentences; only the second needs anything.
+  'The committee met on the first floor and adjourned before noon. Its report was read by the FBI in the spring of that year. Nobody present had read it before they met.',
+  // b1-2: plain prose throughout.
+  'The members went home and did not meet again for a long time. The chairman wrote to each of them about the delay.',
+];
+
+/** A cleaner that reads "FBI" as letters wherever its TARGET prints it, and remembers every target. */
+function lettersCleaner(): NumberNormalizerRunner & { targets: string[] } {
+  const targets: string[] = [];
+  return {
+    targets,
+    model: 'the-cleaner',
+    async generate(input: string): Promise<string> {
+      const target = input.slice(input.indexOf('TARGET'), input.indexOf('NEXT (')).split('\n').slice(1).join(' ').trim();
+      targets.push(target);
+      return target.includes('FBI')
+        ? '{"edits": [{"find": "FBI", "replace": "F B I"}]}'
+        : '{"edits": []}';
+    },
+    async release(): Promise<void> { /* nothing was loaded. */ },
+  };
+}
+
+describe('--unit sentence', () => {
+  test('triage asks one yes/no per SENTENCE, keyed <block>#s<i>, and the file says which unit', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'triage-'));
+    bookFile(dir, PARAGRAPHS);
+    const door = fakeDoor((name) => (name === 'b1-1#s1' ? 0.97 : 0.02));
+    const { file } = await triage(dir, door, 'sentence');
+    expect(Object.keys(door.requests[0]!.questions))
+      .toEqual(['b1-1#s0', 'b1-1#s1', 'b1-1#s2', 'b1-2#s0', 'b1-2#s1']);
+    expect(door.requests[0]!.questions['b1-1#s1']).toEqual({ type: 'yesno', instructions: 'Line [b1-1#s1] needs cleaning.' });
+    expect(door.requests[0]!.state).toContain('[b1-1#s1] (text) Its report was read by the FBI in the spring of that year.');
+    expect(file.unit).toBe('sentence');
+    expect(Object.entries(file.blocks).filter(([, v]) => v.needsCleaning).map(([k]) => k)).toEqual(['b1-1#s1']);
+  });
+
+  test('only the flagged sentence is asked, and the block is written back whole with the edit in place', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'triage-'));
+    const bookPath = bookFile(dir, PARAGRAPHS);
+    const { out } = await triage(dir, fakeDoor((name) => (name === 'b1-1#s1' ? 0.97 : 0.02)), 'sentence');
+    const recordsPath = path.join(dir, 'records.jsonl');
+    const cleaner = lettersCleaner();
+    await runCleanText({
+      bookPath, recordsPath, stampPath: path.join(dir, 'stamp.json'),
+      endpoint: 'http://fake/v1', runner: cleaner, concurrency: 1, triagePath: out, unit: 'sentence', log: () => {},
+    });
+
+    // ONE request, about ONE sentence — not the paragraph.
+    expect(cleaner.targets).toEqual(['Its report was read by the FBI in the spring of that year.']);
+    const rows = fs.readFileSync(recordsPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { key: string; parts: string; text: string });
+    // One row per BLOCK, exactly as a block run writes — the records know nothing of sentences.
+    expect(rows.map((r) => r.parts).sort()).toEqual(['b1-1', 'b1-2']);
+    const b1 = rows.find((r) => r.parts === 'b1-1')!;
+    expect(b1.text).toBe(PARAGRAPHS[0]!.replace('FBI', 'F B I'));
+    expect(b1.key).toBe(cleanKey({ text: PARAGRAPHS[0]!, model: 'the-cleaner', unit: 'sentence' }));
+    // A block none of whose sentences was flagged is kept whole under the triage's key.
+    expect(rows.find((r) => r.parts === 'b1-2')!.key).toBe(triageKey({ text: PARAGRAPHS[1]!, triageModel: 'qwen3.5-0.8b' }));
+
+    const receipt = JSON.parse(fs.readFileSync(receiptPath(recordsPath), 'utf8')) as { units: Array<{ key: string; text: string }> };
+    expect(receipt.units.map((u) => [u.key, u.text])).toEqual([['b1-1#s1', 'Its report was read by the FBI in the spring of that year.']]);
+  });
+
+  test('without a triage every sentence is asked, under a pool, and each block comes back whole', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'triage-'));
+    const texts = PARAGRAPHS;
+    const bookPath = bookFile(dir, texts);
+    const recordsPath = path.join(dir, 'records.jsonl');
+    const cleaner = lettersCleaner();
+    await runCleanText({
+      bookPath, recordsPath, stampPath: path.join(dir, 'stamp.json'),
+      endpoint: 'http://fake/v1', runner: cleaner, concurrency: 3, unit: 'sentence', log: () => {},
+    });
+    expect(cleaner.targets).toHaveLength(5);
+    const rows = fs.readFileSync(recordsPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { parts: string; text: string });
+    expect(rows.find((r) => r.parts === 'b1-1')!.text).toBe(texts[0]!.replace('FBI', 'F B I'));
+  });
+
+  test('a triage made at one unit is refused by a run at the other, by name', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'triage-'));
+    const bookPath = bookFile(dir, PARAGRAPHS);
+    const { out } = await triage(dir, fakeDoor(() => 0.5), 'block');
+    await expect(runCleanText({
+      bookPath, recordsPath: path.join(dir, 'records.jsonl'), stampPath: path.join(dir, 'stamp.json'),
+      endpoint: 'http://fake/v1', runner: stubCleaner(), concurrency: 1, triagePath: out, unit: 'sentence', log: () => {},
+    })).rejects.toThrow(/judged blocks, and this run asks about sentences/);
   });
 });

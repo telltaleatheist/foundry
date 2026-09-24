@@ -41,7 +41,9 @@ import { stripBom } from '../bom.js';
 import { readBookFile } from '../translate/bookrows.js';
 import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
 
-import { cleanBlocks, punctuateAll, stageOneUnits, type StageOneUnit } from './blocks.js';
+import {
+  cleanBlocks, DEFAULT_CLEAN_UNIT, punctuateAll, triageUnits, type CleanUnit, type StageOneUnit,
+} from './blocks.js';
 import { blockDigest } from './digest.js';
 import { CleanTextError } from './punctuate.js';
 import { NORMALIZER_VERSION } from './tts-number-normalizer.js';
@@ -86,6 +88,13 @@ export const TRIAGE_MIN_LABEL_MASS = 0.9;
  * list items), where the fixed part is most of the state, so it is generous.
  */
 const GROUP_MAX_UNITS = 32;
+/**
+ * A SENTENCE group may hold more questions: a sentence is a ~130-character
+ * line, so the count cap binds long before the character cap does, and a
+ * question on a primed state is the cheap part (above). 64 keeps a group's
+ * asked text near the block groups' while halving how often the guide is read.
+ */
+const GROUP_MAX_SENTENCES = 64;
 const GROUP_MAX_CHARS = 20_000;
 const CONTEXT_UNITS = 2;
 const CONTEXT_CHARS = 200;
@@ -140,6 +149,11 @@ export interface TriageFile {
   normalizerVersion: string;
   flagP: number;
   minLabelMass: number;
+  /**
+   * What a position IS — a sentence (`<parts>#s<i>`) or a whole block. Absent in
+   * a file written before 2026-09-24, which judged blocks.
+   */
+  unit?: CleanUnit;
   /** Position → verdict, for every position of the plan. */
   blocks: Record<string, TriageVerdict>;
 }
@@ -152,6 +166,8 @@ export interface CleanTriageOptions {
   /** The resident decide model's id. Required: the door never picks one. */
   model: string;
   concurrency?: number;
+  /** Sentences (the default) or whole blocks — `--unit`. clean-text must be run at the same one. */
+  unit?: CleanUnit;
   /** Injected so the tests drive the whole triage with no server. */
   transport?: Transport;
   /** Injected so the tests do not wait out a Retry-After. */
@@ -181,13 +197,14 @@ interface Group {
 }
 
 /** Cut the units into groups bounded by count and by the characters asked. */
-export function triageGroups(units: readonly StageOneUnit[]): Group[] {
+export function triageGroups(units: readonly StageOneUnit[], unit: CleanUnit = 'block'): Group[] {
+  const maxUnits = unit === 'sentence' ? GROUP_MAX_SENTENCES : GROUP_MAX_UNITS;
   const groups: Group[] = [];
   let start = 0;
   while (start < units.length) {
     let end = start;
     let chars = 0;
-    while (end < units.length && end - start < GROUP_MAX_UNITS) {
+    while (end < units.length && end - start < maxUnits) {
       const next = units[end]!.text.length;
       if (end > start && chars + next > GROUP_MAX_CHARS) break;
       chars += next;
@@ -212,18 +229,29 @@ function unitLine(unit: StageOneUnit, asked: boolean): string {
   return `[${unit.parts}] (context) ${cut}`;
 }
 
+/**
+ * The guide for a SENTENCE run: the same classes, said of a line. Derived from
+ * `TRIAGE_GUIDE` so the two can never list different things, and a block run's
+ * state stays byte-identical to what it was.
+ */
+const SENTENCE_TRIAGE_GUIDE = TRIAGE_GUIDE
+  .replace('You are checking the blocks of a book', 'You are checking the sentences of a book, one per line,')
+  .replace('A block NEEDS CLEANING', 'A line NEEDS CLEANING');
+
 /** The state one request is asked over. */
-export function groupState(units: readonly StageOneUnit[], group: Group): string {
+export function groupState(units: readonly StageOneUnit[], group: Group, unit: CleanUnit = 'block'): string {
   const lines: string[] = [];
   for (let i = group.from; i < group.to; i += 1) {
     lines.push(unitLine(units[i]!, i >= group.askFrom && i < group.askTo));
   }
+  if (unit === 'sentence') return `${SENTENCE_TRIAGE_GUIDE}\n\nLINES\n${lines.join('\n')}`;
   return `${TRIAGE_GUIDE}\n\nBLOCKS\n${lines.join('\n')}`;
 }
 
-/** The question asked of one position. */
-export function triageQuestion(parts: string): { type: 'yesno'; instructions: string } {
-  return { type: 'yesno', instructions: `Block [${parts}] needs cleaning.` };
+/** The question asked of one position. A sentence's position reads `[e-118#s3]`. */
+export function triageQuestion(parts: string, unit: CleanUnit = 'block'): { type: 'yesno'; instructions: string } {
+  const noun = unit === 'sentence' ? 'Line' : 'Block';
+  return { type: 'yesno', instructions: `${noun} [${parts}] needs cleaning.` };
 }
 
 /** The ONE place a verdict's probabilities become a decision. */
@@ -342,9 +370,12 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
     throw new CleanTextError(`--book ${where} has no block with words in it, so there is nothing to triage.`);
   }
   const punctuated = punctuateAll(blocks);
-  const units = stageOneUnits(blocks, punctuated.text);
-  const groups = triageGroups(units);
-  opts.log(`clean-triage: ${units.length} position(s) in ${groups.length} group(s), asked of ${opts.model} at ${url}`);
+  const unit = opts.unit ?? DEFAULT_CLEAN_UNIT;
+  const units = triageUnits(blocks, punctuated.text, unit);
+  const groups = triageGroups(units, unit);
+  opts.log(
+    `clean-triage: ${units.length} ${unit === 'sentence' ? 'sentence' : 'block'} position(s) of `
+    + `${blocks.length} block(s), in ${groups.length} group(s), asked of ${opts.model} at ${url}`);
 
   const verdicts: Record<string, TriageVerdict> = {};
   let served: TriageFile['model'] | null = null;
@@ -355,8 +386,8 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
     const asked = units.slice(group.askFrom, group.askTo);
     const body = JSON.stringify({
       model: opts.model,
-      state: groupState(units, group),
-      questions: Object.fromEntries(asked.map((unit) => [unit.parts, triageQuestion(unit.parts)])),
+      state: groupState(units, group, unit),
+      questions: Object.fromEntries(asked.map((one) => [one.parts, triageQuestion(one.parts, unit)])),
     });
     const reply = await askGroup(transport, url, body, sleep, opts.log);
     for (const unit of asked) {
@@ -396,6 +427,7 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
     normalizerVersion: NORMALIZER_VERSION,
     flagP: TRIAGE_FLAG_P,
     minLabelMass: TRIAGE_MIN_LABEL_MASS,
+    unit,
     // In the book's order, so the file reads alongside it.
     blocks: Object.fromEntries(units.map((unit) => [unit.parts, verdicts[unit.parts]!])),
   };
