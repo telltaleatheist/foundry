@@ -312,8 +312,12 @@ describe('--unit sentence', () => {
     const { file } = await triage(dir, door, 'sentence');
     expect(Object.keys(door.requests[0]!.questions))
       .toEqual(['b1-1#s0', 'b1-1#s1', 'b1-1#s2', 'b1-2#s0', 'b1-2#s1']);
-    expect(door.requests[0]!.questions['b1-1#s1']).toEqual({ type: 'yesno', instructions: 'Line [b1-1#s1] needs cleaning.' });
-    expect(door.requests[0]!.state).toContain('[b1-1#s1] (text) Its report was read by the FBI in the spring of that year.');
+    // The question CARRIES its sentence; the state is the guide alone, shared by every question.
+    expect(door.requests[0]!.questions['b1-1#s1']).toEqual({
+      type: 'yesno', instructions: 'This sentence needs cleaning: «Its report was read by the FBI in the spring of that year.»',
+    });
+    expect(door.requests[0]!.state).not.toContain('Its report');
+    expect(door.requests[0]!.state).toContain('Each question quotes ONE sentence of the book');
     expect(file.unit).toBe('sentence');
     expect(Object.entries(file.blocks).filter(([, v]) => v.needsCleaning).map(([k]) => k)).toEqual(['b1-1#s1']);
   });

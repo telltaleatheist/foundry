@@ -235,23 +235,50 @@ function unitLine(unit: StageOneUnit, asked: boolean): string {
  * state stays byte-identical to what it was.
  */
 const SENTENCE_TRIAGE_GUIDE = TRIAGE_GUIDE
-  .replace('You are checking the blocks of a book', 'You are checking the sentences of a book, one per line,')
-  .replace('A block NEEDS CLEANING', 'A line NEEDS CLEANING');
+  .replace('You are checking the blocks of a book', 'You are checking the sentences of a book, one at a time,')
+  .replace('A block NEEDS CLEANING', 'A sentence NEEDS CLEANING')
+  .replace(
+    'Lines marked (context) are shown only so the others read correctly; you are asked only about the other lines.',
+    'Each question quotes ONE sentence of the book, in full. Judge that sentence and nothing else.',
+  );
 
-/** The state one request is asked over. */
+/**
+ * The state one request is asked over.
+ *
+ * ── AT --unit sentence THE STATE IS THE GUIDE AND NOTHING ELSE ─────────────
+ *
+ * Measured 2026-09-24 on Working Towards the Führer (qwen3.5-2b): with the
+ * sentences listed in the state and each question naming one by id ("Line
+ * [b7-6#s0] needs cleaning."), the yes-probability did not separate the 41
+ * sentences that print something to read from the 171 that print nothing —
+ * AUC 0.55, a coin — and "After 1933, as head of government …" scored LOWEST.
+ * The model had to find a line by its label among 64 before it could judge it.
+ * So each question now CARRIES its sentence (`triageQuestion`), and the state is
+ * only the guide, which every question in the group shares as its prefix.
+ */
 export function groupState(units: readonly StageOneUnit[], group: Group, unit: CleanUnit = 'block'): string {
+  if (unit === 'sentence') return SENTENCE_TRIAGE_GUIDE;
   const lines: string[] = [];
   for (let i = group.from; i < group.to; i += 1) {
     lines.push(unitLine(units[i]!, i >= group.askFrom && i < group.askTo));
   }
-  if (unit === 'sentence') return `${SENTENCE_TRIAGE_GUIDE}\n\nLINES\n${lines.join('\n')}`;
   return `${TRIAGE_GUIDE}\n\nBLOCKS\n${lines.join('\n')}`;
 }
 
-/** The question asked of one position. A sentence's position reads `[e-118#s3]`. */
-export function triageQuestion(parts: string, unit: CleanUnit = 'block'): { type: 'yesno'; instructions: string } {
-  const noun = unit === 'sentence' ? 'Line' : 'Block';
-  return { type: 'yesno', instructions: `${noun} [${parts}] needs cleaning.` };
+/**
+ * The question asked of one position. At `--unit block` it names the block, which
+ * the state lists; at `--unit sentence` it quotes the sentence itself.
+ */
+export function triageQuestion(
+  parts: string,
+  unit: CleanUnit = 'block',
+  text?: string,
+): { type: 'yesno'; instructions: string } {
+  if (unit === 'sentence') {
+    if (text === undefined) throw new Error(`triageQuestion: a sentence question needs its sentence (${parts}).`);
+    return { type: 'yesno', instructions: `This sentence needs cleaning: «${text.replace(/\s+/g, ' ').trim()}»` };
+  }
+  return { type: 'yesno', instructions: `Block [${parts}] needs cleaning.` };
 }
 
 /** The ONE place a verdict's probabilities become a decision. */
@@ -387,7 +414,7 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
     const body = JSON.stringify({
       model: opts.model,
       state: groupState(units, group, unit),
-      questions: Object.fromEntries(asked.map((one) => [one.parts, triageQuestion(one.parts, unit)])),
+      questions: Object.fromEntries(asked.map((one) => [one.parts, triageQuestion(one.parts, unit, one.text)])),
     });
     const reply = await askGroup(transport, url, body, sleep, opts.log);
     for (const unit of asked) {
