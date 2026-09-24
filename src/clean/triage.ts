@@ -70,9 +70,23 @@ export const TRIAGE_MIN_LABEL_MASS = 0.9;
  * digit may be in the second), so a group is bounded by characters as well as
  * by count. A couple of neighbours either side are shown cut short, only so a
  * list item or a heading reads as one.
+ *
+ * MEASURED, 2026-09-24 (snap session, Mac 1.0.26, three real groups replayed):
+ * reading a state (the prime) is LINEAR in its size — ~2,900 chars/s on
+ * qwen3.5-9b, ~700 on the 27B — while a question on a primed state costs
+ * ~0.5 s (9B) / ~0.9 s (27B) and barely moves out to 41k chars. So a group's
+ * size does not change how much text is read (every block is read once); it
+ * changes how often the fixed part — the guide, the context blocks, the
+ * template — is read again. At 6,000 chars Pursuit of Power's long paragraphs
+ * made 387 groups of ~3.5 questions each; at 20,000 it is ~105 of ~13, an
+ * estimated 20–25 % off the whole run. The ceiling is decide's working context,
+ * 8,192 tokens (Crucible `capability.DECIDE_STATE_TOKENS`, ~30k chars of
+ * English): 20,000 chars of asked text is ~5.5k tokens with the guide and
+ * context, clear of it. The count cap only binds on short blocks (headings,
+ * list items), where the fixed part is most of the state, so it is generous.
  */
-const GROUP_MAX_UNITS = 16;
-const GROUP_MAX_CHARS = 6_000;
+const GROUP_MAX_UNITS = 32;
+const GROUP_MAX_CHARS = 20_000;
 const CONTEXT_UNITS = 2;
 const CONTEXT_CHARS = 200;
 
