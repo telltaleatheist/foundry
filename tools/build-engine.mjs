@@ -89,13 +89,17 @@ function plugins(fonts) {
         contents: fs.readFileSync(args.path, 'utf8').replace(/^#![^\n]*\n/, ''),
         loader: 'ts',
       }));
+      // The namespace path is REPO-RELATIVE and forward-slashed: esbuild prints
+      // it into the bundle (a module key and a comment), so an absolute path
+      // would make a Windows build and a Mac build differ in exactly those
+      // bytes — measured, the first time the Mac ran --check.
       build.onResolve({ filter: /\.ttf$/ }, (args) => ({
-        path: path.resolve(args.resolveDir, args.path),
+        path: rel(path.resolve(args.resolveDir, args.path)),
         namespace: 'font-asset',
       }));
       build.onLoad({ filter: /.*/, namespace: 'font-asset' }, (args) => {
         const name = path.basename(args.path);
-        fonts.set(name, args.path);
+        fonts.set(name, path.resolve(repo, args.path));
         return {
           contents: `module.exports = require('node:path').join(__dirname, 'assets', ${JSON.stringify(name)});`,
           loader: 'js',
