@@ -1142,58 +1142,6 @@ const CT_CONCURRENCY: OptionSpec = {
   describe: `Blocks in flight at once. Default ${DEFAULT_TEXT_CONCURRENCY} on openai (${CRUCIBLE_CHAT_CONCURRENCY} on a Crucible's /openai door), ${DEFAULT_OLLAMA_CONCURRENCY} on ollama, ${DEFAULT_CLOUD_CONCURRENCY} on anthropic. Changes the speed, never the text.`,
 };
 
-const CT_TRIAGE: OptionSpec = {
-  name: 'triage',
-  type: 'string',
-  placeholder: '<verdicts.json>',
-  describe: 'A clean-triage verdicts file. Blocks it found clean are recorded as examined and clean, with no model request; only the flagged ones are asked.',
-};
-
-const CTR_OUT: OptionSpec = {
-  name: 'out',
-  type: 'string',
-  placeholder: '<verdicts.json>',
-  describe: 'Where the verdicts are written — the file clean-text --triage reads.',
-};
-
-const CTR_ENDPOINT: OptionSpec = {
-  name: 'endpoint',
-  type: 'string',
-  placeholder: '<url>',
-  describe: 'The Crucible whose decide door is asked (http://host:port). Its credential comes from $FOUNDRY_ENDPOINT_HEADERS.',
-};
-
-const CTR_MODEL: OptionSpec = {
-  name: 'model',
-  type: 'string',
-  placeholder: '<id>',
-  describe: 'The decide model, already resident on that Crucible. Required: the door never picks one.',
-};
-
-const CTR_CONCURRENCY: OptionSpec = {
-  name: 'concurrency',
-  type: 'string',
-  placeholder: '<n>',
-  describe: 'Groups in flight at once (each is one request of many questions). Default 2.',
-};
-
-/** `clean-triage` — the argv layer; the pass is src/clean/triage.ts. */
-async function runCleanTriageCommand(args: ParsedArgs): Promise<void> {
-  const concurrency = optionalString(args, 'concurrency');
-  if (concurrency !== undefined && !/^[1-9]\d*$/.test(concurrency)) {
-    throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
-  }
-  const { runCleanTriage } = await import('./clean/triage.js');
-  await runCleanTriage({
-    bookPath: requireString(args, 'book', 'the book file whose blocks are judged'),
-    outPath: requireString(args, 'out', 'where the verdicts are written'),
-    endpoint: requireString(args, 'endpoint', 'the Crucible whose decide door is asked'),
-    model: requireString(args, 'model', 'the resident decide model'),
-    ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
-    log,
-  });
-}
-
 /**
  * The argv layer, and nothing else.
  *
@@ -1229,7 +1177,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
   }
   const epubIn = optionalString(args, 'epub');
   if (epubIn !== undefined) {
-    const bookRoute = (['book', 'records', 'stamp', 'generation', 'triage'] as const)
+    const bookRoute = (['book', 'records', 'stamp', 'generation'] as const)
       .filter((name) => optionalString(args, name) !== undefined);
     if (bookRoute.length > 0) {
       throw new UsageError(
@@ -1278,8 +1226,6 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     ...(optionalString(args, 'generation') === undefined
       ? {} : { generation: optionalString(args, 'generation')! }),
-    ...(optionalString(args, 'triage') === undefined
-      ? {} : { triagePath: optionalString(args, 'triage')! }),
     log,
   });
 }
@@ -3773,7 +3719,7 @@ export const COMMANDS: readonly Command[] = [
     summary: 'Clean a book\'s text for a narrator: punctuation, numbers as words, the model on every block.',
     usage: '--book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
       + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--server <openai|ollama|anthropic>]'
-      + ' [--concurrency <n>] [--triage <verdicts.json>]'
+      + ' [--concurrency <n>]'
       + '  |  --epub <in.epub> --out <out.epub> [--endpoint <url>] [--model <name>]'
       + ' [--server <openai|ollama|anthropic>] [--concurrency <n>]',
     detail: [
@@ -3972,42 +3918,9 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_EPUB_IN, CT_EPUB_OUT,
-      CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION, CT_TRIAGE,
+      CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION,
     ],
     run: runCleanText,
-  },
-  {
-    name: 'clean-triage',
-    summary: 'Judge which blocks of a book need cleaning at all, before clean-text is run.',
-    usage: '--book <book.jsonl> --out <verdicts.json> --endpoint <crucible url> --model <decide model>'
-      + ' [--concurrency <n>]',
-    detail: [
-      'THE FIRST HALF OF A TRIAGED CLEANUP. Owen, 2026-09-23: "we create a list of',
-      'blocks that need to be cleaned with snap and then we bring snap down and load',
-      'the full normal cleaning logic." This reads the book exactly as clean-text',
-      'would — the same blocks, the same stage-1 punctuation — and asks a Crucible\'s',
-      'decide door one yes/no per block: does it print anything a narrator would say',
-      'differently (a number, an abbreviation, capitals, a bracket, a spaced hyphen,',
-      'a roman numeral)? Every verdict is written to --out with the digest of the',
-      'text it judged.',
-      '',
-      'clean-text --triage <that file> is the second half: it asks the cleaning',
-      'model only about the flagged blocks, and records every other one as examined',
-      'and clean at its punctuated text, under a key of its own — so every block has',
-      'a row, and a later run without --triage still asks the cleaner about it.',
-      '',
-      'EVERY DOUBT RESOLVES TOWARD CLEANING. A block is kept only when the model is',
-      'confidently sure it needs nothing; an unsure answer, an answer whose belief',
-      'was not on the two letters, a verdict about text that has since changed, and',
-      'a block the file never judged are all cleaned.',
-      '',
-      'The model must already be resident: the app places this run on the decide',
-      'class, loaded and leased, and releases it after. This never loads a model.',
-      'A busy door (chat_queue_full) is waited out; a model that is not resident is',
-      'refused by name.',
-    ].join('\n'),
-    options: [CT_BOOK_IN, CTR_OUT, CTR_ENDPOINT, CTR_MODEL, CTR_CONCURRENCY],
-    run: runCleanTriageCommand,
   },
   {
     name: 'epub-final',

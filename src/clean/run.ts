@@ -92,23 +92,23 @@ import { createHash } from 'node:crypto';
 
 import { ensureDir } from '../fsdirs.js';
 import { stripBom } from '../bom.js';
-import { readBookFile } from '../translate/bookrows.js';
+import { bookRowPlan, readBookFile } from '../translate/bookrows.js';
+import type { BookBlock } from '../translate/bookrows.js';
 import { TranslationRecords } from '../translate/records.js';
-import { spliceTableGrid } from '../translate/tablecells.js';
+import { spliceTableGrid, type TableGrid } from '../translate/tablecells.js';
 import {
   DEFAULT_TEXT_CONCURRENCY, openModelServer, resolveConcurrency, type ServerKind,
 } from '../translate/model-server.js';
 import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
 
-import { cleanBlocks, stageOneUnits } from './blocks.js';
-import { readTriageFile } from './triage.js';
 import { blockDigest, bookPositionTexts } from './digest.js';
 import { narrationTextPrompt } from './prompt.js';
 import { applySpans, CleanTextError, punctuateBlocks, segmentsAfter } from './punctuate.js';
 import type { PunctuationStageRecord } from './punctuate.js';
 import { openModelRunner } from './runner.js';
-import { markerCharacters } from './segments.js';
+import { markerCharacters, markerSegments } from './segments.js';
 import { narrationTextStamp, type NarrationTextStamp } from './stamp.js';
+import type { NarrationNumberTarget } from './targets.js';
 import {
   askAboutEach, classifyEdit, EVERY_CLASS,
   NORMALIZER_VERSION,
@@ -157,51 +157,6 @@ export function cleanKey(request: {
   return createHash('sha256').update(fields.join(NUL), 'utf8').digest('hex');
 }
 
-/**
- * THE KEY OF A BLOCK A TRIAGE FOUND CLEAN — its own question, never the cleaner's.
- *
- * Owen, 2026-09-23: *"mark those that dont need to be cleaned as 'clean' so
- * everything is uniform and it's verified that it was at least examined."* So a
- * block the triage passed gets a row like every other — its stage-1 text — but
- * filed under THIS key and not `cleanKey`: the row says "examined by <triage
- * model> and found clean", which is a different answer to a different question.
- * Filed under the cleaner's key it would tell every later run that the cleaning
- * model had read the block, and a full run without a triage would never ask.
- * Materialization reads the newest row per POSITION, so the book is uniform
- * either way.
- */
-export function triageKey(request: { text: string; triageModel: string }): string {
-  const fields = [
-    TRIAGE_KEY_FORMAT,
-    request.triageModel.trim(),
-    NORMALIZER_VERSION,
-    PUNCTUATION_SPEC_VERSION,
-    request.text,
-  ];
-  return createHash('sha256').update(fields.join(NUL), 'utf8').digest('hex');
-}
-
-const TRIAGE_KEY_FORMAT = 'clean/triage/v1';
-
-/**
- * What a triage came to in this run, for the receipt: how many positions it
- * let through as clean, how many it sent, and the ones whose verdict no longer
- * fitted the block (the text changed since it was judged) or was missing — both
- * sent to the cleaner, because a verdict about other words is not one.
- */
-export interface CleanTriageSummary {
-  file: string;
-  model: string;
-  /** Positions recorded as examined and clean, with no model request. */
-  clean: string[];
-  /** Positions the triage flagged, and so asked of the cleaner. */
-  flagged: number;
-  /** Positions whose verdict was about different text — asked. */
-  stale: string[];
-  /** Positions the triage file has no verdict for — asked. */
-  unjudged: string[];
-}
-
 /** Where a cleanup's full receipt lands, beside the records it explains. */
 export function receiptPath(recordsPath: string): string {
   return `${path.resolve(recordsPath)}.receipt.json`;
@@ -237,8 +192,6 @@ export interface CleanTextReceipt {
   unitsParseFailed: number;
   /** The server, window and sampling this run was produced against. Null when nothing was asked. */
   server?: ModelServerFacts | null;
-  /** Present when the run was given `--triage`: what the triage let through and what it sent. */
-  triage?: CleanTriageSummary;
 }
 
 export interface CleanTextOptions {
@@ -298,13 +251,6 @@ export interface CleanTextOptions {
    * binds a records file to its reading is sharing half a format.
    */
   generation?: string;
-  /**
-   * `--triage <file>`: a `clean-triage` verdicts file (src/clean/triage.ts).
-   * Positions it found clean are recorded as examined and clean at their
-   * stage-1 text with no model request; only the rest are asked. Absent means
-   * every block is asked, as before.
-   */
-  triagePath?: string;
   /** Injected so the tests drive the whole pass with no server and no GPU. */
   transport?: Transport;
   /** Injected so a test can settle every block without a transport at all. */
@@ -326,6 +272,32 @@ export interface CleanTextOutcome {
   written: number;
   stamp: NarrationTextStamp;
   receipt: CleanTextReceipt;
+}
+
+/**
+ * One block of the book, as everything downstream sees it.
+ *
+ * `parts` is the RECORD's position and `target` is the pass's own target; they
+ * are carried together because a table's cells are several targets under one
+ * position and nothing else in this file would be able to put them back.
+ */
+interface Block {
+  target: NarrationNumberTarget;
+  /** `b12-3`, or `chapter:<division id>`. */
+  parts: string;
+  /** A cell's index in its grid, for a table. Absent everywhere else. */
+  cell?: number;
+}
+
+/** A table row, held open until every one of its cells has a verdict. */
+interface PendingTable {
+  parts: string;
+  where: string;
+  grid: TableGrid;
+  cells: number[];
+  words: Map<number, string>;
+  /** The whole grid's source text — what the key is computed over. */
+  source: string;
 }
 
 /**
@@ -469,14 +441,11 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     ?? opts.runner?.model
     ?? (await openModelServer({ kind, transport, endpoint, log: opts.log })).model;
 
-  const triage = opts.triagePath === undefined ? null : readTriageFile(opts.triagePath);
   const { text: bookText, where } = openBook(opts.bookPath);
   const book = readBookFile(bookText, where);
 
   // ── The plan: exactly the blocks a translation would touch ────────────────
-  // (src/clean/blocks.ts, shared with clean-triage so a verdict and a cleanup
-  // are about the same blocks.)
-  const { blocks, tables, plan } = cleanBlocks(book, where);
+  const plan = bookRowPlan(book, where);
   for (const [category, count] of plan.skipped) {
     opts.log(`clean-text: ${count} ${category} row(s) skipped — they have no words to clean`);
   }
@@ -484,7 +453,71 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   for (const one of plan.kept) {
     opts.log(`clean-text: LEFT AS PRINTED — ${one}`);
   }
+
+  const blocks: Block[] = [];
+  const tables: PendingTable[] = [];
   const fileName = path.basename(where);
+
+  /*
+   * EVERY TARGET THIS PASS MAKES IS A ROW, and the kind is written here rather
+   * than taken as an argument because there is no longer a second sort of thing
+   * to ask about — see the spine argument below `plan.groups`. `'chapter'` stays
+   * a legal `NarrationNumberTargetKind` (targets.ts) because `translate` still
+   * produces one and the records both programs read still carry it; what is gone
+   * is this pass's ability to mint one.
+   */
+  const targetOf = (key: string, block: BookBlock): NarrationNumberTarget => ({
+    key,
+    kind: 'row',
+    file: fileName,
+    tag: '',
+    statedCategory: block.category.toLowerCase(),
+    text: block.text,
+    segments: markerSegments(block.text),
+    // A book file row carries no styling and no `white-space` declaration, so
+    // nothing here can say the spaces are the author's. `targets.ts` names what
+    // that costs.
+    preformatted: false,
+  });
+
+  for (const group of plan.groups) {
+    if (group.kind === 'table' && group.grid !== undefined) {
+      const row = group.parts[0]!;
+      const table: PendingTable = {
+        parts: row.id,
+        where: `${where} block ${row.id} (Table, page ${row.page})`,
+        grid: group.grid,
+        cells: group.parts.map((part) => part.cell!),
+        words: new Map(),
+        source: row.text,
+      };
+      tables.push(table);
+      for (const part of group.parts) {
+        /*
+         * A CELL IS ITS OWN TARGET AND THE GRID IS NEVER SHOWN TO A MODEL.
+         *
+         * `bookrows.ts` makes the whole argument one act over: a Table row's
+         * text is the vision model's own HTML, and handing that to a model with
+         * "do not touch any of it" is how a table's columns quietly swap. The
+         * cells are separable, they travel as plain strings, and the answers go
+         * back into the source string's OWN ranges — so the tags, the
+         * attributes and the cell order are untouched by construction rather
+         * than by asking nicely. Every cell wears a key of its own here because
+         * the pass needs one per target; the RECORD is written once, against the
+         * row, when the last cell has settled.
+         */
+        blocks.push({
+          target: targetOf(`${row.id}#c${part.cell!}`, part),
+          parts: row.id,
+          cell: part.cell!,
+        });
+      }
+      continue;
+    }
+    for (const part of group.parts) {
+      blocks.push({ target: targetOf(part.id, part), parts: part.id });
+    }
+  }
 
   /*
    * ── AND NOT THE SPINE. Owen's ruling, 2026-09-08 ────────────────────────────
@@ -556,21 +589,13 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   const tableKey = new Map<string, string>();
   for (const table of tables) tableKey.set(table.parts, cleanKey({ text: table.source, model }));
 
-  /*
-   * A TRIAGE'S "CLEAN" ROW ANSWERS THE BLOCK FOR A RUN GIVEN THE SAME TRIAGE —
-   * the same model's verdict about the same source text — and for no other run.
-   * A run without `--triage` asks the cleaner about it, which is the point of
-   * the row having its own key (`triageKey`).
-   */
-  const answered = (source: string, key: string): boolean => records.get(key) !== undefined
-    || (triage !== null && records.get(triageKey({ text: source, triageModel: triage.model.id })) !== undefined);
   const bankedTable = new Set<string>();
   for (const table of tables) {
-    if (answered(table.source, tableKey.get(table.parts)!)) bankedTable.add(table.parts);
+    if (records.get(tableKey.get(table.parts)!) !== undefined) bankedTable.add(table.parts);
   }
   const outstanding = blocks.filter((block) => {
     if (block.cell !== undefined) return !bankedTable.has(block.parts);
-    return !answered(block.target.text, keyOf.get(block.target.key)!);
+    return records.get(keyOf.get(block.target.key)!) === undefined;
   });
   const reused = blocks.length - outstanding.length;
   if (reused > 0) {
@@ -605,47 +630,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     cleanText.set(block.target.key, punctuated.text.get(block.target.key)!);
   }
 
-  /*
-   * ── THE TRIAGE'S SPLIT: WHAT THE CLEANER IS ASKED, AND WHAT IS KEPT CLEAN ───
-   *
-   * A position is kept clean only when the triage judged THESE words — its
-   * verdict's digest is of the stage-1 text this run just produced — and found
-   * nothing to clean. Tables are judged and kept whole (`stageOneUnits`), so a
-   * grid is never half asked. Everything else is asked, exactly as before.
-   */
-  let triageSummary: CleanTriageSummary | undefined;
-  const keptClean = new Set<string>();
-  if (triage !== null) {
-    const summary: CleanTriageSummary = {
-      file: path.resolve(opts.triagePath!), model: triage.model.id, clean: [], flagged: 0, stale: [], unjudged: [],
-    };
-    for (const unit of stageOneUnits(outstanding, cleanText)) {
-      const verdict = triage.blocks[unit.parts];
-      if (verdict === undefined) { summary.unjudged.push(unit.parts); continue; }
-      if (verdict.digest !== blockDigest(unit.text)) { summary.stale.push(unit.parts); continue; }
-      if (verdict.needsCleaning) { summary.flagged += 1; continue; }
-      keptClean.add(unit.parts);
-      summary.clean.push(unit.parts);
-    }
-    opts.log(
-      `clean-text: triage by ${triage.model.id} — ${summary.clean.length} position(s) examined and `
-      + `clean, recorded with no model request; ${summary.flagged} flagged for cleaning`
-      + `${summary.stale.length > 0 ? `; ${summary.stale.length} judged on different text, asked` : ''}`
-      + `${summary.unjudged.length > 0 ? `; ${summary.unjudged.length} not judged, asked` : ''}.`,
-    );
-    triageSummary = summary;
-  }
-  const asked = outstanding.filter((block) => !keptClean.has(block.parts));
-  const keptBlocks = outstanding.filter((block) => keptClean.has(block.parts));
-  /*
-   * The neighbours come from the FULL outstanding order, not from `asked`: a
-   * block kept clean still sits beside the one asked, in the same dialect
-   * (stage-1 text), and the model is owed the paragraph that says 1200 is a year.
-   */
-  const orderOf = new Map(outstanding.map((block, index) => [block.target.key, index] as const));
-
-  const asks = asked.map((block) => {
-    const index = orderOf.get(block.target.key)!;
+  const asks = outstanding.map((block, index) => {
     const text = cleanText.get(block.target.key)!;
     return {
       key: block.target.key,
@@ -704,8 +689,6 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   let humanKept = 0;
   let changed = 0;
 
-  const tableByParts = new Map(tables.map((table) => [table.parts, table] as const));
-
   const appendRecord = (parts: string, key: string, text: string): void => {
     const newest = records.rowFor(parts);
     if (newest !== undefined && newest.text === text && newest.key === key) return;
@@ -729,37 +712,8 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     written += 1;
   };
 
-  /*
-   * ── THE POSITIONS KEPT CLEAN ARE WRITTEN FIRST, AT THEIR STAGE-1 TEXT ──────
-   *
-   * Under the triage's own key, so every position of the book has a row and
-   * the row says who looked at it. A table kept clean is spliced from its
-   * cells' stage-1 text exactly as an answered one would be.
-   */
-  if (triage !== null) {
-    const keptTables = new Set<string>();
-    for (const block of keptBlocks) {
-      const text = cleanText.get(block.target.key)!;
-      if (block.cell === undefined) {
-        if (text !== block.target.text) changed += 1;
-        appendRecord(block.parts, triageKey({ text: block.target.text, triageModel: triage.model.id }), text);
-        continue;
-      }
-      if (keptTables.has(block.parts)) continue;
-      keptTables.add(block.parts);
-      const table = tableByParts.get(block.parts)!;
-      for (const cell of table.cells) table.words.set(cell, cleanText.get(`${table.parts}#c${cell}`)!);
-      const spliced = spliceTableGrid(table.grid, table.words);
-      if ('complaint' in spliced) {
-        opts.log(`clean-text: LEFT AS PRINTED — ${table.where}: ${spliced.complaint}`);
-        continue;
-      }
-      if (spliced.text !== table.source) changed += 1;
-      appendRecord(table.parts, triageKey({ text: table.source, triageModel: triage.model.id }), spliced.text);
-    }
-  }
-
-  const blockByKey = new Map(asked.map((block) => [block.target.key, block] as const));
+  const blockByKey = new Map(outstanding.map((block) => [block.target.key, block] as const));
+  const tableByParts = new Map(tables.map((table) => [table.parts, table] as const));
   /*
    * HOW MANY OF A TABLE'S CELLS ARE STILL OUT, because a table's RECORD is the
    * whole grid and half a grid is not one (the `bankedTable` rule above says
@@ -768,7 +722,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * the grid, and does not need to be.
    */
   const cellsOutstanding = new Map<string, number>();
-  for (const block of asked) {
+  for (const block of outstanding) {
     if (block.cell === undefined) continue;
     cellsOutstanding.set(block.parts, (cellsOutstanding.get(block.parts) ?? 0) + 1);
   }
@@ -850,7 +804,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   const appliedByClass: Record<string, number> = {};
   let modelRefused = 0;
 
-  for (const block of asked) {
+  for (const block of outstanding) {
     const decision = settled.decisions.get(block.target.key);
     if (decision === undefined) {
       throw new CleanTextError(
@@ -895,7 +849,6 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     unitsAsked: settled.asked,
     unitsParseFailed: settled.parseFailed,
     server: runner.serverFacts?.() ?? null,
-    ...(triageSummary === undefined ? {} : { triage: triageSummary }),
   };
   const receiptOut = receiptPath(recordsPath);
   ensureDir(path.dirname(receiptOut));

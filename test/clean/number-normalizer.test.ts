@@ -688,7 +688,10 @@ function scriptedRunner(byTarget: Record<string, Array<{ find: string; replace: 
 }
 
 test('CARRIED — an edit naming the NEXT block\'s text is judged there, after its own', async () => {
-  const blocks = ['Preface', 'Europe from 1815 to 1914 was Dr. Smith\'s period.'];
+  // The carrier prints a run of capitals, so it is ASKED — a heading printing
+  // nothing any answer could change is not (blockMayTakeAnEdit), and so carries
+  // nothing. That is the gate's one cost, stated in its docstring.
+  const blocks = ['PREFACE', 'Europe from 1815 to 1914 was Dr. Smith\'s period.'];
   const asks = blocks.map((text, i) => ({
     key: `b${i}`, text, segments: [text.length],
     previous: i > 0 ? blocks[i - 1]! : null,
@@ -697,7 +700,7 @@ test('CARRIED — an edit naming the NEXT block\'s text is judged there, after i
   // The rules read both years before the model is asked; what the heading's
   // answer carries is the abbreviation, which only the next block prints.
   const { decisions } = await norm.askAboutEach(asks, scriptedRunner({
-    Preface: [{ find: 'Dr. Smith', replace: 'Doctor Smith' }],
+    PREFACE: [{ find: 'Dr. Smith', replace: 'Doctor Smith' }],
   }), 'test', 'prompt', undefined, 'every-block', norm.EVERY_CLASS);
   const heading = decisions.get('b0')!;
   assert.deepStrictEqual(heading.records.map((r) => r.status), ['CARRIED']);
@@ -710,14 +713,14 @@ test('CARRIED — an edit naming the NEXT block\'s text is judged there, after i
 });
 
 test('CARRIED — the neighbour\'s own answer wins a span both name', async () => {
-  const blocks = ['Preface', 'It was Dr. Smith\'s.'];
+  const blocks = ['PREFACE', 'It was Dr. Smith\'s.'];
   const asks = blocks.map((text, i) => ({
     key: `b${i}`, text, segments: [text.length],
     previous: i > 0 ? blocks[i - 1]! : null,
     next: i + 1 < blocks.length ? blocks[i + 1]! : null,
   }));
   const { decisions } = await norm.askAboutEach(asks, scriptedRunner({
-    Preface: [{ find: 'Dr. Smith\'s', replace: 'Drive Smith\'s' }],
+    PREFACE: [{ find: 'Dr. Smith\'s', replace: 'Drive Smith\'s' }],
     'It was Dr. Smith\'s.': [{ find: 'Dr. Smith', replace: 'Doctor Smith' }],
   }), 'test', 'prompt', undefined, 'every-block', norm.EVERY_CLASS);
   const body = decisions.get('b1')!;
@@ -758,4 +761,57 @@ test('a cardinal reading of a year stands ONLY beside a unit or a currency sign'
     'eighteen fifty-eight');
   assert.strictEqual(read('it cost £ 1858 then', '1858', 'one thousand eight hundred fifty-eight'),
     'one thousand eight hundred fifty-eight');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The gate — a block no answer could change is not asked (Owen, 2026-09-24)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('blockMayTakeAnEdit — every path the validator can apply is a YES', () => {
+  const yes: Array<[string, string]> = [
+    ['a number', 'They met in 1848 and parted.'],
+    ['an ampersand', 'Smith & Sons traded there.'],
+    ['a spaced hyphen', 'He paused - then went on.'],
+    ['a square bracket', 'It [the city] was burning.'],
+    ['a parenthesis', 'The treaty (ibid.) held.'],
+    ['a run of capitals', 'The FBI kept a copy.'],
+    ['a roman numeral', 'Louis XIV ruled long.'],
+    ['a table abbreviation', 'They lived on Baker St. for years.'],
+    ['dotted letters', 'Bring water, e.g. a flask.'],
+    ['a split word', 'He could not fini sh the letter.'],
+  ];
+  for (const [why, text] of yes) assert.ok(norm.blockMayTakeAnEdit(text), `${why}: ${text}`);
+});
+
+test('blockMayTakeAnEdit — plain prose is a NO, and a sentence-final period is not an abbreviation', () => {
+  for (const text of [
+    'The rain fell on the quiet town, and nobody went out.',
+    'She said nothing. He left. The door closed behind him.',
+    'Preface',
+    'It was a well-known street, not a pause.',
+  ]) assert.ok(!norm.blockMayTakeAnEdit(text), text);
+});
+
+test('every-block: a block no answer could change is settled by the rules and never sent', async () => {
+  const blocks = ['The rain fell on the quiet town.', 'The FBI kept a copy of it.'];
+  const asks = blocks.map((text, i) => ({
+    key: `b${i}`, text, segments: [text.length],
+    previous: i > 0 ? blocks[i - 1]! : null,
+    next: i + 1 < blocks.length ? blocks[i + 1]! : null,
+  }));
+  const sent: string[] = [];
+  const runner = {
+    model: 'scripted',
+    generate: async (input: string) => {
+      sent.push(/TARGET \(edit ONLY this\):\n([\s\S]*?)\n\nNEXT/.exec(input)![1]!);
+      return JSON.stringify({ edits: [] });
+    },
+    release: async () => {},
+  };
+  const { decisions, asked } = await norm.askAboutEach(
+    asks, runner, 'test', 'prompt', undefined, 'every-block', norm.EVERY_CLASS);
+  assert.deepStrictEqual(sent, ['The FBI kept a copy of it.']);
+  assert.strictEqual(asked, 1);
+  assert.strictEqual(decisions.get('b0')!.status, 'RULES_ONLY');
+  assert.strictEqual(decisions.get('b1')!.status, 'ANSWERED');
 });

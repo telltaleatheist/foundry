@@ -1456,6 +1456,66 @@ export function rejoinsSplitWord(
 }
 
 /**
+ * COULD ANY ANSWER CHANGE THIS BLOCK? — the question the pass asks before it
+ * spends a request on one.
+ *
+ * Owen, 2026-09-24, after the triage measurement: *"skip the bake off. just fix
+ * the system."* A model triage (clean-triage, a decide model per block) cost
+ * minutes of GPU to learn what this function learns for free, because the
+ * VALIDATOR below already decides which edits can ever be applied. An edit is
+ * applied only down one of these paths, and each needs something the block
+ * PRINTS:
+ *
+ *   - a number                  — a digit (`isNumber`);
+ *   - an ampersand              — `&`;
+ *   - a spaced hyphen read as a dash — ` - ` (`hyphenToDash`);
+ *   - a bracket dropped or an apparatus bracket removed — `[`, `(`;
+ *   - a run of capitals, an acronym or a roman numeral — two capitals in a row
+ *     (`capsReadingRefusal`, `romanReadingRefusal`, `isEmphasisRecase` all
+ *     start from one);
+ *   - an abbreviation — a token the TABLE has a reading for
+ *     (`abbreviationReadingRefusal` refuses every other);
+ *   - a split word joined — pieces that are not words making one that is
+ *     (`rejoinsSplitWord`, with the same `knownWord`).
+ *
+ * A block printing none of those can receive no applied edit from ANY answer,
+ * so asking about it is time spent to be told nothing — it is settled by the
+ * rules and recorded (`RULES_ONLY`), which is still "examined". This honours
+ * Owen's 2026-09-04 ruling ("send every single block through … let the model
+ * decide") rather than reversing it: that ruling was about digit-only tests
+ * hiding the abbreviation and acronym classes, and every class the model may
+ * act on is tested here. Each test is a SUPERSET of its validator path — a
+ * false "yes" costs one request, a false "no" would lose a fix — and the
+ * keeper in test/clean pins every path against a block that takes it.
+ */
+export function blockMayTakeAnEdit(
+  text: string,
+  knownWord: (word: string) => boolean = isEnglishWord,
+): boolean {
+  if (DIGIT.test(text)) return true;
+  if (text.includes('&')) return true;
+  if (/[ 	]-[ 	]/.test(text)) return true;
+  if (/[[\]()]/.test(text)) return true;
+  if (/[A-ZÀ-Þ]{2}/.test(text)) return true;
+  const tokens = wordTokens(text);
+  for (const token of tokens) {
+    if ((token.endsWith('.') || DOTTED_LETTERS.test(token))
+      && ABBREVIATION_READINGS.has(abbreviationKey(token))) return true;
+  }
+  // Split words: two or three whitespace-separated pieces, none a word, that
+  // join into one. `rejoinsSplitWord` is the judge, so this cannot disagree
+  // with it.
+  const pieces = text.split(/\s+/).filter((piece) => piece !== '');
+  for (let at = 0; at < pieces.length; at += 1) {
+    for (let width = 2; width <= 3 && at + width <= pieces.length; width += 1) {
+      const run = pieces.slice(at, at + width);
+      if (rejoinsSplitWord(run.join(' '), run.join(''), knownWord)) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Check one target's proposed edits and return the ones that may be applied.
  *
  * EVERY outcome is recorded, and a rejection means the printed digits stand for
@@ -2403,6 +2463,28 @@ export async function askAboutEach(
   const ruledOf = new Map<string, NumberRuleOutcome>();
   for (const ask of asks) ruledOf.set(ask.key, applyNumberRules(ask.text, ask.segments));
 
+  /*
+   * THE BOOK AS ITS OWN DICTIONARY, for `rejoinsSplitWord` and `blockMayTakeAnEdit`. The English list
+   * carries fifteen hundred common words; a word this book prints at least
+   * `BOOK_WORD_MIN` times is a word too. A caller that states its own
+   * `knownWord` keeps it.
+   */
+  const bookWords = new Map<string, number>();
+  if (policy.allowTextEdits && policy.knownWord === undefined) {
+    for (const one of asks) {
+      for (const word of one.text.toLowerCase().match(/\p{L}+/gu) ?? []) {
+        bookWords.set(word, (bookWords.get(word) ?? 0) + 1);
+      }
+    }
+  }
+  const judged: NumberEditPolicy = !policy.allowTextEdits || policy.knownWord !== undefined
+    ? policy
+    : {
+      ...policy,
+      knownWord: (word) => isEnglishWord(word)
+        || (bookWords.get(word.toLowerCase()) ?? 0) >= BOOK_WORD_MIN,
+    };
+
   // Only a span the rules left a digit in is worth a model call. The neighbours
   // are shown in their rule-applied form too, so the context reads in the same
   // words the answer has to be written in.
@@ -2415,6 +2497,11 @@ export async function askAboutEach(
     // about digits. When the question is "does anything here print one way and
     // read another", a block with no digit is exactly the block that might.
     if (ask === 'digit-bearing' && !stillHasDigits(ruled.text)) continue;
+    // And when the question IS "does anything here read another way", a block
+    // printing nothing any answer could change is not asked either — see
+    // `blockMayTakeAnEdit`. It is settled by the rules below, and recorded.
+    if (ask === 'every-block' && policy.allowTextEdits
+      && !blockMayTakeAnEdit(ruled.text, judged.knownWord ?? isEnglishWord)) continue;
     // A block with no text at all is nothing to ask about in either mode.
     if (ruled.text.trim() === '') continue;
     inputs.set(one.key,
@@ -2453,27 +2540,6 @@ export async function askAboutEach(
   runner.pinContextTo?.(
     systemPrompt, [...inputs.values()].reduce((a, b) => (b.length > a.length ? b : a), ''));
 
-  /*
-   * THE BOOK AS ITS OWN DICTIONARY, for `rejoinsSplitWord`. The English list
-   * carries fifteen hundred common words; a word this book prints at least
-   * `BOOK_WORD_MIN` times is a word too. A caller that states its own
-   * `knownWord` keeps it.
-   */
-  const bookWords = new Map<string, number>();
-  if (policy.allowTextEdits && policy.knownWord === undefined) {
-    for (const one of asks) {
-      for (const word of one.text.toLowerCase().match(/\p{L}+/gu) ?? []) {
-        bookWords.set(word, (bookWords.get(word) ?? 0) + 1);
-      }
-    }
-  }
-  const judged: NumberEditPolicy = !policy.allowTextEdits || policy.knownWord !== undefined
-    ? policy
-    : {
-      ...policy,
-      knownWord: (word) => isEnglishWord(word)
-        || (bookWords.get(word.toLowerCase()) ?? 0) >= BOOK_WORD_MIN,
-    };
 
   /*
    * ── THE POOL, AND WHY THE ANSWERS ARE NOT WRITTEN WHERE THEY LAND ──────────
