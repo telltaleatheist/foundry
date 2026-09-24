@@ -759,3 +759,20 @@ test('a cardinal reading of a year stands ONLY beside a unit or a currency sign'
   assert.strictEqual(read('it cost £ 1858 then', '1858', 'one thousand eight hundred fifty-eight'),
     'one thousand eight hundred fifty-eight');
 });
+
+test('a day range and a pre-decimal sum are the model\'s whole, and its reading of each is accepted (2026-09-24)', () => {
+  const policy = norm.EVERY_CLASS;
+  const status = (target: string, find: string, replace: string) =>
+    norm.validateNumberEdits(target, [target.length], [{ find, replace }], [], policy).records[0]!.status;
+  assert.strictEqual(status('On the night of 28–29 November 1830 the palace fell.', '28–29 November 1830',
+    'November twenty-eighth to twenty-ninth, eighteen thirty'), 'APPLIED');
+  assert.strictEqual(status('on November 28–29, 1830 the', 'November 28–29, 1830',
+    'November twenty-eighth to twenty-ninth, eighteen thirty'), 'APPLIED');
+  assert.strictEqual(status('costing total of £803.11.0.', '£803.11.0',
+    'eight hundred three pounds, eleven shillings'), 'APPLIED');
+  // Three units need one join more than decimal money; the budget grants it here only.
+  assert.strictEqual(status('wages of £3.10.6 a week', '£3.10.6',
+    'three pounds, ten shillings and six pence'), 'APPLIED');
+  assert.strictEqual(status('wages of £3.50 a week', '£3.50',
+    'three pounds, and fifty pence, give or take'), 'WORDS_ADDED');
+});

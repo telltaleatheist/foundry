@@ -601,6 +601,17 @@ test('money: the amount, the unit, and the cents', () => {
   reads('€20', 'twenty euros');
 });
 
+test('money: a pre-decimal sum is protected whole for the model (Pursuit of Power, 2026-09-24)', () => {
+  // Read before as "eight hundred three pounds and eleven pence.0."
+  untouched('costing total of £803.11.0.');
+  untouched('£3.10.6 a week');
+  untouched('£1,200.5.0 in all');
+  // The rest of the block is still read, and the decimal forms are unchanged.
+  reads('£803.11.0 in 1831', '£803.11.0 in eighteen thirty-one');
+  reads('£5.50', 'five pounds and fifty pence');
+  reads('$1.5 million', 'one point five million dollars');
+});
+
 test('date: American order, whichever order the book prints', () => {
   reads('December 19, 1991', 'December nineteenth, nineteen ninety-one');
   reads('12 June 1933', 'June twelfth, nineteen thirty-three');
@@ -879,6 +890,27 @@ test('a day-first date with no year reads the American spoken way', () => {
   reads('it was on 4 Sept. and later', 'it was on September fourth and later');
   reads('It was 4 Sept. The next day it rained.',
     'It was September fourth. The next day it rained.');
+});
+
+test('a day RANGE is protected whole for the model, never read in pieces (Pursuit of Power, 2026-09-24)', () => {
+  // Every one of the book's eleven came out "28–November twenty-ninth, …". The
+  // reading is the model's, by the prompt's example; no rule touches any of it.
+  for (const printed of [
+    'on the night of 28–29 November 1830, the',
+    'On 3–4 June 1849 an assault',
+    'held on 10-11 December 1848.',
+    'from 29–31 October,',
+    'the night of 14–15 May.',
+    'on 14–15 Sept. and later',
+    'November 28–29, 1830',
+    'from May 14-15 on',
+  ]) untouched(printed);
+  // The rest of the block is still read.
+  reads('In 1831, on 28–29 November 1830, 300 men',
+    'In eighteen thirty-one, on 28–29 November 1830, three hundred men');
+  // Two dates across a month are two dates, and the rules read both.
+  reads('from 31 October–2 November 1830',
+    'from October thirty-first–November second, eighteen thirty');
 });
 
 test('the yearless rule does not touch a date that HAS a year', () => {
