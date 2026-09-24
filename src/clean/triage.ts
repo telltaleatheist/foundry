@@ -234,13 +234,16 @@ function unitLine(unit: StageOneUnit, asked: boolean): string {
  * `TRIAGE_GUIDE` so the two can never list different things, and a block run's
  * state stays byte-identical to what it was.
  */
-const SENTENCE_TRIAGE_GUIDE = TRIAGE_GUIDE
-  .replace('You are checking the blocks of a book', 'You are checking the sentences of a book, one at a time,')
-  .replace('A block NEEDS CLEANING', 'A sentence NEEDS CLEANING')
-  .replace(
-    'Lines marked (context) are shown only so the others read correctly; you are asked only about the other lines.',
-    'Each question quotes ONE sentence of the book, in full. Judge that sentence and nothing else.',
-  );
+const SENTENCE_TRIAGE_STATE =
+  'You are checking the sentences of a book, one at a time, before a text-to-speech voice reads them aloud.';
+
+/**
+ * The criteria, as they are listed in `TRIAGE_GUIDE` — its bullet lines and the
+ * two lines that follow them — so a sentence and a block are judged by one list.
+ */
+const TRIAGE_CRITERIA = TRIAGE_GUIDE.split('\n')
+  .filter((line) => line.startsWith('- ') || line.startsWith('Superscript') || line.startsWith('Ordinary prose'))
+  .join('\n');
 
 /**
  * The state one request is asked over.
@@ -253,11 +256,13 @@ const SENTENCE_TRIAGE_GUIDE = TRIAGE_GUIDE
  * sentences that print something to read from the 171 that print nothing —
  * AUC 0.55, a coin — and "After 1933, as head of government …" scored LOWEST.
  * The model had to find a line by its label among 64 before it could judge it.
- * So each question now CARRIES its sentence (`triageQuestion`), and the state is
- * only the guide, which every question in the group shares as its prefix.
+ * So each question now ASKS about its sentence, in the words Owen gave
+ * (`triageQuestion`): *"does this sentence need to be cleaned? [sentence] here
+ * are the criteria a sentence should meet if it needs to be cleaned:
+ * [criteria]"*. The state is one line of framing every question shares.
  */
 export function groupState(units: readonly StageOneUnit[], group: Group, unit: CleanUnit = 'block'): string {
-  if (unit === 'sentence') return SENTENCE_TRIAGE_GUIDE;
+  if (unit === 'sentence') return SENTENCE_TRIAGE_STATE;
   const lines: string[] = [];
   for (let i = group.from; i < group.to; i += 1) {
     lines.push(unitLine(units[i]!, i >= group.askFrom && i < group.askTo));
@@ -266,17 +271,35 @@ export function groupState(units: readonly StageOneUnit[], group: Group, unit: C
 }
 
 /**
- * The question asked of one position. At `--unit block` it names the block, which
- * the state lists; at `--unit sentence` it quotes the sentence itself.
+ * The two answers a sentence question offers, which the door renders as
+ * "Options: A. Yes  B. No  Answer with the letter only." (Owen: *"pick A or B.
+ * A: yes. B: no."*). `yes` is the one the policy reads.
  */
-export function triageQuestion(
-  parts: string,
-  unit: CleanUnit = 'block',
-  text?: string,
-): { type: 'yesno'; instructions: string } {
+const SENTENCE_OPTIONS = { yes: 'Yes', no: 'No' } as const;
+
+export type TriageQuestion =
+  | { type: 'yesno'; instructions: string }
+  | { type: 'choice'; instructions: string; options: typeof SENTENCE_OPTIONS };
+
+/**
+ * The question asked of one position.
+ *
+ * At `--unit block` it names the block, which the state lists. At `--unit
+ * sentence` it ASKS, with the sentence and then the criteria in the question
+ * itself — a \`choice\` of Yes/No, because the door's \`yesno\` renders its text as a
+ * statement to be judged true or false, and this is a question.
+ */
+export function triageQuestion(parts: string, unit: CleanUnit = 'block', text?: string): TriageQuestion {
   if (unit === 'sentence') {
     if (text === undefined) throw new Error(`triageQuestion: a sentence question needs its sentence (${parts}).`);
-    return { type: 'yesno', instructions: `This sentence needs cleaning: «${text.replace(/\s+/g, ' ').trim()}»` };
+    return {
+      type: 'choice',
+      instructions: 'Does this sentence need to be cleaned?\n\n'
+        + `${text.replace(/\s+/g, ' ').trim()}\n\n`
+        + 'Here are the criteria a sentence meets if it needs to be cleaned:\n'
+        + TRIAGE_CRITERIA,
+      options: SENTENCE_OPTIONS,
+    };
   }
   return { type: 'yesno', instructions: `Block [${parts}] needs cleaning.` };
 }
@@ -286,7 +309,14 @@ export function needsCleaning(p: number, labelMass: number): boolean {
   return p >= TRIAGE_FLAG_P || labelMass < TRIAGE_MIN_LABEL_MASS;
 }
 
-interface DecideAnswer { type?: unknown; p?: unknown; label_mass?: unknown }
+interface DecideAnswer { type?: unknown; p?: unknown; probabilities?: Record<string, unknown>; label_mass?: unknown }
+
+/** P("needs cleaning") from either answer shape: a yes/no's `p`, or a Yes/No choice's `yes`. */
+function yesProbability(answer: DecideAnswer): number | undefined {
+  if (typeof answer.p === 'number') return answer.p;
+  const yes = answer.probabilities?.['yes'];
+  return typeof yes === 'number' ? yes : undefined;
+}
 interface DecideReply {
   model?: { id?: unknown; revision?: unknown; fingerprint?: unknown };
   engine?: unknown;
@@ -419,12 +449,13 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
     const reply = await askGroup(transport, url, body, sleep, opts.log);
     for (const unit of asked) {
       const answer = reply.answers?.[unit.parts];
-      if (answer === undefined || typeof answer.p !== 'number' || typeof answer.label_mass !== 'number') {
+      const p = answer === undefined ? undefined : yesProbability(answer);
+      if (answer === undefined || p === undefined || typeof answer.label_mass !== 'number') {
         throw new CleanTextError(`clean-triage: the door answered a group without a yes/no for ${unit.parts}.`);
       }
       verdicts[unit.parts] = {
-        needsCleaning: needsCleaning(answer.p, answer.label_mass),
-        p: answer.p,
+        needsCleaning: needsCleaning(p, answer.label_mass),
+        p,
         labelMass: answer.label_mass,
         digest: blockDigest(unit.text),
       };

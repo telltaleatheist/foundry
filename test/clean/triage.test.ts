@@ -82,8 +82,11 @@ function fakeDoor(
       if (refusal !== null) return refusal;
       const request = JSON.parse(body) as DecideRequest;
       requests.push(request);
-      const answers = Object.fromEntries(Object.keys(request.questions).map((name) => [
-        name, { type: 'yesno', p: answer(name), label_mass: 0.99 },
+      // A Yes/No CHOICE answers as the door does: a probability per option.
+      const answers = Object.fromEntries(Object.entries(request.questions).map(([name, q]) => [
+        name, q.type === 'choice'
+          ? { type: 'choice', choice: answer(name) >= 0.5 ? 'yes' : 'no', probabilities: { yes: answer(name), no: 1 - answer(name) }, label_mass: 0.99 }
+          : { type: 'yesno', p: answer(name), label_mass: 0.99 },
       ]));
       return {
         status: 200,
@@ -312,12 +315,15 @@ describe('--unit sentence', () => {
     const { file } = await triage(dir, door, 'sentence');
     expect(Object.keys(door.requests[0]!.questions))
       .toEqual(['b1-1#s0', 'b1-1#s1', 'b1-1#s2', 'b1-2#s0', 'b1-2#s1']);
-    // The question CARRIES its sentence; the state is the guide alone, shared by every question.
-    expect(door.requests[0]!.questions['b1-1#s1']).toEqual({
-      type: 'yesno', instructions: 'This sentence needs cleaning: «Its report was read by the FBI in the spring of that year.»',
-    });
+    // The question ASKS, with the sentence and then the criteria, and offers A. Yes / B. No.
+    const q = door.requests[0]!.questions['b1-1#s1'] as unknown as { type: string; instructions: string; options: Record<string, string> };
+    expect(q.type).toBe('choice');
+    expect(q.options).toEqual({ yes: 'Yes', no: 'No' });
+    expect(q.instructions.startsWith(
+      'Does this sentence need to be cleaned?\n\nIts report was read by the FBI in the spring of that year.\n\n'
+      + 'Here are the criteria a sentence meets if it needs to be cleaned:\n- any digit or number',
+    )).toBe(true);
     expect(door.requests[0]!.state).not.toContain('Its report');
-    expect(door.requests[0]!.state).toContain('Each question quotes ONE sentence of the book');
     expect(file.unit).toBe('sentence');
     expect(Object.entries(file.blocks).filter(([, v]) => v.needsCleaning).map(([k]) => k)).toEqual(['b1-1#s1']);
   });
