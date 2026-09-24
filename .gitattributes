@@ -16,3 +16,8 @@
 # shell scripts above are pinned, one file type along.
 app/shared/foundry.module.json text eol=lf
 app/shared/model-lineup.json text eol=lf
+
+# The bundled engine (tools/build-engine.mjs). Built, committed, and checked
+# byte for byte against src/ by test/engine-bundle.test.ts — so git must never
+# convert its line endings, and a 4 MB generated file has no useful text diff.
+app/engine/** binary

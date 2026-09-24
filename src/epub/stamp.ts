@@ -914,7 +914,7 @@ export async function epubStamp(opts: StampOptions): Promise<StampReport> {
       uncompressedSize: member.uncompressedSize,
     };
   });
-  await Bun.write(opts.outPath!, writeZip(entries));
+  await fs.promises.writeFile(opts.outPath!, writeZip(entries));
   opts.log(
     `epub-stamp: ${entries.length} members written, ${rewritten.size} of ${report.documents} `
     + 'documents stamped',

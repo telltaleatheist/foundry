@@ -3117,7 +3117,7 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
     };
   });
 
-  await Bun.write(opts.outPath!, writeZip(entries));
+  await fs.promises.writeFile(opts.outPath!, writeZip(entries));
 
   /*
    * THE BOOK EXISTS, SO THE SECOND OPINION TAKES ITS PLACE.

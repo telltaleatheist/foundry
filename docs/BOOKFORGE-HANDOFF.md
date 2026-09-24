@@ -207,8 +207,11 @@ under its existing ledger.
 
 ## 7. The engine CLI — the integration surface
 
-The engine is a standalone CLI (`bun run src/cli.ts <command>` in dev; a
-packaged `foundry[.exe]` beside an installed app; `FOUNDRY_BIN` overrides).
+The engine is a standalone CLI — since 2026-09-24 a bundle inside the app
+folder, `app/engine/foundry-engine.cjs` (tools/build-engine.mjs), run by the
+app's own Electron as Node; `bun run src/cli.ts <command>` in a dev shell;
+`FOUNDRY_BIN` overrides. It travels with `app/`, so a host that vendors `app/`
+has the engine that matches it, with nothing to download or version-gate.
 Exit codes: 0 ok, 1 run failed, 2 bad command line. Progress goes to stderr,
 line-buffered. The commands an integrator needs:
 
@@ -299,8 +302,8 @@ stays a spawned CLI, and a project folder on disk stays the whole truth.
 
 ### The shape — three pieces cross, all already separation-clean
 
-1. **The engine CLI**, unchanged. It is standalone today (§7): `FOUNDRY_BIN`,
-   a binary beside the packaged app, or the dev checkout. BookForge's
+1. **The engine CLI**, still a spawned process (§7): since 2026-09-24 the
+   bundle in `app/engine/`, which a vendored `app/` carries, or `FOUNDRY_BIN`. BookForge's
    existing `foundry-bridge` spawn machinery keeps working for headless runs.
 2. **Foundry's main-process modules** (`app/electron/*`), registered inside
    BookForge's main process. Every IPC door Foundry owns is namespaced

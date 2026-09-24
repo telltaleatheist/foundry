@@ -30,6 +30,7 @@ import {
   runCommand,
   versionLine,
 } from './commands.js';
+import { ownTheFetchDeadlines } from './http-deadlines.js';
 import { versionString } from './version.js';
 
 function topLevelHelp(): string {
@@ -92,18 +93,32 @@ async function main(argv: readonly string[]): Promise<void> {
   await runCommand(cmd, argv.slice(1));
 }
 
+/*
+ * EXIT ONLY ONCE STDERR HAS DRAINED. Under Node a write to a pipe can still be
+ * in flight when `process.exit` runs (on macOS pipes are asynchronous), and the
+ * sentence this program exists to print is the thing that would be cut. So the
+ * exit runs from the write's own callback, after the bytes are out. The success
+ * path never calls exit at all — `main` returns and the process ends when it is
+ * idle, which is what lets a large stdout finish.
+ */
+function exitAfter(message: string, code: number): void {
+  process.stderr.write(message, () => process.exit(code));
+}
+
+ownTheFetchDeadlines();
+
 main(process.argv.slice(2)).catch((err: unknown) => {
   if (err instanceof UsageError) {
-    process.stderr.write(`foundry: ${err.message}\n\nRun \`foundry --help\`.\n`);
-    process.exit(2);
+    exitAfter(`foundry: ${err.message}\n\nRun \`foundry --help\`.\n`, 2);
+    return;
   }
   // The message is the product here: every throw in this program is written to
   // name the missing thing and what to do about it, so it is printed alone. The
   // stack is behind FOUNDRY_STACK because a stack trace above that message
   // buries it.
-  process.stderr.write(`foundry: ${err instanceof Error ? err.message : String(err)}\n`);
+  let message = `foundry: ${err instanceof Error ? err.message : String(err)}\n`;
   if (process.env['FOUNDRY_STACK'] && err instanceof Error && err.stack) {
-    process.stderr.write(`${err.stack}\n`);
+    message += `${err.stack}\n`;
   }
   /*
    * A PARK IS NOT A FAILURE, and the exit code is how a dispatcher can tell.
@@ -114,5 +129,5 @@ main(process.argv.slice(2)).catch((err: unknown) => {
    * vocabulary to learn one number.
    */
   const carried = err instanceof Error ? (err as { exitCode?: unknown }).exitCode : undefined;
-  process.exit(typeof carried === 'number' ? carried : 1);
+  exitAfter(message, typeof carried === 'number' ? carried : 1);
 });

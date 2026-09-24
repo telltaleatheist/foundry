@@ -3,8 +3,8 @@
  *
  * The version is IMPORTED FROM package.json, which makes that file the one
  * authority. It is still not a runtime read: `import` of a JSON module is
- * resolved by the bundler, so `bun build --compile` inlines the literal into the
- * executable and there is no package.json to find beside the binary.
+ * resolved by the bundler, so tools/build-engine.mjs inlines the literal into the
+ * engine bundle and there is no package.json to find beside it.
  *
  * It used to be a second constant here, hand-bumped alongside package.json — and
  * it went stale exactly the way two copies of a number do: v0.2.0 and v0.2.1
@@ -12,11 +12,14 @@
  * one string a user pastes into a bug report named a release from two tags ago.
  * One number, one place, or it is not a version.
  *
- * The COMMIT is injected by the build (`bun build --define`), so a binary can
- * always be traced back to the tree it was cut from — `tools/release-build.sh`
- * passes it. Built without the define (e.g. `bun run src/cli.ts`) there is no
- * commit to report, and `--version` says so rather than inventing one. That is
- * not a fallback: "no commit was recorded" is the truth about that build.
+ * The BUILD STAMP is injected by the build (esbuild `define`), so a bundle can
+ * always be traced back to the sources it was built from. Since the engine is
+ * committed inside the app (2026-09-24) the stamp is a digest of those sources,
+ * `src 1a2b3c4d5e6f`, not a git commit — a commit cannot contain its own hash;
+ * see tools/build-engine.mjs. Run without the define (`bun run src/cli.ts`, the
+ * tests) there is no stamp to report, and `--version` says so rather than
+ * inventing one. That is not a fallback: "nothing was recorded" is the truth
+ * about that run.
  */
 
 import pkg from '../package.json';
@@ -32,13 +35,13 @@ declare const FOUNDRY_GIT_COMMIT: string | undefined;
 /** The release version. Bumped in package.json, with a tag and a release. */
 export const VERSION: string = pkg.version;
 
-/** Short commit hash of the tree this binary was built from, or null. */
+/** The build stamp (`src <digest>`) of the sources this bundle was built from, or null. */
 export const GIT_COMMIT: string | null =
   typeof FOUNDRY_GIT_COMMIT === 'string' && FOUNDRY_GIT_COMMIT.length > 0
     ? FOUNDRY_GIT_COMMIT
     : null;
 
-/** `0.1.0 (a1b2c3d)`, or just `0.1.0` when no commit was baked in. */
+/** `2.0.2 (src 1a2b3c4d5e6f)`, or just `2.0.2` when nothing was baked in. */
 export function versionString(): string {
   return GIT_COMMIT ? `${VERSION} (${GIT_COMMIT})` : VERSION;
 }

@@ -1,123 +1,74 @@
-# Deploying foundry to BookForge
+# Deploying foundry
 
-**One command:**
+**The engine is part of the app (2026-09-24).** It used to be a separate
+`bun build --compile` executable per platform, published as its own release and
+downloaded by BookForge as its `foundry-cli` add-on. Owen: *"i dont think it
+needs to be an exe anymore. it can be an engine but maybe we should explode it
+out into normal code that moves along with the app."* Now:
+
+- `node tools/build-engine.mjs` bundles `src/` into **`app/engine/`**
+  (`foundry-engine.cjs` plus the four DejaVu faces), which is **committed**.
+- The app runs it with its own Electron as Node (`ELECTRON_RUN_AS_NODE=1`,
+  `app/electron/engine.ts`) — a child process, as before, with no runtime of
+  its own to ship.
+- `test/engine-bundle.test.ts` fails when `app/engine/` is not what `src/`
+  builds to, so **an engine change is: edit `src/`, run the build, commit both.**
+- `foundry --version` reports `foundry X.Y.Z (src <digest>)` — a digest of the
+  sources the bundle was built from (a commit cannot contain its own hash).
+
+## Getting a change to BookForge
+
+BookForge hosts Foundry from a vendored copy of `app/` (`foundry-app/` there;
+its `VENDORED.md` is the runbook), and `app/engine/` is inside `app/`. So
+**re-vendoring IS deploying the engine** — there is no release to cut, no pin
+to bump and nothing downloaded at startup. The version gates BookForge kept
+against the downloaded engine (`FOUNDRY_VERSION_FOR_*`) went with it: the
+engine and the app that drives it are one copy now and cannot disagree.
+
+## Releasing the Foundry desktop app
 
 ```bash
-tools/deploy.sh
+tools/deploy.sh               # patch bump, publish both installers, verify, promote
+tools/deploy.sh --minor       # 2.0.2 → 2.1.0
+tools/deploy.sh 3.0.0         # exactly that version
+tools/deploy.sh --notes "…"   # release title (default: commit subject)
 ```
 
-After the coordinated package version is committed/pushed and both desktop
-installers are built, that builds all four CLI platforms, packages them, creates
-a prerelease candidate, verifies all seven assets and promotes it. Every BookForge picks it up at
-its next startup. **There is no version to bump in BookForge.**
+It refuses a dirty tree, an unpushed HEAD, a stale `app/engine/`, and versions
+that disagree: the root `package.json` (the engine's) and `app/package.json`
+must both equal the version being published. Both installers must already be
+built into `app/release/`:
 
----
+- Windows: `npm --prefix app run package:win-x64` (or, from `app/`,
+  `npm run build && npx electron-builder --win --x64 --publish never`).
+- macOS: on an Apple Silicon Mac, `npm --prefix app run package:mac`.
+  Public macOS builds use `npm --prefix app run package:mac:signed`, which
+  requires Developer ID signing and Apple notarization; missing credentials or
+  signing failure aborts the build. The wrapper reads credentials from the
+  environment or the shared login-keychain item `BOOKFORGE_NOTARIZE_ASP`,
+  without printing them. Verify with `codesign --verify --deep --strict` and
+  `spctl --assess --type execute` before promotion.
 
-## Why there is no pin to bump
-
-BookForge's `foundry-cli` component carries a pinned version
-(`FOUNDRY_CLI_VERSION` in `electron/components/foundry-cli-components.ts`), and
-it is tempting to think a deploy means editing it. It does not. The pin is a
-**floor**, not a target:
-
-- At startup BookForge asks GitHub for the newest foundry release
-  (`electron/components/foundry-release-check.ts`).
-- `chooseTargetVersion` takes whichever is newer — the pin, or the release.
-- Hashes for a discovered release are read out of that release's own
-  `checksums.txt`, so nothing has to be pasted anywhere by hand.
-
-**Publishing is deploying.** The pin only matters as the version a machine
-falls back to when it cannot reach GitHub, and as the floor that stops a
-*downgrade* if a release is ever yanked. Bump it when you want that floor to
-move; never merely because you shipped.
-
-## The contract you must not break
-
-A program reads these names, not just a person:
-
-```
-foundry-darwin-arm64.tar.gz
-foundry-darwin-x64.tar.gz
-foundry-linux-x64.tar.gz
-foundry-windows-x64.tar.gz
-checksums.txt              ← sha256 of each, published in the SAME release
-```
-
-`tools/release-package.sh` produces exactly that set. An asset published
-without its line in `checksums.txt` is **refused by name** at install time
-rather than installed unverified — which is correct, and also means a
-half-uploaded release breaks installs. `deploy.sh` also requires the matching
-`Foundry-X.Y.Z-windows-x64.exe` and `Foundry-X.Y.Z-macos-arm64.dmg` under
-`app/release/`; all seven assets must be present before the candidate is promoted.
-
-## Desktop builds and version agreement
-
-The root CLI and `app/package.json` versions must match the intended release.
-Update both versions and npm lockfiles, then commit/push before release builds.
-`deploy.sh` now refuses a mismatch: it previously chose a newer tag while
-compiling the older version still in `package.json`.
-
-Build the CLI with `tools/release-build.sh windows-x64 darwin-arm64` (Git Bash on
-Windows), then `npm --prefix app run build`. From the app directory package
-Windows with `npx electron-builder --win --x64 --publish never`.
-Package macOS on an Apple Silicon Mac with
-`npx electron-builder --mac --arm64 --publish never` after its app/CLI build.
-Copy both resulting installers into the publishing checkout's `app/release/`.
-The desktop ships the compiled CLI through `extraResources`; it must not depend
-on `file:..`, which bundled the development repository into older installers.
+The engine reaches an installer through the `files` list in `app/package.json`
+(`engine/**`), inside the app archive — not `extraResources`, and never a
+`file:..` dependency, which bundled the development repository into older
+installers.
 
 No signing identity is configured in Foundry's committed build settings.
 Electron-builder may discover credentials from the build machine; absence means
-an unsigned package and must be reported in release notes. macOS notarization is
-not configured here. Build success does not imply signing/notarization or a
-clean-machine install test. Coordinate installation acceptance and the Crucible
-runtime release before running the publishing command.
-
-## The developer's own machine is the exception
-
-The Mac this is developed on does **not** download releases. Its BookForge
-records the `foundry-cli` component as `external`, pointing straight at
-`dist/foundry-<host>` in this repo (see `installed.json` under
-`~/Library/Application Support/BookForge/components/`). It therefore sees a
-**rebuild** and nothing else — a commit alone never reaches the app, and
-neither does a published release.
-
-```bash
-tools/deploy.sh --local     # rebuild this machine's binary; no release
-```
-
-If the app behaves like older code after you changed foundry, this is the first
-thing to check. `foundry --version` prints the commit it was built from.
-
-## Commands
-
-| Command | What it does |
-|---|---|
-| `tools/deploy.sh` | patch bump (0.6.0 → 0.6.1), build all, publish, verify |
-| `tools/deploy.sh --minor` | 0.6.0 → 0.7.0 |
-| `tools/deploy.sh 1.0.0` | exactly that version |
-| `tools/deploy.sh --local` | build for this machine only; no release |
-| `tools/deploy.sh --notes "…"` | set the release title (default: commit subject) |
-
-The version is derived from **the latest published release**, not from
-`package.json` — releases are what BookForge orders itself against, and a
-`package.json` that drifted would publish something every installed app
-considers older than what it already has.
-
-A deploy refuses a dirty tree and refuses an unpushed HEAD: a release tag must
-name a commit everyone else can fetch. `--local` allows both, because that is
-how you test a build.
+an unsigned package and must be reported in release notes. Build success does
+not imply signing/notarization or a clean-machine install test. Coordinate
+installation acceptance before running the publishing command.
 
 ## Requirements
 
-- `bun` (on PATH or at `~/.bun/bin/bun`). Cross-compiling downloads each
-  target's runtime on first use, so the first full build needs network.
+- `node` (the build script and the bundle check), `bun` (the test suite).
 - `gh`, authenticated against `telltaleatheist/foundry`.
 
 ## The Python environments — a different release, a different runbook
 
-**`env-v1` is not the engine's release and `tools/deploy.sh` never touches it.**
-The five CLI assets above ship under `vX.Y.Z`; the prebuilt Pythons the Electron
+**`env-v1` is not the app's release and `tools/deploy.sh` never touches it.**
+The installers ship under `vX.Y.Z`; the prebuilt Pythons the Electron
 app downloads live under a single, **prerelease-flagged** tag, `env-v1`, kept out
 of `/releases/latest` on purpose so BookForge's engine updater never sees them.
 Bumping the app's version does not republish an environment, and rebuilding an
@@ -169,7 +120,7 @@ Three things about step 3 that are worth stating rather than remembering:
 
 ## Platform notes for the VLM conversion
 
-`vlm-convert` is the one mode with a dependency outside the binary, because
+`vlm-convert` is the one mode with a dependency outside the engine, because
 vision-model runtimes are Python-only:
 
 - **macOS (Apple Silicon)**: local reading via MLX. Needs a Python with
@@ -180,10 +131,8 @@ vision-model runtimes are Python-only:
   rasterize pages**, so `pip install pymupdf` is the whole requirement — no
   MLX, no CUDA, no model download on the client.
 
-The helper script itself (`src/vlm/vlm_page.py`) ships **inside** the binary
-and is written out on first use; only the Python *environment* is yours to
-provide. (It did not always: a compiled binary handed python a path inside its
-own executable — `/$bunfs/root/vlm_page.py` — and every packaged conversion
-failed. Embedded as text since.)
-
-Public macOS builds use `npm --prefix app run package:mac:signed`. This requires Developer ID signing and Apple notarization; missing credentials or signing failure aborts the build. The wrapper reads credentials from the environment or the shared login-keychain item `BOOKFORGE_NOTARIZE_ASP`, without printing them. Verify the resulting bundle with `codesign --verify --deep --strict` and `spctl --assess --type execute` before promotion.
+The helper script itself (`src/vlm/vlm_page.py`) ships **inside** the engine
+bundle and is written out on first use; only the Python *environment* is yours
+to provide. (It did not always: the old compiled binary handed python a path
+inside its own executable — `/$bunfs/root/vlm_page.py` — and every packaged
+conversion failed. Embedded as text since.)

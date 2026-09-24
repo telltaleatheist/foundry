@@ -15,11 +15,24 @@ described the stripped pipeline are marked retired rather than renumbered.
 
 ---
 
-## 1. Core language: TypeScript, compiled with Bun — and one Python seam
+## 1. Core language: TypeScript — and one Python seam
 
-Foundry is TypeScript. `bun build --compile` produces a self-contained
-per-platform executable — the Bun runtime is embedded in the binary, so the end
-user installs nothing.
+Foundry is TypeScript. **Since 2026-09-24 the engine is bundled into the app,
+not compiled into an executable:** `tools/build-engine.mjs` (esbuild) writes
+`src/` as one CommonJS file into `app/engine/`, committed and checked against
+`src/` by the test suite, and the app runs it with its own Electron as Node.
+Owen: *"i dont think it needs to be an exe anymore. it can be an engine but
+maybe we should explode it out into normal code that moves along with the
+app."* Every model had moved to a Crucible server by then; what was left was
+file work and HTTP, and a 100 MB per-platform binary with its own release train
+was a second copy of the app's version to keep in step. Bun remains the dev
+runtime and the test runner. What follows is the original reasoning, kept
+because it is still why this is TypeScript — read "one file" as "one bundle
+inside the app" where it said "one binary".
+
+*(Original:)* `bun build --compile` produced a self-contained per-platform
+executable — the Bun runtime embedded in the binary, so the end user installed
+nothing.
 
 The obvious alternative was Python, because everything *around* this problem is
 Python: the ML ecosystem, the VLM runtimes, the rasterisers. It was rejected
@@ -32,10 +45,10 @@ vocabulary.
 **The one seam: `src/vlm/vlm_page.py`.** Running a vision model locally on
 Apple silicon is MLX, which is Python, and rasterising a PDF page is PyMuPDF,
 which is also Python — foundry's embedded pdf.js is text-only and its canvas
-layer cannot survive `bun build --compile`. So `vlm-convert` shells out to ONE
+layer could not survive `bun build --compile` (nor a Node bundle). So `vlm-convert` shells out to ONE
 interpreter subprocess per book: a JSON config in on stdin, one JSON object per
-page out on stdout. The script's source is embedded in the binary at build time
-and materialised at run time, so the compiled executable still travels alone.
+page out on stdout. The script's source is embedded in the bundle at build time
+and materialised at run time, so the engine still travels as one file.
 The seam is drawn to be as thin as a seam can be, and everything on the far
 side of it is checked loudly (§8): a missing interpreter, a missing package and
 a page that renders to nothing are each named, fatal errors.
@@ -141,7 +154,7 @@ VLM weights are mlx-community / model-owner conversions pulled by the runtime
 (mlx-vlm, or the server behind `--vlm-endpoint`) into the HuggingFace cache on
 first use. Foundry does not host, mirror or checksum them — they are somebody
 else's published models. Nothing multi-gigabyte belongs in a git history or
-inside the compiled binary; a weight file appearing in `git status` means
+inside the engine bundle; a weight file appearing in `git status` means
 something resolved to the wrong directory.
 
 ---

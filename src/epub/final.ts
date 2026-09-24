@@ -971,7 +971,7 @@ export async function epubFinal(opts: FinalOptions): Promise<FinalReport> {
     });
   }
 
-  await Bun.write(opts.outPath, writeZip(entries));
+  await fs.promises.writeFile(opts.outPath, writeZip(entries));
   opts.log(
     `epub-final: ${entries.length} members written, ${rewritten.size} edited, `
     + `${members.length - entries.length} dropped`,

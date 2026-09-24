@@ -752,7 +752,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
   });
 
   ensureDir(path.dirname(outPath));
-  await Bun.write(outPath, writeZip(entries));
+  await fs.promises.writeFile(outPath, writeZip(entries));
 
   const stampPath = cleanEpubStampPath(outPath);
   fs.writeFileSync(stampPath, `${JSON.stringify(stamp, null, 2)}\n`, 'utf8');

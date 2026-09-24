@@ -187,8 +187,8 @@ a **subprocess**, the same way it already drives ebook2audiobook:
 BookForge ──spawn──> foundry vlm-convert --pdf in.pdf --out out.epub
 ```
 
-Nothing in foundry knows what an audiobook is. Shipping a change to BookForge
-is one command — `tools/deploy.sh`, no version to bump on the BookForge side —
+Nothing in foundry knows what an audiobook is. The engine is bundled into the
+app folder (`app/engine/`), so BookForge takes a change by re-vendoring `app/` —
 see [`docs/DEPLOYING.md`](docs/DEPLOYING.md).
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the decisions and why.
@@ -198,18 +198,17 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the decisions and why.
 ```bash
 bun run typecheck
 bun test
-bun run build            # this machine
-bun run build:all        # darwin arm64/x64, linux x64, windows x64
-tools/release-package.sh # tarballs + checksums.txt into dist/release/
+node tools/build-engine.mjs   # src/ -> app/engine/ (commit it; bun test checks it is current)
 ```
 
-`tools/release-build.sh` bakes the git commit into the binary, so
-`foundry --version` reports the version and commit, and a build from a dirty
-tree says `+dirty` rather than claiming the commit it was nearly built from.
+The bundle's `--version` is `foundry X.Y.Z (src <digest>)`: the digest names the
+exact sources it was built from.
 
 ## Install
 
-A release asset is one binary in a tarball. Beyond it, a run needs a Python
+Foundry ships as a desktop app with the engine inside it; a dev shell runs
+`bun run src/cli.ts <command>` or `node app/engine/foundry-engine.cjs <command>`.
+Beyond it, a run needs a Python
 with **PyMuPDF** (and **mlx-vlm**, on Apple silicon reading locally), and — off
 Apple silicon — a VLM server to point `--vlm-endpoint` at. Weights are pulled
 by the runtime into the HuggingFace cache on first use; foundry hosts none.

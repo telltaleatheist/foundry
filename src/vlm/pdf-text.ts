@@ -233,8 +233,8 @@ import type { DotsBox, DotsCategory, Size } from './dots.js';
  *
  * FOUR FACES BECAUSE THE MODEL REPORTS EMPHASIS and there is no other way to
  * draw it. Italic is not decoration in these books: it is how every book title
- * in every footnote is set. The four together are 1.4 MB of a hundred-megabyte
- * executable, only the faces a book actually uses are ever read off disk, and
+ * in every footnote is set. The four together are 1.4 MB beside the engine,
+ * and only the faces a book actually uses are ever read off disk, and
  * the SUBSET that reaches the output is only the glyphs that book used.
  *
  * DejaVu specifically because its licence permits redistribution in a binary
@@ -242,9 +242,9 @@ import type { DotsBox, DotsCategory, Size } from './dots.js';
  * it), and because its coverage is Latin, Greek and Cyrillic — the alphabet set
  * of the books this program is for.
  *
- * `with { type: 'file' }` is the same seam `bridge.ts` uses for `vlm_page.py`:
- * Bun embeds the bytes at compile time and hands back a path that reads back out
- * of the binary's own filesystem.
+ * `with { type: 'file' }` hands back a path to each face — the tree's own file
+ * under `bun run`, and a copy beside the engine bundle in the apps
+ * (tools/build-engine.mjs; see font-asset.d.ts).
  */
 import FONT_ROMAN from './assets/DejaVuSerif.ttf' with { type: 'file' };
 import FONT_ITALIC from './assets/DejaVuSerif-Italic.ttf' with { type: 'file' };

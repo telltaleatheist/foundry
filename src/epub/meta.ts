@@ -1661,7 +1661,7 @@ export async function epubMeta(opts: EpubMetaOptions): Promise<EpubMetaReport> {
       uncompressedSize: member.uncompressedSize,
     };
   });
-  await Bun.write(opts.outPath!, writeZip(entries));
+  await fs.promises.writeFile(opts.outPath!, writeZip(entries));
   opts.log(`epub-meta: ${entries.length} members written, ${book.opfPath} rewritten`);
   return report;
 }
