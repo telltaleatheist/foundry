@@ -26,17 +26,12 @@ import * as path from 'node:path';
 import { runCleanText } from '../../src/clean/run.js';
 import type { NumberNormalizerRunner } from '../../src/clean/tts-number-normalizer.js';
 
-/**
- * Four paragraphs — one block each, no table, no cell arithmetic. Each prints an
- * acronym so that it is ASKED: a block printing nothing any answer could change
- * is settled by the rules without a request (blockMayTakeAnEdit, 2026-09-24),
- * and this file is about what happens to requests.
- */
+/** Four plain paragraphs — one block each, no table, no cell arithmetic. */
 const TEXTS = [
-  'The NATO committee met on the first floor and adjourned before noon.',
-  'Nobody present had read the UN report, and nobody said so out loud.',
-  'A second EU meeting was called for the following week, in the same room.',
-  'The BBC minutes were never circulated, which surprised exactly no one.',
+  'The committee met on the first floor and adjourned before noon.',
+  'Nobody present had read the report, and nobody said so out loud.',
+  'A second meeting was called for the following week, in the same room.',
+  'The minutes were never circulated, which surprised exactly no one.',
 ];
 
 function bookFile(dir: string): string {

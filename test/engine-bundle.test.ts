@@ -72,42 +72,37 @@ describe('the bundled engine', () => {
   });
 
   /*
-   * THE WIRE, AS NODE SENDS IT — a smoke test of the real path. 2026-09-24: the
-   * first engine run on Node sent `content-type: application/json,
-   * application/json` and Crucible refused every request. The regression guard
-   * for that merge is test/translate/transport-headers.test.ts, which fails on
-   * the old code on any runtime; this one proves the bundle, run by node over a
-   * real socket, sends one content-type and a JSON body on a clean-text pass.
+   * THE WIRE, AS NODE SENDS IT. 2026-09-24: the first triage run after the
+   * engine moved onto Node sent `content-type: application/json, application/json`
+   * (two spellings of one header, both kept by undici), and Crucible's decide
+   * door refused every request as `400 invalid_request`. Bun had kept one, so
+   * every in-process test passed. This runs the BUNDLE under node against a
+   * real socket and reads the request the way a server does.
    */
-  test('under node, every request carries ONE content-type and a JSON body', async () => {
+  test('under node, a decide request carries ONE content-type and a JSON body', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-engine-wire-'));
-    const seen: Array<{ method: string; contentType: string | null; parsed: boolean }> = [];
+    const seen: Array<{ contentType: string | null; parsed: boolean }> = [];
     const server = Bun.serve({
       port: 0,
       async fetch(request) {
         const raw = await request.text();
+        let questions: Record<string, unknown> = {};
         let parsed = true;
-        if (request.method === 'POST') { try { JSON.parse(raw); } catch { parsed = false; } }
-        seen.push({ method: request.method, contentType: request.headers.get('content-type'), parsed });
-        if (request.method === 'GET') return Response.json({ object: 'list', data: [{ id: 'm', object: 'model' }] });
-        return Response.json({
-          id: 'x', object: 'chat.completion', model: 'm',
-          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: '{"edits":[]}' } }],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-        });
+        try { questions = (JSON.parse(raw) as { questions: Record<string, unknown> }).questions; } catch { parsed = false; }
+        seen.push({ contentType: request.headers.get('content-type'), parsed });
+        const answers = Object.fromEntries(Object.keys(questions).map((k) => [k, { type: 'yesno', p: 0.9, label_mass: 0.99 }]));
+        return Response.json({ model: { id: 'm', revision: 'r', fingerprint: 'f' }, engine: 'e', answers });
       },
     });
     try {
       const book = path.join(dir, 'book.jsonl');
       const header = { book: 3, engine: 'foundry-test', language: 'en', source: { pages: 1, unreadable: [], bankSha: 'sha256:test' }, chapters: [], typography: null, seams: [], loose: { markers: [], notes: [] } };
-      // An acronym, so the block is ASKED (blockMayTakeAnEdit).
-      const text = 'The NATO report was finally published, long after anyone cared.';
+      const text = 'The report was finally published in 1953.';
       const row = { id: 'b1-1', category: 'Text', text, page: 1, pages: [1], box: [0, 0, 100, 10], parts: [{ src: 'p1-1', page: 1, chars: [0, text.length] }] };
       fs.writeFileSync(book, `${JSON.stringify(header)}
 ${JSON.stringify(row)}
 `);
-      const child = spawn('node', [bundle, 'clean-text', '--book', book,
-        '--records', path.join(dir, 'out.records.jsonl'), '--stamp', path.join(dir, 'out.stamp.json'),
+      const child = spawn('node', [bundle, 'clean-triage', '--book', book, '--out', path.join(dir, 'v.json'),
         '--endpoint', `http://127.0.0.1:${server.port}/v1`, '--model', 'm'], {
         cwd: repo, windowsHide: true,
         env: { ...process.env, FOUNDRY_ENDPOINT_HEADERS: JSON.stringify({ Authorization: 'Bearer t' }) },
@@ -115,11 +110,10 @@ ${JSON.stringify(row)}
       let stderr = '';
       child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
       const code = await new Promise<number | null>((resolve) => child.on('close', resolve));
-      expect(stderr).not.toMatch(/invalid_request|refused the request/);
+      expect(stderr).not.toContain('refused');
       expect(code).toBe(0);
-      const posts = seen.filter((one) => one.method === 'POST');
-      expect(posts.length).toBeGreaterThan(0);
-      for (const one of posts) {
+      expect(seen.length).toBeGreaterThan(0);
+      for (const one of seen) {
         expect(one.contentType).toBe('application/json');
         expect(one.parsed).toBe(true);
       }

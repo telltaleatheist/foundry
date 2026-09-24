@@ -542,25 +542,6 @@ overlapping spans: a second coordinate system to keep true. Both writes go
 through `writeNarrationEpub`, which proves every rewrite landed or destroys its
 output, and the intermediate is content-addressed and reused.
 
-### Which blocks are asked at all — `blockMayTakeAnEdit` (2026-09-24)
-
-Every block is still EXAMINED, and only a block some answer could change is
-ASKED. The validator below is the whole list of ways a model edit can be
-applied — a number, `&`, a spaced hyphen, a bracket, a run of capitals (acronym
-or roman numeral), an abbreviation the table can read, a split word — and each
-needs something the block prints. A block printing none of those is settled by
-the rules and recorded `RULES_ONLY`, with no request. Each test is a superset of
-its validator path, so a false "yes" costs one request and there is no false
-"no".
-
-This REPLACED the cleanup-triage stage (a decide model asked of every block
-before the cleanup — Foundry c7bcb1a/4835411, reverted). Owen, 2026-09-24:
-*"skip the bake off. just fix the system."* Measured against 30 books' cleanup
-receipts (39,537 blocks): 73 % of requests are not needed, with no non-number
-edit lost and no digit left in a skipped block — novels 91–96 %, a dense
-history ~27 %. The one cost: a skipped block no longer CARRIES a fix into its
-neighbour (n7); the neighbour is still asked on its own.
-
 ### What the model may and may not do
 
 The model returns an **anchored edit list** — `{find, replace}` pairs, each a
@@ -724,6 +705,75 @@ model's NAME, so a book cleaned through `qwen3.5:9b-q8_0` re-asks every block
 when it is next cleaned through `Qwen/Qwen3.5-9B`. That is correct — two servers
 at two precisions are two answers — and it is the reason to pick one server per
 machine.
+
+## A triaged run — `clean-triage`, then `clean-text --triage` (2026-09-23)
+
+Owen, 2026-09-23: *"we create a list of blocks that need to be cleaned with snap
+and then we bring snap down and load the full normal cleaning logic"*, and *"a
+cleanup-triage stage that runs before cleanup. go ahead and build it all out."*
+
+Most paragraphs of most books need nothing a narrator would say differently, and
+the cleaner is a large model asked one question per block. A triaged run asks a
+SMALL model first — Crucible's `decide` class, one yes/no per block read off the
+model's own belief in the two letters at `POST /v1/decide` — and then asks the
+cleaner only about the blocks it flagged.
+
+**The two commands** (the engine's, `src/clean/triage.ts` and `src/clean/run.ts`):
+
+```bash
+foundry clean-triage --book <book.jsonl> --out <verdicts.json> \
+                     --endpoint <crucible base url> --model <resident decide model>
+foundry clean-text   --book <book.jsonl> --records <out.records.jsonl> \
+                     --stamp <out.stamp.json> ... --triage <verdicts.json>
+```
+
+`clean-triage` reads the book exactly as `clean-text` does — the same block plan,
+the same stage-1 punctuation (`src/clean/blocks.ts`) — so it judges the words the
+cleaner would be shown. `--endpoint` is the Crucible ENGINE's base address, not
+its `/openai` door; the credential comes from `FOUNDRY_ENDPOINT_HEADERS` like
+every placed run. It never loads a model.
+
+**What `--triage` changes, and what it cannot.** Flagged blocks are asked as
+before. Every other block is recorded at its stage-1 text under a key of its own,
+so every position still has a row — examined, and clean — and a later run WITHOUT
+`--triage` still asks the cleaner about all of them. A verdict about words that
+have changed since, or a block the file never judged, is cleaned. Every doubt
+resolves toward cleaning: a block is kept only when the model is confidently sure
+it needs nothing. The receipt carries the split.
+
+### In the app — two rows from one press
+
+The Clean text dialog carries one box, **"Skip paragraphs that need no cleaning
+(a quick check runs first)"**, ON by default and remembered per machine. It is
+drawn only when an engine the press would go to serves the `decide` class; when
+none does, the dialog says so in a sentence and the press is today's cleanup,
+because a box that cannot be honoured is not an option. A Crucible older than
+1.0.24 has no `decide` row at all, which reads as exactly that.
+
+Ticked, the press goes through `queue:enqueue-clean-triaged` and main makes the
+pair (`enqueueTriagedCleanup`, `app/electron/job-queue.ts`):
+
+* **The triage row** — kind `clean-triage`, titled "Clean text — triage", held
+  like every GPU row. It is placed on the `decide` class like any other act
+  (loaded and leased on the card, released at the settle) and spawns
+  `clean-triage` with the placement's engine address and model. It lands NO step:
+  nothing in the tree is about the question in front of the answer.
+* **The cleanup row** — the same `clean` request the dialog always sent, now
+  carrying `triagePath` and `after` = the triage's row id. The pump will not start
+  it until the triage is `done`; a triage that fails or is removed takes the
+  cleanup with it.
+
+**The verdicts file** is `<key>.clean[.<id8>].triage.json`, beside the records
+and the stamp and named from the records file (`cleanTriageFileFor`,
+`app/electron/projects.ts`) — the one owner both rows ask. Both rows pin the same
+ledger row, so they materialise the same book; a cleanup pressed on a greyed card
+defers its triage on the same promise, and the chain is promise → triage →
+cleanup. Hosted, the pair is two `enqueue` calls into the host's queue, the
+cleanup carrying the host's id for the triage row as its `after`.
+
+**The `decide` class is not routable.** It reads a local model's logits, which no
+upstream can return, so it is not one of `LLM_CLASSES` and a server record that
+forwards it is refused by name at placement.
 
 ## Where it runs
 
