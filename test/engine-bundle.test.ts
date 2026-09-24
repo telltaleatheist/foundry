@@ -13,7 +13,7 @@
  * pass here and fail in front of somebody.
  */
 import { describe, expect, test } from 'bun:test';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -70,4 +70,56 @@ describe('the bundled engine', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  /*
+   * THE WIRE, AS NODE SENDS IT. 2026-09-24: the first triage run after the
+   * engine moved onto Node sent `content-type: application/json, application/json`
+   * (two spellings of one header, both kept by undici), and Crucible's decide
+   * door refused every request as `400 invalid_request`. Bun had kept one, so
+   * every in-process test passed. This runs the BUNDLE under node against a
+   * real socket and reads the request the way a server does.
+   */
+  test('under node, a decide request carries ONE content-type and a JSON body', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-engine-wire-'));
+    const seen: Array<{ contentType: string | null; parsed: boolean }> = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const raw = await request.text();
+        let questions: Record<string, unknown> = {};
+        let parsed = true;
+        try { questions = (JSON.parse(raw) as { questions: Record<string, unknown> }).questions; } catch { parsed = false; }
+        seen.push({ contentType: request.headers.get('content-type'), parsed });
+        const answers = Object.fromEntries(Object.keys(questions).map((k) => [k, { type: 'yesno', p: 0.9, label_mass: 0.99 }]));
+        return Response.json({ model: { id: 'm', revision: 'r', fingerprint: 'f' }, engine: 'e', answers });
+      },
+    });
+    try {
+      const book = path.join(dir, 'book.jsonl');
+      const header = { book: 3, engine: 'foundry-test', language: 'en', source: { pages: 1, unreadable: [], bankSha: 'sha256:test' }, chapters: [], typography: null, seams: [], loose: { markers: [], notes: [] } };
+      const text = 'The report was finally published in 1953.';
+      const row = { id: 'b1-1', category: 'Text', text, page: 1, pages: [1], box: [0, 0, 100, 10], parts: [{ src: 'p1-1', page: 1, chars: [0, text.length] }] };
+      fs.writeFileSync(book, `${JSON.stringify(header)}
+${JSON.stringify(row)}
+`);
+      const child = spawn('node', [bundle, 'clean-triage', '--book', book, '--out', path.join(dir, 'v.json'),
+        '--endpoint', `http://127.0.0.1:${server.port}/v1`, '--model', 'm'], {
+        cwd: repo, windowsHide: true,
+        env: { ...process.env, FOUNDRY_ENDPOINT_HEADERS: JSON.stringify({ Authorization: 'Bearer t' }) },
+      });
+      let stderr = '';
+      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      const code = await new Promise<number | null>((resolve) => child.on('close', resolve));
+      expect(stderr).not.toContain('refused');
+      expect(code).toBe(0);
+      expect(seen.length).toBeGreaterThan(0);
+      for (const one of seen) {
+        expect(one.contentType).toBe('application/json');
+        expect(one.parsed).toBe(true);
+      }
+    } finally {
+      server.stop(true);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

@@ -222,7 +222,7 @@ interface DecideReply {
   model?: { id?: unknown; revision?: unknown; fingerprint?: unknown };
   engine?: unknown;
   answers?: Record<string, DecideAnswer>;
-  error?: { code?: unknown; message?: unknown; details?: { retry_after?: unknown } };
+  error?: { code?: unknown; message?: unknown; details?: { retry_after?: unknown; problems?: unknown } };
 }
 
 /**
@@ -245,7 +245,7 @@ async function askGroup(
   for (;;) {
     let response;
     try {
-      response = await transport.post(url, body, { 'Content-Type': 'application/json' });
+      response = await transport.post(url, body);
     } catch (err) {
       transportFailures += 1;
       if (transportFailures > TRANSPORT_RETRIES) {
@@ -275,7 +275,19 @@ async function askGroup(
       await sleep(seconds * 1_000);
       continue;
     }
-    throw new CleanTextError(`clean-triage: ${url} refused the request (${response.status} ${code}): ${message}`);
+    // A 400 names WHICH field was wrong (`details.problems`, Crucible's
+    // validation handler); that list is the whole diagnosis, so it is printed.
+    // Without it, a malformed request read as "not a valid job request" and
+    // nothing else — which is how a duplicated content-type hid (2026-09-24).
+    const problems = Array.isArray(reply.error?.details?.problems)
+      ? (reply.error!.details!.problems as Array<{ location?: unknown; message?: unknown }>)
+        .slice(0, 5)
+        .map((p) => `${Array.isArray(p.location) ? p.location.join('.') : '?'}: ${String(p.message)}`)
+        .join('; ')
+      : '';
+    throw new CleanTextError(
+      `clean-triage: ${url} refused the request (${response.status} ${code}): ${message}`
+      + (problems ? ` — ${problems}` : ''));
   }
 }
 

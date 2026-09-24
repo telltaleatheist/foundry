@@ -230,6 +230,24 @@ export function fetchTransport(
   headers: Readonly<Record<string, string>> | undefined = resolveEndpointHeaders(),
 ): Transport {
   const extra = headers ?? {};
+  /*
+   * THE LAYERS ARE MERGED BY HEADER NAME, CASE-INSENSITIVELY. HTTP header
+   * names are, and a plain object is not: `{ 'Content-Type': a, 'content-type': b }`
+   * is two keys, and Node's fetch (undici) sends BOTH, joined —
+   * `content-type: application/json, application/json` — which a server's
+   * JSON parser does not recognise, so the body is not read as JSON at all.
+   * Bun happened to keep one. This surfaced the day the engine moved onto
+   * Node (2026-09-24): every `clean-triage` request to a Crucible decide door
+   * came back `400 invalid_request`. `Headers.set` replaces whatever spelling
+   * came before, which is the "later layer wins" the order below promises.
+   */
+  const merged = (...layers: ReadonlyArray<Readonly<Record<string, string>> | undefined>): Headers => {
+    const out = new Headers();
+    for (const layer of layers) {
+      for (const [name, value] of Object.entries(layer ?? {})) out.set(name, value);
+    }
+    return out;
+  };
   const call = async (url: string, init: RequestInit): Promise<HttpResponse> => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -253,10 +271,10 @@ export function fetchTransport(
     }
   };
   return {
-    get: (url, dialect) => call(url, { method: 'GET', headers: { ...dialect, ...extra } }),
+    get: (url, dialect) => call(url, { method: 'GET', headers: merged(dialect, extra) }),
     post: (url, body, dialect) => call(url, {
       method: 'POST',
-      headers: { ...dialect, ...extra, 'content-type': 'application/json' },
+      headers: merged(dialect, extra, { 'content-type': 'application/json' }),
       body,
     }),
   };
