@@ -53,6 +53,7 @@ const CLEAN = path.resolve(import.meta.dir, '..', '..', 'src', 'clean');
 const PROMPTS = [
   'prompts/tts-number-normalize.txt',
   'prompts/tts-narration-text.txt',
+  'prompts/tts-clean-text.txt',
 ];
 
 interface Example {

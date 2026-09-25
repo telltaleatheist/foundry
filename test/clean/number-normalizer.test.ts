@@ -791,3 +791,12 @@ test('the gate OFF applies a judgement refusal and records what it would have sa
   // A find the text does not print cannot be spliced, gate or no gate.
   assert.strictEqual(off.records[1]!.status, 'NOT_FOUND');
 });
+
+test('the gate OFF still never edits inline markup: a note number or an emphasis delimiter (2026-09-25)', () => {
+  const policy = { ...norm.EVERY_CLASS, gate: false };
+  const target = 'The party senate never came about.⁴¹ It was *Tagebücher* that said so.';
+  const { records, accepted } = norm.validateNumberEdits(target, [target.length],
+    [{ find: '⁴¹', replace: 'forty one' }, { find: 'Tagebücher*', replace: 'Tagebücher' }], [], policy);
+  assert.strictEqual(accepted.length, 0);
+  assert.ok(records.every((r) => r.status !== 'APPLIED'));
+});

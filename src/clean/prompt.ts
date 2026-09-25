@@ -26,10 +26,23 @@
  */
 import NARRATION_TEXT_PROMPT from './prompts/tts-narration-text.txt' with { type: 'text' };
 import NUMBER_NORMALIZE_PROMPT from './prompts/tts-number-normalize.txt' with { type: 'text' };
+import CLEAN_TEXT_PROMPT from './prompts/tts-clean-text.txt' with { type: 'text' };
 
-/** The whole instruction, exactly as `loadNarrationTextPrompt` assembles it. */
+/**
+ * THE ONE PROMPT clean-text sends, since n13 (2026-09-25) — no longer the two
+ * files above joined.
+ *
+ * Joined, they were ~5,000 tokens in which the rules the n12 run most needed
+ * ("never spell out an ordinary word", "never translate") sat near the end, and
+ * the model spelled out "Hitler" and translated "im Dritten Reich" regardless.
+ * Owen asked for one short prompt: `prompts/tts-clean-text.txt` says what is
+ * never changed FIRST, then each class as a rule with positive examples (no
+ * negative ones: "it might see it and do it anyway"), then a few worked answers.
+ * The two files above stay for what else reads them — the training side's
+ * number prompt and its keeper.
+ */
 export function narrationTextPrompt(): string {
-  return `${NUMBER_NORMALIZE_PROMPT.trim()}\n\n${NARRATION_TEXT_PROMPT.trim()}`;
+  return CLEAN_TEXT_PROMPT.trim();
 }
 
 /** The number half alone — what the training side vendors, for its own keeper. */
