@@ -40,6 +40,7 @@ import { ensureDir } from '../fsdirs.js';
 import { stripBom } from '../bom.js';
 import { readBookFile } from '../translate/bookrows.js';
 import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
+import { askDecide, decideUrl, pool, type DecideReply as DoorReply } from '../backend/decide-door.js';
 
 import {
   cleanBlocks, DEFAULT_CLEAN_UNIT, punctuateAll, triageUnits, type CleanUnit, type StageOneUnit,
@@ -101,9 +102,6 @@ const CONTEXT_CHARS = 200;
 
 /** Default requests in flight. The door batches each request's questions itself. */
 export const DEFAULT_TRIAGE_CONCURRENCY = 2;
-
-/** How often a transport failure is retried before the run is refused by name. */
-const TRANSPORT_RETRIES = 5;
 
 /**
  * What the model is shown before every group — the cleaner's own classes, in
@@ -182,11 +180,8 @@ export interface CleanTriageOutcome {
   file: TriageFile;
 }
 
-/** The door's URL from a Crucible base, whether or not `/v1` was typed. */
-export function decideUrl(endpoint: string): string {
-  const base = endpoint.trim().replace(/\/+$/, '').replace(/\/v1$/, '');
-  return `${base}/v1/decide`;
-}
+/** The door's URL — backend/decide-door.ts's, re-exported where triage's callers found it. */
+export { decideUrl };
 
 /** A group: the positions asked, and the wider stretch shown. */
 interface Group {
@@ -351,91 +346,7 @@ function yesProbability(answer: DecideAnswer): number | undefined {
   const yes = answer.probabilities?.['yes'];
   return typeof yes === 'number' ? yes : undefined;
 }
-interface DecideReply {
-  model?: { id?: unknown; revision?: unknown; fingerprint?: unknown };
-  engine?: unknown;
-  answers?: Record<string, DecideAnswer>;
-  error?: { code?: unknown; message?: unknown; details?: { retry_after?: unknown; problems?: unknown } };
-}
-
-/**
- * ONE REQUEST, with the weather handled and misconfiguration refused.
- *
- * `503 chat_queue_full` is the door saying "not yet" (PHASE22 §2.2 — *"treat it
- * as weather"*): it is waited out, for as long as it lasts, with a sentence each
- * time. A transport failure is retried `TRANSPORT_RETRIES` times and then
- * refused naming the URL. Anything else the door refuses — a model not resident,
- * a malformed request — is a mistake somebody can fix, and is said once.
- */
-async function askGroup(
-  transport: Transport,
-  url: string,
-  body: string,
-  sleep: (ms: number) => Promise<void>,
-  log: (message: string) => void,
-): Promise<DecideReply> {
-  let transportFailures = 0;
-  for (;;) {
-    let response;
-    try {
-      response = await transport.post(url, body);
-    } catch (err) {
-      transportFailures += 1;
-      if (transportFailures > TRANSPORT_RETRIES) {
-        throw new CleanTextError(
-          `clean-triage could not reach ${url} after ${TRANSPORT_RETRIES} retries: ${(err as Error).message}`,
-        );
-      }
-      log(`clean-triage: ${url} did not answer (${(err as Error).message}) — retrying (${transportFailures} of ${TRANSPORT_RETRIES})`);
-      await sleep(2_000 * transportFailures);
-      continue;
-    }
-    let reply: DecideReply;
-    try {
-      reply = JSON.parse(response.body) as DecideReply;
-    } catch {
-      throw new CleanTextError(`clean-triage: ${url} answered ${response.status} with a body that is not JSON: ${response.body.slice(0, 200)}`);
-    }
-    if (response.status === 200) return reply;
-    const code = typeof reply.error?.code === 'string' ? reply.error.code : `http_${response.status}`;
-    const message = typeof reply.error?.message === 'string' ? reply.error.message : response.body.slice(0, 200);
-    if (response.status === 503 && code === 'chat_queue_full') {
-      const header = Number(response.headers?.['retry-after']);
-      const detail = Number(reply.error?.details?.retry_after);
-      const seconds = Number.isFinite(header) && header > 0 ? header
-        : Number.isFinite(detail) && detail > 0 ? detail : 2;
-      log(`clean-triage: the server is busy (${message}) — waiting ${seconds} s and asking again`);
-      await sleep(seconds * 1_000);
-      continue;
-    }
-    // A 400 names WHICH field was wrong (`details.problems`, Crucible's
-    // validation handler); that list is the whole diagnosis, so it is printed.
-    // Without it, a malformed request read as "not a valid job request" and
-    // nothing else — which is how a duplicated content-type hid (2026-09-24).
-    const problems = Array.isArray(reply.error?.details?.problems)
-      ? (reply.error!.details!.problems as Array<{ location?: unknown; message?: unknown }>)
-        .slice(0, 5)
-        .map((p) => `${Array.isArray(p.location) ? p.location.join('.') : '?'}: ${String(p.message)}`)
-        .join('; ')
-      : '';
-    throw new CleanTextError(
-      `clean-triage: ${url} refused the request (${response.status} ${code}): ${message}`
-      + (problems ? ` — ${problems}` : ''));
-  }
-}
-
-/** Run a pool of `concurrency` over `count` jobs, in any order. */
-async function pool(count: number, concurrency: number, job: (index: number) => Promise<void>): Promise<void> {
-  let next = 0;
-  const lanes = Array.from({ length: Math.min(concurrency, count) }, async () => {
-    while (next < count) {
-      const index = next;
-      next += 1;
-      await job(index);
-    }
-  });
-  await Promise.all(lanes);
-}
+type DecideReply = Omit<DoorReply, 'answers'> & { answers?: Record<string, DecideAnswer> };
 
 /**
  * Judge every position of the book, and write the verdicts to `outPath`.
@@ -480,7 +391,9 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
       state: groupState(units, group, unit),
       questions: Object.fromEntries(asked.map((one) => [one.parts, triageQuestion(one.parts, unit, one.text)])),
     });
-    const reply = await askGroup(transport, url, body, sleep, opts.log);
+    const reply = await askDecide(transport, url, body, {
+      who: 'clean-triage', fail: (message) => new CleanTextError(message), sleep, log: opts.log,
+    }) as DecideReply;
     for (const unit of asked) {
       const answer = reply.answers?.[unit.parts];
       const p = answer === undefined ? undefined : yesProbability(answer);

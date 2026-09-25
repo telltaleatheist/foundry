@@ -548,6 +548,45 @@ work. Append with a date; never rewrite the other side's notes.
 
 ## #foundrynotes
 
+**2026-09-25 — ANALYSIS IS BRIEFCASE'S SNAP RANKER NOW. THE REPORT IS FORMAT 2,
+AND THIS ONE IS BREAKING FOR ANYTHING THAT READS A REPORT OR RUNS `analyze`.**
+
+Owen: *"full replacement … we're replacing the logic — the way it works. not
+the ui"*, *"confirmed only"*, *"9b for triage"*, *"the side panel should show
+the reasoning"*. The entailment ranker (DeBERTa worker, `--nli-python`, the
+`nli-*` environments) is deleted. docs/ANALYSIS.md is the contract; what you
+have to change:
+
+- **Two commands.** `foundry analyze-rank --book B --out R --endpoint <crucible
+  base> --model <resident decide model> [--categories C]` writes a rank file;
+  `foundry analyze --book B --ranks R --out report.jsonl [--categories C] …`
+  verifies it. Same book, same categories file, or `analyze` refuses by name.
+  Your audiobook flow is `vtt-book` → `analyze-rank` → `analyze`. The rank
+  needs a Crucible serving a decide-capable model, resident and leased by the
+  caller (the app uses the server's `clean` row — the 9B — leased as `decide`);
+  it never loads one. `--nli-python`, `--nli-home` and `--fetch-nli-model` are
+  gone, and a `--categories` entry carrying `hypotheses` is refused by name.
+- **Report header**: `analysis: 2`. Gone: `nli`, `nliRevision`, `hypotheses`,
+  `capture`. New: `ranker` (`"snap-v1"`), `decide` (ranking model id),
+  `options` (question-set version), `spans` (span-parameter string), `prompt`
+  (`foundry-verify/v4-justified-2026-09-25`). Kept: `engine`, `bankSha`,
+  `generation?`, `verify`, `categories`, `untuned`, `hues`, `names`.
+- **Finding rows are flags only**, and carry `reason` (the verifier's one or two
+  sentences) and `alsoReasons` (aligned with `also`). `verdict` is gone — every
+  finding is a flag. `score` is now the ranker's evidence for the primary
+  category (0–1), recorded rather than sliced on; there are no display tiers.
+- **Cache rows** are `{kind:'verdict', key, verdict, reason}`; `rank` rows are
+  gone to the rank file.
+- **Progress lines are unchanged in shape**: `analyze: rank n/m` (from
+  `analyze-rank`, counting units) and `analyze: verify n/m (<category>)`.
+- **In the app**: a new `JobKind`, `analysis-rank` (gpu lane, decide act,
+  title "Analysis — ranking"), queued in front of every analysis;
+  `queue:enqueue-analysis` answers `{ rank, analysis }` rather than one `Job`.
+  Analysis is still refused hosted, so this reaches your window only when that
+  gate lifts.
+
+It reaches you with the `app/` re-vendor, which carries the engine bundle.
+
 **2026-09-15 — FOUNDRY KEEPS NO MODEL. TWELVE DOORS AND ONE PUSH REMOVED, AND
 THIS ONE IS BREAKING FOR ANY VENDORED BRIDGE ENTRY.**
 
@@ -1592,7 +1631,8 @@ CLOSED question with the decode constrained, so its vLLM body is
 same schema Ollama gets as `format`, one user message and no system message
 (because Ollama's `/api/generate` templates its prompt — `/v1/completions` would
 hand the model an untemplated string). Its `--concurrency` default is **1 under
-Ollama** and 12 under vLLM. Its NLI ranker is a Python worker and is untouched.
+Ollama** and 12 under vLLM. Its NLI ranker is a Python worker and is untouched
+(since 2026-09-25 there is no NLI ranker — see the note of that date above).
 
 **The URL is the flag it always was**: `--ollama <url>` on translate,
 `--endpoint <url>` on clean-text. Under vLLM it defaults to

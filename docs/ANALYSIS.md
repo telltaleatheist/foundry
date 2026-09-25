@@ -14,89 +14,102 @@ and §9 is what is deliberately not being built, out loud.
 
 ## 1. Where the method comes from, and what it is not
 
-The method is **briefcase's measured flag pipeline**
-(`briefcase/backend/src/analysis/nli-ranker.service.ts` and neighbours),
-ported, not reinvented. BookForge's old book-analysis is **deprecated and is
-not the model**: it asked an LLM to read a chapter and discover quotes, which
+The method is **briefcase's measured flag pipeline**, ported, not reinvented.
+Since 2026-09-25 that is briefcase's **snap flag ranker** — the version that
+replaced the entailment ranker there (briefcase main d80cc71,
+`backend/src/scorer/flags/`, `scorer/crucible-decide.ts`,
+`analysis/flag-windows.ts`, `analysis/prompts/analysis-prompts.ts`) and
+replaces it here (Owen: *"full replacement … we're replacing the logic — the
+way it works. not the ui"*). BookForge's old book-analysis is **deprecated and
+is not the model**: it asked an LLM to read a chapter and discover quotes, which
 fails the way open-ended discovery always fails — the model returns the two or
 three most obvious hits and stops — and then fuzzy-matched the (often
 reworded) quotes back into the book, which is why a whole recovery module
 exists over there. Foundry has block identity; nothing here matches a quote to
 anything, ever.
 
-Three stages, each doing the half the engine is actually good at:
+Two acts on two models, run by the app as two queue rows (the cleanup's triage
+and its cleanup are the precedent):
 
-1. **RANK** — every sentence, and every sliding 3-sentence window, scored
-   against every enabled category's stance hypotheses by a zero-shot NLI
-   model (`MoritzLaurer/deberta-v3-base-zeroshot-v2.0`, `multi_label`) in a
-   resident Python worker. Exhaustive and cheap: nothing is missed because a
-   model stopped early.
-2. **WINDOW** — surviving sentences expand to the sentences around them and
-   merge, category-blind, into paragraph-sized passages. Scoring stays per
-   sentence; judging moves to the passage.
-3. **VERIFY** — one schema-constrained model call per (window, category),
-   answering exactly one question: is the author asserting this claim as
-   their own position, or reporting / quoting / questioning / arguing
-   against it? This is the stage that keeps a history of propaganda from
-   being flagged as propaganda, and nothing upstream can do it — "these
-   people are vermin" and "he called them vermin, which is monstrous" score
-   identically on the same hypothesis.
+1. **RANK** — `foundry analyze-rank`, on a small decide model on a Crucible
+   (the server's clean row, the 9B — Owen: *"9b for triage"*). Every sentence
+   of the book, in overlapping groups of three, is QUOTED in one multiple-
+   choice question over the enabled categories and "none"; the decide door
+   returns the model's probability on each answer letter, never generated text.
+   Each sentence's vector is the mean of its groups'. Exhaustive and cheap:
+   nothing is missed because a model stopped early.
+2. **VERIFY** — `foundry analyze --ranks`. The rating map becomes spans (each
+   category measured against its OWN usual level in this book, so a book about
+   a subject does not light up end to end), sections of about a long paragraph,
+   and merged verification windows; then one schema-constrained model call per
+   (window, category) answers exactly one question: is the author asserting
+   this claim as their own position, or reporting / quoting / questioning /
+   arguing against it? This is the stage that keeps a history of propaganda
+   from being flagged as propaganda, and nothing upstream can do it — "these
+   people are vermin" and "he called them vermin, which is monstrous" read
+   alike to any ranker.
 
-The verifier answers a verdict and nothing else. **There is no generated
-explanation and no severity** — the flagged passage IS the finding, and the
-ranker's window score is the only ordering. Inventing a rationale would be
-fabrication; briefcase measured this and Foundry keeps the ruling.
+The verifier answers a verdict **and its reason** — one or two sentences on
+what the author says and why that is or is not the claim (briefcase's v4
+prompt; Owen, 2026-09-25: *"the side panel should show the reasoning"*). The
+schema puts the verdict first, so the reason explains the call rather than
+steering it. **There is still no severity.** Only the flags are findings
+(Owen: *"confirmed only"*); every verdict, flag or skip, is stored as the cache.
 
 ---
 
-## 2. The engine: `analyze`
+## 2. The engine: `analyze-rank`, then `analyze`
 
-A new command in the house shape (`src/commands.ts` conventions: shared
+Two commands in the house shape (`src/commands.ts` conventions: shared
 `OptionSpec`s, stderr = progress, stdout = the result path, exit 2 before
 work, exit 1 after):
 
 ```
-foundry analyze --book <key.book.jsonl> --out <report.jsonl>
-                    [--categories <cats.json>]
-                    [--model <name>] [--endpoint <url>] [--server <openai|ollama|anthropic>]
-                    [--nli-python <path>] [--fresh]
+foundry analyze-rank --book <key.book.jsonl> --out <ranks.json>
+                     --endpoint <crucible base url> --model <decide model>
+                     [--categories <cats.json>]
+
+foundry analyze --book <key.book.jsonl> --ranks <ranks.json> --out <report.jsonl>
+                [--categories <cats.json>]
+                [--model <name>] [--endpoint <url>] [--server <openai|ollama|anthropic>]
+                [--concurrency <n>] [--fresh]
 ```
 
-**There is no sensitivity flag, and that is a ruling, not an omission**
-(Owen, 2026-08-25): *"it flags absolutely anything that could possibly match
-and then we have a button that displays things that match strictly (only
-turn up a few options), a moderate filter, or a very loose filter."* The run
-captures ONCE at the widest calibrated net; strictness is a display-time
-filter over the stored scores (§8), so changing it costs a click, never a
-re-run. briefcase's per-run sensitivity ladder exists because it re-runs;
-Foundry's report remembers, so the knob would be a knob whose good value is
-known (ARCHITECTURE.md §5) — the good value is "everything, once".
+**There is no sensitivity flag and no display tier.** The run ranks every
+sentence, verifies every ranked window and reports what the verifier flagged.
+(The Strict / Moderate / Loose tiers of 2026-08-25 sliced a report that kept
+every verdict and an entailment score; they went with the entailment ranker.)
 
-- `--book` is the book file (`docs/BOOK-FILE.md`) — read, never written.
-  Loaded with `parseBookFile`; the rows analysed are `shelf === undefined`
-  and prose-category (`Text`, `Quote`, `List-item`, `Caption`, `Footnote`,
-  `Section-header`, `Title` — the translate set minus furniture).
-- `--nli-python` names the interpreter for the NLI worker, env fallback
-  `FOUNDRY_NLI_PYTHON`. **Not** `FOUNDRY_VLM_PYTHON` — that name means the
-  PyMuPDF/MLX interpreter and overloading it would be wrong. No PATH search,
-  same as `resolvePython`: a miss names every candidate tried.
-- `--model` absent on `--server openai` means the model the server holds (it
-  holds one; the served id is used and written into the report header); absent
-  on `--server ollama` it is REFUSED by name, because an Ollama holds a
-  library. `--endpoint` absent means `backend.endpointUrl` from settings on the
-  OpenAI door and `http://localhost:11434` on the Ollama one — the setting is
-  not consulted there, since it names an OpenAI-compatible URL. Owen's *"27b is
-  the standard we'll use for every task"* is what the app's settings start
-  from, not a fallback here.
-- Progress on stderr, counting finished, monotonic:
-  `analyze: rank <n>/<m> sentences`, `analyze: verify <n>/<m>
-  (<category>)`. The result path is the last line on stdout.
+- `--book` is the book file (`docs/BOOK-FILE.md`) — read, never written, by
+  BOTH commands, through one reader (`readProse`, src/analyze/prose.ts): rows
+  with `shelf === undefined` and a prose category (`Text`, `Quote`,
+  `List-item`, `Caption`, `Footnote`, `Section-header`, `Title` — the
+  translate set minus furniture), cut into sentences (§3).
+- `--categories` must be the same file for both; the rank file records which
+  questions were asked (`optionSetVersion`) and `analyze` refuses one asked
+  about a different list, one made from another bank, or one whose units do
+  not match the book it is handed — each by name.
+- `analyze-rank --endpoint` is the Crucible's BASE address and `--model` the
+  resident decide model; the credential comes from `FOUNDRY_ENDPOINT_HEADERS`.
+  It never loads a model: the app places and leases it. The book is cut into
+  chunks that fit the context the model is LOADED at, read off the server's
+  `/v1/models` (§4); a server that does not say is refused.
+- `analyze --model` absent on `--server openai` means the model the server
+  holds; absent on `--server ollama` it is REFUSED by name. `--endpoint`
+  absent means `backend.endpointUrl` on the OpenAI door and
+  `http://localhost:11434` on the Ollama one.
+- Progress on stderr, counting finished, monotonic: `analyze: rank <n>/<m>`
+  (units) from the first, `analyze: verify <n>/<m> (<category>)` from the
+  second. The result path is the last line on stdout.
 
-**Runtime honesty:** ranking a book is minutes; verification is one model
-call per surviving (window, category) and can be an hour on a hot book. The
-report file is therefore written with `records.ts` discipline — appended and
-fsynced as each verdict lands, question-keyed so a re-run pays only for what
-changed, replaced only via pending-swap. A run killed at 400/456 keeps 399.
+**Runtime honesty:** ranking a book is a few minutes on the 9B; verification is
+one model call per ranked (window, category) and can be an hour on a hot book.
+The report is written with `records.ts` discipline — every verdict appended
+and fsynced as it lands, question-keyed so a re-run pays only for what changed,
+replaced only via pending-swap. A run killed at 400/456 keeps 399. The rank
+file is written whole at the end of its run.
+
+---
 
 ---
 
@@ -227,13 +240,13 @@ Two things are Ollama's alone. **`num_ctx` is pinned once for the whole stage**
 (`stageNumCtx`), sized from the longest prompt, because Ollama reloads the model
 on any change to it and these prompts differ only by passage length — the OpenAI
 door is told no window at all and the log line does not claim one. And **the
-model is unloaded when the run ends**, success or failure, in the same `finally`
-that stops the NLI worker.
+model is unloaded when the run ends**, success or failure, in the run's
+`finally`.
 
 `--model` may be omitted on the OpenAI door — the served id is used and written
-into the report header — and is required on Ollama. **The NLI ranker is a
-resident Python worker and none of this reaches it**: the ranking half of a run
-costs exactly what it always cost.
+into the report header — and is required on Ollama. **The ranking is
+`analyze-rank`'s and none of this reaches it**: it speaks only the Crucible
+decide door (§4).
 
 ## 3. Sentences — the first segmenter in the project
 
@@ -243,184 +256,182 @@ segmenter — **TS-side, in `src/analyze/`**, offsets `[start, end)` into
 `BookRow.text`, the same shape as `parts[].chars`. The locator is measured
 from source structure; no model ever emits one.
 
-The split rule is briefcase's, calibrated with the 0.7 threshold:
+The split rule is briefcase's (`assembleSentences`, which its snap ranker still
+builds its units from):
 `/[.!?]+["')\]]*(?=\s|$)/g` — terminal marks, optional closing quote/paren,
 followed by whitespace or end. Trailing text with no terminal mark is a
 sentence too. Whitespace inside a block is already normalised by the reflow;
 the segmenter does not rewrite anything, it only measures.
 
-The numeric axis downstream (window expansion caps, merge gaps) was tuned in
-seconds against 3–6 s spoken sentences. It ports as **words, not seconds**:
-the 40 s merged-window cap was "a paragraph, 100–130 spoken words", so the
-book constants are word-count equivalents, named and argued at declaration,
-retunable when the first reference books are audited.
+The numeric axis downstream (span merge gaps, section sizes, window expansion
+caps, merge gaps) was tuned in seconds against spoken sentences. It ports as
+**words, not seconds**, through ONE declared rate, 3.25 words a second
+(`WORDS_PER_SECOND`, rank.ts): the 40 s merged-window cap was "a paragraph,
+100–130 spoken words", and the top of that range against the 40 s is the rate.
+briefcase-mac-1 suggested 2.5 (150 wpm) for the snap port; one rate for every
+converted constant was kept instead. Every conversion is named and argued at
+its declaration, retunable when the first reference books are audited.
 
 ---
 
-## 4. The NLI worker — a resident subprocess, the first one
+## 4. The ranker — briefcase's snap flag ranker on a Crucible's decide door
 
-`src/analyze/nli-bridge.ts` + `src/analyze/nli_worker.py`. The existing
-`bridge.ts` seam is batch (stdin closed after config); this worker is
-resident: line-delimited JSON requests in, line-delimited responses out,
-stdin stays open, EOF is the shutdown, SIGKILL after 2 s the backstop.
+`src/analyze/snap.ts` (the half that needs the card) and `src/analyze/spans.ts`
+(the half that does not). The entailment worker it replaced — `nli-bridge.ts`,
+`nli_worker.py`, the `nli-*` environments — is deleted.
 
-Wire contract (briefcase's, kept verbatim so measurements transfer):
+- **Units** (`buildUnits`, briefcase's `unitsFromSentences`): the §3 sentences,
+  a sentence under 4 words folded into the next (ContentStudio's
+  `min_words=4`), a unit over 60 words cut into ~30-word pieces. briefcase's
+  30-second run-on cap is dropped: it is 98 words at the declared rate, so the
+  60-word cap always bound first. Each unit records the sentences it came
+  from and its position in WORDS from the start of the prose.
+- **Chunks** (`planChunks`, briefcase's `planFlagChunks`): one chunk up to the
+  single-chunk ceiling, else equal cores with overlap context each side,
+  every unit owned by exactly one core. briefcase's ceiling is 16k / 12k / 2k
+  tokens on a scorer it loads at 32k itself; Foundry does not load the model,
+  so the plan keeps those proportions and scales them to what the server says
+  the model is loaded at, less 4096 for the legend, frame and a question
+  (`chunkBudget`). A 9B loaded without a stated context comes up at 16,384
+  (Crucible's manifest `context_default`), giving 12,288 / 9,216 / 1,536; at a
+  32k load it is briefcase's plan exactly. Tokens are estimated at chars/3.6.
+- **State and questions** — briefcase's 'prefix' layout, its default: the
+  chunk's units one per line, a blank line, then `Categories (the options in
+  the questions below):` and one `- <category>: <line>` per category plus
+  `- none: None of these: ordinary talk about something else`. Groups of 3
+  units, stride 2 (consecutive groups share one unit), 64 questions per
+  request, each QUOTING its passage (units clipped to 300 characters):
+  `Passage from the text above: "…"` / `Which of the categories listed above
+  does the author do in this passage?` — briefcase's words with this port's
+  one systematic rewrite (author, not speaker; text, not transcript). Options
+  are the category ids with their titles ("Political demonization"), then
+  `none`; option order is letter order, which is why an integer-like category
+  name is refused (a JSON object would reorder it).
+- **The wire** (the shared `backend/decide-door.ts`, which cleanup triage uses
+  too): `POST <crucible>/v1/decide` with `missing: "report"`, `503
+  chat_queue_full` waited out, transport failures retried five times. Each
+  answer is read as briefcase's `floorAnswer` reads it: a label outside the
+  engine's top-K (`missing_labels`) gets the tighter of two upper bounds the
+  answer itself proves, never under ln 1e-12, and the row is renormalised; an
+  answer with under **1%** of its mass on the letters is read as no evidence
+  (uniform) and counted.
+- **The rating map** is written to the rank file (`foundry-analysis-rank/v1`):
+  units, the per-unit mean vectors `[...categories, none]`, label mass, the
+  chunk plan, the model and the loaded context — kept whole so spans can be
+  re-derived with other numbers without the card.
+- **Spans** (spans.ts, briefcase's `flag-spans.ts`): baseline per category =
+  min(0.5, its median over the book); evidence = rise above it as a share of
+  the headroom; hotness = the unit's strongest evidence; a two-state Viterbi
+  (switch cost 0.5 nats, τ −1: an isolated unit opens a span at hot > 0.5, a
+  span extends at > 0.27, one cold unit breaks it at < 0.12); runs merged
+  category-blind across ≤ 1 unit or ≤ 16 words; per span the categories within
+  0.34 of the top one's evidence; strength Σ log(1 − s_c), so two categories
+  at 0.9 outrank one at 0.97. A span over **293 words** (briefcase's 90 s) is
+  cut at its quietest boundary into sections of at least **65 words** (20 s),
+  recursively, a lull with no category left dropped. Then every (section,
+  category) goes through rank.ts's `buildWindows` — unchanged from the
+  entailment port — and the windows are verified strongest first.
+- **No verify budget.** briefcase caps verifier calls at max(20, 60 × hours)
+  and stores the rest unverified; Foundry verifies every window.
 
-- worker → `{"ready": true, "device": "cpu", "model": "...", "revision": "<sha>"}`
-  once the model is loaded; ready timeout 180 s.
-  - `device` is always `cpu` since 2026-09-17. A step wanting a GPU belongs to
-    Crucible, so the one that stays local is the one that needs no card —
-    `pick_device()` carries the ruling.
-  - `revision` is the commit those weights were resolved from, or `null` when
-    transformers did not stamp one. A model id is a NAME and a Hub repo is
-    mutable; the host records this beside the id and re-scores when it changes,
-    because `rankKey` hashes the name and cannot see weights moving under it.
-- host → `{"id": n, "texts": [...], "hypotheses": [...]}`
-- worker → `{"id": n, "progress": k}` per internal chunk — foundry's one
-  addition to briefcase's wire: it moves the queue bar every few seconds and
-  re-arms the response timeout, which therefore measures SILENCE rather than
-  the length of the book (a flat per-request deadline was quietly a cap on
-  book size).
-- worker → `{"id": n, "scores": [[...], ...]}` — row-major texts ×
-  hypotheses, raw per-hypothesis probabilities (`multi_label`, rows do not
-  sum to 1); or `{"id": n, "error": "...", "trace": "..."}` — the traceback
-  rides in the response because the host echoes worker stderr only during
-  the model load.
-- **The transformers pipeline returns labels sorted by score; the worker
-  must re-map to input hypothesis order before emitting.** This is the one
-  place a reimplementation silently breaks, so it is said here and in the
-  worker.
-- The worker duplicates fd 1 and reassigns stdout to stderr for everything
-  but the protocol writer (`vlm_page.py`'s hardening, kept) and runs with
-  `HF_HOME` under the worker dir, `HF_HUB_OFFLINE=1`,
-  `TRANSFORMERS_OFFLINE=1` — an analysis never blocks on a network fetch; a
-  missing model refuses by name and at once.
-
-The worker source is embedded at build time (`import ... with {type:
-'text'}` + a `.d.ts` shim, `bun build --compile` requirement) and
-materialised to tmp by content hash, like `vlm_page.py`.
-
-**No fallback.** briefcase degrades to the old discovery pass when the
-worker is missing; Foundry's §8 ruling (ARCHITECTURE.md — fallbacks are bugs
-with a delay on them) says no: a missing worker env ends the run with the
-exact candidate list that was tried and what to install. A worker that dies
-mid-run ends the run the same way; the report keeps every verdict that
-landed, and a re-run reuses them.
+**No fallback.** A Crucible with no decide model, a model not resident, a
+server that will not say its loaded context — each ends the run by name.
 
 ---
 
-## 5. Plan, thresholds, verify — the measured constants
+## 5. Categories and the verifier — the carried constants
 
-Ported verbatim from `nli-ranker.service.ts` (lines cited in the source),
-with one systematic rewrite: hypotheses phrase the **author**, not the
-speaker — *"The author asserts that…"* — because a book is not a transcript.
-The propositional form is the load-bearing part and is kept: a hypothesis is
-a proposition the sentence can entail, never an analyst's description of the
-act, never a bare noun-matcher (the rejected forms and their false-positive
-scores are quoted beside the hypotheses in briefcase; the port carries the
-lesson, not the corpse).
-
-- Tuned categories carried over: political-demonization, hate, conspiracy,
-  dehumanization (5 hypotheses), violence, false-prophecy,
-  **christian-nationalism** (3 hypotheses), prosperity-gospel, extremism,
-  political-violence. `misinformation` stays excluded — measured 19/20
-  verified false positives; entailment cannot rank it.
-- **The hypothesis template is the pipeline's default** ("This example is
-  {}."), because that is the configuration every ported threshold was
-  calibrated against — briefcase's own worker marks it "do not clean this
-  up; changing the template silently moves the threshold." The port briefly
-  shipped the bare template on readability reasoning and was corrected
-  against the real worker on the Mac (2026-08-25); the rank cache key was
-  bumped so no bare-template score survives as an answer.
-- Owen's book categories that have no tuned hypothesis yet — **anti-evolution
-  / science denial** (the JW material), and the Project 2025 /
-  authoritarian-blueprint family — enter as description-backed categories
-  (the untuned fallback shape) with first-draft hypotheses in the
-  propositional form, and are flagged in the report as untuned. Tuning
-  against reference books is the follow-up work, indexed in PLAN.md.
-- **Capture floor 0.2, rescue floor 0.15, fixed** — briefcase's widest
-  sensitivity, run unconditionally, because the tiers are applied at display
-  time (§8) and a score below the loosest tier is a score nobody can ask
-  for. The measured ladder 0.9 / 0.7 (calibrated) / 0.5 / 0.35 / 0.2 becomes
-  the DISPLAY tiers, not run parameters. Rescue rule intact at the floor:
-  ≥2 categories at ≥0.15 on a sentence nothing else claimed — the 0.15
-  clamp is load-bearing (measured in briefcase: without it the widest
-  setting "rescued" everything at 0.008).
-- Sliding window 3, stride 1; window dedupe highest-score-first; expansion
-  ±2 sentences under the word-cap; merge gap 1 sentence, category-blind,
-  merged cap ~the-paragraph constant (§3); noisy-OR window score
-  `1 − Π(1 − sᵢ)`; ordering by `Σ log(1 − s)` because the noisy-OR
-  saturates in float64.
-- Verify: the briefcase prompt with "speaker" → "author", passage = the
-  window's sentences, one call per (window, category), **sequential and in
-  DESCENDING window-score order** — the strict tier's findings are verified
-  first, so a run interrupted an hour in has already finished the findings
-  most worth trusting, and the append-as-landed report makes them readable
-  before the loose tail is done. **Every candidate is verified and every
-  verdict is stored** — `flag` and `skip` both — because the loosest display
-  tier shows the skips (ghosted, labelled as the verifier's rejection)
-  rather than hiding them; a person hunting for "almost everything" is owed
-  the net's whole contents, told honestly which fish the verifier threw
-  back. The `VERIFICATION_EMPHASIS` ladder is NOT ported: it existed to
-  lean one re-run's verdicts, and with verdicts stored once the calibrated
-  prompt (briefcase's level 2, the deliberately empty emphasis) is the only
-  one asked. Temperature 0, answer budget a small constant — never
-  translate's `answerBudget`, which would grant a verdict thousands of tokens.
-  Schema-constrained (`{"verdict": "flag"|"skip"}`) — measured 9/10 recall at
-  2.9 s/call vs 6/10 at 20.3 s unconstrained, under the serial server this
-  engine no longer speaks to, where the thinking-model trap put the answer in
-  a `thinking` field. On the one door the trap's shape is a leading `<think>`
-  block, which `withoutThinking` strips. An unreadable answer is a skip and a
-  warning, never a flag: an unreadable answer must not be able to accuse
-  anybody. The thinking switch for the qwen3 family and the served-model
-  preflight are `transport.ts`'s and `vllm.ts`'s rulings; there is no unload
-  at the end, because the operator owns what is resident (docs/VLLM.md §5).
+- **The scorer's lines** are briefcase's `SNAP_OPTION_TEXTS`, verbatim (they
+  name an act with no subject, so they read of an author as of a speaker),
+  for the ten tuned categories: political-demonization, hate, conspiracy,
+  dehumanization, violence, false-prophecy, christian-nationalism,
+  prosperity-gospel, extremism, political-violence. A scorer reads a
+  category's DESCRIPTION as content, so it never sees one of those.
+- **The propositions** the verifier tests are briefcase's `FLAG_PROPOSITIONS`
+  with "the author" for "the speaker" — unchanged from the entailment port.
+- **Owen's two book categories** — anti-evolution and authoritarian-blueprint
+  — have lines written for the port in briefcase's style (Owen, 2026-09-25:
+  *"write one line for each in briefcase's style"*) and are `tuned: false`,
+  named untuned in the report. **A category the user writes** is ranked by the
+  first sentence of its description (≤ 140 characters, briefcase's
+  `customOptionText`) and verified against the whole of it, untuned.
+- `misinformation` stays excluded — measured 19/20 verified false positives
+  under the entailment ranker, and briefcase's snap ranker skips it by default
+  for the same reason. At most 25 categories (26 letters, one for none).
+- **Verify**: briefcase's v4 prompt (`flag-verify/v4-justified`) with "speaker"
+  → "author" and "Transcript passage." → "Passage from a book." (a transcript
+  is a false premise about a book), versioned here as
+  `foundry-verify/v4-justified-2026-09-25`. One call per (window, category),
+  passage = the window's sentences joined by newlines, DISPATCHED strongest
+  first. Schema-constrained `{"verdict": "flag"|"skip", "reason": string}`,
+  verdict first — measured 9/10 recall at 2.9 s/call constrained vs 6/10 at
+  20.3 s unconstrained, which is why there is no opt-out. Temperature 0; the
+  answer budget is 512 tokens, room for the sentence and the object. The
+  parser is briefcase's `parseVerification`: the verdict by regex, the reason
+  from the object around it, prose as the reason when a door answered without
+  the schema. A call that fails, hits the ceiling or carries no verdict is
+  **not a finding and is not stored**, so the next run asks again; a stage
+  where every call failed refuses rather than writing a clean-looking report.
+  The `VERIFICATION_EMPHASIS` ladder is not ported: one grader, the measured
+  one.
 
 ---
 
 ## 6. The report — a step's payload
 
-`analysis/<stepId>.jsonl` in the project (a new layer beside `ops/` and
-`curations/`), the payload of a new ledger step:
+`analysis/<stepId>.jsonl` in the project, the payload of a ledger step,
+**format 2** (2026-09-25; format 1, the entailment ranker's, is refused whole
+by the engine and by the app's reader):
 
 - **Step action `analysis`**, child of the step it was run against — Owen's
   ruling verbatim. Retention `expensive` (a model pass; re-runnable but
-  hours). Params carry what was asked (categories, model) — sorted
-  consciously against `MINTED_BY_THE_RUN`.
-- Header line first, rows after, **no timestamp anywhere in the body path**
-  (same input, same bytes): the header carries the book's `source.bankSha`
-  and generation, the NLI model id AND the commit it resolved to
-  (`nliRevision`, absent when unknown), the hypothesis-set version, the verify
-  model, the capture floor, and `hues` + `names` — each category's display hue
-  and display name, so the report owns its display facts on any device
-  (`categoryHue`/`CATEGORY_NAMES` in plan.ts; the app's shared table is their
-  named mirror; a custom category's name is the label its author typed).
-  Labels are display-only and deliberately outside `hypothesisSetVersion` —
-  relabelling changes no question a score answered. A loader that finds a changed bank refuses by
-  name — a report keyed to `b12-3` is only meaningful against the bank that
-  minted it.
-- One row per **candidate** window — verified or not: `{ id, start, end,
-  category, also: [...], score, verdict: 'flag' | 'skip', sentences: n }` —
-  `id` is the block id (`b<page>-<order>[-<part>]`), `start`/`end` are
-  `[start, end)` character offsets into that row's `text` as the book file
-  carries it, `category` the primary (highest-scoring category the verifier
-  flagged, or highest-scoring outright when it flagged none), `also` the
-  other flagged categories of the window. The verdict rides every row
-  because the display tiers slice on `(verdict, score)` and the loosest tier
-  shows the skips. A window spanning blocks carries one row per block it
-  touches, sharing a `hit` ordinal so the app can light them as one finding.
-- Cache rows (rank scores, verdicts) live in the same file under their own
-  `kind`, question-keyed (hash over sentence text ∥ NLI model ∥ hypothesis
-  set ∥ threshold, and passage ∥ category ∥ verify model ∥ prompt), so a
-  re-run against an edited book re-pays only the edited blocks.
+  hours). Params carry what was asked (categories, model).
+- Header line first, rows after, **no timestamp anywhere in the body path**:
+  the book's `source.bankSha` and generation; `ranker: "snap-v1"`; `decide`
+  (the ranking model as the door named it); `options` (`optionSetVersion`);
+  `spans` (`spanParamsVersion`, the numbers the map was read with); `verify`
+  (the verifying model); `prompt` (`VERIFY_PROMPT_VERSION`); `categories`,
+  `untuned`, and `hues` + `names` so the report owns its display facts on any
+  device. A loader that finds a changed bank says so rather than lighting the
+  wrong paragraphs.
+- One row per **flagged** window per block it touches: `{ kind: 'finding',
+  hit, id, start, end, category, reason, also: [...], alsoReasons: [...],
+  score, sentences }` — `id` the block id, `start`/`end` `[start, end)`
+  character offsets into that row's text as the book file carries it,
+  `category` the strongest flagged category, `reason` the verifier's for it,
+  `also` the other flagged categories with `alsoReasons` in the same order,
+  `score` the primary category's evidence in the window (recorded, not
+  sliced on). A window spanning blocks writes one row per block, sharing a
+  `hit` ordinal so the app lights them as one finding. A window the verifier
+  rejected entirely writes no row.
+- Cache rows: `{ kind: 'verdict', key, verdict, reason }`, key = sha256 over
+  `foundry-analysis-verdict-2` ∥ verify model ∥ category ∥ passage ∥ prompt.
+  Flags AND skips, so a re-run against an edited book re-pays only the
+  edited passages.
+- **This header is a cross-repo contract** (BookForge reads it directly and
+  refuses on a missing field). Format 2 is announced to BookForge before it
+  ships, and reaches them with the `app/` re-vendor, which carries the engine
+  bundle (`app/engine/foundry-engine.cjs`).
+- The rank file (`<report>.rank.json`, `analysisRankFileFor`) is the pair's
+  scratch: written by the ranking row, read by the analysis row, removed when
+  the analysis lands, kept on any other ending so a Retry of the analysis
+  does not pay the card for the ranking again.
 
 ---
 
 ## 7. The app: the step, the queue, the panel
 
+- **An analysis is two queue rows, pressed as one** (2026-09-25):
+  `analysis-rank` on the decide act — placed on the server's `clean` row, the
+  model a cleanup's triage runs on, leased as decide (`placeJob`) — and
+  `analysis` on the analysis class, waiting behind it (`Job.after`). Both are
+  held, pinned together to the server the dialog chose, and released together
+  by Start; the dialog draws the ranking's bar, then the check's. A ranking that
+  fails takes the analysis with it. `enqueueAnalysis` answers both rows,
+  `enqueueTriagedCleanup`'s shape. The rank row lands no step.
 - `'analysis'` joins `STEP_ACTIONS` (one array, union derived — the capture
   lesson), `JobKind`, and `JOB_RESOURCE` as **gpu** (the model holds the card,
-  translate's reason). Lane wording added to the shelf. Two new progress
+  translate's reason); `'analysis-rank'` is a `JobKind` on the gpu lane too. Lane wording added to the shelf. Two new progress
   phases — `rank` and `verify` — in `JobProgress` and `parseProgressLine`,
   where pattern order is load-bearing (insert carefully) and the stage word
   the pattern already matched on is CAPTURED. It was one phase, `analyze`,
@@ -433,19 +444,17 @@ lesson, not the corpse).
   path (main owns names), `family:verb`, `ipcMain.handle`, and
   `docs/IPC-CHANNELS.md` regenerated in the same commit.
 - Launch from the action menu beside Translate, a small dialog in the
-  translate-dialog shape: category checklist, model + endpoint text inputs
-  defaulted from `app/shared/pipeline.ts` — no sensitivity control, because
-  strictness is the panel's filter (§8), not the run's. Enqueued held, like
-  everything expensive. **No unapplied guard**: the run reads the book file
+  translate-dialog shape: category checklist and the server to run on — no
+  sensitivity control, because there is no strictness to choose (§2).
+  Enqueued held, like everything expensive. **No unapplied guard**: the run reads the book file
   and writes a report; it consumes no rendering (the sweep's rule, decided
   explicitly).
 - **The checklist can be added to** (Owen, 2026-08-25: *"maybe the user can
   add more categories - even one-sentence descriptive ones. and they check off
   which ones they want to search for in this document."*). A category the user
-  writes is a NAME and ONE SENTENCE; the sentence IS the hypothesis, wrapped by
-  `describedHypothesis` and marked untuned, which is the door
-  description-backed categories have always come through (§5, and the two
-  built-in book categories entered by it). Two facts, two homes: WHAT
+  writes is a NAME and ONE SENTENCE; the sentence IS the question — its first
+  sentence the ranker's line (`customOptionText`), the whole of it the
+  verifier's claim — and the category is marked untuned (§5). Two facts, two homes: WHAT
   CATEGORIES EXIST is the reader's and persists app-level in
   `app-settings.json` (`AppSettings.analysisCategories`, beside the library
   folder) so it reaches every book on the machine; WHICH ONES ARE TICKED is
@@ -458,7 +467,7 @@ lesson, not the corpse).
   than refusing, which is `app-settings.json`'s own philosophy, and the dialog
   does the refusing in sentences because a clamp is the wrong answer to
   somebody who has just typed something).
-- **Free text still never reaches a hypothesis by accident**, and the old
+- **Free text still never reaches a model's question by accident**, and the old
   sentence needed a new true form rather than a quiet deletion. A typed name
   becomes a category ONLY by being saved through main's door, where it is
   slugged and checked; `workspace:plan-analysis` then admits a name only if
@@ -471,8 +480,9 @@ lesson, not the corpse).
   (`analysisCategoryName`), so a report naming a category that has since been
   deleted renders in full, colour and all.
 - The categories file main writes beside the report
-  (`<report>.categories.json`) carries `{name, enabled}` and, for a user's own
-  category, `description`. Three fields and no more: `parseCategoriesJson`
+  (`<report>.categories.json`, read by BOTH rows of the pair) carries
+  `{name, enabled}` and, for a user's own category, `description` and `label`.
+  Four fields and no more: `parseCategoriesJson`
   REFUSES an entry carrying a field it does not read, so anything this app
   grew on its own request shape would end the run the day it was added.
 - Jobs land via `landStep` under the standing step. Hosted world routes
@@ -492,20 +502,11 @@ lesson, not the corpse).
   ghosting struck ones, and reporting hits whose offsets no longer land as
   **sentences on the load, not a refusal to open** (the `unplaced`
   precedent). Hit keys are `${id}#${start}`.
-- **The strictness filter is three buttons on the panel** — Owen's ruling
-  (2026-08-25) verbatim in §2. They slice the stored `(verdict, score)`;
-  nothing re-runs:
-  - **Strict** — verifier-flagged findings at score ≥ 0.9. "Only turn up a
-    few options": the near-certain entailments.
-  - **Moderate** — verifier-flagged at score ≥ 0.7, briefcase's calibrated
-    default. The set a default briefcase run would have produced.
-  - **Loose** — everything the net caught, down to the 0.2 capture floor,
-    including windows the verifier skipped — drawn ghosted and labelled as
-    the verifier's rejection (reported speech, quotation, argument against),
-    the same shown-but-inert treatment struck rows get. "Matches almost
-    everything", and honest about which of it the verifier threw back.
-  The tier is session display state, not persisted, not a param of the step
-  — the report is the same file under every button.
+- ~~**The strictness filter is three buttons on the panel** — Strict (flagged,
+  score ≥ 0.9), Moderate (flagged, ≥ 0.7), Loose (everything, skips ghosted).~~
+  **GONE, 2026-09-25, by Owen**: *"we wont have two separate categories in
+  this. confirmed only."* The report holds the flags alone, each card shows the
+  verifier's reason under its quotation, and the legend is the only filter.
 - **Highlights are runs, not overlays**: `cut()` in the book view already
   closes a run when marker coverage changes; analysis spans join the same
   cursor walk and emit a `hit` class on the run. No `innerHTML` (banned on
@@ -528,7 +529,7 @@ lesson, not the corpse).
   it unreadable"*): nothing colours a glyph, ever; the hue appears only as a
   pale stroke behind the words. One hue source (`analysisCategoryHue`), two
   treatments — the panel mixes it for charcoal, `tintOf` (book-view) mixes it
-  for cream at `hsl(H 75% 68% / .32)` for a flag and `/ .14` for a rejection —
+  for cream at `hsl(H 75% 68% / .32)` —
   so the two grounds are accommodated where they must be (lightness and alpha)
   and the identity is shared where it must be (the hue). A shared colour
   *string* would have had to be legible on both, which nothing is.
@@ -559,9 +560,10 @@ What that is, clause by clause:
   list is the flat sequence `place()` already returns, which is reading order.
   A list beside a book is read AGAINST the book, and grouping scatters one
   page's findings down five sections. Each card: the category name, the page
-  (`≈`, the sheet's own estimate mark), the score, the quotation as the body,
-  the other categories named where there are any, and the verifier's rejection
-  as a sentence where the verdict was a skip.
+  (`≈`, the sheet's own estimate mark), the quotation as the body, the
+  verifier's reason under it, and the other flagged categories named with
+  their own reasons where there are any. (Until 2026-09-25 it also carried the
+  entailment score and, under Loose, the verifier's rejection.)
 - **A HUE PER CATEGORY.** The card's left edge is a rail in
   the category's colour — the block chrome's gutter-rail idiom — and the same
   colour is the legend's dot and the card's category name. The hues are one
@@ -579,7 +581,7 @@ What that is, clause by clause:
   colour it becomes is a decision about one surface's ground — **and the paper
   now makes that decision too**, by Owen's overruling of the one-ink rule
   (§8 above and `tintOf`, book-view.component.ts).
-- **THE LEGEND IS THE FILTER.** Each category present at the current tier gets
+- **THE LEGEND IS THE FILTER.** Each category present in the report gets
   a chip — dot, name, count — and pressing it switches that category's cards
   AND its highlights on the paper off, because they are one list (`hits` is
   what the panel draws and what `litRanges` paints). This is the clause this
@@ -587,7 +589,7 @@ What that is, clause by clause:
   and not of the shown, so an empty set means everything and a report that
   grows an unfamiliar category shows it. Counts are taken BEFORE the filter, so
   a switched-off row keeps the number telling you what turning it back on
-  would bring. The three tier buttons stay above it.
+  would bring.
 - **NO BLOCK IDS.** `b151-5` is a coordinate this program keys ops and travel
   by and is not a thing a reader has any use for; the no-filenames-in-copy rule
   is read as covering it. Travel is the WHOLE CARD (a chip-sized target inside
@@ -595,10 +597,9 @@ What that is, clause by clause:
   the affordance — never a growth, which is the "rows that move under the hand"
   fault Owen ruled against on the sweep.
 - **NO TOOLTIP THAT REPEATS THE CARD.** The `also` categories are named
-  instead of counted behind a `+2`; the verifier's rejection is a sentence
-  instead of a two-word chip with the sentence hidden on hover. The three that
-  remain each say something the surface does not: what a tier means (×3), and
-  that the score is not a severity.
+  instead of counted behind a `+2`, each with its reason on the card. (The
+  tier buttons and the score, the two that carried a hover sentence of their
+  own, went with the tiers.)
 - **THE GLANCE IS CUT.** It was the one hover here that showed MORE than the
   row did, so it passes the "repeats what is on screen" test — and it goes
   anyway, because the sync below gives its job to something better: a card
@@ -652,8 +653,8 @@ What that is, clause by clause:
     not on the selected finding (paper — in `release`, so it catches only a
     plain click on the words and never a right-click, a marquee, a marker peek
     or a gutter chip, each of which returns or never reaches it; panel — one
-    listener on the list with `closest('.card')` as the test, and the tiers and
-    the legend deliberately outside it, because changing what is shown is not
+    listener on the list with `closest('.card')` as the test, and the legend
+    deliberately outside it, because changing what is shown is not
     the same act as looking away from a finding), a click that selects another,
     or **the passage scrolling off the page**. That last one IS an
     IntersectionObserver, and it is the one place one is right here: it watches
@@ -696,19 +697,21 @@ What that is, clause by clause:
 
 ## 9. Not being built, out loud
 
-- **No discovery fallback** (§4). briefcase keeps one for workerless
-  machines; Foundry refuses by name instead.
-- **No severity and no generated rationales** (§1). The passage is the
-  finding.
-- **No shipped NLI env yet.** The first cut runs against a hand-provisioned
-  interpreter named by `--nli-python` / `FOUNDRY_NLI_PYTHON` (torch +
-  transformers + the deberta weights). The `env-catalog.ts` target, release
-  assets, `doctor` tier and `env-provision.ts` rule are indexed follow-up
-  work — deferred, not forgotten.
-- **No misinformation category** — measured out in briefcase; entailment
-  cannot rank it and the verifier drowned.
-- **Hypothesis tuning for the book categories** (anti-evolution, Project
-  2025 family) is follow-up work against reference books; until then those
-  categories run description-backed and say so in the report.
+- **No discovery fallback and no local ranker** (§4). Without a Crucible that
+  serves a decide model, analysis refuses by name.
+- **No severity** (§1). The verifier's reason is shown; nothing ranks a
+  finding's badness.
+- **No verify budget and no display tier** (§4, §8). Every window is verified
+  and only the flags are shown.
+- **No chapters from the ranker.** briefcase's snap engine also outlines and
+  chapters a video; a book takes its chapters from its structure, so only the
+  flag half is ported.
+- **No misinformation category** — measured out in briefcase, and its snap
+  ranker skips it by default too.
+- **Tuning** — the span numbers (τ, λ, the 0.34 floor, the baseline, the
+  section sizes) are briefcase's plan arithmetic, unmeasured on flags even
+  there, and the book categories' lines are first drafts. Both are follow-up
+  work against reference books; the rank file keeps the rating map so the
+  spans can be re-read without the card.
 - **BookForge parity**: the deprecated BookForge analysis is not touched;
   this reaches BookForge by the normal re-vendor, later.

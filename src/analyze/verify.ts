@@ -3,35 +3,42 @@
  *
  * ── WHAT THIS STAGE IS FOR ──────────────────────────────────────────────────
  *
- * An entailment model cannot tell STANCE apart. "These people are vermin" and
- * "he called them vermin, which is monstrous" score identically on the same
- * hypothesis, because both passages are about the same proposition — one
- * asserts it and the other reports it, and nothing in the score says which.
- * That is the stage that keeps a history of propaganda from being flagged as
- * propaganda, and nothing upstream can do it.
+ * A ranker cannot tell STANCE apart. "These people are vermin" and "he called
+ * them vermin, which is monstrous" read alike to it, because both passages are
+ * about the same proposition — one asserts it and the other reports it, and
+ * nothing in a ranking says which. That is the stage that keeps a history of
+ * propaganda from being flagged as propaganda, and nothing upstream can do it.
  *
  * So every (window, category) the ranker kept gets exactly one question asked
  * about the whole passage: is the AUTHOR asserting this claim as their own
  * position, or reporting, quoting, questioning or arguing against it? The
- * answer is a verdict and nothing else. **There is no generated explanation and
- * no severity** — the flagged passage IS the finding, and inventing a rationale
- * would be fabrication (docs/ANALYSIS.md §1).
+ * answer is a verdict and the verifier's REASON for it — one or two sentences
+ * naming what the author says and why that is or is not the claim. There is
+ * still no severity.
  *
- * ── EVERY VERDICT IS STORED, INCLUDING THE SKIPS ────────────────────────────
+ * ── THE REASON IS ASKED FOR, AFTER THE VERDICT ──────────────────────────────
  *
- * briefcase discarded a "skip" — it was re-running anyway, so a rejected
- * candidate cost nothing to lose. Foundry captures once at the widest net and
- * filters at display time, and the loosest tier SHOWS the rejections, ghosted
- * and labelled as the verifier's own. A person hunting for "almost everything"
- * is owed the net's whole contents, told honestly which fish the verifier threw
- * back. So a skip is a stored answer here, not a discarded one.
+ * briefcase's v4 prompt (flag-verify/v4-justified-2026-09-24) and Owen's
+ * ruling here (2026-09-25: *"yes, side panel should show the reasoning"*). The
+ * schema puts `verdict` FIRST, so the answer is committed before the
+ * justification is written and the reason explains the call rather than
+ * steering it — the measurement below is what room to reason BEFORE answering
+ * cost.
+ *
+ * ── EVERY VERDICT IS STORED; ONLY THE FLAGS ARE FOUND ───────────────────────
+ *
+ * A skip is kept in the report's cache like a flag, so a re-run never pays for
+ * the same question twice. But the report's FINDINGS are the flags alone (Owen,
+ * 2026-09-25: *"we wont have two separate categories in this. confirmed
+ * only"*) — the ghosted rejections the loose display tier used to show are gone
+ * with the tiers.
  *
  * ── THE EMPHASIS LADDER IS DELIBERATELY NOT PORTED ──────────────────────────
  *
  * briefcase's prompt carried a `VERIFICATION_EMPHASIS` line that leaned the
  * verdict harder toward "flag" at higher sensitivities. It existed to make ONE
  * RE-RUN's verdicts looser, and Foundry does not re-run: verdicts are stored
- * once and sliced afterwards. The prompt below is briefcase's level 2 — the
+ * once and read back. The prompt below is briefcase's level 2 — the
  * CALIBRATED one, whose emphasis string is deliberately empty — and it is the
  * only one ever asked. Leaning it would mean the stored verdicts were the
  * answer to a different question from the one the report claims.
@@ -57,34 +64,42 @@ import type { Transport } from '../translate/transport.js';
 import { readGenerateAnswer } from '../translate/ollama.js';
 import { constrainedChatBody, readChatAnswer } from '../translate/vllm.js';
 import { constrainedToolBody, readMessageAnswer } from '../translate/anthropic.js';
-import type { FlagWindow, WindowCategory } from './rank.js';
+import type { WindowCategory } from './rank.js';
 
 /**
- * The schema the constrained decode carries. Two tokens, one of two values.
- * See this file's header for the measurement that makes it mandatory.
+ * The schema the constrained decode carries — briefcase's
+ * `FLAG_VERIFICATION_SCHEMA`. See this file's header for the measurement that
+ * makes the constraint mandatory, and for why `verdict` is first.
  */
 export const VERDICT_SCHEMA: Record<string, unknown> = {
   type: 'object',
   properties: {
     verdict: { type: 'string', enum: ['flag', 'skip'] },
+    reason: { type: 'string' },
   },
-  required: ['verdict'],
+  required: ['verdict', 'reason'],
   additionalProperties: false,
 };
+
+/**
+ * Which prompt asked — part of every verdict's cache key, and stamped into the
+ * report header. briefcase's `FLAG_VERIFICATION_PROMPT_VERSION` with this
+ * port's author rewrite, so it is named as its own.
+ */
+export const VERIFY_PROMPT_VERSION = 'foundry-verify/v4-justified-2026-09-25';
 
 /**
  * How much answer one verdict may generate.
  *
  * A SMALL FIXED CONSTANT, and explicitly NOT translate's `answerBudget`, which
- * sizes generation from the SOURCE — a 600-character passage would buy a
- * verdict nearly a thousand tokens to ramble in, on a question whose answer is
- * `{"verdict":"flag"}`. briefcase measured the constrained decode at 27-30
- * output tokens end to end; 128 is four times that, which is headroom rather
- * than an expectation, and it is the same floor `answerBudget` uses for a
- * one-word block. An answer that somehow hits it is reported as a degradation
- * and counted, never guessed at.
+ * sizes generation from the SOURCE. briefcase measured the bare verdict at
+ * 27-30 output tokens end to end; the reason adds one or two sentences — call
+ * it sixty to a hundred tokens — and 512 is several times the two together,
+ * which is headroom rather than an expectation. An answer that somehow hits it
+ * is reported as a degradation and counted, never guessed at: a reason cut off
+ * mid-sentence is not one to show anybody.
  */
-const VERDICT_PREDICT_TOKENS = 128;
+const VERDICT_PREDICT_TOKENS = 512;
 
 /**
  * The output budget num_ctx is SIZED from — a different number, on purpose.
@@ -158,8 +173,8 @@ export function stageNumCtx(prompts: readonly string[], model: string): number {
 /**
  * Verify ONE (window, category) pair.
  *
- * briefcase's `buildFlagVerificationPrompt` at sensitivity 2, with "speaker"
- * rewritten to "author" throughout and its opening line changed from
+ * briefcase's `buildFlagVerificationPrompt` (v4, the justified one), with
+ * "speaker" rewritten to "author" throughout and its opening line changed from
  * "Transcript passage." — the ONE change beyond the systematic rewrite, and it
  * is not optional: telling a model that a page of a book is a transcript is a
  * false premise in the first four words of the prompt.
@@ -193,39 +208,62 @@ Question: anywhere in this passage, is the author asserting or promoting that cl
 Answer "flag" if the author asserts it, endorses it, or repeats it approvingly as true.
 Answer "skip" if the author is reporting that other people make that claim, quoting it neutrally, asking about it, arguing against it, or if the passage does not make that claim at all.
 
-Respond with JSON only: {"verdict":"flag"} or {"verdict":"skip"}`;
+Then give the reason in one or two sentences: what the author says in this passage, and why that is or is not asserting the claim. Name the author's own words where they settle it.
+
+Respond with JSON only: {"verdict":"flag" or "skip","reason":"..."}`;
+}
+
+/** One verdict and the verifier's account of it. */
+export interface Verification {
+  verdict: 'flag' | 'skip';
+  /** The verifier's one or two sentences. Empty where the answer carried none. */
+  reason: string;
 }
 
 /**
- * The verdict in an answer, or null where there is none.
+ * The verdict and reason in an answer, or null where there is no verdict —
+ * briefcase's `parseVerification`.
  *
  * Regex first, then the substring XOR. The schema makes the JSON reliable, so
- * the first branch is what always fires; the second exists because a model
- * whose template inlines its reasoning can wrap the object in prose, and an
- * answer that says "flag" and nothing else is not worth throwing away over
- * punctuation. The XOR is the whole safety of that branch: text containing BOTH
- * words has not answered anything.
+ * the first branch is what always fires, and the reason comes from parsing the
+ * object it sits in; the second exists because a model whose template inlines
+ * its reasoning can wrap the object in prose, and an answer that says "flag"
+ * and nothing else is not worth throwing away over punctuation. The XOR is the
+ * whole safety of that branch: text containing BOTH words has not answered
+ * anything. In that branch the prose IS the reason, as briefcase reads it.
  *
- * NULL IS A REAL ANSWER AND THE CALLER TREATS IT AS A SKIP PLUS A WARNING,
- * NEVER AS A FLAG. An unreadable answer must not be able to accuse anybody.
+ * NULL IS A REAL ANSWER AND THE CALLER NEVER TREATS IT AS A FLAG. An
+ * unreadable answer must not be able to accuse anybody.
  */
-export function parseVerdict(text: string): 'flag' | 'skip' | null {
+export function parseVerification(text: string): Verification | null {
   if (!text) return null;
   const json = /"verdict"\s*:\s*"(flag|skip)"/i.exec(text);
-  if (json) return json[1]!.toLowerCase() as 'flag' | 'skip';
+  if (json) {
+    let reason = '';
+    try {
+      const parsed = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as { reason?: unknown };
+      if (typeof parsed.reason === 'string') reason = parsed.reason.trim();
+    } catch {
+      const quoted = /"reason"\s*:\s*"((?:[^"\\]|\\.)*)"/i.exec(text);
+      if (quoted) reason = quoted[1]!.replace(/\\"/g, '"').trim();
+    }
+    return { verdict: json[1]!.toLowerCase() as 'flag' | 'skip', reason };
+  }
 
-  const lower = text.trim().toLowerCase();
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
   const hasFlag = lower.includes('flag');
   const hasSkip = lower.includes('skip');
-  if (hasFlag && !hasSkip) return 'flag';
-  if (hasSkip && !hasFlag) return 'skip';
+  const prose = trimmed.length > 12 ? trimmed : '';
+  if (hasFlag && !hasSkip) return { verdict: 'flag', reason: prose };
+  if (hasSkip && !hasFlag) return { verdict: 'skip', reason: prose };
   return null;
 }
 
-/** What one call produced: a verdict, or the reason there is not one. */
+/** What one call produced: a verification, or the reason there is not one. */
 export interface VerdictOutcome {
-  verdict: 'flag' | 'skip' | null;
-  /** Set only where `verdict` is null — the sentence the run reports. */
+  verification: Verification | null;
+  /** Set only where `verification` is null — the sentence the run reports. */
   degraded?: string;
 }
 
@@ -259,7 +297,7 @@ export interface ConstrainedAnswer {
  * nothing is executed and nothing is handed back to the model — `tool_choice`
  * naming the tool is simply that API's way of saying "your next output is an
  * object of this shape". Its answer arrives as the tool call's `input`, and the
- * dialect re-serialises it, so what reaches `parseVerdict` below is the same
+ * dialect re-serialises it, so what reaches `parseVerification` below is the same
  * string whichever door produced it.
  *
  * WHAT DOES NOT CROSS IS `num_ctx`. It is a request option on Ollama, where
@@ -337,9 +375,9 @@ export async function askConstrained(
  *
  * The envelope, the schema and the thinking-model trap are `askConstrained`'s;
  * what is left here is the READING — and its one rule, which is the reason a
- * degradation is never allowed to be an accusation: a null verdict is recorded
- * by the caller as a skip plus a warning. A stage where EVERY call degraded is
- * the caller's problem and it refuses.
+ * degradation is never allowed to be an accusation: a null verification is
+ * never a flag, and it is not stored, so the next run asks again. A stage where
+ * EVERY call degraded is the caller's problem and it refuses.
  */
 export async function askVerdict(
   transport: Transport,
@@ -350,15 +388,15 @@ export async function askVerdict(
   const answer = await askConstrained(
     transport, server, prompt, numCtx, VERDICT_SCHEMA, VERDICT_PREDICT_TOKENS,
   );
-  if (answer.text === null) return { verdict: null, degraded: answer.degraded ?? 'no answer' };
-  const verdict = parseVerdict(answer.text);
-  if (verdict === null) {
+  if (answer.text === null) return { verification: null, degraded: answer.degraded ?? 'no answer' };
+  const verification = parseVerification(answer.text);
+  if (verification === null) {
     return {
-      verdict: null,
+      verification: null,
       degraded: `no verdict in the answer: ${answer.text.trim().slice(0, 120) || '(empty)'}`,
     };
   }
-  return { verdict };
+  return { verification };
 }
 
 /**
@@ -369,59 +407,57 @@ export async function askVerdict(
  * back-to-back flags for one moment. Emitting one finding per flagged category
  * on the same passage is that complaint in a different costume — three markers
  * stacked on the same paragraph. So the finding carries the strongest flagged
- * category and names the others in `also`; nothing is lost, because both reach
- * the panel.
+ * category and names the others in `also`, each with the verifier's reason;
+ * nothing is lost, because all of it reaches the panel.
  */
 export interface WindowFinding {
-  /**
-   * The primary: the highest-scoring category the verifier FLAGGED, or the
-   * highest-scoring category outright where it flagged none.
-   */
+  /** The highest-scoring category the verifier FLAGGED. */
   category: string;
-  /** The other flagged categories, strongest first. Empty on a skip. */
+  /** Why the verifier flagged it. */
+  reason: string;
+  /** The other flagged categories, strongest first... */
   also: string[];
+  /** ...and the verifier's reason for each, in the same order. */
+  alsoReasons: string[];
   /**
-   * The primary category's own best score — NOT the window's noisy-OR.
-   *
-   * This is the number the app's display tiers slice on (strict 0.9, moderate
-   * 0.7, loose everything), and those numbers ARE briefcase's calibrated
-   * per-category ladder, so the thing they are compared against has to be a
-   * per-category score. The noisy-OR is a different quantity with a different
-   * meaning — it saturates at 1.0000 for any window with two strong categories
-   * — and its one job is ordering the verification queue.
+   * The primary category's own score — its best evidence in the window, the
+   * ranker's s_c (spans.ts). Not the window's noisy-OR, which saturates at
+   * 1.0000 for any window with two strong categories. It orders nothing any
+   * more; it is recorded so a reader can see how hot the ranker ran here.
    */
   score: number;
-  /** What the verifier said about the window as a whole. */
-  verdict: 'flag' | 'skip';
   /** Inclusive sentence-index span the finding covers. */
   from: number;
   to: number;
 }
 
+/** A flagged category of a window, with the verifier's reason. */
+export interface FlaggedCategory {
+  category: WindowCategory;
+  reason: string;
+}
+
 /**
- * Turn one window's verdicts into its finding.
+ * Turn one window's FLAGGED categories into its finding, or null where the
+ * verifier flagged none — a window it rejected entirely is not a finding.
  *
  * THE SPAN IS MEASURED, never a fixed window: it runs from the first to the
  * last sentence that fired a FLAGGED category, and the finding is that span
  * read verbatim. Sentences that fired only a category the verifier rejected do
  * not stretch it, and the surrounding context the model was shown is not part
  * of it — a person clicking a finding lands on the words that earned it.
- *
- * A WINDOW THE VERIFIER FLAGGED NOTHING IN still becomes a row, because the
- * loosest display tier shows the rejections. There is no flagged category to
- * measure the span from, so it is measured from every category that fired: the
- * ghost covers what the ranker actually caught, which is what a person looking
- * at the loose tier is asking to see.
  */
-export function windowFinding(window: FlagWindow, flagged: readonly WindowCategory[]): WindowFinding {
-  const ranked = [...(flagged.length > 0 ? flagged : window.categories)].sort((a, b) => b.score - a.score);
+export function windowFinding(flagged: readonly FlaggedCategory[]): WindowFinding | null {
+  if (flagged.length === 0) return null;
+  const ranked = [...flagged].sort((a, b) => b.category.score - a.category.score);
   const primary = ranked[0]!;
-  const fired = ranked.flatMap((c) => c.sentenceIndices);
+  const fired = ranked.flatMap((one) => one.category.sentenceIndices);
   return {
-    category: primary.category,
-    also: flagged.length > 0 ? ranked.slice(1).map((c) => c.category) : [],
-    score: primary.score,
-    verdict: flagged.length > 0 ? 'flag' : 'skip',
+    category: primary.category.category,
+    reason: primary.reason,
+    also: ranked.slice(1).map((one) => one.category.category),
+    alsoReasons: ranked.slice(1).map((one) => one.reason),
+    score: primary.category.score,
     from: Math.min(...fired),
     to: Math.max(...fired),
   };

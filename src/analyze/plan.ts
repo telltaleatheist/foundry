@@ -1,41 +1,29 @@
 /**
- * analyze/plan — the categories, the hypotheses, and what each stage asks.
+ * analyze/plan — the categories, and what each stage asks about them.
  *
  * ── PORTED, NOT INVENTED ────────────────────────────────────────────────────
  *
- * Every tuned hypothesis below is briefcase's
- * (`backend/src/analysis/nli-ranker.service.ts`), carried over with ONE
- * systematic rewrite: they phrase the AUTHOR rather than the speaker, because a
- * book is not a transcript. Nothing else about them moves. The measurements
- * quoted in the comments were made THERE, against briefcase's two reference
- * videos, and they are attributed as such every time — nothing in this
- * repository has measured any of these numbers, and a number that changed
- * owners without saying so would be a lie the next person builds on.
+ * The ranker is briefcase's snap flag ranker (src/analyze/snap.ts), and the
+ * scorer's line for every tuned category below is briefcase's
+ * (`backend/src/scorer/flags/flag-options.ts`, `SNAP_OPTION_TEXTS`, main
+ * d80cc71), carried over VERBATIM: each is a description of an act with no
+ * subject in it ("Calls political opponents communists…"), so it reads as true
+ * of an author exactly as it read of a speaker, and there is nothing to
+ * rewrite. The propositions are briefcase's `FLAG_PROPOSITIONS` with the one
+ * systematic rewrite this port has always made — the AUTHOR rather than the
+ * speaker. Nothing in this repository has measured any of them.
  *
- * ── WHAT A HYPOTHESIS IS, AND THE TWO WRONG SHAPES ──────────────────────────
+ * ── TWO STRINGS PER CATEGORY, FOR TWO DIFFERENT READERS ─────────────────────
  *
- * A hypothesis is a PROPOSITION THE SENTENCE CAN ENTAIL. It is not a category
- * description (those are instructions written for an LLM — "ANY use of slurs —
- * flag even if quoted" — and an entailment model scores an instruction as a
- * claim about the text, which is meaningless), and it is not a noun-matcher.
- * briefcase measured both wrong shapes and the losses are quoted beside
- * `dehumanization`, where they are worst. The port carries the LESSON and not
- * the corpse: the rejected forms are named so nobody re-derives them, and only
- * the surviving propositions are ever sent.
+ * `option` is what the SCORER reads: one short, discriminating line naming the
+ * act, offered as one letter of a choice over the categories and "none". It is
+ * never a category's description — those are written as instructions to an LLM
+ * ("flag even if quoted"), and a scorer reads an instruction as content.
  *
- * A category may carry SEVERAL hypotheses and scores as the MAX across them,
- * because entailment is a per-proposition question and one category can be
- * argued in genuinely different propositions. `christian-nationalism` is the
- * case that proved it (see its comment).
- *
- * ── TWO KINDS OF QUESTION, TWO SHAPES OF STRING ─────────────────────────────
- *
- * `hypotheses` are what the NLI model scores, and they describe the author
- * doing something ("The author asserts that…"), which is the right shape for
- * entailment. `proposition` is what the VERIFIER is shown, and it is the CLAIM
- * itself, so the prompt can ask whether the author is asserting it or reporting
- * somebody else asserting it. Same category, different job, and neither string
- * is usable in the other's place.
+ * `proposition` is what the VERIFIER is shown: the CLAIM itself, so the prompt
+ * can ask whether the author asserts it or reports somebody else asserting it.
+ * Same category, different job, and neither string is usable in the other's
+ * place.
  */
 import { createHash } from 'node:crypto';
 
@@ -52,100 +40,49 @@ export interface RankPlan {
   category: string;
   /** The display name — `CategoryRequest.label`, a built-in's mirrored name, or the id. */
   label: string;
-  /** One or more stance hypotheses; a category scores as the MAX across them. */
-  hypotheses: string[];
+  /** The one line the scorer reads for this category — see this file's header. */
+  option: string;
   /** The claim the verifier tests, phrased as the thing the author would assert. */
   proposition: string;
   /**
-   * True where the hypotheses were tuned against reference material. False for
-   * the description-backed ones — the numbers in this file were not calibrated
-   * for them, so their candidate counts may be high or low, and the report says
-   * so by name in its header rather than leaving a reader to assume otherwise.
+   * True where the option line is briefcase's measured one. False for the book
+   * categories and every described one — nothing calibrated how hot their line
+   * runs, so their counts may be high or low, and the report says so by name in
+   * its header rather than leaving a reader to assume otherwise.
    */
   tuned: boolean;
 }
 
 /**
- * Stance hypotheses, one entry per built-in category, tuned in briefcase
- * against its reference videos (`calibrate-nli.py`).
+ * The scorer's line for each built-in category — briefcase's `SNAP_OPTION_TEXTS`
+ * (flag-options.ts at d80cc71), verbatim. briefcase derived them from the tuned
+ * hypotheses of the entailment ranker they replaced, collapsing a category's
+ * several hypotheses into one disjunction because a choice option holds one line.
+ *
+ * In the order a default run has always planned them, which is also the order
+ * of their letters in every question.
  *
  * `misinformation` IS ABSENT ON PURPOSE — see `MISINFORMATION_EXCLUSION`.
  */
-const HYPOTHESES: Record<string, string | string[]> = {
-  'political-demonization':
-    'The author asserts that political opponents are communists, Marxists, or enemies of the country.',
-  hate: 'The author expresses hostility or mockery toward a group based on race, religion, or identity.',
-  conspiracy: 'The author promotes a conspiracy theory as true.',
-  /*
-   * MEASURED IN BRIEFCASE, `dh-probe.js` on both reference videos. The single
-   * hypothesis below scored a MAXIMUM of 0.172 over the 12-minute political
-   * video and 0.016 over the 60-minute one — including 0.150 on "With a whole
-   * army of commies, zombies behind him", a sentence containing the literal
-   * word 'zombies'. It is phrased as a DESCRIPTION OF THE ACT ("describes
-   * people as subhuman"), which is what an analyst would write in a report; it
-   * is not how the thing is ever said out loud. So, as with
-   * christian-nationalism, the category carries several propositions and takes
-   * the max.
-   *
-   * WHAT WAS TRIED AND REJECTED IN BRIEFCASE, because a loose proposition here
-   * costs precision on ordinary political insult:
-   *
-   *   'compares a group of people to zombies, animals, or insects'  — scored
-   *     0.958 on "That's 323 death rattlers there here in San Diego" (a Marine
-   *     squadron nickname) and 0.908 on "we need those wildcatters out there"
-   *     (oil drilling). It matched animal NOUNS, not the dehumanizing move.
-   *   'refers to a group as a horde, a swarm, or a mindless mass'  — scored
-   *     0.999 on "They have pack of fools" and 0.780 on the neutral sentence
-   *     "The communists have proven they can win in coastal cities".
-   *   'attributes opponents' politics to psychological damage, guilt,
-   *     resentment, or family problems'  — scored 0.973 on "Do you blame the
-   *     parents?" in a passage about the fentanyl crisis. Naming POLITICAL
-   *     BELIEF explicitly (the surviving form below) drops that to 0.062.
-   *
-   * All five kept propositions together score, on the reference video with no
-   * dehumanizing content at all, ZERO sentences above 0.5 and ZERO windows
-   * above 0.7.
-   */
-  dehumanization: [
-    'The author describes people as subhuman, as vermin, disease, or zombies, or as mentally ill because of their politics.',
-    'The author describes a group of people as an infestation, a plague, a fever, or something spreading through the country.',
-    'The author calls a crowd of political supporters zombies or mindless followers.',
-    "The author explains opponents' politics as mental illness, derangement, or personal damage rather than sincere belief.",
-    'The author says opponents hold their political beliefs because of psychological damage, guilt, or resentment rather than reason.',
-  ],
-  violence: 'The author calls for, threatens, or glorifies violence.',
-  'false-prophecy': 'The author claims to receive communication or prophecy from God.',
-  /*
-   * MEASURED IN BRIEFCASE, `cn-probe.js` on the 60-minute reference video: the
-   * single hypothesis "Christianity should control politics or government"
-   * scored a MAXIMUM of 0.457 over 801 sentences — zero candidates at any
-   * sensitivity — on a video whose subject is prayer ministries operating
-   * inside the White House and God-ordained regime change. It reads as a claim
-   * about doctrine, and nobody says it that way out loud; what they say is
-   * "there are Christians in the White House" and "God is determined to see
-   * this happen".
-   *
-   * A category may therefore carry SEVERAL hypotheses and takes the MAX across
-   * them. These three were picked against the reference videos: on the
-   * 60-minute video they lift the category from 0 to real candidates (0.961
-   * sentence / 0.989 window), and on the 12-minute political video, which has
-   * no Christian-nationalist content at all, they score 0.025 and 0.089 max —
-   * so they do not leak into unrelated material.
-   */
-  'christian-nationalism': [
-    'The author argues that Christianity should control politics or government.',
-    'The author says Christians or the church should take authority in government or public life.',
-    'The author says God is directing the nation, its government, or its leaders.',
-  ],
-  'prosperity-gospel': 'The author asks followers for money as a religious duty.',
-  extremism: 'The author defends oppression, supremacy, or authoritarian rule.',
-  'political-violence': 'The author defends or downplays political violence.',
+const OPTION_TEXTS: Record<string, string> = {
+  'political-demonization': 'Calls political opponents communists, Marxists, or enemies of the country',
+  hate: 'Shows hostility or mockery toward a group because of race, religion, ethnicity, sexuality, or identity',
+  conspiracy: 'Presents a conspiracy theory (stolen election, deep state, a hidden plot) as true',
+  dehumanization:
+    "Describes people as vermin, disease, zombies, or less than human, or calls opponents' politics a mental illness",
+  violence: 'Calls for, threatens, or glorifies violence',
+  'false-prophecy': 'Claims God spoke to them or someone they cite, or announces a prophecy or revelation',
+  'christian-nationalism':
+    'Says Christianity or the church should run government, or that God is directing the nation or its leaders',
+  'prosperity-gospel': 'Asks followers for money as a religious duty, or promises blessing in return for giving',
+  extremism: 'Defends oppression, supremacy, ethnic cleansing, or authoritarian rule',
+  'political-violence': 'Defends or downplays a political attack, riot, or insurrection',
 };
 
 /**
  * The propositions the VERIFIER tests, phrased as the thing the author would be
  * asserting. See this file's header for why these are a different shape from
- * the hypotheses above.
+ * the option lines above.
  */
 const PROPOSITIONS: Record<string, string> = {
   hate: 'a group of people deserves hostility, contempt, or mockery because of their race, ethnicity, religion, national origin, immigration status, gender, or sexuality',
@@ -172,33 +109,27 @@ const PROPOSITIONS: Record<string, string> = {
  * The feature exists for material the reference videos never contained:
  * *"jehovahs witness anti evolution material, christian nationalist books,
  * project 2025, etc."* Christian nationalism is tuned already, above. The other
- * two have no calibrated hypothesis anywhere and are not going to acquire one
- * by being written confidently, so they enter through the SAME door a
- * user-supplied category enters by: description-backed, `tuned: false`, and
- * named as untuned in the report header (docs/ANALYSIS.md §5).
+ * two have no measured line anywhere and are not going to acquire one by being
+ * written confidently, so they are `tuned: false` and named as untuned in the
+ * report header (docs/ANALYSIS.md §5).
  *
- * They carry first-draft hypotheses rather than only a description, because the
- * description fallback ("The author's statement matches this description: …")
- * is measurably the weaker shape — it is the very form briefcase found scores
- * an instruction rather than a claim — and a first draft in the propositional
- * form is a better starting point for the tuning pass than a wrapper is.
+ * Their option lines were written for the snap port (Owen, 2026-09-25: *"write
+ * one line for each in briefcase's style"*) — an act, verb first, no subject,
+ * one disjunction — rather than taken from the first sentence of a description,
+ * which is the rule a user's own category runs on (`customOptionText`) and the
+ * weaker shape, because a description is written to an LLM and a line is written
+ * to a scorer.
  *
- * NO SCORE IS CLAIMED FOR ANY OF THEM. Nothing here has been run against a
- * reference book; tuning against real ones is the follow-up work indexed in
- * PLAN.md, and until it happens these two may produce too many candidates or
- * too few. That is why the untuned flag exists and why it reaches the report.
+ * NO SCORE IS CLAIMED FOR EITHER. Nothing here has been run against a reference
+ * book; until it has, these two may produce too many candidates or too few.
+ * That is why the untuned flag exists and why it reaches the report.
  */
 const UNTUNED_BOOK_CATEGORIES: readonly RankPlan[] = [
   {
     category: 'anti-evolution',
     label: 'Anti-evolution and science denial',
-    hypotheses: [
-      'The author asserts that evolution is false, a lie, or a deception.',
-      'The author asserts that living things were created in their present forms rather than evolving from earlier ones.',
-      'The author asserts that the earth or life on it is only a few thousand years old.',
-      'The author says that the teaching of evolution comes from Satan or leads people away from God.',
-      'The author says that scientists who accept evolution are dishonest, deceived, or serving an agenda.',
-    ],
+    option:
+      'Says evolution is false or a deception, or that life was created in its present forms on a young earth',
     proposition:
       'evolution is false and living things were created in their present forms — that the scientific '
       + 'account of origins is a lie, a deception, or satanic, and that a young earth or a special '
@@ -208,12 +139,8 @@ const UNTUNED_BOOK_CATEGORIES: readonly RankPlan[] = [
   {
     category: 'authoritarian-blueprint',
     label: 'Authoritarian blueprint',
-    hypotheses: [
-      'The author argues that career civil servants should be removed and replaced with people loyal to the leader.',
-      'The author argues that the executive should take direct control of the agencies, the courts, or criminal prosecutions.',
-      'The author argues that the checks and limits on executive power should be dismantled, ignored, or overridden.',
-      'The author says a new administration should seize control of the government immediately and remove those who resist it.',
-    ],
+    option:
+      'Argues for replacing civil servants with loyalists, or for the executive to control the agencies, courts, or prosecutions unchecked',
     proposition:
       'the executive should be staffed with loyalists in place of career civil servants, should hold '
       + 'direct control over the agencies and prosecutions, and should not be restrained by the checks '
@@ -225,11 +152,10 @@ const UNTUNED_BOOK_CATEGORIES: readonly RankPlan[] = [
 /**
  * WHY `misinformation` IS NOT RANKED — measured in briefcase, not a preference.
  *
- * Every stance hypothesis for this category degenerates to "the author makes a
- * factual assertion", because that is the only part of it an entailment model
- * can see. Whether an assertion is FALSE is a world-knowledge question, and NLI
- * has no world knowledge. briefcase's result on the reference runs
- * (`final-score.txt`):
+ * Whether an assertion is FALSE is a world-knowledge question, and a ranker
+ * that reads a book for what it SAYS can only see "the author makes a factual
+ * assertion", which is most of any book. briefcase measured it under the
+ * entailment ranker this port replaced (`final-score.txt`):
  *
  *   * long video (60 min): 169 of 205 candidates were misinformation, and 19 of
  *     the 20 verified false positives were misinformation — ordinary true
@@ -238,31 +164,45 @@ const UNTUNED_BOOK_CATEGORIES: readonly RankPlan[] = [
  *     unconstrained arm misinformation ATE two real flags by outranking their
  *     true category on the same sentence.
  *
- * So ranking it costs a verifier call on most sentences in the book and buys
- * false positives. briefcase kept an escape hatch to an LLM discovery pass that
- * CAN bring world knowledge to bear; Foundry has no such pass and is not
- * growing one (docs/ANALYSIS.md §9), so this category is refused outright and
- * the sentence below says why.
+ * The snap ranker keeps it out by default for the same reason (briefcase's
+ * `buildFlagPlan`, "parity with NLI"); it runs there only as an eval arm, and
+ * Foundry has no eval arm. So this category is refused outright and the
+ * sentence below says why.
  */
 const MISINFORMATION_EXCLUSION =
-  'misinformation is not rankable by entailment — it degenerates to "makes a factual assertion", and '
-  + 'whether an assertion is false is world knowledge an entailment model does not have. Measured in '
-  + 'briefcase against its reference videos: 169 of 205 candidates and 19 of 20 verified false '
-  + 'positives were this one category.';
+  'misinformation is not ranked — whether an assertion is false is world knowledge, and a ranker that '
+  + 'reads for what a book says sees only "makes a factual assertion". Measured in briefcase against '
+  + 'its reference videos: 169 of 205 candidates and 19 of 20 verified false positives were this one '
+  + 'category.';
 
 /** The category name that is refused rather than ranked. See above. */
 export const EXCLUDED_CATEGORY = 'misinformation';
 
+/** The option key for "none of these" — briefcase's `NONE_KEY`. No category may be called it. */
+export const NONE_KEY = 'none';
+
 /**
- * The wrapper an untuned, description-only category is ranked through.
- *
- * It is briefcase's fallback with the author rewrite, and it is the WEAK shape
- * on purpose: it exists so that a category somebody added by hand still gets
- * scored rather than silently dropped, and the report names it untuned so
- * nobody reads its counts as calibrated.
+ * At most this many categories: the door's letters run A..Z, and one of the
+ * twenty-six is "none". briefcase's `MAX_FLAG_CATEGORIES`.
  */
-export function describedHypothesis(description: string): string {
-  return `The author's statement matches this description: ${description}`;
+export const MAX_CATEGORIES = 25;
+
+/** A custom category's line: the first sentence of its description, clipped to this. */
+const CUSTOM_OPTION_MAX_CHARS = 140;
+
+/**
+ * The line a described category is ranked by — briefcase's `customOptionText`:
+ * the first sentence of the description, clipped. A description is usually
+ * written as an instruction to an LLM, and its first sentence is the closest
+ * thing to a description of an act it carries. The report names the category
+ * untuned so nobody reads its counts as calibrated.
+ */
+export function customOptionText(description: string, maxChars = CUSTOM_OPTION_MAX_CHARS): string {
+  const text = description.replace(/\s+/g, ' ').trim();
+  const m = /^.*?[.!?](?=\s|$)/.exec(text);
+  let first = (m ? m[0] : text).trim();
+  if (first.length > maxChars) first = first.slice(0, maxChars - 1).trimEnd() + '…';
+  return first;
 }
 
 /** One category as a caller may ask for it — the `--categories` file's shape. */
@@ -270,24 +210,31 @@ export interface CategoryRequest {
   name: string;
   /** False turns a built-in off. Absent means on. */
   enabled?: boolean;
-  /** Required for a name with no tuned hypotheses, unless `hypotheses` is given. */
+  /**
+   * Required for a name this program has no line for. It becomes the
+   * proposition the verifier tests, and its first sentence the line the scorer
+   * reads (`customOptionText`).
+   */
   description?: string;
-  /** Overrides the built-in hypotheses, or supplies them for a new category. */
-  hypotheses?: string[];
   /**
    * The words a person reads for this category — carried into the report's
    * `names` header so every device shows the label the asker chose, exactly.
    * Absent, a built-in gets its mirrored display name and anything else is
    * shown as its id. Display only: it is deliberately OUTSIDE
-   * `hypothesisSetVersion`, because relabelling a category does not change the
-   * question a single score answered.
+   * `optionSetVersion`, because relabelling a category does not change the
+   * question a single answer answered.
    */
   label?: string;
 }
 
 /** Every built-in category name, in the order a default run plans them. */
 export function builtInCategories(): string[] {
-  return [...Object.keys(HYPOTHESES), ...UNTUNED_BOOK_CATEGORIES.map((c) => c.category)];
+  return [...Object.keys(OPTION_TEXTS), ...UNTUNED_BOOK_CATEGORIES.map((c) => c.category)];
+}
+
+/** A JS object lists integer-like keys first — briefcase's `integerLike`, for the door's reason. */
+function integerLike(key: string): boolean {
+  return /^(0|[1-9]\d*)$/.test(key) && Number(key) < 4294967295;
 }
 
 /**
@@ -326,63 +273,56 @@ export function buildPlan(requested: readonly CategoryRequest[] | null, log: (li
       log(`analyze: the category "${EXCLUDED_CATEGORY}" is not ranked — ${MISINFORMATION_EXCLUSION}`);
       continue;
     }
+    /*
+     * THE NAME IS AN ANSWER KEY ON THE WIRE, and two names cannot be. "none" is
+     * the letter every question keeps for "none of these"; an integer-like name
+     * would be moved to the front of the options object by any JSON reader, and
+     * the letters would silently stop meaning what the question listed.
+     */
+    if (name.toLowerCase() === NONE_KEY) {
+      throw new AnalysisPlanError(
+        `a category cannot be called "${name}": every question the ranker asks keeps that name for `
+        + '"none of these", and a category under it would be read as the absence of every category.',
+      );
+    }
+    if (integerLike(name)) {
+      throw new AnalysisPlanError(
+        `a category cannot be called "${name}": the ranker's options travel as a JSON object, and a key `
+        + 'that looks like a number is moved to the front of it — its letter would stop being the '
+        + 'category the question listed.',
+      );
+    }
 
-    const asked = request.hypotheses?.map((one) => one.trim()).filter((one) => one.length > 0);
-    const tunedHypotheses = HYPOTHESES[name];
+    const tuned = OPTION_TEXTS[name];
     const untunedBuiltIn = UNTUNED_BOOK_CATEGORIES.find((one) => one.category === name);
     const description = (request.description ?? '').replace(/\s+/g, ' ').trim();
     const label = (request.label ?? '').trim() || CATEGORY_NAMES[name] || name;
 
-    if (asked !== undefined && asked.length > 0) {
-      /*
-       * HAND-WRITTEN HYPOTHESES WIN AND ARE NEVER CALLED TUNED. They may be
-       * better than the built-in ones — that is what the tuning pass will
-       * produce — but nothing has measured them, and the report's untuned list
-       * is the only place a reader learns which counts to trust.
-       */
-      plan.push({
-        category: name,
-        label,
-        hypotheses: asked,
-        proposition: description.length > 0
-          ? description
-          : untunedBuiltIn?.proposition ?? PROPOSITIONS[name] ?? describedHypothesis(name),
-        tuned: false,
-      });
-      continue;
-    }
-
-    if (tunedHypotheses !== undefined) {
-      plan.push({
-        category: name,
-        label,
-        hypotheses: Array.isArray(tunedHypotheses) ? tunedHypotheses : [tunedHypotheses],
-        proposition: PROPOSITIONS[name]!,
-        tuned: true,
-      });
+    if (tuned !== undefined) {
+      plan.push({ category: name, label, option: tuned, proposition: PROPOSITIONS[name]!, tuned: true });
       continue;
     }
 
     if (untunedBuiltIn !== undefined) {
-      plan.push({ ...untunedBuiltIn, hypotheses: [...untunedBuiltIn.hypotheses], label });
+      plan.push({ ...untunedBuiltIn, label });
       continue;
     }
 
     if (description.length === 0) {
       throw new AnalysisPlanError(
-        `the category "${name}" is not one this program has hypotheses for, and it was given neither `
-        + 'a description nor hypotheses of its own. There is nothing to score a sentence against, and '
-        + 'a category that scored nothing would sit in the report reading as "nothing in this book '
-        + 'matched it".',
+        `the category "${name}" is not one this program has a line for, and it was given no `
+        + 'description. There is nothing to rank a sentence against, and a category that scored '
+        + 'nothing would sit in the report reading as "nothing in this book matched it".',
       );
     }
-    plan.push({
-      category: name,
-      label,
-      hypotheses: [describedHypothesis(description)],
-      proposition: description,
-      tuned: false,
-    });
+    const option = customOptionText(description);
+    log(
+      `analyze: "${name}" has no measured line, so the ranker reads the first sentence of its `
+      + `description (${JSON.stringify(option)}) and the report names it untuned.`,
+    );
+    // The whole description is the proposition, as it always was, so the
+    // verifier tests the claim the person wrote rather than its first sentence.
+    plan.push({ category: name, label, option, proposition: description, tuned: false });
   }
 
   if (plan.length === 0) {
@@ -391,29 +331,32 @@ export function buildPlan(requested: readonly CategoryRequest[] | null, log: (li
       + 'would say the book is clean, which is a claim nothing measured.',
     );
   }
+  if (plan.length > MAX_CATEGORIES) {
+    throw new AnalysisPlanError(
+      `${plan.length} categories are enabled and the ranker can ask about at most ${MAX_CATEGORIES}: `
+      + 'every question is one letter per category, the letters run A to Z, and one of them is '
+      + '"none of these". Turn some off.',
+    );
+  }
 
   /*
-   * TWO CATEGORIES CANNOT SHARE A HYPOTHESIS STRING, and this is the check that
-   * keeps the worker honest. The NLI worker maps the pipeline's score-sorted
-   * labels back to input order BY THE LABEL TEXT (`nli_worker.py`), so two
-   * identical hypotheses are one label with one score, and the second category
-   * would silently inherit the first's number for the whole book. Caught here,
-   * where the sentence can name both categories, rather than in Python where it
-   * can only name a string.
+   * TWO CATEGORIES CANNOT SHARE A LINE. The scorer is shown both as two letters
+   * of one question with the same words beside them, and it splits its belief
+   * between them however it likes — the two would share the evidence and one of
+   * them would be reported for the other's. Caught here, where the sentence can
+   * name both categories.
    */
   const owner = new Map<string, string>();
   for (const entry of plan) {
-    for (const hypothesis of entry.hypotheses) {
-      const already = owner.get(hypothesis);
-      if (already !== undefined) {
-        throw new AnalysisPlanError(
-          `the categories "${already}" and "${entry.category}" are asking the same question, word for `
-          + `word: "${hypothesis}". The scorer answers one question once, so the two would share a `
-          + 'score and one of them would be reported for the other\'s evidence.',
-        );
-      }
-      owner.set(hypothesis, entry.category);
+    const already = owner.get(entry.option);
+    if (already !== undefined) {
+      throw new AnalysisPlanError(
+        `the categories "${already}" and "${entry.category}" are asking the same question, word for `
+        + `word: "${entry.option}". The ranker would offer them as two letters with one meaning, and `
+        + 'one of them would be reported for the other\'s evidence.',
+      );
     }
+    owner.set(entry.option, entry.category);
   }
 
   return plan;
@@ -424,8 +367,8 @@ export function buildPlan(requested: readonly CategoryRequest[] | null, log: (li
  *
  * EVERY REFUSAL NAMES THE ENTRY. A categories file is written by hand, and the
  * failure it is going to have is a typo in a field name — which, accepted
- * silently, means a hand-written hypothesis that never reached the model and a
- * run that cost an hour and looked fine. So an unknown field is an error, not a
+ * silently, means a hand-written line that never reached the model and a run
+ * that cost an hour and looked fine. So an unknown field is an error, not a
  * thing that is ignored.
  */
 export function parseCategoriesJson(text: string, where: string): CategoryRequest[] {
@@ -441,7 +384,7 @@ export function parseCategoriesJson(text: string, where: string): CategoryReques
       + 'categories: [{"name":"hate"}, {"name":"my-topic","description":"…"}]',
     );
   }
-  const known = new Set(['name', 'enabled', 'description', 'hypotheses', 'label']);
+  const known = new Set(['name', 'enabled', 'description', 'label']);
   const out: CategoryRequest[] = [];
   for (const [index, raw] of parsed.entries()) {
     const at = `${where}, category ${index + 1}`;
@@ -450,6 +393,15 @@ export function parseCategoriesJson(text: string, where: string): CategoryReques
     }
     const entry = raw as Record<string, unknown>;
     for (const key of Object.keys(entry)) {
+      if (key === 'hypotheses') {
+        // Its own sentence, because it was a real field until 2026-09-25 and a
+        // file written for the entailment ranker is the one that will carry it.
+        throw new AnalysisPlanError(
+          `${at} carries "hypotheses", which the entailment ranker read and the snap ranker that replaced `
+          + 'it does not. Give the category a "description": its first sentence is what the ranker reads '
+          + 'and the whole of it is what the verifier tests.',
+        );
+      }
       if (!known.has(key)) {
         throw new AnalysisPlanError(
           `${at} carries a field called "${key}", and a category is made of ${[...known].join(', ')}. `
@@ -469,17 +421,10 @@ export function parseCategoriesJson(text: string, where: string): CategoryReques
     if (entry['label'] !== undefined && typeof entry['label'] !== 'string') {
       throw new AnalysisPlanError(`${at}: "label" is a string — the display name a reader sees`);
     }
-    const hypotheses = entry['hypotheses'];
-    if (hypotheses !== undefined) {
-      if (!Array.isArray(hypotheses) || hypotheses.some((one) => typeof one !== 'string')) {
-        throw new AnalysisPlanError(`${at}: "hypotheses" is a list of strings`);
-      }
-    }
     out.push({
       name: entry['name'],
       ...(entry['enabled'] !== undefined ? { enabled: entry['enabled'] as boolean } : {}),
       ...(entry['description'] !== undefined ? { description: entry['description'] as string } : {}),
-      ...(hypotheses !== undefined ? { hypotheses: hypotheses as string[] } : {}),
       ...(entry['label'] !== undefined ? { label: entry['label'] as string } : {}),
     });
   }
@@ -487,31 +432,26 @@ export function parseCategoriesJson(text: string, where: string): CategoryReques
 }
 
 /**
- * The hypothesis set, as one short hex string — the report header's version of
- * what this run asked.
+ * The plan's questions, as one short hex string — what the rank file and the
+ * report header say this run asked.
  *
- * ── WHY THE SET NEEDS A NAME AT ALL ─────────────────────────────────────────
+ * A rank file is the scorer's answers to "which of THESE does this passage do",
+ * and the question includes every line that was a letter in it. Change one word
+ * of one line and every stored answer is an answer to a question nobody is
+ * asking any more. So the set is hashed, the hash is stamped into the rank file
+ * and the report, and `analyze` refuses a rank file whose set is not the one it
+ * is about to verify.
  *
- * A cached rank score is the answer to "what does this sentence entail",
- * and the question includes every hypothesis that was in the column list.
- * Change one word of one hypothesis and every stored score is an answer to a
- * question nobody is asking any more. So the set is hashed, the hash goes in
- * every cache key and in the header, and a report from an older set is legible
- * as such rather than quietly reused.
- *
- * The category NAME and the tuned flag are in the digest as well as the
- * strings: two plans with the same hypotheses under different names produce
- * different reports, so they are different questions.
- *
- * Sixteen hex — eight bytes — for `bankSha`'s reason: far past accidental
- * collision for the handful of plans that will ever exist, and short enough to
- * read in a header.
+ * The category NAME, the tuned flag and the proposition are in the digest as
+ * well as the line: two plans with the same lines under different names produce
+ * different reports, so they are different questions. Sixteen hex — eight bytes
+ * — for `bankSha`'s reason.
  */
-export function hypothesisSetVersion(plan: readonly RankPlan[]): string {
+export function optionSetVersion(plan: readonly RankPlan[]): string {
   const NUL = String.fromCharCode(0);
-  const fields: string[] = ['foundry-analysis-hypotheses-1'];
+  const fields: string[] = ['foundry-analysis-options-1'];
   for (const entry of plan) {
-    fields.push(entry.category, entry.tuned ? 'tuned' : 'untuned', entry.proposition, ...entry.hypotheses);
+    fields.push(entry.category, entry.tuned ? 'tuned' : 'untuned', entry.option, entry.proposition);
   }
   return createHash('sha256').update(fields.join(NUL), 'utf8').digest('hex').slice(0, 16);
 }

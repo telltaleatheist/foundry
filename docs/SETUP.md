@@ -416,10 +416,10 @@ the three answers are genuinely different.
 Pulled by **ollama**, on request, during setup. Progress on screen. Ollama's
 store, ollama's business.
 
-### The analysis model (`MoritzLaurer/deberta-v3-base-zeroshot-v2.0`)
+### ~~The analysis model (`MoritzLaurer/deberta-v3-base-zeroshot-v2.0`)~~
 
-**Inside the environment tarball.** See §8. First analysis is offline because
-there is nothing left to fetch.
+**Gone, 2026-09-25.** Analysis ranks on a Crucible's decide model now
+(docs/ANALYSIS.md §4), so there are no analysis weights on this machine to fetch.
 
 ### The reading model (`dots.ocr`) — REWRITTEN 2026-09-13
 
@@ -502,77 +502,13 @@ If (1) fails, the F16 pair in the same repo (3.56 GB + 2.53 GB) is the next thin
 to try, and the two file names are two constants at the top of
 `app/electron/page-reader.ts`.
 
-## 8. The analysis-worker environment
+## 8. ~~The analysis-worker environment~~ — removed 2026-09-25
 
-Two new catalog entries, `nli-windows-x64` and `nli-mac-arm64`, alongside the
-three reading environments. Same release (`env-v1`), same layout, same
-sha256-or-refusal rule.
-
-```
-python/
-  foundry-env.json          the manifest AND the marker
-  python.exe                (windows) or bin/python3 (mac)
-  Lib/site-packages/
-    sitecustomize.py        points HF_HOME at the cache below
-    torch/ transformers/ …
-  hf-cache/                 the DeBERTa weights, ~380 MB
-```
-
-**Why the weights are baked in.** `src/analyze/nli_worker.py` runs with
-`HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`, deliberately, so a missing model
-fails in a second instead of an hour into an analysis. An environment that
-shipped only torch and transformers would install perfectly and then refuse the
-first book with a sentence about a cache the user has never heard of.
-
-**How the worker finds the cache.** `sitecustomize.py` in site-packages, imported
-by `site` at interpreter startup — the only moment early enough, because
-huggingface_hub reads `HF_HOME` once at import and freezes the paths it derives.
-It computes the cache from `sys.prefix`, so the path is correct wherever the
-archive was unpacked, and it uses `setdefault` — somebody who exports `HF_HOME`
-because they keep one shared cache for every tool on the machine has said
-something, and an environment overriding it would download a second copy of every
-model they own.
-
-**No symlinks survive in the archive.** huggingface_hub keeps one copy under
-`blobs/` and links `snapshots/` at it; the app unpacks with the system tar, and
-on Windows a symlink in the stream is a privilege error that fails the install
-for everyone. So the build flattens the cache — every snapshot entry becomes a
-real file, `blobs/`, `.locks/` and `.no_exist/` are deleted — and then **re-loads
-the model offline from the flattened cache before it will tar anything.** If that
-ever stops being true the build fails there, which is the only place that failure
-is cheap.
-
-**Torch is the CPU build on Windows.** The card on a machine running foundry is
-holding the reading model or the LLM; a 2.5 GB CUDA torch would double the
-archive to contend for a card that is already busy. Scoring on the processor is
-roughly an order of magnitude slower and the worker says `"device": "cpu"` on its
-ready line, so a slow pass has a one-word explanation. On Apple silicon there is
-no such split — PyPI's macOS wheel is the Metal-capable one — so the mac target
-takes it as published and the worker picks `mps`.
-
-**Nothing is written into settings.json for these.** `EnvSpec.role` is `'nli'`,
-and the installer's configure step skips the write. `backend.python` is the
-*rasteriser*: pointing it at an interpreter with torch and no PyMuPDF would break
-every conversion on the machine, silently, at the next job, as the reward for
-installing the analysis worker. The engine finds this one **by name** instead —
-the default destination is the first entry in `defaultNliPythonCandidates()`
-(`src/analyze/nli-bridge.ts`), so an install that lands where the catalog says is
-already configured. That path is a contract between the two files and is
-commented as one on both sides.
-
-### Published state
-
-| target | asset | bytes | sha256 |
-| --- | --- | --- | --- |
-| `nli-windows-x64` | `foundry-env-nli-windows-x64-v1.tar.gz` | 528,417,092 | `3a4f32f3…f8b00d2` |
-| `nli-mac-arm64` | — | — | **null — not built** |
-
-The mac entry's null is the honest state, not an oversight:
-`tools/env/build-env.sh nli-mac-arm64` downloads a darwin-aarch64 interpreter and
-then **executes** it to install wheels and bake the weights, which no cross-build
-can do. It has to run on an Apple-silicon Mac. Until it does, `requirePublished`
-throws on that entry, the card greys it out, and nobody downloads an archive
-nobody can name the hash of.
+The `nli-windows-x64` and `nli-mac-arm64` catalog entries (torch, transformers
+and the DeBERTa weights, for the entailment ranker) are gone with the ranker:
+analysis ranks on a Crucible's decide door (docs/ANALYSIS.md §4), and the
+published v1 archives are orphaned on the release, never offered again.
+`EnvTarget` is the two reading environments.
 
 ## 9. Building and publishing an environment
 
@@ -580,8 +516,8 @@ See `docs/DEPLOYING.md` § "The Python environments" for the runbook.
 
 ## 10. Deliberately not built
 
-* **The mac analysis environment.** Needs an Apple-silicon Mac to build; the
-  script is written and the catalog entry is `null`. (§8.)
+* **~~The mac analysis environment.~~** Moot since 2026-09-25: there is no
+  analysis environment on any platform. (§8.)
 * **~~A pre-pull for `dots.ocr` on macOS.~~ DONE 2026-09-13.** The local page
   reader downloads the GGUF on every platform, macOS included, with a real
   progress bar over `page-reader:progress`. A Mac with mlx-vlm installed does not

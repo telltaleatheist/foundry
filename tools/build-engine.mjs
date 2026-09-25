@@ -53,9 +53,9 @@
  *     face, copied to `app/engine/assets/`. The same contract Bun kept (a path
  *     `fs.readFileSync` can open; see vlm/font-asset.d.ts), so the source is
  *     unchanged, and 1.4 MB of fonts stay files rather than base64 in the bundle.
- *   - `import.meta.url` → this bundle's own file URL. bridge.ts and
- *     nli-bridge.ts look for their Python helper beside the module and, not
- *     finding it, write the embedded copy out — which is the right answer here.
+ *   - `import.meta.url` → this bundle's own file URL. bridge.ts looks for its
+ *     Python helper beside the module and, not finding it, writes the embedded
+ *     copy out — which is the right answer here.
  *   - the `#!/usr/bin/env bun` line on cli.ts is dropped: this file is run by
  *     Node, never executed by name.
  */

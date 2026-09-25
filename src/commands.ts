@@ -1035,24 +1035,23 @@ const AN_MODEL: OptionSpec = {
 /** `TR_ENDPOINT`'s flag and `TR_ENDPOINT`'s reason: one question, one spelling. */
 const AN_ENDPOINT: OptionSpec = TR_ENDPOINT;
 
-const AN_NLI_PYTHON: OptionSpec = {
-  name: 'nli-python',
+/**
+ * The rank file `analyze-rank` wrote — REQUIRED, like every input here. The
+ * verify stage has nothing to verify without it, and it refuses one made from
+ * another book or another set of categories by name (src/analyze/run.ts).
+ */
+const AN_RANKS: OptionSpec = {
+  name: 'ranks',
   type: 'string',
-  placeholder: '<path>',
-  describe: 'The interpreter with torch and transformers in it. Also FOUNDRY_NLI_PYTHON.',
+  placeholder: '<ranks.json>',
+  describe: 'The rank file analyze-rank wrote for this book, with the same --categories. Required.',
 };
 
-const AN_NLI_HOME: OptionSpec = {
-  name: 'nli-home',
+const AR_OUT: OptionSpec = {
+  name: 'out',
   type: 'string',
-  placeholder: '<dir>',
-  describe: 'Where the entailment model\'s weights live (HF_HOME). Also FOUNDRY_NLI_HOME.',
-};
-
-const AN_FETCH: OptionSpec = {
-  name: 'fetch-nli-model',
-  type: 'boolean',
-  describe: 'Let the worker download the entailment model this once. Also FOUNDRY_NLI_FETCH=1.',
+  placeholder: '<ranks.json>',
+  describe: 'Where the rank file is written — the file analyze --ranks reads. Required.',
 };
 
 /**
@@ -1878,20 +1877,12 @@ async function runVlmCompile(args: ParsedArgs): Promise<void> {
 async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
   // The plumbing first — `textServer`'s rule: a typo'd --server or a missing
   // --model on Ollama is a mistake about the machine, and hearing about it
-  // before a gigabyte of entailment weights is loaded is the whole point.
+  // before the rank file is read is the whole point.
   const server = textServer(args);
   const bookPath = requireString(args, 'book', 'the book file to analyse');
+  const ranksPath = requireString(args, 'ranks', 'the rank file analyze-rank wrote for this book');
   const outPath = requireString(args, 'out', 'where the report is written');
   const categoriesPath = optionalString(args, 'categories');
-  const nliPython = optionalString(args, 'nli-python');
-  const nliHome = optionalString(args, 'nli-home');
-  /*
-   * The fetch hatch takes a flag OR an environment variable, because the two
-   * callers are different people: a person at a terminal pulling the weights
-   * once types the flag, and a machine being provisioned sets the variable in
-   * the same place it sets every other path this program reads.
-   */
-  const fetch = flag(args, 'fetch-nli-model') || process.env['FOUNDRY_NLI_FETCH'] === '1';
 
   // translate's rule and translate's sentence, because it is the same flag
   // answering the same question about the same kind of pool.
@@ -1908,17 +1899,13 @@ async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
    */
   const result = await analyzeBook({
     bookPath,
+    ranksPath,
     outPath,
     ...(categoriesPath !== undefined ? { categoriesPath } : {}),
     ...(server.model === undefined ? {} : { model: server.model }),
     endpoint: server.endpoint,
     server: server.kind,
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
-    nli: {
-      ...(nliPython !== undefined ? { python: nliPython } : {}),
-      ...(nliHome !== undefined ? { home: nliHome } : {}),
-      ...(fetch ? { fetch: true } : {}),
-    },
     fresh: flag(args, 'fresh'),
     log,
   });
@@ -1931,6 +1918,23 @@ async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
   // The result is the path, and it is the last line on stdout. Everything above
   // was progress and went to stderr.
   process.stdout.write(`${result.outPath}\n`);
+}
+
+/** `analyze-rank` — the argv layer; the pass is src/analyze/snap.ts. */
+async function runAnalyzeRankCommand(args: ParsedArgs): Promise<void> {
+  const categoriesPath = optionalString(args, 'categories');
+  const outPath = requireString(args, 'out', 'where the rank file is written');
+  const { runAnalyzeRank } = await import('./analyze/snap.js');
+  await runAnalyzeRank({
+    bookPath: requireString(args, 'book', 'the book file to rank'),
+    outPath,
+    ...(categoriesPath !== undefined ? { categoriesPath } : {}),
+    endpoint: requireString(args, 'endpoint', 'the Crucible whose decide door is asked'),
+    model: requireString(args, 'model', 'the resident decide model'),
+    log,
+  });
+  // The rank file's path is the result, and the last line on stdout.
+  process.stdout.write(`${path.resolve(outPath)}\n`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -3386,87 +3390,98 @@ export const COMMANDS: readonly Command[] = [
     run: runVlmBlocks,
   },
   {
-    name: 'analyze',
-    summary: 'Read a book against the categories: entailment ranks it, a model judges stance.',
-    usage: '--book <book.jsonl> --out <report.jsonl> [--categories <cats.json>] [--model <name>]'
-      + ' [--endpoint <url>] [--server <openai|ollama|anthropic>] [--concurrency <n>]'
-      + ' [--nli-python <path>] [--nli-home <dir>] [--fresh]',
+    name: 'analyze-rank',
+    summary: 'Rank a book for analysis: every sentence, asked of a Crucible decide model against the categories.',
+    usage: '--book <book.jsonl> --out <ranks.json> --endpoint <crucible url> --model <decide model>'
+      + ' [--categories <cats.json>]',
     detail: [
-      'THE BOOK, READ AGAINST THE CATEGORIES. Every sentence of every prose block',
-      'is scored against every category\'s stance hypotheses by a zero-shot',
-      'entailment model; the sentences that survive are grown into',
-      'paragraph-sized passages; and each passage is put to a model with',
-      'exactly one question — is the AUTHOR asserting this claim as their own',
-      'position, or reporting, quoting, questioning or arguing against it?',
+      'THE FIRST HALF OF AN ANALYSIS. The book\'s prose is cut into sentences, a',
+      'sentence under four words is read with the one after it, and every three',
+      'consecutive units — each three sharing one unit with the next — are QUOTED',
+      'in one multiple-choice question over the categories and "none": which of',
+      'these does the author do in this passage? The book is the state the',
+      'questions are asked over, one unit per line with the categories written',
+      'once after it, so a Crucible\'s decide door reads each stretch of it once.',
+      'The answers are probabilities, never generated text, and every unit\'s is',
+      'the mean of its groups\'. They are written to --out as a rank file.',
       '',
-      'THAT LAST STAGE IS THE POINT. "These people are vermin" and "he called',
-      'them vermin, which is monstrous" score identically on the same hypothesis,',
-      'because both passages are about the same proposition. Nothing upstream can',
-      'tell them apart, and without the question a history of propaganda is',
-      'flagged as propaganda.',
+      'analyze --ranks <that file> is the second half: it turns the scores into',
+      'passages and puts each one to a model. The two must be given the same book',
+      'and the same --categories; analyze refuses a rank file that was not.',
+      '',
+      'PORTED FROM BRIEFCASE\'S SNAP FLAG RANKER, which replaced the entailment',
+      'ranker there and replaced it here (2026-09-25). The book is cut into chunks',
+      'that fit the context the model is loaded at, read off the server.',
+      '',
+      'The model must already be resident: the app places this run on the decide',
+      'act, loaded and leased, and releases it after. This never loads a model.',
+      'A busy door (chat_queue_full) is waited out; a model that is not resident is',
+      'refused by name.',
+    ].join('\n'),
+    options: [AN_BOOK, AR_OUT, AN_CATEGORIES, CTR_ENDPOINT, CTR_MODEL],
+    run: runAnalyzeRankCommand,
+  },
+  {
+    name: 'analyze',
+    summary: 'Verify a ranked book against the categories: a model judges each passage\'s stance and says why.',
+    usage: '--book <book.jsonl> --ranks <ranks.json> --out <report.jsonl> [--categories <cats.json>]'
+      + ' [--model <name>] [--endpoint <url>] [--server <openai|ollama|anthropic>] [--concurrency <n>]'
+      + ' [--fresh]',
+    detail: [
+      'THE SECOND HALF OF AN ANALYSIS. analyze-rank scored every sentence of the',
+      'book against the categories; this reads its rank file, grows the hot',
+      'stretches into paragraph-sized passages — each category measured against',
+      'its own usual level in this book, so a book about a subject does not light',
+      'up from end to end — and puts each passage to a model with exactly one',
+      'question: is the AUTHOR asserting this claim as their own position, or',
+      'reporting, quoting, questioning or arguing against it? The model answers',
+      'with a verdict and one or two sentences saying why.',
+      '',
+      'THAT QUESTION IS THE POINT. "These people are vermin" and "he called them',
+      'vermin, which is monstrous" are about the same proposition, and nothing',
+      'that only ranks can tell them apart; without the question a history of',
+      'propaganda is flagged as propaganda.',
       '',
       'NOTHING MATCHES A QUOTATION TO ANYTHING. Every finding is a block name and',
       'a pair of character offsets into that block\'s own text, measured from the',
       'book file. No model ever emits a location, and a report is only meaningful',
       'against the bank that minted the names, which the header records.',
       '',
-      'THE VERDICT IS THE WHOLE ANSWER. There is no generated explanation and no',
-      'severity: the passage IS the finding, and a rationale invented for it',
-      'would be a fabrication. The ranker\'s score is the only ordering.',
-      '',
-      'THERE IS NO SENSITIVITY DIAL, and that is a decision rather than an',
-      'omission. The run captures once at the widest calibrated net — anything',
-      'that could possibly match — and every candidate is verified and every',
-      'verdict stored, the rejections included. Strictness is a filter applied',
-      'when the report is READ, so changing your mind about it costs a click',
-      'rather than an hour.',
-      '',
-      'WHAT IT NEEDS. A server at --endpoint holding the model, which foundry',
-      'never starts, stops or pulls — on --server openai the operator makes it',
-      'resident first, on --server ollama it is a tag that has to be pulled',
-      'already, and on --server anthropic it is a model name the key can reach;',
-      'and a Python with torch, transformers and the',
-      'MoritzLaurer/deberta-v3-base-zeroshot-v2.0 weights, named with',
-      '--nli-python or FOUNDRY_NLI_PYTHON. There is no PATH search: a miss prints',
-      'every path that was tried. The weights live under --nli-home (or',
-      'FOUNDRY_NLI_HOME, or an HF_HOME you have already set, or foundry\'s own',
-      'config directory), and the worker runs OFFLINE — an analysis never blocks',
-      'on a network fetch, so a missing model refuses in a second rather than an',
-      'hour in. Pass --fetch-nli-model ONCE to let it download them; every run',
-      'after that is offline again.',
+      'CONFIRMED FINDINGS ONLY. Every passage is verified and every verdict is',
+      'stored, but a passage the verifier rejected is not a finding: the report',
+      'holds the flags, each with the verifier\'s reason.',
       '',
       'WHICH ROWS. The flowing prose: text, title, section-header, quote,',
       'footnote, caption and list-item. Shelved rows are out — a running head is',
       'not in the book the reader sees — and so are figures, formulae and tables,',
       'which have no sentences in them.',
       '',
-      'WHICH CATEGORIES. Ten tuned against reference material, plus two book',
+      'WHICH CATEGORIES. Ten with briefcase\'s measured lines, plus two book',
       'categories that are FIRST DRAFTS and say so: anti-evolution and',
       'authoritarian-blueprint. The report names every untuned category in its',
       'header, because their counts may be high or low and a reader deciding what',
       'to trust needs to know which is which. `misinformation` is refused',
       'outright and the refusal explains itself: whether an assertion is FALSE is',
-      'world knowledge, which an entailment model does not have.',
+      'world knowledge, which a ranker reading for what a book says does not have.',
       '',
       '--categories takes a JSON list that REPLACES the built-in set:',
-      '[{"name":"hate"},{"name":"my-topic","description":"…","hypotheses":["The',
-      'author asserts that …"]}]. A hypothesis is a PROPOSITION a sentence can',
-      'entail, never an instruction to a reader and never a list of words to',
-      'match. A field this program does not read is an error rather than',
-      'something ignored.',
+      '[{"name":"hate"},{"name":"my-topic","description":"…"}]. A category of',
+      'your own is ranked by the first sentence of its description and verified',
+      'against the whole of it. A field this program does not read is an error',
+      'rather than something ignored.',
       '',
       'IT REMEMBERS WHAT IT PAID FOR. The report is its own cost cache: every',
-      'score and every verdict is filed under a hash of the question that',
-      'produced it, appended and fsynced as it lands, so a run that is killed',
-      'keeps everything but the call in flight and a re-run against an edited',
-      'book pays only for the edited blocks. The findings are replaced whole at',
-      'the end, by a rename, so nothing anybody paid for is destroyed until its',
-      'replacement is on the disk. --fresh asks everything again into a file that',
-      'takes the report\'s place only when the run finishes.',
+      'verdict is filed under a hash of the question that produced it, appended',
+      'and fsynced as it lands, so a run that is killed keeps everything but the',
+      'call in flight and a re-run against an edited book pays only for the edited',
+      'passages. The findings are replaced whole at the end, by a rename, so',
+      'nothing anybody paid for is destroyed until its replacement is on the',
+      'disk. --fresh asks everything again into a file that takes the report\'s',
+      'place only when the run finishes.',
       '',
-      'RUNTIME HONESTY: ranking is minutes and verification can be an hour on a',
-      'hot book. Passages are verified STRONGEST FIRST, so a run you interrupt',
-      'has already finished the findings most worth trusting.',
+      'RUNTIME HONESTY: verification can be an hour on a hot book. Passages are',
+      'verified STRONGEST FIRST, so a run you interrupt has already finished the',
+      'findings most worth trusting.',
       '',
       'THREE KINDS OF SERVER. --server openai (the default) asks each verdict of an',
       'OpenAI-compatible server with the schema as response_format, and that',
@@ -3486,12 +3501,11 @@ export const COMMANDS: readonly Command[] = [
       'single FORCED TOOL CALL whose input_schema is that same schema — the same',
       'grammar-constrained decode in a third spelling — with --model REQUIRED,',
       `${DEFAULT_CLOUD_CONCURRENCY} in flight, and a 429 or a 529 waited out rather than`,
-      'read as a dead server. The NLI ranker is a Python worker and is untouched',
-      'by any of this.',
+      'read as a dead server. The ranking is analyze-rank\'s and is untouched by',
+      'any of this.',
     ].join('\n'),
     options: [
-      AN_BOOK, AN_OUT, AN_CATEGORIES, AN_MODEL, AN_ENDPOINT, LLM_SERVER, AN_CONCURRENCY,
-      AN_NLI_PYTHON, AN_NLI_HOME, AN_FETCH, AN_FRESH,
+      AN_BOOK, AN_RANKS, AN_OUT, AN_CATEGORIES, AN_MODEL, AN_ENDPOINT, LLM_SERVER, AN_CONCURRENCY, AN_FRESH,
     ],
     run: runVlmAnalyze,
   },

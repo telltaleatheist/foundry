@@ -74,32 +74,31 @@ of `/releases/latest` on purpose so BookForge's engine updater never sees them.
 Bumping the app's version does not republish an environment, and rebuilding an
 environment does not make a release.
 
-Five targets today (`app/electron/env-catalog.ts`):
+Two targets today (`app/electron/env-catalog.ts`; `wsl-x64` is still a
+`build-env.sh` target but no longer a catalog entry, docs/SLOTS.md §6):
 
 | target | what it is for | built on |
 | --- | --- | --- |
 | `windows-x64` | PyMuPDF, the rasteriser every tier needs | any bash on Windows |
-| `wsl-x64` | vLLM, the reading server | a WSL distro |
 | `mac-arm64` | mlx-vlm + PyMuPDF | an Apple-silicon Mac |
-| `nli-windows-x64` | torch + transformers + the DeBERTa weights | any bash on Windows |
-| `nli-mac-arm64` | the same, MPS-capable | an Apple-silicon Mac |
+
+The `nli-windows-x64` / `nli-mac-arm64` pair (torch, transformers and the
+DeBERTa weights for the entailment ranker) was removed on 2026-09-25 with the
+ranker; analysis ranks on a Crucible's decide door now (docs/ANALYSIS.md §4).
 
 **Each target must be built on a machine that can EXECUTE its interpreter.** The
 build downloads a python-build-standalone tarball and then runs it to install
-wheels; there is no cross-build. That is why `nli-mac-arm64` has a `null` sha256
-in the catalog today — it is written and unbuilt, and the null makes that a
-visible refusal rather than a quiet gap (`docs/SETUP.md` §8).
+wheels; there is no cross-build.
 
 ```
-# 1. build — prints bytes + sha256, and for an nli target verifies the model
-#    loads OFFLINE and drives one request through src/analyze/nli_worker.py
-tools/env/build-env.sh nli-windows-x64 /tmp/nli-env
+# 1. build — prints bytes + sha256
+tools/env/build-env.sh windows-x64 /tmp/env
 
 # 2. upload — the .tar.gz (or its .partN slices) plus the .json testimony
-tools/env/upload-env.sh nli-windows-x64 /tmp/nli-env
+tools/env/upload-env.sh windows-x64 /tmp/env
 
 # 3. THE STEP NOTHING AUTOMATES: copy the numbers from
-#    /tmp/nli-env/foundry-env-<target>-v1.json into ENV_ASSETS
+#    /tmp/env/foundry-env-<target>-v1.json into ENV_ASSETS
 #    (app/electron/env-catalog.ts) and commit.
 ```
 

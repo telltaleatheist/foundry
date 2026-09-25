@@ -516,7 +516,9 @@ starts from the right mechanism.
 
 - **analyze's NLI ranker is untouched.** It is a resident Python worker with its
   own model and its own lifecycle; none of this reaches it, and the ranking half
-  of a run costs exactly what it always cost.
+  of a run costs exactly what it always cost. (Since 2026-09-25 the ranker is a
+  Crucible decide pass, `analyze-rank` — docs/ANALYSIS.md §4 — and still none
+  of this reaches it.)
 - **The 27B is unmeasured.** The 9B has now been measured (§9) and the 27B has
   not: it is a 21 GB 4-bit build on a 24 GB card, so its batch depth is the open
   question, and every number about it in this file is arithmetic rather than a

@@ -1,42 +1,42 @@
 /**
  * analyze/report — the run's product, and its own cost cache.
  *
- * ── ONE FILE, THREE KINDS OF LINE ───────────────────────────────────────────
+ * ── ONE FILE, TWO KINDS OF LINE ─────────────────────────────────────────────
  *
- * JSONL, header first, `records.ts` discipline throughout. Three kinds of row
+ * JSONL, header first, `records.ts` discipline throughout. Two kinds of row
  * live in it and every one declares its `kind`:
  *
- *   `finding`  what the analysis FOUND — one row per candidate window per block
+ *   `finding`  what the analysis FOUND — one row per flagged window per block
  *              it touches, carrying the block's id, the exact characters, the
- *              category, the score and the verifier's verdict.
- *   `rank`     one text's per-category scores, keyed by the question that
- *              produced them. The cost cache for the NLI passes.
- *   `verdict`  one (passage, category)'s answer, keyed the same way. The cost
- *              cache for the Ollama stage, which is the expensive one.
+ *              category and the verifier's reason. Flags only: a window the
+ *              verifier rejected is not a finding (Owen, 2026-09-25,
+ *              confirmed only).
+ *   `verdict`  one (passage, category)'s answer — flag OR skip, with its
+ *              reason — keyed by the question. The cost cache for the verify
+ *              stage, which is the expensive one.
+ *
+ * The ranker's answers are not in here. They are the rank file `analyze-rank`
+ * writes (snap.ts), made on another model in another process, and `analyze`
+ * reads it whole; what this file caches is what `analyze` itself pays for.
  *
  * ── WHY THE CACHE LIVES IN THE PRODUCT ──────────────────────────────────────
  *
- * Ranking a book is minutes; verifying it is one Ollama call per surviving
- * (window, category) and can be an hour. A run killed at 400 of 456 must keep
- * 399, and a re-run against a book somebody edited one paragraph of must pay
- * for one paragraph. Both fall out of `bank.ts`'s arrangement: every answer is
- * filed under a hash of the QUESTION, so an unchanged sentence has an unchanged
- * key and is never asked again — and a changed one cannot accidentally match,
- * because its key is different.
+ * Verifying a book is one model call per (window, category) and can be an
+ * hour. A run killed at 400 of 456 must keep 399, and a re-run against a book
+ * somebody edited one paragraph of must pay for one paragraph. Both fall out of
+ * `bank.ts`'s arrangement: every answer is filed under a hash of the QUESTION,
+ * so an unchanged passage has an unchanged key and is never asked again — and a
+ * changed one cannot accidentally match, because its key is different.
  *
- * The keys are the contract's (docs/ANALYSIS.md §6): a rank row is keyed over
- * the text, the NLI model, the hypothesis set and the capture floor; a verdict
- * row over the passage, the category, the verify model and the prompt. The
- * capture floor is a CONSTANT of this engine now rather than a dial, so it is
- * in the key as a format tag rather than as a partition — it can only change
- * when the code changes, and when it does every stored score should indeed be
- * re-asked under a name that says so.
+ * The key is the contract's (docs/ANALYSIS.md §6): the passage, the category,
+ * the verify model and the prompt — and the prompt carries the proposition and
+ * `VERIFY_PROMPT_VERSION`'s wording, so a reworded prompt re-asks everything.
  *
  * ── APPENDED AS IT LANDS, REPLACED ONLY BY SOMETHING THAT EXISTS ────────────
  *
  * Cache rows are appended and fsynced the moment an answer is accepted — never
- * at the end of a pass, never at the end of the run. What a kill costs is the
- * one call in flight.
+ * at the end of the stage, never at the end of the run. What a kill costs is
+ * the one call in flight.
  *
  * The FINDINGS cannot work that way, because a re-run produces a new set and an
  * appended file would accumulate both. So at the end the whole file is composed
@@ -69,6 +69,7 @@ import * as path from 'node:path';
 import { stripBom } from '../bom.js';
 import { ensureDir } from '../fsdirs.js';
 import { VERSION } from '../version.js';
+import type { Verification } from './verify.js';
 
 /** Something is wrong with the report file itself. */
 export class AnalysisReportError extends Error {
@@ -81,8 +82,14 @@ export class AnalysisReportError extends Error {
 /**
  * The format written into the header, so a reader can refuse a shape it cannot
  * use rather than half-understanding it.
+ *
+ * 2 (2026-09-25): the snap ranker replaced the entailment one. The header
+ * names the ranker's model and questions where it named the NLI model and its
+ * hypotheses, findings are flags only and carry the verifier's reason, and the
+ * rank rows are gone to the rank file. A version-1 report is refused whole —
+ * nothing in it answers a question this version asks.
  */
-export const ANALYSIS_FILE_VERSION = 1;
+export const ANALYSIS_FILE_VERSION = 2;
 
 /** The field separator inside a key — see `bank.ts`, whose reason this is. */
 const NUL = String.fromCharCode(0);
@@ -100,28 +107,18 @@ export interface AnalysisHeader {
   bankSha: string;
   /** The app's binding of the reading to its step, carried and never read. */
   generation?: string;
-  /** Which entailment model produced every `rank` score in the file. */
-  nli: string;
-  /**
-   * WHICH BUILD OF IT — the commit those weights were resolved from.
-   *
-   * `nli` above is a NAME, and a Hugging Face repo is mutable: the same name can
-   * serve different weights next month. Without this a report is unfalsifiable
-   * about its own provenance, and worse, `rankKey` would hand scores from the
-   * old weights back as answers from the new ones — the same silent reuse the
-   * `-2` bump in that function exists to prevent, arriving by a different route.
-   *
-   * OPTIONAL BECAUSE A WORKER MAY NOT SAY. `_commit_hash` is private to
-   * transformers; absent means unknown provenance, which `run.ts` treats as a
-   * mismatch rather than as agreement.
-   */
-  nliRevision?: string;
-  /** `hypothesisSetVersion` — which questions those scores answer. */
-  hypotheses: string;
-  /** Which Ollama model produced every verdict. */
+  /** Which ranker chose the passages. One value today; named so the next one is legible. */
+  ranker: 'snap-v1';
+  /** The model that answered the ranker's questions, as the decide door named it. */
+  decide: string;
+  /** `optionSetVersion` — which questions the ranker asked. */
+  options: string;
+  /** `spanParamsVersion` — the numbers its answers were read with (spans.ts). */
+  spans: string;
+  /** Which model produced every verdict. */
   verify: string;
-  /** The floors this run captured at. Constants now, recorded so they are legible. */
-  capture: { threshold: number; rescue: number };
+  /** `VERIFY_PROMPT_VERSION` — which question the verifier was asked. */
+  prompt: string;
   /** Every category in the plan, in plan order. */
   categories: string[];
   /**
@@ -148,18 +145,18 @@ export interface AnalysisHeader {
 }
 /*
  * THIS HEADER IS A CROSS-REPO CONTRACT ONCE 1.0.0 IS IN THE WORLD. BookForge
- * reads `bankSha`, `hypotheses`, `verify`, `nli`, `capture`, `categories`,
- * `untuned`, `hues` and `names` off it directly, REFUSES a report missing a
- * required field rather than substituting (their side's no-fallbacks rule,
- * 2026-08-26 — correct while no old report exists to be compatible with), and
- * asked for the word on any header change shipped after release so they can
- * gate by version instead of meeting it as a refusal. Same standing agreement
- * as vtt-book's decode recipe: announce before shipping, land in the release
- * they follow.
+ * reads it directly, REFUSES a report missing a required field rather than
+ * substituting (their side's no-fallbacks rule, 2026-08-26), and asked for the
+ * word on any header change shipped after release so they can gate by version
+ * instead of meeting it as a refusal. Same standing agreement as vtt-book's
+ * decode recipe: announce before shipping, land in the release they follow.
+ * Format 2 (2026-09-25) is such a change: `nli`, `nliRevision`, `hypotheses`
+ * and `capture` are gone, `ranker`, `decide`, `options`, `spans` and `prompt`
+ * are new, and a finding carries `reason` and `alsoReasons` and no `verdict`.
  */
 
 /**
- * One row of the report — one block's share of one candidate window.
+ * One row of the report — one block's share of one flagged window.
  *
  * `hit` IS WHAT MAKES A WINDOW ONE FINDING. A passage that crosses a paragraph
  * break touches two blocks and therefore writes two rows; they share the
@@ -176,69 +173,44 @@ export interface AnalysisFinding {
   end: number;
   /** The primary category — see `WindowFinding.category`. */
   category: string;
-  /** The other categories the verifier flagged on this window, strongest first. */
+  /** Why the verifier flagged it, in its own one or two sentences. */
+  reason: string;
+  /** The other categories the verifier flagged on this window, strongest first... */
   also: string[];
-  /** The primary category's own best score. The display tiers slice on this. */
+  /** ...and its reason for each, in the same order. */
+  alsoReasons: string[];
+  /** The primary category's evidence in the window, the ranker's s_c. Recorded, not sliced on. */
   score: number;
-  /** The verifier's answer for the window. Skips are stored, not discarded. */
-  verdict: 'flag' | 'skip';
   /** How many sentences of the finding fall in THIS row. */
   sentences: number;
-}
-
-interface RankRow {
-  kind: 'rank';
-  key: string;
-  /** One score per plan entry, in plan order, rounded to four places. */
-  scores: number[];
 }
 
 interface VerdictRow {
   kind: 'verdict';
   key: string;
   verdict: 'flag' | 'skip';
+  reason: string;
 }
 
-/**
- * The question a `rank` row answers.
- *
- * The whole digest is kept rather than a prefix, for `bankKey`'s reason: a
- * collision here is not a missing answer, it is the WRONG scores attached to a
- * sentence and reported as evidence.
- */
-export function rankKey(text: string, nliModel: string, hypothesisVersion: string, threshold: number): string {
-  // -2: the hypothesis template changed from bare to the pipeline default
-  // (nli_worker.py's docstring carries the incident, 2026-08-25). A score is an
-  // answer to a configuration, and every -1 score answered a question this
-  // worker no longer asks; reusing one would file the wrong number as evidence.
-  return createHash('sha256')
-    .update(['foundry-analysis-rank-2', nliModel, hypothesisVersion, threshold.toFixed(4), text].join(NUL), 'utf8')
-    .digest('hex');
-}
-
-/** The question a `verdict` row answers. */
+/** The question a `verdict` row answers. *//** The question a `verdict` row answers. */
 export function verdictKey(
   passage: string,
   category: string,
   verifyModel: string,
   prompt: string,
 ): string {
+  // -2: a verdict row carries the verifier's reason now, and every -1 row was
+  // asked a prompt that never requested one.
   return createHash('sha256')
-    .update(['foundry-analysis-verdict-1', verifyModel, category, passage, prompt].join(NUL), 'utf8')
+    .update(['foundry-analysis-verdict-2', verifyModel, category, passage, prompt].join(NUL), 'utf8')
     .digest('hex');
-}
-
-/** Four places is far past what any threshold or display tier can resolve. */
-function round4(value: number): number {
-  return Math.round(value * 10_000) / 10_000;
 }
 
 /**
  * A report on disk: what it already answers, and what this run adds to it.
  */
 export class AnalysisReport {
-  private readonly ranks = new Map<string, number[]>();
-  private readonly verdicts = new Map<string, 'flag' | 'skip'>();
+  private readonly verdicts = new Map<string, Verification>();
   private prior: Partial<AnalysisHeader> | null = null;
   private rows = 0;
 
@@ -252,29 +224,6 @@ export class AnalysisReport {
   /** The header that was already there, for the sentence the caller prints. */
   get priorHeader(): Partial<AnalysisHeader> | null {
     return this.prior;
-  }
-
-  /**
-   * THROW AWAY EVERY CACHED RANK SCORE, keeping the verdicts.
-   *
-   * Called when the entailment model that answered them turns out not to be the
-   * one about to answer now (`run.ts`). The two halves are separable on purpose:
-   * a rank score is an answer from the NLI model and a verdict is an answer from
-   * the LLM, and a new build of one says nothing about the other — discarding
-   * both would re-pay an hour of verification to fix a minute of scoring.
-   *
-   * The rows on DISK are untouched and do not need to be: `finish` writes the
-   * cache from what is held here, so a row that is forgotten is a row the next
-   * file does not carry.
-   */
-  forgetRanks(): void {
-    this.ranks.clear();
-  }
-
-  /** How many sentence scores were read off the disk — for the sentence that
-   *  says how many are being paid for again. */
-  get rankCount(): number {
-    return this.ranks.size;
   }
 
   /**
@@ -319,19 +268,12 @@ export class AnalysisReport {
         continue;
       }
       switch (row['kind']) {
-        case 'rank': {
-          const key = row['key'];
-          const scores = row['scores'];
-          if (typeof key !== 'string' || !Array.isArray(scores)) break;
-          this.ranks.set(key, scores.map((one) => Number(one)));
-          this.rows += 1;
-          break;
-        }
         case 'verdict': {
           const key = row['key'];
           const verdict = row['verdict'];
-          if (typeof key !== 'string' || (verdict !== 'flag' && verdict !== 'skip')) break;
-          this.verdicts.set(key, verdict);
+          const reason = row['reason'];
+          if (typeof key !== 'string' || (verdict !== 'flag' && verdict !== 'skip') || typeof reason !== 'string') break;
+          this.verdicts.set(key, { verdict, reason });
           this.rows += 1;
           break;
         }
@@ -352,18 +294,13 @@ export class AnalysisReport {
     return this.rows;
   }
 
-  /** How many verdicts — the expensive half — are already paid for. */
+  /** How many verdicts are already paid for. */
   get verdictCount(): number {
     return this.verdicts.size;
   }
 
-  /** The stored scores for this question, or undefined. */
-  rank(key: string): number[] | undefined {
-    return this.ranks.get(key);
-  }
-
-  /** The stored verdict for this question, or undefined. */
-  verdict(key: string): 'flag' | 'skip' | undefined {
+  /** The stored verdict and reason for this question, or undefined. */
+  verdict(key: string): Verification | undefined {
     return this.verdicts.get(key);
   }
 
@@ -371,7 +308,7 @@ export class AnalysisReport {
    * Append and fsync, the moment an answer is accepted. Synchronous from open
    * to close, so nothing can interleave a line into the middle of another.
    */
-  private append(row: RankRow | VerdictRow): void {
+  private append(row: VerdictRow): void {
     ensureDir(path.dirname(this.appendPath));
     const handle = fs.openSync(this.appendPath, 'a');
     try {
@@ -383,15 +320,9 @@ export class AnalysisReport {
     this.rows += 1;
   }
 
-  addRank(key: string, scores: readonly number[]): void {
-    const rounded = scores.map(round4);
-    this.ranks.set(key, rounded);
-    this.append({ kind: 'rank', key, scores: rounded });
-  }
-
-  addVerdict(key: string, verdict: 'flag' | 'skip'): void {
-    this.verdicts.set(key, verdict);
-    this.append({ kind: 'verdict', key, verdict });
+  addVerdict(key: string, answer: Verification): void {
+    this.verdicts.set(key, answer);
+    this.append({ kind: 'verdict', key, verdict: answer.verdict, reason: answer.reason });
   }
 
   /**
@@ -406,8 +337,9 @@ export class AnalysisReport {
   finish(header: AnalysisHeader, findings: readonly AnalysisFinding[]): void {
     const lines: string[] = [JSON.stringify({ analysis: ANALYSIS_FILE_VERSION, ...header })];
     for (const finding of findings) lines.push(JSON.stringify(finding));
-    for (const [key, scores] of this.ranks) lines.push(JSON.stringify({ kind: 'rank', key, scores }));
-    for (const [key, verdict] of this.verdicts) lines.push(JSON.stringify({ kind: 'verdict', key, verdict }));
+    for (const [key, answer] of this.verdicts) {
+      lines.push(JSON.stringify({ kind: 'verdict', key, verdict: answer.verdict, reason: answer.reason }));
+    }
 
     ensureDir(path.dirname(this.outPath));
     const part = `${this.outPath}.${process.pid}.part`;
@@ -481,11 +413,11 @@ export function openAnalysisReport(request: {
       report,
       pendingPath: pending,
       sentence: report.size === 0
-        ? `analyze: a fresh analysis was asked for, so every sentence and every passage is asked `
+        ? `analyze: a fresh analysis was asked for, so every passage is asked `
           + `again — whatever is in ${outPath} is left exactly as it is, and the new answers go to `
           + `${pending}, which replaces it only when this run finishes.`
         : `analyze: a fresh analysis was asked for and one was already begun — ${report.size} `
-          + `answer(s) are in ${pending} (${report.verdictCount} of them verdicts), nothing whose `
+          + `answer(s) are in ${pending}, nothing whose `
           + `exact question is in there is asked again, and it replaces ${outPath} only when this run `
           + 'finishes.',
     };
@@ -502,11 +434,10 @@ export function openAnalysisReport(request: {
     report,
     pendingPath: null,
     sentence: report.size === 0
-      ? `analyze: nothing is answered in ${outPath}, so every sentence is scored and every passage `
-        + 'is verified, and each answer is recorded there as it lands.'
-      : `analyze: ${report.size} answer(s) are already in ${outPath}, ${report.verdictCount} of `
-        + 'them verdicts — nothing whose exact question is in there is asked again, and every new '
-        + `answer is added to it.${banked}`,
+      ? `analyze: nothing is answered in ${outPath}, so every passage is verified, and each `
+        + 'answer is recorded there as it lands.'
+      : `analyze: ${report.size} verdict(s) are already in ${outPath} — nothing whose exact question `
+        + `is in there is asked again, and every new answer is added to it.${banked}`,
   };
 }
 

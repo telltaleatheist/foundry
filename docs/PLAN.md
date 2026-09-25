@@ -20,7 +20,7 @@ in the process, not a detail.
 where they were argued — `docs/WORKBENCH.md` (app surface + the endgame
 specs §8–§11), `docs/DERIVED-BOOK.md` (the data model, phases 0/A–G),
 `docs/STEP-LEDGER.md`, `docs/BANK-LIFECYCLE.md`, `docs/TRANSLATION-STEPS.md`,
-`docs/SETUP.md` (first run, the model lineup, the analysis-worker environment)
+`docs/SETUP.md` (first run, the model lineup)
 — and this file says what is done, what is running, what is next, and what
 is knowingly not being done. When a unit lands, update its row here in the
 same commit that lands it.
@@ -2895,7 +2895,9 @@ supposed to be, and it exists so the same failure is visible next time.
   No Crucible `entail` class. Requested and withdrawn the same evening, before
   anything was built on either side.
 
-- **`nli-mac-arm64` has never been built, so the Mac cannot analyse.** Null
+- **MOOT 2026-09-25 (Wave 75): there is no NLI pack on any platform; analysis
+  ranks on a Crucible's decide model.** Kept for the record:
+  **`nli-mac-arm64` has never been built, so the Mac cannot analyse.** Null
   size, null hash in `env-catalog.ts`, and `requirePublished` throws on it —
   which is honest, and leaves the Mac with no analysis at all. While the
   ranker was moving to Crucible this resolved itself; under the ruling above
@@ -2905,7 +2907,9 @@ supposed to be, and it exists so the same failure is visible next time.
   the weights, which no cross-build can do. Owen has a Mac; this is the only
   thing standing between it and the analysis feature.
 
-- **`rankKey` does not include the model REVISION.** `src/analyze/report.ts`
+- **MOOT 2026-09-25 (Wave 75): `rankKey` and the rank rows are gone; the rank
+  file names the decide model the door reported.** Kept for the record:
+  **`rankKey` does not include the model REVISION.** `src/analyze/report.ts`
   hashes `text ∥ model id ∥ hypothesis set ∥ threshold`. The id is fixed;
   `MoritzLaurer/deberta-v3-base-zeroshot-v2.0` moving on the Hub changes every
   score while the key says nothing happened. That function already carries the
@@ -6337,3 +6341,45 @@ here today — correct.
 
 **Unexercised and named:** the branch that actually draws the card, and the
 launch itself. Reaching either means stopping the engine Owen is using.
+
+### Wave 75 — analysis ranks on briefcase's snap ranker, confirmed findings only (Owen, 2026-09-25) — BUILT, not yet run live
+
+Owen: *"full replacement. and we wont have two separate categories in this.
+confirmed only. we're replacing the logic - the way it works. not the ui"*;
+*"9b for triage"*; *"yes, side panel should show the reasoning"*; *"write one
+line for each in briefcase's style"*. Source: briefcase main d80cc71, briefed
+by briefcase-mac-1. **`docs/ANALYSIS.md` is the contract.**
+
+- **Engine** — `analyze-rank` (src/analyze/snap.ts: units, chunks sized to
+  the loaded context, prefix-layout group questions on `/v1/decide`, report
+  mode, briefcase's floor and 1% label-mass gate) writes a rank file;
+  `analyze --ranks` (spans.ts: baseline, two-state Viterbi, merge, sections,
+  then rank.ts's unchanged `buildWindows`) verifies every window with the v4
+  prompt and a reason. Report format 2: flags only, `reason`/`alsoReasons`,
+  new header. The decide-door weather handling moved to
+  `src/backend/decide-door.ts`, shared with cleanup triage (behaviour
+  unchanged). The NLI worker, its flags and the `nli-*` env targets are
+  deleted. — BUILT; root tsc clean; bun test 1175/0; a scratch end-to-end
+  run against fake servers ranked, verified, wrote a format-2 report and
+  re-ran from cache with zero calls.
+- **App** — `analysis-rank` JobKind (decide act, the clean row's model, gpu
+  lane) queued in front of every analysis, pinned and released as a pair; the
+  dialog draws the ranking then the check; tiers and ghosted skips removed
+  from the panel and the paper; each card shows the verifier's reasons; the
+  app's reader refuses a format-1 report by name. — BUILT; both app tscs and
+  `ng build` clean.
+- **Deferred, out loud:**
+  1. **A live run** on the 9B + the analysis model. It loads models on a card
+     (crucible-probe-safety), so it waits for Owen's go.
+  2. **BookForge** — format 2 and the two-command flow are announced in
+     docs/BOOKFORGE-HANDOFF.md #foundrynotes 2026-09-25; it reaches them with
+     the re-vendor. Their audiobook overlay reads the report header and will
+     refuse format 2 until they update.
+  3. **Tuning** — the span numbers are briefcase's unmeasured plan arithmetic
+     and the two book categories' lines are first drafts; the rank file keeps
+     the rating map for offline re-reading.
+  4. **No tests were written** for the port (standing rule: none unasked).
+     briefcase's `flag-spans.spec.ts`, `snap-flag-ranker.spec.ts` and
+     `flag-text.spec.ts` exist to port if Owen wants them.
+  5. **Chapters** from briefcase's snap engine are not ported: a book takes its
+     chapters from its structure.

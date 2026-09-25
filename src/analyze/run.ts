@@ -1,20 +1,21 @@
 /**
- * analyze/run — the book, read against the categories.
+ * analyze/run — `foundry analyze`: the rank file's passages, put to a model.
  *
- * Three stages, each doing the half the engine it uses is actually good at
- * (docs/ANALYSIS.md §1):
+ * An analysis is two acts on two models, run by the app as two rows of its
+ * queue (the same shape as a cleanup's triage and its cleanup):
  *
- *   1. RANK — every sentence, and every sliding three-sentence window, scored
- *      against every category's stance hypotheses by a zero-shot entailment
- *      model in a resident Python worker. Exhaustive and cheap: nothing is
- *      missed because a model stopped early, which is exactly how open-ended
- *      "read this chapter and find the quotes" always fails.
- *   2. WINDOW — surviving sentences expand to their neighbours and merge,
- *      category-blind, into paragraph-sized passages. Scoring stays per
- *      sentence; judging moves to the passage.
- *   3. VERIFY — one schema-constrained model call per (window, category),
- *      answering one question: is the author asserting this, or reporting,
- *      quoting, questioning or arguing against it?
+ *   1. RANK — `foundry analyze-rank` (snap.ts): every sentence of the book,
+ *      in groups of three, asked of a small decide model as one choice over
+ *      the categories and "none". Its answers are a rating map, written to the
+ *      rank file. Exhaustive and cheap: nothing is missed because a model
+ *      stopped early, which is exactly how open-ended "read this chapter and
+ *      find the quotes" always fails.
+ *   2. VERIFY — this file. The rating map becomes spans, sections and
+ *      paragraph-sized passages (spans.ts, pure), and one schema-constrained
+ *      model call per (passage, category) answers one question: is the author
+ *      asserting this, or reporting, quoting, questioning or arguing against
+ *      it? — with the verifier's reason. Every verdict is stored; only the
+ *      flags are findings.
  *
  * NOTHING HERE MATCHES A QUOTATION TO ANYTHING, EVER. Foundry has block
  * identity, so every finding is a block id and a pair of character offsets
@@ -24,14 +25,11 @@
  *
  * ── WHAT THIS FILE OWNS ─────────────────────────────────────────────────────
  *
- * The order of operations and the two things only a caller can decide: which
- * rows of the book are prose, and where an answer comes from — the report's
- * cache or a model. Every rule about HOW a stage works lives in the stage's own
- * file, and this one does not repeat any of them.
+ * The order of operations, the check that the rank file is about THIS book and
+ * THESE questions, and where an answer comes from — the report's cache or a
+ * model. Every rule about HOW a stage works lives in the stage's own file, and
+ * this one does not repeat any of them.
  */
-import * as fs from 'node:fs';
-
-import { stripBom } from '../bom.js';
 import {
   DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel, resolveConcurrency,
   type ModelServer, type ServerKind,
@@ -39,83 +37,30 @@ import {
 import {
   deadlineForConcurrency, fetchTransport, usageLine, type Transport,
 } from '../translate/transport.js';
-import { parseBookFile } from '../vlm/book-file.js';
-import { NliWorker, NLI_MODEL_ID, type NliWorkerOptions } from './nli-bridge.js';
-import {
-  buildPlan,
-  hypothesisSetVersion,
-  parseCategoriesJson,
-  planHues,
-  planNames,
-  untunedNames,
-  type CategoryRequest,
-  type RankPlan,
-} from './plan.js';
-import {
-  bookSentence,
-  collapseRow,
-  flattenHypotheses,
-  rankWindows,
-  CAPTURE_THRESHOLD,
-  RESCUE_FLOOR,
-  SLIDING_WINDOW_SENTENCES,
-  type BookSentence,
-  type FlagWindow,
-  type WindowCategory,
-} from './rank.js';
-import { splitSentences } from './sentences.js';
+import { optionSetVersion, planHues, planNames, untunedNames, type RankPlan } from './plan.js';
+import { AnalyzeError, readProse } from './prose.js';
+import type { BookSentence, FlagWindow } from './rank.js';
 import {
   analysisHeader,
   openAnalysisReport,
-  rankKey,
   verdictKey,
   type AnalysisFinding,
   type AnalysisReport,
 } from './report.js';
+import { buildUnits, readPlan, readRankFile, type RankFile } from './snap.js';
+import { rankFromRatingMap, spanParamsVersion } from './spans.js';
 import {
   askVerdict,
   buildVerificationPrompt,
   stageNumCtx,
   windowFinding,
+  VERIFY_PROMPT_VERSION,
+  type FlaggedCategory,
+  type Verification,
   type WindowFinding,
 } from './verify.js';
 
-/** The run cannot continue, and the message says why. */
-export class AnalyzeError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'AnalyzeError';
-  }
-}
-
-/**
- * The rows whose words are read.
- *
- * The translate set minus the furniture: a running head is not prose and a page
- * number is not an assertion, and both recur on every page — scoring them would
- * spend the NLI pass proving that the book's title is not hate speech, several
- * hundred times. `Formula`, `Picture` and `Table` are out for their own reason:
- * a formula and a picture have no sentences, and a table's cells are not one.
- *
- * SHELVED ROWS ARE OUT TOO, by `shelf === undefined` rather than by category —
- * a block the reflow judged to be a running head is out of the flow, and
- * analysing something the reader is not shown would flag a passage nobody can
- * be travelled to.
- */
-const PROSE: ReadonlySet<string> = new Set([
-  'Caption', 'Footnote', 'List-item', 'Quote', 'Section-header', 'Text', 'Title',
-]);
-
-/**
- * How many texts go to the worker in one request.
- *
- * The worker chunks internally to bound its own memory; this bound is about
- * PROGRESS. One request for a whole book would be one progress line at the
- * start and one at the end, with twenty minutes of silence between them, and a
- * user watching a job with no output cannot tell it from a hung one. Five
- * hundred is a few seconds of work on a GPU and under a minute on a CPU.
- */
-const SCORE_BATCH = 500;
+export { AnalyzeError };
 
 /**
  * How many verify calls are in flight at once on the OpenAI door when nobody
@@ -133,9 +78,11 @@ const DEFAULT_ANALYZE_CONCURRENCY = DEFAULT_TEXT_CONCURRENCY;
 export interface AnalyzeOptions {
   /** The book file. Read, never written. */
   bookPath: string;
+  /** The rank file `analyze-rank` wrote for this book. Read, never written. */
+  ranksPath: string;
   /** Where the report goes. Required — foundry never invents a name. */
   outPath: string;
-  /** A `--categories` file, or null for every built-in category. */
+  /** A `--categories` file, or null for every built-in category — the SAME one the rank used. */
   categoriesPath?: string | null;
   /**
    * The model that answers the verdicts.
@@ -162,8 +109,6 @@ export interface AnalyzeOptions {
    * the question rather than by when it was asked.
    */
   concurrency?: number;
-  /** `--nli-python`, `--nli-home`, `--fetch-nli-model`. */
-  nli: Omit<NliWorkerOptions, 'log'>;
   /** `--fresh`: ask everything again rather than reusing what is stored. */
   fresh: boolean;
   /** Progress and diagnostics. stderr, per the house rule. */
@@ -176,92 +121,78 @@ export interface AnalyzeResult {
   outPath: string;
   /** Sentences the book was cut into. */
   sentences: number;
-  /** Candidate passages the ranker kept. */
+  /** Passages the ranker put to the verifier. */
   passages: number;
   /** Verify calls this run made — cached answers are not among them. */
   asked: number;
-  /** Verify calls that produced no usable answer. Each was recorded as a skip. */
+  /** Verify calls that produced no usable answer. None of them is a finding. */
   degraded: number;
-  /** Findings the verifier flagged. */
+  /** Passages the verifier flagged — the findings. */
   flagged: number;
-  /** Findings it rejected — stored, not discarded. */
+  /** Passages it rejected entirely — stored in the cache, not reported. */
   skipped: number;
 }
 
-/** Read the book, take its prose, and cut it into one flat list of sentences. */
-function readSentences(bookPath: string, log: (line: string) => void): {
-  sentences: BookSentence[];
-  bankSha: string;
-  generation: string | undefined;
-} {
-  if (!fs.existsSync(bookPath)) throw new AnalyzeError(`no such book file: ${bookPath}`);
-  const book = parseBookFile(stripBom(fs.readFileSync(bookPath, 'utf8')));
-
-  const sentences: BookSentence[] = [];
-  let rows = 0;
-  for (const row of book.rows) {
-    if (row.shelf !== undefined) continue;
-    if (!PROSE.has(row.category)) continue;
-    rows += 1;
-    for (const sentence of splitSentences(row.text)) {
-      sentences.push(bookSentence(row.id, sentence.start, sentence.end, sentence.text));
-    }
-  }
-  log(
-    `analyze: ${book.rows.length} row(s) in the book, ${rows} of them prose in the flow, cut into `
-    + `${sentences.length} sentence(s)`,
-  );
-  if (sentences.length === 0) {
+/**
+ * THE RANK FILE MUST BE ABOUT THIS BOOK AND THESE QUESTIONS, and each way it
+ * can fail to be is refused by name. The rank and the verify are two processes
+ * the queue runs one after the other; a rank file from another book, or from
+ * another set of categories, would light passages that were never scored for
+ * what the report will say they are.
+ */
+function checkRankFile(
+  file: RankFile,
+  ranksPath: string,
+  sentences: readonly BookSentence[],
+  bankSha: string,
+  plan: readonly RankPlan[],
+): void {
+  if (file.bankSha !== bankSha) {
     throw new AnalyzeError(
-      `${bookPath} has no prose to analyse. Its rows are all shelved, or all figures, formulae and `
-      + 'tables — there is nothing here for an entailment model to read.',
+      `${ranksPath} ranked the book from bank ${file.bankSha}, and this book comes from ${bankSha}. `
+      + 'Rank this book, then verify it.',
     );
   }
-  return { sentences, bankSha: book.source.bankSha, generation: book.source.generation };
-}
-
-/** The categories this run plans, from a file or from the built-in set. */
-function readPlan(categoriesPath: string | null | undefined, log: (line: string) => void): RankPlan[] {
-  let requested: CategoryRequest[] | null = null;
-  if (categoriesPath) {
-    if (!fs.existsSync(categoriesPath)) {
-      throw new AnalyzeError(`no such categories file: ${categoriesPath}`);
-    }
-    requested = parseCategoriesJson(stripBom(fs.readFileSync(categoriesPath, 'utf8')), categoriesPath);
+  const options = optionSetVersion(plan);
+  if (file.options !== options) {
+    throw new AnalyzeError(
+      `${ranksPath} was ranked against a different set of categories (${file.options}; these are `
+      + `${options}). The rank and the verify must be given the same --categories.`,
+    );
   }
-  const plan = buildPlan(requested, log);
-  const untuned = untunedNames(plan);
-  log(
-    `analyze: ${plan.length} categor(ies) — ${plan.map((one) => one.category).join(', ')}`
-    + (untuned.length > 0
-      ? `. Nothing has calibrated ${untuned.join(', ')}, so their counts may be high or low and the `
-        + 'report says so in its header.'
-      : ''),
-  );
-  return plan;
+  const units = buildUnits(sentences);
+  const same = units.length === file.units.length
+    && units.every((unit, i) => unit.text === file.units[i]!.text
+      && unit.sentenceFrom === file.units[i]!.sentenceFrom && unit.sentenceTo === file.units[i]!.sentenceTo);
+  if (!same) {
+    throw new AnalyzeError(
+      `${ranksPath} was ranked from ${file.units.length} unit(s) and this book cuts into ${units.length} `
+      + 'that do not match them — the book was read differently by the build that ranked it. Rank it again.',
+    );
+  }
 }
 
 /**
  * The whole run.
  *
- * ── THE ORDER OF THE FIRST ACTS IS THE CHEAP-CHECK-FIRST RULE ───────────────
- *
- * The server preflight is one HTTP GET and names a missing model in a sentence
- * somebody can act on, so it happens BEFORE a Python interpreter spends ninety
- * seconds loading a gigabyte of weights for a run that was always going to fail
- * at its first verdict.
- *
- * AND THE NLI WORKER IS STARTED LAZILY, at the first sentence nobody has scored
- * yet. A re-run against an unedited book has every score in the report already,
- * and starting an interpreter to load a model that will not be asked a single
- * question is a minute of somebody's afternoon spent proving the cache works.
- * A run that needs it still pays exactly what it always paid.
+ * THE CHEAP CHECKS COME FIRST: the rank file is read and matched against the
+ * book before the server is asked anything, and the server preflight is one
+ * HTTP GET that names a missing model in a sentence somebody can act on.
  */
 export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> {
   const { log } = opts;
-  const { sentences, bankSha, generation } = readSentences(opts.bookPath, log);
+  const { sentences, bankSha, generation } = readProse(opts.bookPath, 'analyze', log);
   const plan = readPlan(opts.categoriesPath ?? null, log);
-  const hypotheses = hypothesisSetVersion(plan);
+  const ranks = readRankFile(opts.ranksPath);
+  checkRankFile(ranks, opts.ranksPath, sentences, bankSha, plan);
+
+  const ranked = rankFromRatingMap(ranks, sentences, plan);
+  const calls = ranked.windows.reduce((n, w) => n + w.categories.length, 0);
+  log(
+    `analyze: the ranking by ${ranks.model.id} made ${ranked.spans.length} span(s), ${ranked.passages.length} `
+    + `section(s) and ${ranked.windows.length} passage(s) to verify — ${calls} question(s)`
+    + (ranks.gated > 0 ? `; ${ranks.gated} of its answers were read as no evidence` : ''),
+  );
 
   const opened = openAnalysisReport({ outPath: opts.outPath, freshRequested: opts.fresh, bankSha });
   log(opened.sentence);
@@ -296,130 +227,12 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
     ...(opts.model === undefined ? {} : { model: opts.model }),
   });
 
-  let worker: NliWorker | null = null;
-  const ensureWorker = async (): Promise<NliWorker> => {
-    if (worker !== null) return worker;
-    worker = await NliWorker.start({ ...opts.nli, log });
-    /*
-     * ── IS THE MODEL ABOUT TO SCORE THE ONE THAT SCORED BEFORE? ─────────────
-     *
-     * `rankKey` hashes the model's NAME, and a Hugging Face repo is mutable: the
-     * same name can serve different weights next month. So a cached score and a
-     * fresh one can carry the same key and come from different models, and the
-     * report would mix them under a header naming one.
-     *
-     * THE CHECK IS HERE, AND HERE IS THE ONLY PLACE IT CAN BE. The revision is
-     * knowable only once the model is loaded, and loading happens lazily — on
-     * the first cache MISS — which is deliberate: a fully-cached re-run pays no
-     * model load at all. Putting the revision in the key would mean knowing it
-     * before knowing whether anything is a miss, which is circular. But the
-     * check does not need to happen at key time; it needs to happen before old
-     * and new scores are mixed, and that moment is exactly this one. A run that
-     * never reaches here is a run producing nothing new to mix.
-     *
-     * ABSENT COUNTS AS DIFFERENT, on both sides. A report written before this
-     * field existed, or a worker whose transformers stopped stamping
-     * `_commit_hash`, leaves provenance unknown — and unknown is not agreement.
-     * Re-scoring costs minutes; filing a score under weights that may not have
-     * produced it is the thing this whole key exists to prevent.
-     */
-    const before = report.priorHeader?.nliRevision ?? null;
-    const now = worker.revision;
-    if (before !== now || now === null) {
-      const had = report.rankCount;
-      if (had > 0) {
-        report.forgetRanks();
-        log(
-          `analyze: the ${had} stored sentence score(s) were produced by `
-          + `${before === null ? 'an unrecorded build' : before.slice(0, 12)} of `
-          + `${NLI_MODEL_ID} and this run has `
-          + `${now === null ? 'a build it cannot identify' : now.slice(0, 12)}. `
-          + 'They are being scored again — a score is an answer to a configuration.',
-        );
-      }
-    }
-    return worker;
-  };
-  // Read through a function so the `finally` sees the CURRENT value: the
-  // compiler cannot see an assignment that happens inside `ensureWorker`, and
-  // narrows the variable to the null it was declared with.
-  const startedWorker = (): NliWorker | null => worker;
-
-  let result: AnalyzeResult;
   try {
-    /*
-     * THE CACHED SCORER, and it is the whole of what makes a re-run cheap.
-     *
-     * Every text is a question — its words, the entailment model, the
-     * hypothesis set and the capture floor — and a question already answered in
-     * the report is not asked again. What reaches the worker is the misses,
-     * deduplicated, because a book repeats sentences ("See note 4.") and paying
-     * twice for one question inside a single run would be as wrong as paying
-     * twice across two.
-     */
-    const flat = flattenHypotheses(plan);
-    const slidingWindows = sentences.length < SLIDING_WINDOW_SENTENCES
-      ? 0
-      : sentences.length - SLIDING_WINDOW_SENTENCES + 1;
-    const total = sentences.length + slidingWindows;
-    let finished = 0;
-    log(
-      `analyze: ${sentences.length} sentence(s) and ${slidingWindows} sliding window(s) are scored `
-      + `against ${flat.texts.length} hypothes(es) — the rank progress line counts all ${total} of `
-      + 'them, because each is one text the model has to read',
-    );
-
-    const scoreTexts = async (texts: readonly string[]): Promise<number[][]> => {
-      const keys = texts.map((text) => rankKey(text, NLI_MODEL_ID, hypotheses, CAPTURE_THRESHOLD));
-      const wanted = new Map<string, string>();
-      for (const [index, key] of keys.entries()) {
-        if (report.rank(key) === undefined && !wanted.has(key)) wanted.set(key, texts[index]!);
-      }
-      const misses = [...wanted.entries()];
-      for (let at = 0; at < misses.length; at += SCORE_BATCH) {
-        const batch = misses.slice(at, at + SCORE_BATCH);
-        // The worker reports each chunk it finishes, so the bar moves every few
-        // seconds rather than once per batch — `finished` itself only advances
-        // when the batch's scores are banked, which keeps the count honest if
-        // the request dies partway.
-        const raw = await (await ensureWorker()).score(
-          batch.map(([, text]) => text),
-          flat.texts,
-          (done) => log(`analyze: rank ${Math.min(total, finished + done)}/${total} sentences`),
-        );
-        if (raw.length !== batch.length) {
-          throw new AnalyzeError(
-            `the analysis worker was asked to score ${batch.length} text(s) and answered for `
-            + `${raw.length}. A matrix that does not line up with the texts it is about would file `
-            + 'every score under the wrong sentence.',
-          );
-        }
-        for (const [offset, [key]] of batch.entries()) {
-          report.addRank(key, collapseRow(raw[offset]!, flat.owner, plan.length));
-        }
-        finished = Math.min(total, finished + batch.length);
-        log(`analyze: rank ${finished}/${total} sentences`);
-      }
-      // Cached texts finished the moment they were looked up; the counter says
-      // so rather than jumping at the end of the pass.
-      const free = texts.length - misses.length;
-      if (free > 0) {
-        finished = Math.min(total, finished + free);
-        log(`analyze: rank ${finished}/${total} sentences`);
-      }
-      return keys.map((key) => report.rank(key) ?? new Array<number>(plan.length).fill(0));
-    };
-
-    const windows = await rankWindows(sentences, plan, scoreTexts, log);
-    result = await verifyStage({
-      windows, sentences, plan, report, transport, server,
-      concurrency,
-      hypotheses, bankSha, generation, log,
-      nliRevision: startedWorker()?.revision ?? report.priorHeader?.nliRevision ?? null,
+    return await verifyStage({
+      windows: ranked.windows, sentences, plan, report, transport, server, concurrency,
+      ranks, bankSha, generation, log,
     });
   } finally {
-    // The NLI worker is this run's own process and goes with it.
-    startedWorker()?.stop();
     /*
      * The card back, best-effort, exactly as translate ends. It runs in the
      * `finally` so a FAILED run gives the memory back too, and it can never fail
@@ -439,47 +252,33 @@ export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> 
     /*
      * WHAT THE RUN SPENT, once, last, in this act's prefix — and in the
      * `finally` for the release's own reason: a stage that was interrupted an
-     * hour in still spent what it spent, and a count that printed only on the
-     * happy path would be missing from the runs somebody most wants it for.
-     * Null and therefore silent where no server reported usage; see `usageLine`.
+     * hour in still spent what it spent. Null and therefore silent where no
+     * server reported usage; see `usageLine`.
      */
     const spent = usageLine('analyze');
     if (spent !== null) log(spent);
   }
-  return result;
 }
 
 /**
- * The verify stage: one question per (window, category), in DESCENDING window
- * score, `concurrency` of them in flight at once.
+ * The verify stage: one question per (window, category), strongest window
+ * first, `concurrency` of them in flight at once.
  *
- * DESCENDING is Owen's ruling and it is the answer to the cost of capturing
- * everything: the strongest passages are verified first, so a run interrupted
- * an hour in has already finished the findings most worth trusting, and the
- * append-as-landed report makes them readable before the loose tail is done.
- * A POOL DOES NOT WEAKEN THAT — the jobs are DISPATCHED in the same descending
- * order and only land out of it, so what is finished first is still what was
- * worth finishing first.
- *
- * ── TWELVE IN FLIGHT BY DEFAULT ON THE OpenAI DOOR, and it is not recklessness ─
- *
- * That server batches the requests in flight together, and this stage —
- * hundreds of tiny closed questions over one loaded model — is the shape that
- * gains most. On Ollama the default is four and even that mostly buys queueing,
- * because Ollama serialises per model unless its own parallelism was turned up.
- * A pool never moved a verdict on any door, which is the next paragraph.
+ * STRONGEST FIRST is Owen's ruling and it is the answer to the cost of
+ * verifying everything: the strongest passages are verified first, so a run
+ * interrupted an hour in has already finished the findings most worth trusting,
+ * and the append-as-landed cache means the next run picks up from there. A POOL
+ * DOES NOT WEAKEN THAT — the jobs are DISPATCHED in the same order and only
+ * land out of it, so what is finished first is still what was worth finishing
+ * first.
  *
  * ── WHAT THE POOL IS NOT ALLOWED TO MOVE ───────────────────────────────────
  *
- * The findings. Verdicts are collected into a map and the flagged categories
+ * The findings. Answers are collected into a map and the flagged categories
  * are composed AFTERWARDS by walking `jobs` in their own order, so a window's
  * `also` list is in descending score whatever order the answers came back in.
  * `askAboutEach`'s rule in the cleanup, for its reason: a pool may change how
  * long a run takes and must never change what it wrote.
- *
- * The progress line counts calls FINISHED rather than an index, which is the
- * only honest reading of it once more than one is in the air — and at
- * concurrency 1 that is the same number it always printed.
  */
 async function verifyStage(args: {
   windows: readonly FlagWindow[];
@@ -489,26 +288,16 @@ async function verifyStage(args: {
   transport: Transport;
   server: ModelServer;
   concurrency: number;
-  hypotheses: string;
+  ranks: RankFile;
   bankSha: string;
   generation: string | undefined;
-  /**
-   * WHICH BUILD OF THE ENTAILMENT MODEL THE SCORES CAME FROM, for the header.
-   *
-   * Passed rather than read off the worker here, because the worker belongs to
-   * the rank stage and this stage runs after it has been stopped — and because
-   * a FULLY CACHED run never starts one, in which case the honest value is the
-   * revision the previous run recorded rather than nothing.
-   */
-  nliRevision: string | null;
   log: (line: string) => void;
 }): Promise<AnalyzeResult> {
   const { windows, sentences, report, log } = args;
 
   interface Job {
     window: FlagWindow;
-    category: WindowCategory;
-    passage: string;
+    category: FlaggedCategory['category'];
     prompt: string;
     key: string;
   }
@@ -521,7 +310,6 @@ async function verifyStage(args: {
       jobs.push({
         window,
         category,
-        passage: joined,
         prompt,
         key: verdictKey(joined, category.category, args.server.model, prompt),
       });
@@ -538,12 +326,6 @@ async function verifyStage(args: {
    */
   const numCtx = stageNumCtx(jobs.map((job) => job.prompt), args.server.model);
   const cached = jobs.filter((job) => report.verdict(job.key) !== undefined).length;
-  /*
-   * THE OpenAI DOOR IS NOT TOLD A WINDOW, so the line must not claim one. Its
-   * context is fixed when the model is made resident and `num_ctx` has no
-   * counterpart on that route; saying "at num_ctx 8192" there would be this
-   * program reporting a setting it did not send.
-   */
   log(
     `analyze: ${windows.length} passage(s) and ${jobs.length} verify call(s) `
     + (args.server.kind === 'ollama' ? `at num_ctx ${numCtx} ` : '')
@@ -556,46 +338,43 @@ async function verifyStage(args: {
   let degraded = 0;
   let finished = 0;
   let next = 0;
-  const answers = new Map<Job, 'flag' | 'skip'>();
+  const answers = new Map<Job, Verification>();
 
   const judge = async (job: Job): Promise<void> => {
-    let verdict = report.verdict(job.key);
-    if (verdict === undefined) {
+    let answer = report.verdict(job.key);
+    if (answer === undefined) {
       asked += 1;
       const outcome = await askVerdict(args.transport, args.server, job.prompt, numCtx);
-      if (outcome.verdict === null) {
+      if (outcome.verification === null) {
         /*
-         * A DEGRADATION IS A SKIP AND A WARNING, NEVER A FLAG. There are three
-         * ways to get here — the call failed, the answer hit the token ceiling,
-         * or the answer carried no verdict — and all three mean the same thing:
-         * nothing judged this passage. An unreadable answer must not be able to
-         * accuse anybody.
+         * A DEGRADATION IS NEVER A FLAG. There are three ways to get here — the
+         * call failed, the answer hit the token ceiling, or the answer carried
+         * no verdict — and all three mean the same thing: nothing judged this
+         * passage. An unreadable answer must not be able to accuse anybody.
          *
-         * It is NOT stored. A stored skip is the verifier's answer, and a
-         * re-run must be free to ask again rather than inheriting a network
-         * failure as though it were a judgment.
+         * It is NOT stored. A stored skip is the verifier's answer, and a re-run
+         * must be free to ask again rather than inheriting a network failure as
+         * though it were a judgment.
          */
         degraded += 1;
         log(
           `analyze: no verdict for ${job.category.category} at ${sentences[job.window.firedFrom]!.row}`
-          + ` — ${outcome.degraded}; this passage is recorded as a skip`,
+          + ` — ${outcome.degraded}; it is not a finding, and the next run asks again`,
         );
-        verdict = 'skip';
       } else {
-        verdict = outcome.verdict;
-        report.addVerdict(job.key, verdict);
+        answer = outcome.verification;
+        report.addVerdict(job.key, answer);
       }
     }
-    answers.set(job, verdict);
+    if (answer !== undefined) answers.set(job, answer);
     finished += 1;
     log(`analyze: verify ${finished}/${jobs.length} (${job.category.category})`);
   };
 
   /*
    * THE POOL: workers pull from one index, so the jobs go OUT in the array's
-   * own descending order and a worker that finishes early takes the next
-   * strongest rather than a slice it was handed at the start. At concurrency 1
-   * this is the `for` loop it replaced, one job at a time in the same order.
+   * own order and a worker that finishes early takes the next strongest rather
+   * than a slice it was handed at the start.
    */
   const workers = Math.max(1, Math.min(args.concurrency, jobs.length));
   const pull = async (): Promise<void> => {
@@ -607,55 +386,52 @@ async function verifyStage(args: {
   await Promise.all(Array.from({ length: workers }, pull));
 
   /*
-   * AND THE FINDINGS ARE COMPOSED FROM THE JOBS' OWN ORDER, never from the
-   * order the answers landed in. `windowFinding` reads this list as "strongest
-   * flagged category first", which is true of `jobs` by construction and would
-   * be a lie about a pool's completion order.
-   */
-  const flaggedByWindow = new Map<FlagWindow, WindowCategory[]>();
-  for (const job of jobs) {
-    if (answers.get(job) !== 'flag') continue;
-    const list = flaggedByWindow.get(job.window);
-    if (list) list.push(job.category);
-    else flaggedByWindow.set(job.window, [job.category]);
-  }
-
-  /*
    * EVERY CALL UNUSABLE IS A BROKEN STAGE, NOT A QUIET RESULT. The report would
-   * say every passage was rejected, which reads exactly like a clean book, and
-   * nothing on the disk would distinguish the two. So the run refuses — and it
-   * refuses BEFORE the swap, so the report that is there stays as it was and
-   * every score this run paid for is already appended for the next one.
+   * say nothing was found, which reads exactly like a clean book, and nothing
+   * on the disk would distinguish the two. So the run refuses — and it refuses
+   * BEFORE the swap, so the report that is there stays as it was.
    */
   if (jobs.length > 0 && degraded === jobs.length) {
     throw new AnalyzeError(
       `not one of the ${jobs.length} verification call(s) produced a usable verdict. The ranking is `
-      + 'recorded and costs nothing to redo; the verdicts are what this run could not get, and a '
-      + 'report saying every passage was rejected would be indistinguishable from a clean book.',
+      + 'in the rank file and costs nothing to redo; the verdicts are what this run could not get, and a '
+      + 'report with nothing in it would be indistinguishable from a clean book.',
     );
   }
 
-  const findings: { finding: WindowFinding; window: FlagWindow }[] = windows
-    .map((window) => ({ finding: windowFinding(window, flaggedByWindow.get(window) ?? []), window }))
-    .sort((a, b) => a.finding.from - b.finding.from || a.finding.to - b.finding.to);
+  /*
+   * AND THE FINDINGS ARE COMPOSED FROM THE JOBS' OWN ORDER, never from the
+   * order the answers landed in.
+   */
+  const flaggedByWindow = new Map<FlagWindow, FlaggedCategory[]>();
+  for (const job of jobs) {
+    const answer = answers.get(job);
+    if (answer?.verdict !== 'flag') continue;
+    const list = flaggedByWindow.get(job.window) ?? [];
+    list.push({ category: job.category, reason: answer.reason });
+    flaggedByWindow.set(job.window, list);
+  }
+
+  const findings: WindowFinding[] = windows
+    .map((window) => windowFinding(flaggedByWindow.get(window) ?? []))
+    .filter((finding): finding is WindowFinding => finding !== null)
+    .sort((a, b) => a.from - b.from || a.to - b.to);
 
   const rows: AnalysisFinding[] = [];
-  for (const [index, entry] of findings.entries()) {
-    rows.push(...findingRows(entry.finding, sentences, index + 1));
+  for (const [index, finding] of findings.entries()) {
+    rows.push(...findingRows(finding, sentences, index + 1));
   }
 
   report.finish(
     analysisHeader({
       bankSha: args.bankSha,
       ...(args.generation !== undefined ? { generation: args.generation } : {}),
-      nli: NLI_MODEL_ID,
-      // The build those scores came from, when it is known. Absent stays absent:
-      // a header that invented a revision would be the false provenance this
-      // field exists to prevent.
-      ...(args.nliRevision !== null ? { nliRevision: args.nliRevision } : {}),
-      hypotheses: args.hypotheses,
+      ranker: 'snap-v1',
+      decide: args.ranks.model.id,
+      options: optionSetVersion(args.plan),
+      spans: spanParamsVersion(),
       verify: args.server.model,
-      capture: { threshold: CAPTURE_THRESHOLD, rescue: RESCUE_FLOOR },
+      prompt: VERIFY_PROMPT_VERSION,
       categories: args.plan.map((one) => one.category),
       untuned: untunedNames(args.plan),
       hues: planHues(args.plan),
@@ -664,11 +440,11 @@ async function verifyStage(args: {
     rows,
   );
 
-  const flagged = findings.filter((one) => one.finding.verdict === 'flag').length;
+  const answered = windows.filter((window) => jobs.some((job) => job.window === window && answers.has(job)));
   log(
-    `analyze: ${flagged} passage(s) flagged and ${findings.length - flagged} rejected, written as `
-    + `${rows.length} row(s) across the blocks they touch`
-    + (degraded > 0 ? `; ${degraded} call(s) produced no usable answer and were recorded as skips` : ''),
+    `analyze: ${findings.length} passage(s) flagged and ${answered.length - findings.length} rejected, `
+    + `written as ${rows.length} row(s) across the blocks they touch`
+    + (degraded > 0 ? `; ${degraded} call(s) produced no usable answer and are not findings` : ''),
   );
 
   return {
@@ -677,8 +453,8 @@ async function verifyStage(args: {
     passages: windows.length,
     asked,
     degraded,
-    flagged,
-    skipped: findings.length - flagged,
+    flagged: findings.length,
+    skipped: answered.length - findings.length,
   };
 }
 
@@ -689,7 +465,7 @@ async function verifyStage(args: {
  * sentences are contiguous within that, so the split is a walk: each run of
  * sentences sharing a row becomes one row of the report, carrying the first
  * sentence's `start` and the last one's `end`. Every row of the finding repeats
- * the category, the score and the verdict, because the app draws a row on its
+ * the category, the reason and the score, because the app draws a row on its
  * own and a row that had to be joined to a sibling to be understood would be a
  * second lookup at every draw.
  *
@@ -722,9 +498,10 @@ export function findingRows(
       start,
       end,
       category: finding.category,
+      reason: finding.reason,
       also: finding.also,
+      alsoReasons: finding.alsoReasons,
       score: Math.round(finding.score * 10_000) / 10_000,
-      verdict: finding.verdict,
       sentences: count,
     });
   }

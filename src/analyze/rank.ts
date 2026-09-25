@@ -1,25 +1,18 @@
 /**
- * analyze/rank — every sentence, every sliding window, then paragraphs.
+ * analyze/rank — the sentences, and the paragraphs a verdict is asked about.
  *
- * ── THE TWO PASSES AND WHY THERE ARE TWO ────────────────────────────────────
+ * ── WHAT IS LEFT HERE, AND WHY IT IS HERE ───────────────────────────────────
  *
- * The SENTENCE pass finds a sentence that entails a hypothesis on its own. It
- * cannot find DISTRIBUTED rhetoric — a passage where the premise is in one
- * sentence, the actor in the next and the conclusion in the third, and no
- * single sentence carries the whole proposition. briefcase measured the
- * symptom: a 60-minute recording about prayer ministries operating inside the
- * White House and God-ordained regime change produced ZERO
- * christian-nationalism candidates, because the argument is never in one
- * sentence.
+ * The ranker itself — which sentences are hot, for which categories — is
+ * snap.ts (the scorer) and spans.ts (what its answers add up to), ported from
+ * briefcase on 2026-09-25 in place of the entailment ranker this file used to
+ * hold. What stays is the half that never belonged to either ranker: the
+ * book's sentences as one list, and `buildWindows`, which turns ranked spans
+ * into the paragraph-sized passages a verdict is asked about. briefcase's snap
+ * ranker kept its own copy of the same function unchanged for the same reason
+ * (flag-windows.ts): judging moves up to a passage whatever did the ranking.
  *
- * So the same hypotheses are scored again against every sliding
- * three-sentence window, stride 1, and the two sets are unioned. The NLI pass
- * is local and cheap (measured in briefcase: both passes over a 60-minute
- * transcript, ~90 s on MPS), so roughly doubling its work is affordable in a
- * way that doubling Ollama calls would not be — which is exactly why the union
- * is DEDUPED by span overlap before anything reaches the verifier.
- *
- * ── THEN SCORING AND JUDGING PART COMPANY ───────────────────────────────────
+ * ── SCORING AND JUDGING PART COMPANY ────────────────────────────────────────
  *
  * Scoring stays at the sentence. JUDGING moves up to a paragraph-sized passage,
  * because a reader experiences one moment rather than four consecutive
@@ -37,17 +30,16 @@
  * quantity those numbers were ever really about is HOW MUCH TEXT a passage
  * carries — the seconds were a proxy for words at speaking rate — so they port
  * as word counts through one declared rate, and each conversion is argued at
- * its declaration below. They are retunable the day the first reference books
- * are audited (docs/ANALYSIS.md §3), and nothing here has been measured
- * against a book.
+ * its declaration below. spans.ts converts its own seconds through the same
+ * rate. They are retunable the day the first reference books are audited
+ * (docs/ANALYSIS.md §3), and nothing here has been measured against a book.
  */
 import { wordCount } from './sentences.js';
-import type { RankPlan } from './plan.js';
 
 /**
  * One sentence of the book, flattened across rows in reading order.
  *
- * The list the passes work on is GLOBAL — every prose row's sentences, one
+ * The list the ranker works on is GLOBAL — every prose row's sentences, one
  * after another — which is what lets a window straddle a paragraph break. That
  * is not a bug being tolerated; it is the distributed-rhetoric case again, and
  * a rhetorical move that finishes in the next paragraph is the same move.
@@ -71,11 +63,9 @@ export function bookSentence(row: string, start: number, end: number, text: stri
 }
 
 /**
- * One (span, category) pair the ranker kept.
- *
- * A SENTENCE-level candidate spans one sentence (`spanFrom === spanTo`). A
- * WINDOW-level candidate spans the sliding window that scored, and
- * `sentenceIndex` is its middle — used for logging and never for the span.
+ * One (section, category) pair the ranker kept — one of spans.ts's sections,
+ * with `sentenceIndex` the sentence holding the unit that scored it (used for
+ * logging, never for the span).
  */
 export interface FlagCandidate {
   sentenceIndex: number;
@@ -87,13 +77,6 @@ export interface FlagCandidate {
   score: number;
   /** The stance proposition the verifier will test this candidate against. */
   proposition: string;
-  source: 'sentence' | 'window';
-  /**
-   * True when this pair never cleared the capture floor on its own and exists
-   * only because the sentence fired several categories just under it — see
-   * `RESCUE_MARGIN`.
-   */
-  rescued: boolean;
 }
 
 /** One category's evidence inside a verification window. */
@@ -106,8 +89,6 @@ export interface WindowCategory {
   sentenceIndex: number;
   /** Every sentence in the window that fired this category, in reading order. */
   sentenceIndices: number[];
-  /** True only when EVERY firing of this category in the window was a rescue. */
-  rescued: boolean;
 }
 
 /**
@@ -129,85 +110,6 @@ export interface FlagWindow {
 }
 
 /**
- * THE CAPTURE FLOOR, AND WHY IT IS A CONSTANT RATHER THAN A DIAL.
- *
- * briefcase ran a sensitivity ladder — 0.9 / 0.7 / 0.5 / 0.35 / 0.2 — because
- * every setting was a fresh run against a fresh video and the operator chose
- * how deep to read before paying for it. Foundry's report REMEMBERS, so Owen's
- * ruling (2026-08-25) is that the run captures once at the widest calibrated
- * net and the ladder becomes a DISPLAY filter over the stored scores:
- * *"it flags absolutely anything that could possibly match and then we have a
- * button that displays things that match strictly … a moderate filter, or a
- * very loose filter."* A knob whose good value is known is not a knob
- * (ARCHITECTURE.md §5), and the good value here is "everything, once".
- *
- * 0.2 IS THE BOTTOM OF THE USEFUL RANGE, not an arbitrary low number.
- * Measured in briefcase: deberta's scores on this material are strongly
- * bimodal, and below about 0.15 essentially nothing is a near-miss — it is the
- * model saying no. A floor under that stops ranking and starts forwarding the
- * book.
- *
- * WHAT IT COSTS, said plainly because it is the accepted price of never
- * re-running: every candidate is verified, and verifying down to 0.2 is more
- * Ollama calls than briefcase's default (0.7) ever paid. briefcase's measured
- * cost table on its two reference videos — candidates / verify calls / stored
- * sections — is the shape of the ramp:
- *
- *              12-min, 159 sentences        60-min, 801 sentences
- *   0.7          72 /  56 / 11                79 /  67 / 13   (4m34s)
- *   0.5          89 /  67 / 12               107 /  90 / 19   (6m12s)
- *   0.35         95 /  69 /  -               134 / 111 / 22   (7m33s)
- *   0.2         119 /  83 / 16               164 / 134 / 27   (9m13s)
- *
- * The ramp is SUBLINEAR in the threshold for the bimodality reason above, and
- * windowing then merges many of the new candidates into passages that were
- * going to be verified anyway: the widest net cost roughly twice the default on
- * the long video rather than ten times. The mitigations that make it payable
- * once are the question-keyed cache (a re-run pays only for what changed) and
- * descending-score verification (an interrupted run has already finished the
- * findings most worth trusting).
- */
-export const CAPTURE_THRESHOLD = 0.2;
-
-/**
- * RESCUE — corroboration standing in for certainty.
- *
- * A single category at 0.18 is below the floor and stays below it. But a
- * sentence scoring 0.18 on dehumanization AND 0.17 on hate is not the same
- * evidence as a sentence scoring 0.18 on one thing and nothing on anything
- * else: two independent hypotheses both nearly entailing the same sentence is
- * itself a signal.
- *
- * The rule applies ONLY to sentences where nothing cleared the floor. Adding
- * near-floor categories to already-hot sentences would add verification calls —
- * the opposite of what the rule is for — and would let a weak category attach
- * itself to strong evidence.
- *
- * ── THE CLAMP IS THE LOAD-BEARING PART ──────────────────────────────────────
- *
- * The floor is `threshold - margin`, and at the widest setting that arithmetic
- * is 0.2 - 0.25 = -0.05: a NEGATIVE floor, which every score in the matrix
- * clears. MEASURED IN BRIEFCASE on the first run of the widened dial, before
- * the clamp existed: every one of the 159 sentences of the short reference
- * video was "rescued" on all 10 categories at scores of 0.000-0.008, which is
- * not corroboration, it is forwarding the transcript — about 1,600 verifier
- * calls on the short video and roughly 8,000 (some seven hours on the 27b) on
- * the long one.
- *
- * So the floor never goes below `RESCUE_MIN_SCORE`. Two categories at 0.001 are
- * not two hypotheses nearly entailing a sentence; they are two hypotheses that
- * both said no. The arithmetic is left visible below rather than collapsed to
- * the constant it currently produces, because the clamp is the thing a future
- * reader must not delete.
- */
-const RESCUE_MARGIN = 0.25;
-const RESCUE_MIN_SCORE = 0.15;
-const RESCUE_MIN_CATEGORIES = 2;
-
-/** The score a near-miss must reach to corroborate. See `RESCUE_MARGIN`. */
-export const RESCUE_FLOOR = Math.max(CAPTURE_THRESHOLD - RESCUE_MARGIN, RESCUE_MIN_SCORE);
-
-/**
  * SPOKEN WORDS PER SECOND — the one number the whole axis conversion runs
  * through, and the only invented constant in this file.
  *
@@ -227,7 +129,7 @@ export const RESCUE_FLOOR = Math.max(CAPTURE_THRESHOLD - RESCUE_MARGIN, RESCUE_M
  * round-number precision, and why the caps below are rounded rather than
  * carried to two decimals.
  */
-const WORDS_PER_SECOND = 3.25;
+export const WORDS_PER_SECOND = 3.25;
 
 /**
  * How far a hot sentence expands, in sentences. briefcase's +/-2, UNCHANGED —
@@ -287,49 +189,6 @@ const WINDOW_MERGE_GAP_WORDS = Math.round(5 * WORDS_PER_SECOND);
  */
 const WINDOW_MAX_MERGED_WORDS = Math.round(40 * WORDS_PER_SECOND);
 
-/** The sliding window's size. briefcase's 3, stride 1. */
-export const SLIDING_WINDOW_SENTENCES = 3;
-
-/**
- * Flatten a plan into the hypothesis list the worker scores, remembering which
- * plan entry owns each column. A category with three hypotheses occupies three
- * columns and collapses back to one score by MAX — the strongest way the
- * category was argued wins, which is the right reduction for propositions that
- * are alternatives rather than parts of one claim.
- */
-export function flattenHypotheses(plan: readonly RankPlan[]): { texts: string[]; owner: number[] } {
-  const texts: string[] = [];
-  const owner: number[] = [];
-  for (let p = 0; p < plan.length; p += 1) {
-    for (const hypothesis of plan[p]!.hypotheses) {
-      texts.push(hypothesis);
-      owner.push(p);
-    }
-  }
-  return { texts, owner };
-}
-
-/** Collapse one row of raw hypothesis scores to one score per plan entry. */
-export function collapseRow(row: readonly number[], owner: readonly number[], planCount: number): number[] {
-  const out = new Array<number>(planCount).fill(0);
-  for (let column = 0; column < owner.length; column += 1) {
-    const score = row[column] ?? 0;
-    const at = owner[column]!;
-    if (score > out[at]!) out[at] = score;
-  }
-  return out;
-}
-
-/**
- * What a pass asks for: the collapsed per-category score of each text.
- *
- * INJECTED rather than called, so the cache lives above this file. `run.ts`
- * supplies a function that answers out of the report's stored rank rows where
- * it can and pays the worker only for what it cannot — which is what makes a
- * re-run against an edited book re-pay only the edited blocks.
- */
-export type ScoreTexts = (texts: readonly string[]) => Promise<number[][]>;
-
 /** Prefix sums of word counts, so a span's length is O(1) rather than O(n). */
 function wordPrefix(sentences: readonly BookSentence[]): number[] {
   const prefix = new Array<number>(sentences.length + 1).fill(0);
@@ -343,163 +202,6 @@ function words(prefix: readonly number[], from: number, to: number): number {
   return prefix[to + 1]! - prefix[from]!;
 }
 
-/**
- * The sentence pass: every (sentence, category) pair at or above the capture
- * floor, plus the rescues.
- *
- * ALL categories above the floor become candidates, deliberately, and not the
- * argmax. MEASURED IN BRIEFCASE: the argmax version LOST real flags to category
- * mislabelling — a dehumanization line whose top score was 'misinformation' was
- * verified, flagged, and then scored as a miss because it carried the wrong
- * category. Keeping every category above the floor is what makes 10/10 and
- * 11/11 reachable at all.
- *
- * It stands on its own, rather than inside the walk below, because the two
- * levels are measured separately and a change to one must be readable against
- * the other. It was EXPORTED until 2026-09-13 for `foundry tag`, which ranked a
- * document against somebody's own vocabulary through this exact pass; that
- * command is gone and this is file-local again.
- */
-async function scoreSentenceLevel(
-  sentences: readonly BookSentence[],
-  plan: readonly RankPlan[],
-  score: ScoreTexts,
-  log: (line: string) => void,
-): Promise<FlagCandidate[]> {
-  const scores = await score(sentences.map((s) => s.text));
-
-  const candidates: FlagCandidate[] = [];
-  let rescuedSentences = 0;
-  const make = (i: number, c: number, value: number, rescued: boolean): FlagCandidate => ({
-    sentenceIndex: i,
-    spanFrom: i,
-    spanTo: i,
-    text: sentences[i]!.text,
-    category: plan[c]!.category,
-    score: value,
-    proposition: plan[c]!.proposition,
-    source: 'sentence',
-    rescued,
-  });
-
-  for (let i = 0; i < sentences.length && i < scores.length; i += 1) {
-    const row = scores[i]!;
-    const hits: FlagCandidate[] = [];
-    for (let c = 0; c < plan.length; c += 1) {
-      const value = row[c] ?? 0;
-      if (value >= CAPTURE_THRESHOLD) hits.push(make(i, c, value, false));
-    }
-
-    if (hits.length === 0) {
-      const near: FlagCandidate[] = [];
-      for (let c = 0; c < plan.length; c += 1) {
-        const value = row[c] ?? 0;
-        if (value >= RESCUE_FLOOR) near.push(make(i, c, value, true));
-      }
-      if (near.length >= RESCUE_MIN_CATEGORIES) {
-        near.sort((a, b) => b.score - a.score);
-        hits.push(...near);
-        rescuedSentences += 1;
-      }
-    }
-
-    hits.sort((a, b) => b.score - a.score);
-    candidates.push(...hits);
-  }
-
-  log(
-    `analyze: sentence pass — ${sentences.length} sentence(s) x ${plan.length} categor(ies) at `
-    + `${CAPTURE_THRESHOLD} gave ${candidates.length} candidate(s); ${rescuedSentences} sentence(s) `
-    + `were rescued on ${RESCUE_MIN_CATEGORIES}+ corroborating categories at or above ${RESCUE_FLOOR}`,
-  );
-  return candidates;
-}
-
-/**
- * The sliding-window pass: what no single sentence carried.
- *
- * DEDUPE, in this order, both by span overlap:
- *   1. against the sentence pass — if that category already fired on a sentence
- *      inside this window, the window is the same finding restated and only
- *      costs a verifier call;
- *   2. against stronger windows of the same category — stride-1 windows overlap
- *      by construction, so a run of them is one finding and the highest-scoring
- *      window represents it.
- *
- * NO RESCUE HERE. Corroboration is a claim about one sentence firing several
- * hypotheses at once; a three-sentence window that half-entails two categories
- * is a much weaker version of the same argument, and briefcase never measured
- * it. The rule is left where it was measured.
- *
- * File-local, with `scoreSentenceLevel` and for its reason.
- */
-async function scoreWindowLevel(
-  sentences: readonly BookSentence[],
-  plan: readonly RankPlan[],
-  sentenceLevel: readonly FlagCandidate[],
-  score: ScoreTexts,
-  log: (line: string) => void,
-): Promise<FlagCandidate[]> {
-  const size = SLIDING_WINDOW_SENTENCES;
-  if (sentences.length < size) return [];
-
-  const texts: string[] = [];
-  for (let i = 0; i + size <= sentences.length; i += 1) {
-    texts.push(sentences.slice(i, i + size).map((s) => s.text).join(' '));
-  }
-  const scores = await score(texts);
-
-  const raw: FlagCandidate[] = [];
-  for (let w = 0; w < texts.length && w < scores.length; w += 1) {
-    const row = scores[w]!;
-    for (let c = 0; c < plan.length; c += 1) {
-      const value = row[c] ?? 0;
-      if (value < CAPTURE_THRESHOLD) continue;
-      raw.push({
-        // Representative sentence = the middle of the window; used for logs,
-        // never for the span, which is the whole window.
-        sentenceIndex: w + Math.floor(size / 2),
-        spanFrom: w,
-        spanTo: w + size - 1,
-        text: texts[w]!,
-        category: plan[c]!.category,
-        score: value,
-        proposition: plan[c]!.proposition,
-        source: 'window',
-        rescued: false,
-      });
-    }
-  }
-
-  const alreadyHot = new Map<string, number[]>();
-  for (const candidate of sentenceLevel) {
-    const list = alreadyHot.get(candidate.category);
-    if (list) list.push(candidate.sentenceIndex);
-    else alreadyHot.set(candidate.category, [candidate.sentenceIndex]);
-  }
-
-  const keptSpans = new Map<string, Array<[number, number]>>();
-  const kept: FlagCandidate[] = [];
-  for (const candidate of [...raw].sort((a, b) => b.score - a.score)) {
-    const hotHere = alreadyHot.get(candidate.category) ?? [];
-    if (hotHere.some((i) => i >= candidate.spanFrom && i <= candidate.spanTo)) continue;
-
-    const spans = keptSpans.get(candidate.category) ?? [];
-    if (spans.some(([from, to]) => from <= candidate.spanTo && to >= candidate.spanFrom)) continue;
-    spans.push([candidate.spanFrom, candidate.spanTo]);
-    keptSpans.set(candidate.category, spans);
-    kept.push(candidate);
-  }
-
-  kept.sort((a, b) => a.spanFrom - b.spanFrom);
-  log(
-    `analyze: window pass — ${texts.length} sliding ${size}-sentence window(s) gave ${raw.length} `
-    + `raw hit(s) and ${kept.length} new candidate(s); ${raw.length - kept.length} were the sentence `
-    + 'pass or a stronger overlapping window saying the same thing',
-  );
-  return kept;
-}
-
 /** The per-category evidence one hot span contributes to a window. */
 function categoriesFromSpan(candidates: readonly FlagCandidate[]): WindowCategory[] {
   return candidates.map((candidate) => ({
@@ -511,7 +213,6 @@ function categoriesFromSpan(candidates: readonly FlagCandidate[]): WindowCategor
       { length: candidate.spanTo - candidate.spanFrom + 1 },
       (_unused, offset) => candidate.spanFrom + offset,
     ),
-    rescued: candidate.rescued,
   }));
 }
 
@@ -534,9 +235,6 @@ function mergeWindowCategories(a: readonly WindowCategory[], b: readonly WindowC
     out.set(entry.category, {
       ...best,
       sentenceIndices: [...indices].sort((x, y) => x - y),
-      // One floor-clearing firing anywhere in the window means the category is
-      // not resting on the rescue rule.
-      rescued: existing.rescued && entry.rescued,
     });
   }
   return [...out.values()];
@@ -545,12 +243,12 @@ function mergeWindowCategories(a: readonly WindowCategory[], b: readonly WindowC
 /**
  * Turn ranked (span, category) candidates into merged verification windows.
  *
- * Pure and exported so the shape can be exercised without a Python worker.
+ * Pure and exported so the shape can be exercised without a scorer.
  * Candidates must be in reading order (ascending spanFrom, then spanTo), which
- * is what `rankWindows` hands it.
+ * is what `spansToWindows` (spans.ts) hands it.
  *
  * MULTI-CATEGORY BOOST. A window's ranking score is the noisy-OR of its
- * categories' best scores, `1 - PROD(1 - s)`. Two independent hypotheses at 0.95
+ * categories' best scores, `1 - PROD(1 - s)`. Two independent categories at 0.95
  * and 0.93 give 0.9965, which outranks any single 0.99 — which is the point: a
  * passage that is demonizing AND hateful is worse than a passage that is very
  * confidently one thing, and it should be verified and read first. The score
@@ -642,38 +340,4 @@ export function windowStrength(window: FlagWindow): number {
     (sum, c) => sum + Math.log(Math.max(1 - c.score, Number.MIN_VALUE)),
     0,
   );
-}
-
-/**
- * The stage-1 entry point: rank sentences AND sliding windows, union the two,
- * then group the survivors into merged verification windows, STRONGEST FIRST.
- *
- * The order is the verification order (docs/ANALYSIS.md §5): a run interrupted
- * an hour in has already finished the findings most worth trusting, and the
- * append-as-landed report makes them readable before the loose tail is done.
- */
-export async function rankWindows(
-  sentences: readonly BookSentence[],
-  plan: readonly RankPlan[],
-  score: ScoreTexts,
-  log: (line: string) => void,
-): Promise<FlagWindow[]> {
-  if (plan.length === 0 || sentences.length === 0) return [];
-
-  const sentenceLevel = await scoreSentenceLevel(sentences, plan, score, log);
-  const windowLevel = await scoreWindowLevel(sentences, plan, sentenceLevel, score, log);
-  const candidates = [...sentenceLevel, ...windowLevel].sort(
-    (a, b) => a.spanFrom - b.spanFrom || a.spanTo - b.spanTo,
-  );
-
-  const windows = buildWindows(sentences, candidates);
-  windows.sort((a, b) => windowStrength(a) - windowStrength(b) || a.contextFrom - b.contextFrom);
-
-  const calls = windows.reduce((total, window) => total + window.categories.length, 0);
-  log(
-    `analyze: ${candidates.length} candidate(s) (${sentenceLevel.length} sentence + `
-    + `${windowLevel.length} window) became ${windows.length} passage(s) and ${calls} verify call(s) `
-    + `— one call per candidate would have been ${candidates.length}`,
-  );
-  return windows;
 }

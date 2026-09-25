@@ -6,9 +6,9 @@
  * Translate's unit is the BLOCK, on purpose: a paragraph is the smallest thing
  * that carries enough grammar to be translated, and cutting one into sentences
  * would hand a model half a clause and no antecedent. Analysis's unit is the
- * SENTENCE, for the opposite reason: an entailment model scores a proposition
- * against a claim, and a paragraph containing one hateful sentence and four
- * neutral ones dilutes to nothing (measured in briefcase as stretch-level
+ * SENTENCE, for the opposite reason: a ranker judges a passage against a claim,
+ * and a paragraph containing one hateful sentence and four neutral ones dilutes
+ * to nothing (measured in briefcase as stretch-level
  * dilution, which is what moved scoring down to the sentence in the first
  * place). So the book gets a segmenter, and it lives here.
  *
@@ -34,25 +34,23 @@
  * `/[.!?]+["')\]]*(?=\s|$)/g` — one or more terminal marks, then any closing
  * quotes or brackets that belong to the same sentence, then whitespace or the
  * end of the string. The punctuation STAYS WITH THE SENTENCE it ends, which is
- * what makes a hypothesis about an assertion score against a complete
- * assertion. Trailing text with no terminal mark at all is a sentence too: a
+ * what makes a question about an assertion read a complete assertion. Trailing text with no terminal mark at all is a sentence too: a
  * heading, a list item and a caption are all ordinary rows of this book and
  * almost none of them are punctuated, and a rule that dropped them would make
  * the analysis blind to exactly the categories that live in headings.
  *
- * It is kept byte-identical to briefcase's `assembleSentences` because the 0.7
- * calibration and every measured number quoted in `plan.ts` and `rank.ts` were
- * measured against THIS division of the text. A "better" rule here — one that
+ * It is kept byte-identical to briefcase's `assembleSentences` because every
+ * measured number carried into `snap.ts`, `spans.ts` and `rank.ts` was measured
+ * against THIS division of the text. A "better" rule here — one that
  * knew about "Dr." or "e.g." — would be a different division, and every
  * measurement carried over would silently be about something else.
  *
  * WHAT IT THEREFORE GETS WRONG, said out loud rather than patched: an
  * abbreviation ends a sentence early ("Dr. King said" is two), and an ellipsis
  * or a decimal point can too. The cost is bounded and it is the cheap
- * direction — a short fragment scores LOW on every stance hypothesis, so the
- * failure is a candidate that does not appear, not a passage flagged for
- * something it does not say. The sliding three-sentence window pass
- * (`rank.ts`) reads across such a cut anyway.
+ * direction — a fragment under four words is read with the sentence after it
+ * (`buildUnits`, snap.ts), and every question quotes three units at once, so
+ * the ranker reads across such a cut anyway.
  */
 
 /** One sentence of one row: where it is, and the characters that are there. */
@@ -80,7 +78,7 @@ const BOUNDARY = /[.!?]+["')\]]*(?=\s|$)/g;
  *
  * Pure, TS-side, no model and no subprocess. A row of whitespace, or of
  * nothing, is no sentences rather than one empty one — an empty string entails
- * nothing and would cost an NLI column and a report row saying so.
+ * nothing and would cost a ranker's question and a report row saying so.
  */
 export function splitSentences(text: string): Sentence[] {
   /*
