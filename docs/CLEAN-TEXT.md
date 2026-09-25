@@ -706,6 +706,25 @@ when it is next cleaned through `Qwen/Qwen3.5-9B`. That is correct — two serve
 at two precisions are two answers — and it is the reason to pick one server per
 machine.
 
+## The gate is LIGHT — `--gate light` (2026-09-25, n15)
+
+Owen: *"lets rebuild the gate to have a very light touch. something thatll only reject
+the things that it should, and preferably never reject a legitimate change."*
+
+`src/clean/light-gate.ts`, clean-text's default. Built from every edit five gate-off runs
+applied (Working Towards the Führer ×4, Pursuit of Power ×1, qwen3.5-9b): the model's
+mistakes were all one shape — it changed a word that is already spoken as printed
+("Führer" → "Fuehrer", 'idea' → idea, "Movement" → "movement", "decade" → "ten year
+period") or invented words between words it kept ("Franz Joseph" → "Franz the Second
+Joseph"). So a reading may change only PRINTED-FORM tokens (digits, abbreviations and
+initials, capitals, roman numerals, brackets, ampersands, line-break pieces, garbled
+words); every other word comes back exactly, and added words sit beside what was read.
+A dash, dropped interpolation brackets, removed apparatus and a rejoined broken word are
+recognised whole. It does NOT judge whether a number reading is right — that is the
+prompt's job. Replayed over those 365 edits it refused every bad one found by reading
+them, and none of the legitimate ones. `--gate on` is the strict validators; `--gate
+off` applies everything spliceable; every setting records the strict verdict.
+
 ## The gate is OFF while the prompt is tuned — `--gate on|off` (2026-09-24, n11)
 
 Owen: *"we're focusing too much on gating/limiting/validating. we could turn the gate

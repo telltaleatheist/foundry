@@ -786,7 +786,7 @@ test('the gate OFF applies a judgement refusal and records what it would have sa
   assert.strictEqual(on.accepted.length, 0);
   const off = norm.validateNumberEdits(target, [target.length], edits, [], { ...norm.EVERY_CLASS, gate: false });
   assert.strictEqual(off.records[0]!.status, 'APPLIED');
-  assert.match(off.records[0]!.detail ?? '', /^UNGATED — the gate would have refused DIGIT_IN_REPLACE/);
+  assert.match(off.records[0]!.detail ?? '', /^UNGATED — the strict gate would have refused DIGIT_IN_REPLACE/);
   assert.deepStrictEqual(off.accepted.map((a) => a.replace), ['3 hundred']);
   // A find the text does not print cannot be spliced, gate or no gate.
   assert.strictEqual(off.records[1]!.status, 'NOT_FOUND');

@@ -155,7 +155,7 @@ const NUL = String.fromCharCode(0);
  * `records.ts` exists to hold.
  */
 /** Off while the prompt is tuned (Owen, 2026-09-24); `--gate on` restores the validators. */
-export const DEFAULT_CLEAN_GATE = false;
+export const DEFAULT_CLEAN_GATE: boolean | 'light' = 'light';
 
 export function cleanKey(request: {
   text: string;
@@ -336,7 +336,7 @@ export interface CleanTextOptions {
    * edit the model proposes that can be spliced is applied, and the receipt
    * records what the gate would have refused (`UNGATED — …`).
    */
-  gate?: boolean;
+  gate?: boolean | 'light';
   /** Injected so the tests drive the whole pass with no server and no GPU. */
   transport?: Transport;
   /** Injected so a test can settle every block without a transport at all. */

@@ -1161,8 +1161,8 @@ const CT_UNIT: OptionSpec = {
 const CT_GATE: OptionSpec = {
   name: 'gate',
   type: 'string',
-  placeholder: '<on|off>',
-  describe: 'Enforce the validators judgement refusals (on), or apply every edit the model proposes that can be spliced and record what the gate would have said (off, the default while the prompt is tuned).',
+  placeholder: '<light|on|off>',
+  describe: 'light (default): refuse only a reading that changes what is already spoken as printed. on: the strict validators. off: apply every edit that can be spliced. Every setting records what the strict gate would have said.',
 };
 
 /** Read `--unit`, refusing anything but the two units by name. */
@@ -1258,10 +1258,10 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
   }
   const unit = await cleanUnit(args);
   const gateArg = optionalString(args, 'gate');
-  if (gateArg !== undefined && gateArg !== 'on' && gateArg !== 'off') {
-    throw new UsageError(`--gate takes on or off, not "${gateArg}"`);
+  if (gateArg !== undefined && gateArg !== 'on' && gateArg !== 'off' && gateArg !== 'light') {
+    throw new UsageError(`--gate takes light, on or off, not "${gateArg}"`);
   }
-  const gate = gateArg === undefined ? undefined : gateArg === 'on';
+  const gate = gateArg === undefined ? undefined : gateArg === 'light' ? 'light' as const : gateArg === 'on';
   const epubIn = optionalString(args, 'epub');
   if (epubIn !== undefined) {
     const bookRoute = (['book', 'records', 'stamp', 'generation', 'triage', 'unit'] as const)
@@ -3810,7 +3810,7 @@ export const COMMANDS: readonly Command[] = [
     summary: 'Clean a book\'s text for a narrator: punctuation, numbers as words, the model on every block.',
     usage: '--book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
       + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--server <openai|ollama|anthropic>]'
-      + ' [--concurrency <n>] [--triage <verdicts.json>] [--unit <sentence|block>] [--gate <on|off>]'
+      + ' [--concurrency <n>] [--triage <verdicts.json>] [--unit <sentence|block>] [--gate <light|on|off>]'
       + '  |  --epub <in.epub> --out <out.epub> [--endpoint <url>] [--model <name>]'
       + ' [--server <openai|ollama|anthropic>] [--concurrency <n>]',
     detail: [
