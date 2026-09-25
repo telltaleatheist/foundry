@@ -1157,6 +1157,14 @@ const CT_UNIT: OptionSpec = {
   describe: 'What one question is about: a sentence (default) or a whole block. clean-text --triage must name the unit its verdicts were made at.',
 };
 
+/** `--gate` on clean-text: are the validators' judgement refusals enforced. */
+const CT_GATE: OptionSpec = {
+  name: 'gate',
+  type: 'string',
+  placeholder: '<on|off>',
+  describe: 'Enforce the validators judgement refusals (on), or apply every edit the model proposes that can be spliced and record what the gate would have said (off, the default while the prompt is tuned).',
+};
+
 /** Read `--unit`, refusing anything but the two units by name. */
 async function cleanUnit(args: ParsedArgs): Promise<import('./clean/blocks.js').CleanUnit | undefined> {
   const unit = optionalString(args, 'unit');
@@ -1249,6 +1257,11 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
     throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
   }
   const unit = await cleanUnit(args);
+  const gateArg = optionalString(args, 'gate');
+  if (gateArg !== undefined && gateArg !== 'on' && gateArg !== 'off') {
+    throw new UsageError(`--gate takes on or off, not "${gateArg}"`);
+  }
+  const gate = gateArg === undefined ? undefined : gateArg === 'on';
   const epubIn = optionalString(args, 'epub');
   if (epubIn !== undefined) {
     const bookRoute = (['book', 'records', 'stamp', 'generation', 'triage', 'unit'] as const)
@@ -1303,6 +1316,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
     ...(optionalString(args, 'triage') === undefined
       ? {} : { triagePath: optionalString(args, 'triage')! }),
     ...(unit === undefined ? {} : { unit }),
+    ...(gate === undefined ? {} : { gate }),
     log,
   });
 }
@@ -3796,7 +3810,7 @@ export const COMMANDS: readonly Command[] = [
     summary: 'Clean a book\'s text for a narrator: punctuation, numbers as words, the model on every block.',
     usage: '--book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
       + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--server <openai|ollama|anthropic>]'
-      + ' [--concurrency <n>] [--triage <verdicts.json>] [--unit <sentence|block>]'
+      + ' [--concurrency <n>] [--triage <verdicts.json>] [--unit <sentence|block>] [--gate <on|off>]'
       + '  |  --epub <in.epub> --out <out.epub> [--endpoint <url>] [--model <name>]'
       + ' [--server <openai|ollama|anthropic>] [--concurrency <n>]',
     detail: [
@@ -3995,7 +4009,7 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_EPUB_IN, CT_EPUB_OUT,
-      CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION, CT_TRIAGE, CT_UNIT,
+      CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION, CT_TRIAGE, CT_UNIT, CT_GATE,
     ],
     run: runCleanText,
   },

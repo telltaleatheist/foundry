@@ -154,6 +154,9 @@ const NUL = String.fromCharCode(0);
  * identical words are one question and two rows, which is the arrangement
  * `records.ts` exists to hold.
  */
+/** Off while the prompt is tuned (Owen, 2026-09-24); `--gate on` restores the validators. */
+export const DEFAULT_CLEAN_GATE = false;
+
 export function cleanKey(request: {
   text: string;
   model: string;
@@ -326,6 +329,14 @@ export interface CleanTextOptions {
    * `--triage` file must have judged the same unit.
    */
   unit?: CleanUnit;
+  /**
+   * `--gate on|off`: are the validators' JUDGEMENT refusals enforced? Default
+   * OFF since 2026-09-24 (Owen: *"turn the gate and eveyrthing off completely
+   * for the moment … focus on fixing the cleanup logic/prompting"*). Off, every
+   * edit the model proposes that can be spliced is applied, and the receipt
+   * records what the gate would have refused (`UNGATED — …`).
+   */
+  gate?: boolean;
   /** Injected so the tests drive the whole pass with no server and no GPU. */
   transport?: Transport;
   /** Injected so a test can settle every block without a transport at all. */
@@ -936,7 +947,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
       if (total > 0 && label !== 'Releasing model') opts.log(`clean-text: ${done}/${total}`);
     },
     'every-block',
-    EVERY_CLASS,
+    { ...EVERY_CLASS, gate: opts.gate ?? DEFAULT_CLEAN_GATE },
     concurrency,
     bankAnswer,
   );

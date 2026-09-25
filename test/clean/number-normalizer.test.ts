@@ -776,3 +776,18 @@ test('a day range and a pre-decimal sum are the model\'s whole, and its reading 
   assert.strictEqual(status('wages of £3.50 a week', '£3.50',
     'three pounds, and fifty pence, give or take'), 'WORDS_ADDED');
 });
+
+test('the gate OFF applies a judgement refusal and records what it would have said; mechanics still refuse (2026-09-24)', () => {
+  const target = 'The committee grew to 300 members in the spring.';
+  // "3 hundred" still prints a digit: the gate refuses it DIGIT_IN_REPLACE.
+  const edits = [{ find: '300', replace: '3 hundred' }, { find: 'not here', replace: 'x' }];
+  const on = norm.validateNumberEdits(target, [target.length], edits, [], norm.EVERY_CLASS);
+  assert.strictEqual(on.records[0]!.status, 'DIGIT_IN_REPLACE');
+  assert.strictEqual(on.accepted.length, 0);
+  const off = norm.validateNumberEdits(target, [target.length], edits, [], { ...norm.EVERY_CLASS, gate: false });
+  assert.strictEqual(off.records[0]!.status, 'APPLIED');
+  assert.match(off.records[0]!.detail ?? '', /^UNGATED — the gate would have refused DIGIT_IN_REPLACE/);
+  assert.deepStrictEqual(off.accepted.map((a) => a.replace), ['3 hundred']);
+  // A find the text does not print cannot be spliced, gate or no gate.
+  assert.strictEqual(off.records[1]!.status, 'NOT_FOUND');
+});

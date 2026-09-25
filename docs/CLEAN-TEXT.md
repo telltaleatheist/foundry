@@ -706,6 +706,20 @@ when it is next cleaned through `Qwen/Qwen3.5-9B`. That is correct — two serve
 at two precisions are two answers — and it is the reason to pick one server per
 machine.
 
+## The gate is OFF while the prompt is tuned — `--gate on|off` (2026-09-24, n11)
+
+Owen: *"we're focusing too much on gating/limiting/validating. we could turn the gate
+and eveyrthing off completely for the moment … then turn it back on when we're done.
+ideally we wouldnt even need a validator/gate. focus on fixing the cleanup
+logic/prompting so it gives us the right results."*
+
+`clean-text` defaults to `--gate off`: every edit the model proposes is applied
+unless it physically cannot be spliced (not in the text, in it twice, across markup,
+over another edit). What the validators WOULD have refused is still recorded in the
+receipt as `UNGATED — the gate would have refused <STATUS>: …`, so turning it back on is
+a decision made against evidence. `--gate on` restores every refusal. The prompts
+carry the readings as examples; that is where correctness now comes from.
+
 ## The unit is a sentence — `--unit sentence` (2026-09-24, n10)
 
 Owen, after Pursuit of Power's n8 run left ~330 regnal numerals, 39 decimals and a
