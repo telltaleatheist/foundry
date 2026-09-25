@@ -35,6 +35,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import * as norm from '../../src/clean/tts-number-normalizer.js';
+import { DEFAULT_CLEAN_GATE } from '../../src/clean/run.js';
+
+/**
+ * The policy clean-text actually runs with. While the gate is OFF (Owen, 2026-09-24:
+ * turn it off while the prompt is tuned) a prompt example only has to be spliceable;
+ * the day `DEFAULT_CLEAN_GATE` is true again, every example must pass the gate too.
+ */
+const POLICY: norm.NumberEditPolicy = { ...norm.EVERY_CLASS, gate: DEFAULT_CLEAN_GATE };
 import * as rules from '../../src/clean/tts-number-rules.js';
 import * as punct from '../../src/clean/tts-punctuation.js';
 import * as forms from '../../src/clean/tts-spoken-forms.js';
@@ -97,7 +105,7 @@ test('every prompt file this pass sends carries worked examples', () => {
 for (const example of ALL) {
   test(`${path.basename(example.file)} — ${example.target.slice(0, 58)}…`, () => {
     const { records } = norm.validateNumberEdits(
-      example.target, [example.target.length], example.edits, [], norm.EVERY_CLASS);
+      example.target, [example.target.length], example.edits, [], POLICY);
     assert.strictEqual(records.length, example.edits.length,
       'every proposed edit is recorded');
     const refused = records.filter((r) => r.status !== 'APPLIED');
@@ -213,7 +221,7 @@ for (const pair of PAIRS) {
     const target = frameFor(pair.find);
     const { records } = norm.validateNumberEdits(
       target, [target.length], [{ find: pair.find, replace: pair.replace }], [],
-      norm.EVERY_CLASS);
+      POLICY);
     assert.strictEqual(records[0].status, 'APPLIED',
       `the prompt teaches this reading and the validator answers ${records[0].status}`
       + `${records[0].detail ? ` — ${records[0].detail}` : ''}`);
