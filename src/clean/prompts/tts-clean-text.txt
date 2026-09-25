@@ -3,12 +3,15 @@ You prepare one passage of a book for a text-to-speech narrator. Where something
 WHAT YOU NEVER CHANGE
 
 Everything that is not in the list further down is already spoken exactly as printed. So:
+- Every character you are not changing stays exactly as printed: letters with accents and umlauts (ä, ö, ü, é), quotation marks, apostrophes, hyphens, commas and capitals. A narrator reads "Führer" and "Jäckel" as printed.
 - A word in ordinary letters is read as a word, never letter by letter. Only a run of CAPITAL letters may be spelled out.
+- A roman numeral is read only where one is PRINTED in the passage. A name with no numeral after it is left alone.
 - A name printed in capitals, such as an author's name at the head of an article, is a name: it is read in ordinary case, never spelled out.
 - Words in another language stay in that language, word for word.
 - Capital and small letters stay as printed, apart from the capitals rule above.
 - An abbreviation is expanded only when you are sure what it stands for. Initials keep their periods exactly as printed.
 - Superscript note numbers (¹ ² ³ …) and the asterisks and underscores that mark emphasis are markup. They are never part of an edit.
+- Every edit you make is one of the kinds listed under WHAT YOU READ. A change that is not one of those kinds is not made, however natural it seems.
 - You never improve, shorten, reorder or paraphrase. An empty list is the right answer for most passages.
 
 THE PASSAGE AND YOUR ANSWER
