@@ -120,6 +120,9 @@ import type {
   AskOutcome, ModelServerFacts, NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
 } from './tts-number-normalizer.js';
 import { PUNCTUATION_SPEC_VERSION } from './tts-punctuation.js';
+import {
+  NO_REMOVAL, removalKeyField, removalRecord, removesAnything, sameRemoval, withRemoval, type RemovalRequest,
+} from './removal.js';
 
 export { CleanTextError };
 
@@ -162,6 +165,8 @@ export function cleanKey(request: {
   model: string;
   /** Default `block`: the key every record written before 2026-09-24 was filed under. */
   unit?: CleanUnit;
+  /** What the run removes. Absent or nothing removed: the key every earlier record was filed under. */
+  removal?: RemovalRequest;
 }): string {
   const fields = [
     request.unit === 'sentence' ? SENTENCE_KEY_FORMAT : KEY_FORMAT,
@@ -170,6 +175,10 @@ export function cleanKey(request: {
     PUNCTUATION_SPEC_VERSION,
     request.text,
   ];
+  // A REMOVAL IS PART OF THE QUESTION (src/clean/removal.ts): appended only when
+  // there is one, so a run that removes nothing keeps every key it had.
+  const removal = request.removal === undefined ? '' : removalKeyField(request.removal);
+  if (removal.length > 0) fields.push(removal);
   return createHash('sha256').update(fields.join(NUL), 'utf8').digest('hex');
 }
 
@@ -186,7 +195,7 @@ export function cleanKey(request: {
  * Materialization reads the newest row per POSITION, so the book is uniform
  * either way.
  */
-export function triageKey(request: { text: string; triageModel: string }): string {
+export function triageKey(request: { text: string; triageModel: string; removal?: RemovalRequest }): string {
   const fields = [
     TRIAGE_KEY_FORMAT,
     request.triageModel.trim(),
@@ -194,6 +203,9 @@ export function triageKey(request: { text: string; triageModel: string }): strin
     PUNCTUATION_SPEC_VERSION,
     request.text,
   ];
+  // "Found clean" is a verdict against the criteria asked, and a removal adds one.
+  const removal = request.removal === undefined ? '' : removalKeyField(request.removal);
+  if (removal.length > 0) fields.push(removal);
   return createHash('sha256').update(fields.join(NUL), 'utf8').digest('hex');
 }
 
@@ -255,6 +267,8 @@ export interface CleanTextReceipt {
   server?: ModelServerFacts | null;
   /** Present when the run was given `--triage`: what the triage let through and what it sent. */
   triage?: CleanTriageSummary;
+  /** What the run was asked to remove (src/clean/removal.ts). Absent in a receipt written before 2026-09-29. */
+  removal?: RemovalRequest;
 }
 
 export interface CleanTextOptions {
@@ -337,6 +351,13 @@ export interface CleanTextOptions {
    * records what the gate would have refused (`UNGATED — …`).
    */
   gate?: boolean | 'light';
+  /**
+   * `--remove-references` / `--remove-also`: what this cleanup TAKES OUT beside what
+   * it reads (src/clean/removal.ts). Absent removes nothing more than the cleanup
+   * always did. Said to the model, which decides span by span; a removal it
+   * proposes is accepted as one under every gate.
+   */
+  removal?: RemovalRequest;
   /** Injected so the tests drive the whole pass with no server and no GPU. */
   transport?: Transport;
   /** Injected so a test can settle every block without a transport at all. */
@@ -502,7 +523,21 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     ?? (await openModelServer({ kind, transport, endpoint, log: opts.log })).model;
 
   const unit = opts.unit ?? DEFAULT_CLEAN_UNIT;
+  const removal = opts.removal ?? NO_REMOVAL;
   const triage = opts.triagePath === undefined ? null : readTriageFile(opts.triagePath);
+  /*
+   * A TRIAGE ASKED ABOUT OTHER REMOVALS JUDGED BY OTHER CRITERIA. A sentence it
+   * found clean may print exactly what this run was asked to take out, so its
+   * verdicts are not about this question: refused by name, the unit's rule.
+   */
+  if (triage !== null && !sameRemoval(triage.removal ?? NO_REMOVAL, removal)) {
+    throw new CleanTextError(
+      `--triage ${path.resolve(opts.triagePath!)} was asked about a different removal `
+      + `(${JSON.stringify(removalRecord(triage.removal ?? NO_REMOVAL))}) from this run's `
+      + `(${JSON.stringify(removalRecord(removal))}). Run clean-triage with the same --remove-references `
+      + 'and --remove-also as clean-text.',
+    );
+  }
   if (triage !== null && (triage.unit ?? 'block') !== unit) {
     throw new CleanTextError(
       `--triage ${path.resolve(opts.triagePath!)} judged ${triage.unit ?? 'block'}s, and this run asks about `
@@ -592,9 +627,9 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * a Table row holds the whole grid and half a grid is not one.
    */
   const keyOf = new Map<string, string>();
-  for (const block of blocks) keyOf.set(block.target.key, cleanKey({ text: block.target.text, model, unit }));
+  for (const block of blocks) keyOf.set(block.target.key, cleanKey({ text: block.target.text, model, unit, removal }));
   const tableKey = new Map<string, string>();
-  for (const table of tables) tableKey.set(table.parts, cleanKey({ text: table.source, model, unit }));
+  for (const table of tables) tableKey.set(table.parts, cleanKey({ text: table.source, model, unit, removal }));
 
   /*
    * A TRIAGE'S "CLEAN" ROW ANSWERS THE BLOCK FOR A RUN GIVEN THE SAME TRIAGE —
@@ -603,7 +638,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * the row having its own key (`triageKey`).
    */
   const answered = (source: string, key: string): boolean => records.get(key) !== undefined
-    || (triage !== null && records.get(triageKey({ text: source, triageModel: triage.model.id })) !== undefined);
+    || (triage !== null && records.get(triageKey({ text: source, triageModel: triage.model.id, removal })) !== undefined);
   const bankedTable = new Set<string>();
   for (const table of tables) {
     if (answered(table.source, tableKey.get(table.parts)!)) bankedTable.add(table.parts);
@@ -818,7 +853,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
       const text = cleanText.get(block.target.key)!;
       if (block.cell === undefined) {
         if (text !== block.target.text) changed += 1;
-        appendRecord(block.parts, triageKey({ text: block.target.text, triageModel: triage.model.id }), text);
+        appendRecord(block.parts, triageKey({ text: block.target.text, triageModel: triage.model.id, removal }), text);
         continue;
       }
       if (keptTables.has(block.parts)) continue;
@@ -831,7 +866,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
         continue;
       }
       if (spliced.text !== table.source) changed += 1;
-      appendRecord(table.parts, triageKey({ text: table.source, triageModel: triage.model.id }), spliced.text);
+      appendRecord(table.parts, triageKey({ text: table.source, triageModel: triage.model.id, removal }), spliced.text);
     }
   }
 
@@ -930,7 +965,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     // The act's own name, so a failure names the pass that was running rather
     // than the pass this function was lifted out of (`askForEdits`).
     'clean-text',
-    narrationTextPrompt(),
+    withRemoval(narrationTextPrompt(), removal),
     (done, total, label) => {
       /*
        * `clean-text: <done>/<total>`, per block, and BookForge mirrors the
@@ -947,7 +982,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
       if (total > 0 && label !== 'Releasing model') opts.log(`clean-text: ${done}/${total}`);
     },
     'every-block',
-    { ...EVERY_CLASS, gate: opts.gate ?? DEFAULT_CLEAN_GATE },
+    { ...EVERY_CLASS, gate: opts.gate ?? DEFAULT_CLEAN_GATE, removal: removesAnything(removal) },
     concurrency,
     bankAnswer,
   );
@@ -1012,6 +1047,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     unitsParseFailed: settled.parseFailed,
     server: runner.serverFacts?.() ?? null,
     ...(triageSummary === undefined ? {} : { triage: triageSummary }),
+    removal: removalRecord(removal),
   };
   const receiptOut = receiptPath(recordsPath);
   ensureDir(path.dirname(receiptOut));

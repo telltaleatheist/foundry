@@ -159,11 +159,30 @@ export function reassemble(text: string, spans: readonly SentenceSpan[], cleaned
   if (cleaned.length !== spans.length) {
     throw new Error(`reassemble: ${spans.length} sentence(s) and ${cleaned.length} answer(s).`);
   }
+  /*
+   * A SENTENCE CLEANED TO NOTHING takes one gap with it. A cleanup that removes
+   * (src/clean/removal.ts) may remove a whole sentence — "See Figure 3." standing
+   * alone — and splicing '' between its two gaps would leave the block with a
+   * doubled space where it stood. So a removed sentence drops the gap BEFORE it,
+   * or, when no sentence has been kept yet, the gap after it.
+   */
   let out = '';
   let at = 0;
+  let kept = 0;
+  let dropNextGap = false;
   spans.forEach((span, i) => {
-    out += text.slice(at, span.start) + cleaned[i]!;
+    const gap = text.slice(at, span.start);
     at = span.end;
+    if (cleaned[i]!.trim().length === 0) {
+      if (kept === 0) {
+        out += gap;
+        dropNextGap = true;
+      }
+      return;
+    }
+    out += (dropNextGap ? '' : gap) + cleaned[i]!;
+    dropNextGap = false;
+    kept += 1;
   });
   return out + text.slice(at);
 }

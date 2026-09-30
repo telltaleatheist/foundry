@@ -1164,6 +1164,37 @@ const CT_GATE: OptionSpec = {
   describe: 'light (default): refuse only a reading that changes what is already spoken as printed. on: the strict validators. off: apply every edit that can be spliced. Every setting records what the strict gate would have said.',
 };
 
+/**
+ * `--remove-references` and `--remove-also`, shared by clean-triage and
+ * clean-text: what the cleanup TAKES OUT (src/clean/removal.ts). The two commands
+ * must be given the same, and clean-text refuses a triage asked about another.
+ *
+ * ON BY DEFAULT, as the app's box is (Owen, 2026-09-29: "a checkbox … that's
+ * automatically checked") — the command line and the app run one code path.
+ */
+const CT_REMOVE_REFERENCES: OptionSpec = {
+  name: 'remove-references',
+  type: 'string',
+  placeholder: '<on|off>',
+  describe: 'on (default): the model removes printed references a narrator would not read — "(see Table 3)", "(fig. 1-1)", "[image]" — deciding each one. off: they are left to the other rules of the cleanup.',
+};
+
+const CT_REMOVE_ALSO: OptionSpec = {
+  name: 'remove-also',
+  type: 'string',
+  placeholder: '<text>',
+  describe: 'Anything else this book prints that a narrator would not read, described in your own words. Added to the triage question and to the prompt of the cleaner; the model decides what fits.',
+};
+
+/** Read the two removal flags into one request, refusing a malformed switch by name. */
+async function cleanRemoval(args: ParsedArgs): Promise<import('./clean/removal.js').RemovalRequest> {
+  const references = optionalString(args, 'remove-references');
+  if (references !== undefined && references !== 'on' && references !== 'off') {
+    throw new UsageError(`--remove-references takes on or off, not "${references}"`);
+  }
+  return { references: references !== 'off', also: optionalString(args, 'remove-also') ?? '' };
+}
+
 /** Read `--unit`, refusing anything but the two units by name. */
 async function cleanUnit(args: ParsedArgs): Promise<import('./clean/blocks.js').CleanUnit | undefined> {
   const unit = optionalString(args, 'unit');
@@ -1210,9 +1241,11 @@ async function runCleanTriageCommand(args: ParsedArgs): Promise<void> {
     throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
   }
   const unit = await cleanUnit(args);
+  const removal = await cleanRemoval(args);
   const { runCleanTriage } = await import('./clean/triage.js');
   await runCleanTriage({
     ...(unit === undefined ? {} : { unit }),
+    removal,
     bookPath: requireString(args, 'book', 'the book file whose blocks are judged'),
     outPath: requireString(args, 'out', 'where the verdicts are written'),
     endpoint: requireString(args, 'endpoint', 'the Crucible whose decide door is asked'),
@@ -1256,6 +1289,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
     throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
   }
   const unit = await cleanUnit(args);
+  const removal = await cleanRemoval(args);
   const gateArg = optionalString(args, 'gate');
   if (gateArg !== undefined && gateArg !== 'on' && gateArg !== 'off' && gateArg !== 'light') {
     throw new UsageError(`--gate takes light, on or off, not "${gateArg}"`);
@@ -1285,6 +1319,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
       server: server.kind,
       ...(server.model === undefined ? {} : { model: server.model }),
       ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
+      removal,
       log,
     });
     return;
@@ -1316,6 +1351,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
       ? {} : { triagePath: optionalString(args, 'triage')! }),
     ...(unit === undefined ? {} : { unit }),
     ...(gate === undefined ? {} : { gate }),
+    removal,
     log,
   });
 }
@@ -3825,6 +3861,7 @@ export const COMMANDS: readonly Command[] = [
     usage: '--book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
       + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--server <openai|ollama|anthropic>]'
       + ' [--concurrency <n>] [--triage <verdicts.json>] [--unit <sentence|block>] [--gate <light|on|off>]'
+      + ' [--remove-references <on|off>] [--remove-also <text>]'
       + '  |  --epub <in.epub> --out <out.epub> [--endpoint <url>] [--model <name>]'
       + ' [--server <openai|ollama|anthropic>] [--concurrency <n>]',
     detail: [
@@ -4024,6 +4061,7 @@ export const COMMANDS: readonly Command[] = [
     options: [
       CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_EPUB_IN, CT_EPUB_OUT,
       CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION, CT_TRIAGE, CT_UNIT, CT_GATE,
+      CT_REMOVE_REFERENCES, CT_REMOVE_ALSO,
     ],
     run: runCleanText,
   },
@@ -4031,7 +4069,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'clean-triage',
     summary: 'Judge which blocks of a book need cleaning at all, before clean-text is run.',
     usage: '--book <book.jsonl> --out <verdicts.json> --endpoint <crucible url> --model <decide model>'
-      + ' [--concurrency <n>] [--unit <sentence|block>]',
+      + ' [--concurrency <n>] [--unit <sentence|block>] [--remove-references <on|off>] [--remove-also <text>]',
     detail: [
       'THE FIRST HALF OF A TRIAGED CLEANUP. Owen, 2026-09-23: "we create a list of',
       'blocks that need to be cleaned with snap and then we bring snap down and load',
@@ -4057,7 +4095,7 @@ export const COMMANDS: readonly Command[] = [
       'A busy door (chat_queue_full) is waited out; a model that is not resident is',
       'refused by name.',
     ].join('\n'),
-    options: [CT_BOOK_IN, CTR_OUT, CTR_ENDPOINT, CTR_MODEL, CTR_CONCURRENCY, CT_UNIT],
+    options: [CT_BOOK_IN, CTR_OUT, CTR_ENDPOINT, CTR_MODEL, CTR_CONCURRENCY, CT_UNIT, CT_REMOVE_REFERENCES, CT_REMOVE_ALSO],
     run: runCleanTriageCommand,
   },
   {

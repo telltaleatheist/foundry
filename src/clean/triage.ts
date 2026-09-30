@@ -49,6 +49,7 @@ import { blockDigest } from './digest.js';
 import { CleanTextError } from './punctuate.js';
 import { NORMALIZER_VERSION } from './tts-number-normalizer.js';
 import { PUNCTUATION_SPEC_VERSION } from './tts-punctuation.js';
+import { NO_REMOVAL, removalRecord, removalTriageCriteria, type RemovalRequest } from './removal.js';
 
 /** What a triage file is, spelled into it — a reader refuses any other. */
 export const TRIAGE_FORMAT = 'foundry-clean-triage/v1';
@@ -154,6 +155,12 @@ export interface TriageFile {
   unit?: CleanUnit;
   /** Position → verdict, for every position of the plan. */
   blocks: Record<string, TriageVerdict>;
+  /**
+   * What the question also asked to be removed (src/clean/removal.ts) — its
+   * criteria were part of every verdict, so clean-text refuses a file asked about
+   * other removals. Absent in a file written before 2026-09-29, which asked none.
+   */
+  removal?: RemovalRequest;
 }
 
 export interface CleanTriageOptions {
@@ -166,6 +173,12 @@ export interface CleanTriageOptions {
   concurrency?: number;
   /** Sentences (the default) or whole blocks — `--unit`. clean-text must be run at the same one. */
   unit?: CleanUnit;
+  /**
+   * What the cleanup behind this will remove (src/clean/removal.ts). Its criteria
+   * are added to the question, so a sentence that prints only something to remove
+   * is sent to the cleaner. clean-text must be given the same.
+   */
+  removal?: RemovalRequest;
   /** Injected so the tests drive the whole triage with no server. */
   transport?: Transport;
   /** Injected so the tests do not wait out a Retry-After. */
@@ -290,13 +303,28 @@ const TRIAGE_CRITERIA = TRIAGE_GUIDE.split('\n')
  * are the criteria a sentence should meet if it needs to be cleaned:
  * [criteria]"*. The state is one line of framing every question shares.
  */
-export function groupState(units: readonly StageOneUnit[], group: Group, unit: CleanUnit = 'block'): string {
+export function groupState(
+  units: readonly StageOneUnit[], group: Group, unit: CleanUnit = 'block', removal: RemovalRequest = NO_REMOVAL,
+): string {
   if (unit === 'sentence') return SENTENCE_TRIAGE_STATE;
   const lines: string[] = [];
   for (let i = group.from; i < group.to; i += 1) {
     lines.push(unitLine(units[i]!, i >= group.askFrom && i < group.askTo));
   }
-  return `${TRIAGE_GUIDE}\n\nBLOCKS\n${lines.join('\n')}`;
+  return `${withRemovalCriteria(TRIAGE_GUIDE, removal)}\n\nBLOCKS\n${lines.join('\n')}`;
+}
+
+/**
+ * A criteria list with the removal criteria (src/clean/removal.ts) after its last
+ * bullet — so a run that removes nothing is shown the list byte for byte, and one
+ * that does is shown them among the other reasons a line needs cleaning.
+ */
+function withRemovalCriteria(list: string, removal: RemovalRequest): string {
+  const extra = removalTriageCriteria(removal);
+  if (extra.length === 0) return list;
+  const lines = list.split('\n');
+  const last = lines.map((line) => line.startsWith('- ')).lastIndexOf(true);
+  return [...lines.slice(0, last + 1), extra, ...lines.slice(last + 1)].join('\n');
 }
 
 /**
@@ -318,7 +346,9 @@ export type TriageQuestion =
  * itself — a \`choice\` of Yes/No, because the door's \`yesno\` renders its text as a
  * statement to be judged true or false, and this is a question.
  */
-export function triageQuestion(parts: string, unit: CleanUnit = 'block', text?: string): TriageQuestion {
+export function triageQuestion(
+  parts: string, unit: CleanUnit = 'block', text?: string, removal: RemovalRequest = NO_REMOVAL,
+): TriageQuestion {
   if (unit === 'sentence') {
     if (text === undefined) throw new Error(`triageQuestion: a sentence question needs its sentence (${parts}).`);
     return {
@@ -326,7 +356,7 @@ export function triageQuestion(parts: string, unit: CleanUnit = 'block', text?: 
       instructions: 'Does this sentence need to be cleaned?\n\n'
         + `${text.replace(/\s+/g, ' ').trim()}\n\n`
         + 'Here are the criteria a sentence meets if it needs to be cleaned:\n'
-        + TRIAGE_CRITERIA,
+        + withRemovalCriteria(TRIAGE_CRITERIA, removal),
       options: SENTENCE_OPTIONS,
     };
   }
@@ -373,6 +403,7 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
   }
   const punctuated = punctuateAll(blocks);
   const unit = opts.unit ?? DEFAULT_CLEAN_UNIT;
+  const removal = opts.removal ?? NO_REMOVAL;
   const units = triageUnits(blocks, punctuated.text, unit);
   const groups = triageGroups(units, unit);
   opts.log(
@@ -388,8 +419,8 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
     const asked = units.slice(group.askFrom, group.askTo);
     const body = JSON.stringify({
       model: opts.model,
-      state: groupState(units, group, unit),
-      questions: Object.fromEntries(asked.map((one) => [one.parts, triageQuestion(one.parts, unit, one.text)])),
+      state: groupState(units, group, unit, removal),
+      questions: Object.fromEntries(asked.map((one) => [one.parts, triageQuestion(one.parts, unit, one.text, removal)])),
     });
     const reply = await askDecide(transport, url, body, {
       who: 'clean-triage', fail: (message) => new CleanTextError(message), sleep, log: opts.log,
@@ -433,6 +464,7 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
     flagP: TRIAGE_FLAG_P,
     minLabelMass: TRIAGE_MIN_LABEL_MASS,
     unit,
+    removal: removalRecord(removal),
     // In the book's order, so the file reads alongside it.
     blocks: Object.fromEntries(units.map((unit) => [unit.parts, verdicts[unit.parts]!])),
   };

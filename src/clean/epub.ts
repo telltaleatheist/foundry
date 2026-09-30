@@ -96,6 +96,7 @@ import { deadlineForConcurrency, fetchTransport, type Transport } from '../trans
 
 import { blockDigest } from './digest.js';
 import { narrationTextPrompt } from './prompt.js';
+import { NO_REMOVAL, removalKeyField, removesAnything, withRemoval, type RemovalRequest } from './removal.js';
 import { CleanTextError, nodeHolding, punctuateTarget } from './punctuate.js';
 import type { PunctuationRefusal, PunctuationStageRecord } from './punctuate.js';
 import { openModelRunner } from './runner.js';
@@ -134,7 +135,7 @@ const NUL = String.fromCharCode(0);
  * a banked answer can only ever be replayed into the shape it was written for —
  * which is what makes the replay a splice rather than a guess.
  */
-export function cleanEpubKey(request: { nodes: readonly string[]; model: string }): string {
+export function cleanEpubKey(request: { nodes: readonly string[]; model: string; removal?: RemovalRequest }): string {
   const fields = [
     'clean/xhtml/v1',
     request.model.trim(),
@@ -142,6 +143,9 @@ export function cleanEpubKey(request: { nodes: readonly string[]; model: string 
     PUNCTUATION_SPEC_VERSION,
     ...request.nodes,
   ];
+  // A removal is part of the question — `cleanKey`'s rule, appended only when asked.
+  const removal = request.removal === undefined ? '' : removalKeyField(request.removal);
+  if (removal.length > 0) fields.push(removal);
   return createHash('sha256').update(fields.join(NUL), 'utf8').digest('hex');
 }
 
@@ -216,6 +220,8 @@ export interface CleanEpubOptions {
   transport?: Transport;
   /** Injected so a test can settle every block without a transport at all. */
   runner?: NumberNormalizerRunner;
+  /** What the cleanup takes out — the book route's `removal` (src/clean/removal.ts). */
+  removal?: RemovalRequest;
   log: (message: string) => void;
 }
 
@@ -366,6 +372,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
   // Decided before the transport, because the deadline is a function of it —
   // the book route's header (`src/clean/run.ts`) carries the whole argument, and
   // `resolveConcurrency` (translate/model-server.ts) owns the three rungs.
+  const removal = opts.removal ?? NO_REMOVAL;
   const concurrency = await resolveConcurrency({
     asked: opts.concurrency, kind, openaiDefault: DEFAULT_TEXT_CONCURRENCY, endpoint,
     transport: opts.transport, log: opts.log,
@@ -482,7 +489,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
   const bank = TranslationBank.open(bankPath);
   const keyOf = new Map<string, string>();
   for (const block of blocks) {
-    keyOf.set(block.position, cleanEpubKey({ nodes: block.nodes.map((n) => n.text), model }));
+    keyOf.set(block.position, cleanEpubKey({ nodes: block.nodes.map((n) => n.text), model, removal }));
   }
   const outstanding = blocks.filter((block) => bank.get(keyOf.get(block.position)!) === undefined);
   const reused = blocks.length - outstanding.length;
@@ -606,14 +613,14 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
     runner,
     // The act's own name — src/clean/run.ts carries the argument.
     'clean-text',
-    narrationTextPrompt(),
+    withRemoval(narrationTextPrompt(), removal),
     (done, total, label) => {
       // `clean-text: <done>/<total>` — BookForge mirrors the shape, so it stays
       // exactly this, and the release tick is not a block (src/clean/run.ts).
       if (total > 0 && label !== 'Releasing model') opts.log(`clean-text: ${done}/${total}`);
     },
     'every-block',
-    EVERY_CLASS,
+    { ...EVERY_CLASS, removal: removesAnything(removal) },
     concurrency,
     bankAnswer,
   );
