@@ -40,7 +40,7 @@ import { ensureDir } from '../fsdirs.js';
 import { stripBom } from '../bom.js';
 import { readBookFile } from '../translate/bookrows.js';
 import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
-import { askDecide, decideUrl, pool, type DecideReply as DoorReply } from '../backend/decide-door.js';
+import { askDecide, decideDeadline, decideUrl, pool, type DecideReply as DoorReply } from '../backend/decide-door.js';
 
 import {
   cleanBlocks, DEFAULT_CLEAN_UNIT, punctuateAll, triageUnits, type CleanUnit, type StageOneUnit,
@@ -385,7 +385,7 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
   const started = Date.now();
   const at = new Date().toISOString();
   const concurrency = opts.concurrency ?? DEFAULT_TRIAGE_CONCURRENCY;
-  const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
+  const transport = opts.transport ?? fetchTransport(decideDeadline(deadlineForConcurrency(concurrency)));
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const url = decideUrl(opts.endpoint);
 

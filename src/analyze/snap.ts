@@ -45,7 +45,7 @@ import * as path from 'node:path';
 
 import { stripBom } from '../bom.js';
 import { ensureDir } from '../fsdirs.js';
-import { askDecide, decideUrl } from '../backend/decide-door.js';
+import { askDecide, decideDeadline, decideUrl } from '../backend/decide-door.js';
 import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
 import { servedModels } from '../translate/vllm.js';
 import { VERSION } from '../version.js';
@@ -532,7 +532,7 @@ async function loadedContextOf(transport: Transport, endpoint: string, model: st
 export async function runAnalyzeRank(opts: AnalyzeRankOptions): Promise<AnalyzeRankOutcome> {
   const started = Date.now();
   const { log } = opts;
-  const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(1));
+  const transport = opts.transport ?? fetchTransport(decideDeadline(deadlineForConcurrency(1)));
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const url = decideUrl(opts.endpoint);
 
