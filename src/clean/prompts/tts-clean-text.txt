@@ -88,6 +88,7 @@ BRACKETS.
 
 DASHES AND BROKEN WORDS.
 - A hyphen with a space on each side is a dash: replace each one, with the word either side in the find: "himself - written" is "himself—written".
+- A hyphen with NO spaces is a dash when the sentence breaks there: a speaker cut off or resuming, a sudden turn of thought, or an aside set off between two such hyphens. Replace it with an em dash and change nothing else; keep the word either side in the find. A hyphen that joins the parts of one word stays a hyphen. A hyphen beside a digit is never a dash.
 - A word broken across a line is one word: "Verlags- anstalt" is "Verlagsanstalt"; "fini sh" is "finish".
 
 WORKED ANSWERS

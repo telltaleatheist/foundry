@@ -117,6 +117,7 @@ export const TRIAGE_GUIDE = [
   '- a run of capital letters: an acronym such as FBI or NATO, or a word in capitals for emphasis;',
   '- a bracketed insertion or apparatus: [sic], [12], [he said], (see page twelve), (Kershaw 1993);',
   '- a hyphen with a space on each side, used as a dash;',
+  '- a hyphen with no spaces standing where the sentence breaks or turns aside, used as a dash rather than joining one word;',
   '- a roman numeral: Part IV, Chapter IX, Henry VIII.',
   'Superscript note numbers, daggers and asterisks used as reference marks do NOT count — they are removed elsewhere.',
   'Ordinary prose with none of these does not need cleaning. If you are unsure, it needs cleaning.',

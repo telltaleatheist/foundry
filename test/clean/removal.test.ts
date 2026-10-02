@@ -119,18 +119,18 @@ test('with the box, a long bracketed reference is removed whole, and its space w
 test('with the box, an unbracketed reference and a placeholder are removed', () => {
   const see = 'Output doubled after the reform, see fig. 1-1.';
   const one = judge(see, ', see fig. 1-1', { ...norm.EVERY_CLASS, gate: 'light', removal: true });
-  assert.strictEqual(one.records[0]!.status, 'APPLIED', one.records[0]!.detail);
+  assert.strictEqual(one.records[0]!.status, 'APPLIED', one.records[0]!.detail ?? '');
   assert.strictEqual(applied(see, one.accepted), 'Output doubled after the reform.');
 
   const image = '[image] The harbour at Kiel, 1917.';
   const two = judge(image, '[image]', { ...norm.EVERY_CLASS, gate: 'light', removal: true });
-  assert.strictEqual(two.records[0]!.status, 'APPLIED', two.records[0]!.detail);
+  assert.strictEqual(two.records[0]!.status, 'APPLIED', two.records[0]!.detail ?? '');
   assert.strictEqual(applied(image, two.accepted), 'The harbour at Kiel, 1917.');
 
   // A whole sentence that is only a reference.
   const whole = 'See Figure 4.';
   const three = judge(whole, 'See Figure 4.', { ...norm.EVERY_CLASS, gate: 'light', removal: true });
-  assert.strictEqual(three.records[0]!.status, 'APPLIED', three.records[0]!.detail);
+  assert.strictEqual(three.records[0]!.status, 'APPLIED', three.records[0]!.detail ?? '');
   assert.strictEqual(applied(whole, three.accepted), '');
 });
 

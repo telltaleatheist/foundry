@@ -69,7 +69,7 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 
 import { hasLetter } from './ai-cleanup-prepass.js';
-import { lightGateRefusal } from './light-gate.js';
+import { lightGateRefusal, unspacedDashReading } from './light-gate.js';
 import {
   applyNumberRules, bareWord, CANONICAL_BOOK_NAMES, cardinalWords, scriptureSpans,
   isQuantityContext, printsPreDecimalSum, sitsInCitation, stillHasDigits, yearQuantityReadings, yearReading,
@@ -202,11 +202,21 @@ export { sitsInCitation, bareWord };
  * "specific examples sometimes lead to smaller models using the examples and
  * nothing else").
  *
+ * n17 -> n18 (2026-10-02, Owen: "emdashes dramatically affect prosody. its
+ * something we want to get exactly right. so where we can, we can do this
+ * deterministically. where it isnt trustworthy to do it deterministically, we
+ * should hand the rule to the model"): a hyphen typed with NO spaces where the
+ * sentence breaks off or turns aside is read as an em dash ("If you're wrong-if
+ * he is a bad guy", "the fifth-or sixth-time"). A general rule in the prompt,
+ * and `unspacedDashReading` accepts exactly that edit. The shapes that can be
+ * nothing else are already fixed deterministically in narrator's engine input
+ * (BookForge 2340aab7); this is the judgement half.
+ *
  * A BUMP HERE IS A CROSS-REPO EVENT. These rules are vendored byte-for-byte into
  * orpheus-finetune's `pipeline/normalization/vendor/` and drift-checked on every
  * training build — see docs/NARRATION_TEXT_PASS.md.
  */
-export const NORMALIZER_VERSION = 'n17';
+export const NORMALIZER_VERSION = 'n18';
 
 /**
  * The model this pass uses when the setting is absent.
@@ -370,6 +380,8 @@ export type NumberEditClass =
   | 'bracketed'
   /** A hyphen used as a dash, with spaces around it. */
   | 'spaced-hyphen'
+  /** A hyphen with NO spaces, read as the em dash it stands for (n18, `unspacedDashReading`). */
+  | 'unspaced-dash'
   /** An ampersand, which a narrator says as the word. */
   | 'ampersand'
   /** A roman numeral naming a person or a part. */
@@ -1806,7 +1818,7 @@ export function validateNumberEdits(
       });
       continue;
     }
-    if (hyphenToDash(find) === replace) {
+    if (hyphenToDash(find) === replace || unspacedDashReading(find, replace)) {
       if (sitsInCitation(target, find, at)) {
         reject(find, replace, 'CITATION_CODE');
         continue;
@@ -1818,12 +1830,14 @@ export function validateNumberEdits(
         reject(find, replace, 'OVERLAPS_APPLIED');
         continue;
       }
-      // NO BUDGET: `hyphenToDash(find) === replace` IS the proof — the dash is the
-      // only character that changed, so nothing here can paraphrase.
+      // NO BUDGET: `hyphenToDash(find) === replace` (or `unspacedDashReading`) IS
+      // the proof — the dash is the only character that changed, so nothing here
+      // can paraphrase.
       accepted.push({ find, replace, at });
       const whence = said(undefined);
       records.push({
-        find, replace, status: 'APPLIED', editClass: 'spaced-hyphen',
+        find, replace, status: 'APPLIED',
+        editClass: hyphenToDash(find) === replace ? 'spaced-hyphen' : 'unspaced-dash',
         ...(whence === undefined ? {} : { detail: whence }),
       });
       continue;
