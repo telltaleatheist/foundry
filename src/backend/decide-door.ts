@@ -10,8 +10,8 @@
  * two cannot drift into two opinions about what `503 chat_queue_full` means.
  *
  * The model must already be resident. The app places the run on the `decide`
- * act, loaded and leased, and releases it when the engine exits; nothing here
- * loads a model or picks one.
+ * act inside a Crucible queue session opened with that model loaded, and closes
+ * it when the engine exits; nothing here loads a model or picks one.
  */
 import type { Transport } from '../translate/transport.js';
 

@@ -365,7 +365,7 @@ function busyReason(status: number): string {
   // A Crucible's two ways of saying the card is busy rather than broken; the
   // list a door waits on is the door's own (`BUSY_STATUSES`, vllm.ts).
   if (status === 503) return 'no lane free';
-  if (status === 409) return 'the lane is leased';
+  if (status === 409) return 'the machine is held';
   return `busy (${status})`;
 }
 
