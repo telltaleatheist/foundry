@@ -1,6 +1,6 @@
 /**
- * clean/fixed-readings — readings a cleanup is HANDED, applied everywhere and
- * never asked about again (2026-10-03).
+ * clean/fixed-readings — readings a cleanup is HANDED, applied before anything
+ * is judged or asked, and never asked about again (2026-10-03).
  *
  * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
  *
@@ -10,21 +10,32 @@
  * and the same book came out saying "ESP" in one place and "especial" in two.
  * The evidence was in the book, just not in the sentence.
  *
- * So the caller (BookForge's narration glossary) decides each printed form ONCE,
- * from sentences across the whole book, and hands the answers here. This module
- * knows nothing about how they were decided or what a pronunciation is: it is a
- * list of exact strings and what to print in their place.
+ * So the caller (BookForge's narration glossary) decides each printed form from
+ * sentences across the whole book — and, where one form means two things in one
+ * book ("esp" the psychic sense, "esp." short for especially), each OCCURRENCE —
+ * and hands the answers here. This module knows nothing about how they were
+ * decided or what a pronunciation is: it is a list of exact strings and what to
+ * print in their place.
  *
- * ── WHAT IT DOES ─────────────────────────────────────────────────────────────
+ * ── TWO KINDS OF READING ─────────────────────────────────────────────────────
+ *
+ *   BOOK-WIDE   {find, replace}: read wherever the find stands as a whole token
+ *               run. Longer finds win where two overlap ("Wolf IV" before "IV").
+ *               A find ending in a period consumes it, except where it also ends
+ *               the block.
+ *   AT A SPOT   {find, replace, at, nth}: read at ONE occurrence — the `nth`
+ *               (0-based) whole-token run of `find` in the block whose target key
+ *               is `at`. `replace` is printed verbatim: the caller, who knows
+ *               which meaning this spot has, says whether a period stays.
+ *
+ * A whole token run is one with no letter or digit touching it on either side.
+ * Case-sensitive, exact. Spots are read first, against the block's own text;
+ * book-wide readings then read what is left.
  *
  * Applied to every block's stage-one text (after punctuation, before the number
  * rules and the model), in BOTH the cleanup and its triage, so the two see the
- * same words: a triage then has no reason to flag a form that is already read,
- * and the model is shown "Wolf Four" and has no "IV" left to re-read.
- *
- * A find matches as a whole token run: the characters on either side of it are
- * not letters or digits. Case-sensitive, exact. Longer finds win where two
- * overlap, so "Wolf IV" is read before a bare "IV" could be.
+ * same words: a triage has no reason to flag a form that is already read, and the
+ * model is shown "Wolf Four" and has no "IV" left to re-read.
  *
  * ── AND THE CACHE ────────────────────────────────────────────────────────────
  *
@@ -46,6 +57,10 @@ export interface FixedReading {
   find: string;
   /** What is printed in its place. */
   replace: string;
+  /** A spot: the target key of the one block it applies to. Absent: book-wide. */
+  at?: string;
+  /** A spot: which whole-token run of `find` in that block, from 0. */
+  nth?: number;
 }
 
 /** Inline markup is structure and never part of a reading (run.ts, `MARKUP`). */
@@ -71,7 +86,7 @@ export function readFixedReadingsFile(file: string): FixedReading[] {
   if (doc?.format !== FIXED_READINGS_FORMAT || !Array.isArray(doc.readings)) {
     throw new CleanTextError(
       `--fixed-readings ${where} is not a ${FIXED_READINGS_FORMAT} file `
-      + '({"format": "fixed-readings/v1", "readings": [{"find", "replace"}, ...]}).',
+      + '({"format": "fixed-readings/v1", "readings": [{"find", "replace", "at"?, "nth"?}, ...]}).',
     );
   }
   return validateFixedReadings(doc.readings, where);
@@ -80,9 +95,10 @@ export function readFixedReadingsFile(file: string): FixedReading[] {
 /** The list, checked entry by entry. Exported for the tests and for in-memory callers. */
 export function validateFixedReadings(list: readonly unknown[], where = 'fixed readings'): FixedReading[] {
   const out: FixedReading[] = [];
-  const seen = new Map<string, string>();
+  const bookWide = new Map<string, string>();
+  const spots = new Set<string>();
   list.forEach((raw, i) => {
-    const one = raw as { find?: unknown; replace?: unknown };
+    const one = raw as { find?: unknown; replace?: unknown; at?: unknown; nth?: unknown };
     if (typeof one?.find !== 'string' || typeof one.replace !== 'string') {
       throw new CleanTextError(`${where}: reading ${i} needs a string "find" and a string "replace".`);
     }
@@ -100,20 +116,58 @@ export function validateFixedReadings(list: readonly unknown[], where = 'fixed r
         + 'superscript note number — which a reading never crosses.',
       );
     }
-    const earlier = seen.get(find);
+    const hasAt = one.at !== undefined;
+    const hasNth = one.nth !== undefined;
+    if (hasAt !== hasNth) {
+      throw new CleanTextError(`${where}: reading ${i} ("${find}") names ${hasAt ? '"at" without "nth"' : '"nth" without "at"'}; a spot needs both.`);
+    }
+    if (hasAt) {
+      if (typeof one.at !== 'string' || one.at.length === 0 || !Number.isInteger(one.nth) || (one.nth as number) < 0) {
+        throw new CleanTextError(`${where}: reading ${i} ("${find}") needs a block key "at" and a whole number "nth".`);
+      }
+      const spot = `${one.at}\u0000${find}\u0000${one.nth as number}`;
+      if (spots.has(spot)) {
+        throw new CleanTextError(`${where}: "${find}" is read twice at ${one.at} #${one.nth as number}. One spot, one reading.`);
+      }
+      spots.add(spot);
+      if (find !== replace) out.push({ find, replace, at: one.at, nth: one.nth as number });
+      return;
+    }
+    const earlier = bookWide.get(find);
     if (earlier !== undefined && earlier !== replace) {
       throw new CleanTextError(
-        `${where}: "${find}" is given two readings, "${earlier}" and "${replace}". One printed form, one reading.`,
+        `${where}: "${find}" is given two book-wide readings, "${earlier}" and "${replace}". A form read `
+        + 'two ways is read at its spots ("at" and "nth"), never twice book-wide.',
       );
     }
     if (earlier === undefined && find !== replace) out.push({ find, replace });
-    seen.set(find, replace);
+    bookWide.set(find, replace);
   });
   return out;
 }
 
 function escape(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Does `find` stand at `at` as a whole token run — nothing word-like touching either side? */
+function standsAt(text: string, at: number, find: string): boolean {
+  if (!text.startsWith(find, at)) return false;
+  const end = at + find.length;
+  return !(at > 0 && WORD.test(text[at - 1]!)) && !(end < text.length && WORD.test(text[end]!));
+}
+
+/**
+ * Where `find` stands as a whole token run in `text`, in order. The one
+ * definition of "the nth occurrence": `clean-forms` numbers a spot with it, and a
+ * spot is found with it here.
+ */
+export function wholeTokenOffsets(text: string, find: string): number[] {
+  const out: number[] = [];
+  for (let at = text.indexOf(find); at >= 0; at = text.indexOf(find, at + 1)) {
+    if (standsAt(text, at, find)) out.push(at);
+  }
+  return out;
 }
 
 /** The finds, longest first, and one pattern that finds where any of them may start. */
@@ -125,18 +179,11 @@ function matcherFor(readings: readonly FixedReading[]): Matcher | null {
   return { finds, pattern: new RegExp(finds.map(escape).join('|'), 'gu') };
 }
 
-/** Does `find` stand at `at` as a whole token run — nothing word-like touching either side? */
-function standsAt(text: string, at: number, find: string): boolean {
-  if (!text.startsWith(find, at)) return false;
-  const end = at + find.length;
-  return !(at > 0 && WORD.test(text[at - 1]!)) && !(end < text.length && WORD.test(text[end]!));
-}
-
 /**
- * Every occurrence of a reading in `text` that stands as a whole token run, in
- * order and non-overlapping. Where finds start at the same place the LONGEST
- * that stands there wins — and a shorter one still gets its turn when the
- * longer does not stand ("Dr.Smith": "Dr." is glued to a word, "Dr" is not).
+ * Every occurrence of a book-wide reading in `text`, in order and
+ * non-overlapping. Where finds start at the same place the LONGEST that stands
+ * there wins — and a shorter one still gets its turn when the longer does not
+ * stand ("Dr.Smith": "Dr." is glued to a word, "Dr" is not).
  */
 function occurrences(text: string, matcher: Matcher): { at: number; find: string }[] {
   const out: { at: number; find: string }[] = [];
@@ -156,50 +203,92 @@ function occurrences(text: string, matcher: Matcher): { at: number; find: string
   return out;
 }
 
+/** The readings that belong to the block with target key `at`: its spots, and every book-wide one. */
+function forBlock(readings: readonly FixedReading[], at: string | undefined): { spots: FixedReading[]; bookWide: FixedReading[] } {
+  const spots: FixedReading[] = [];
+  const bookWide: FixedReading[] = [];
+  for (const reading of readings) {
+    if (reading.at === undefined) bookWide.push(reading);
+    // A table's key covers its cells (`<row>#c<n>`), whose text the grid is spliced from.
+    else if (at !== undefined && (reading.at === at || reading.at.startsWith(`${at}#c`))) spots.push(reading);
+  }
+  return { spots, bookWide };
+}
+
 export interface FixedApplication {
   text: string;
   /** find → how many times it was read in this text. */
   applied: Map<string, number>;
+  /** Spots whose occurrence was not in this text — the block changed since they were decided. */
+  missed: FixedReading[];
 }
 
-/** Apply the readings to one text. */
-export function applyFixedReadings(text: string, readings: readonly FixedReading[]): FixedApplication {
+/** Apply the readings that belong to the block keyed `at` to its text. */
+export function applyFixedReadings(text: string, readings: readonly FixedReading[], at?: string): FixedApplication {
   const applied = new Map<string, number>();
-  const matcher = matcherFor(readings);
-  if (matcher === null) return { text, applied };
-  const byFind = new Map(readings.map((r) => [r.find, r.replace] as const));
-  let out = '';
+  const missed: FixedReading[] = [];
+  const { spots, bookWide } = forBlock(readings, at);
+
+  // ── The spots, against the block's own text, back to front ────────────────
+  const edits: { at: number; length: number; replace: string; find: string }[] = [];
+  for (const spot of spots) {
+    if (spot.at !== at) continue; // a cell's spot belongs to that cell's own text
+    const offset = wholeTokenOffsets(text, spot.find)[spot.nth!];
+    if (offset === undefined) { missed.push(spot); continue; }
+    edits.push({ at: offset, length: spot.find.length, replace: spot.replace, find: spot.find });
+  }
+  edits.sort((a, b) => b.at - a.at);
+  let out = text;
+  let floor = Infinity;
+  for (const edit of edits) {
+    if (edit.at + edit.length > floor) { missed.push(spots.find((s) => s.find === edit.find)!); continue; }
+    out = out.slice(0, edit.at) + edit.replace + out.slice(edit.at + edit.length);
+    floor = edit.at;
+    applied.set(edit.find, (applied.get(edit.find) ?? 0) + 1);
+  }
+
+  // ── Then the book-wide readings, over what is left ────────────────────────
+  const matcher = matcherFor(bookWide);
+  if (matcher === null) return { text: out, applied, missed };
+  const byFind = new Map(bookWide.map((r) => [r.find, r.replace] as const));
+  let result = '';
   let from = 0;
-  for (const hit of occurrences(text, matcher)) {
+  for (const hit of occurrences(out, matcher)) {
     const replace = byFind.get(hit.find)!;
     const end = hit.at + hit.find.length;
     /*
      * A PERIOD THAT IS BOTH THE ABBREVIATION'S AND THE BLOCK'S. "3 vols." closing a
      * paragraph read "three volumes" would end the paragraph with no stop, so where
      * nothing but closing quotes or brackets follows, the stop is kept. Mid-block
-     * the two cannot be told apart ("ed. Smith" against "esp. Then"), which is why
-     * a caller hands the bare form for a word the book also prints without one.
+     * the two cannot be told apart ("ed. Smith" against "esp. Then") — which is
+     * what a spot is for: its caller knows which this one is.
      */
     const keepsStop = hit.find.endsWith('.') && !replace.endsWith('.')
-      && /^["'’”)\]]*\s*$/u.test(text.slice(end));
-    out += text.slice(from, hit.at) + replace + (keepsStop ? '.' : '');
+      && /^["'’”)\]]*\s*$/u.test(out.slice(end));
+    result += out.slice(from, hit.at) + replace + (keepsStop ? '.' : '');
     from = end;
     applied.set(hit.find, (applied.get(hit.find) ?? 0) + 1);
   }
-  return { text: out + text.slice(from), applied };
+  return { text: result + out.slice(from), applied, missed };
 }
 
 /**
  * What the readings add to a block's cache key: '' when none applies to `text`,
- * so a block the glossary never touches keeps every key it had.
+ * so a block the glossary never touches keeps every key it had. `at` is the
+ * block's target key (a table's row key covers its cells' spots).
  */
-export function fixedKeyField(text: string, readings: readonly FixedReading[]): string {
-  const matcher = matcherFor(readings);
-  if (matcher === null) return '';
-  const byFind = new Map(readings.map((r) => [r.find, r.replace] as const));
-  const used = [...new Set(occurrences(text, matcher).map((hit) => hit.find))].sort();
+export function fixedKeyField(text: string, readings: readonly FixedReading[], at?: string): string {
+  const { spots, bookWide } = forBlock(readings, at);
+  const used: string[] = spots.map((s) => `${s.at}\u0003${s.nth}\u0003${s.find}\u0001${s.replace}`);
+  const matcher = matcherFor(bookWide);
+  if (matcher !== null) {
+    const byFind = new Map(bookWide.map((r) => [r.find, r.replace] as const));
+    for (const find of new Set(occurrences(text, matcher).map((hit) => hit.find))) {
+      used.push(`${find}\u0001${byFind.get(find)!}`);
+    }
+  }
   if (used.length === 0) return '';
-  return `fixed/v1:${used.map((find) => `${find}\u0001${byFind.get(find)!}`).join('\u0002')}`;
+  return `fixed/v1:${used.sort().join('\u0002')}`;
 }
 
 /** What the receipt says about the readings this run was handed. */
@@ -208,24 +297,28 @@ export interface FixedReadingsRecord {
   given: number;
   /** find → how many times it was read across the blocks this run cleaned. */
   applied: Record<string, number>;
+  /** Spots whose occurrence was not where they said — their block changed since. Left as printed. */
+  missed: { at: string; find: string; nth: number }[];
 }
 
 /**
- * Apply the readings to every stage-one text in `texts` (keyed however the
- * caller keys them), in place, and say what was read.
+ * Apply the readings to every stage-one text in `texts` (keyed by target key),
+ * in place, and say what was read.
  */
 export function applyFixedToAll(
   texts: Map<string, string>,
   readings: readonly FixedReading[],
 ): FixedReadingsRecord {
   const applied: Record<string, number> = {};
+  const missed: FixedReadingsRecord['missed'] = [];
   if (readings.length > 0) {
     for (const [key, text] of texts) {
-      const one = applyFixedReadings(text, readings);
+      const one = applyFixedReadings(text, readings, key);
+      for (const spot of one.missed) missed.push({ at: spot.at!, find: spot.find, nth: spot.nth! });
       if (one.applied.size === 0) continue;
       texts.set(key, one.text);
       for (const [find, n] of one.applied) applied[find] = (applied[find] ?? 0) + n;
     }
   }
-  return { given: readings.length, applied };
+  return { given: readings.length, applied, missed };
 }

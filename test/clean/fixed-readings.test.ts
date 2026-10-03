@@ -66,6 +66,35 @@ describe('applying a reading', () => {
   });
 });
 
+describe('a reading at a spot — one form, two meanings in one book', () => {
+  // "esp" the psychic sense and "esp." short for especially, in one paragraph.
+  const text = 'Her esp failed, esp. in the cold; she trusted her esp.';
+  const spots: FixedReading[] = [
+    { find: 'esp', replace: 'ESP', at: 'b7', nth: 0 },
+    { find: 'esp.', replace: 'especially', at: 'b7', nth: 0 },
+    // The last "esp." is the sense's own word at a sentence's end: its caller keeps the stop.
+    { find: 'esp.', replace: 'ESP.', at: 'b7', nth: 1 },
+  ];
+
+  test('each spot reads its own occurrence, and only in its own block', () => {
+    expect(applyFixedReadings(text, spots, 'b7').text).toBe('Her ESP failed, especially in the cold; she trusted her ESP.');
+    expect(applyFixedReadings(text, spots, 'b8').text).toBe(text);
+    expect(applyFixedReadings(text, spots).text).toBe(text);
+  });
+
+  test('a spot whose occurrence is gone is reported, never applied elsewhere', () => {
+    const one = applyFixedReadings('Her esp failed.', [{ find: 'esp', replace: 'ESP', at: 'b7', nth: 3 }], 'b7');
+    expect(one.text).toBe('Her esp failed.');
+    expect(one.missed).toEqual([{ find: 'esp', replace: 'ESP', at: 'b7', nth: 3 }]);
+  });
+
+  test('a spot is in its own block key and no other block key', () => {
+    const base = { model: 'm', unit: 'sentence' as const, text };
+    expect(cleanKey({ ...base, fixed: spots, at: 'b8' })).toBe(cleanKey(base));
+    expect(cleanKey({ ...base, fixed: spots, at: 'b7' })).not.toBe(cleanKey(base));
+  });
+});
+
 describe('the cache key', () => {
   const base = { model: 'qwen3.5-9b', unit: 'sentence' as const };
 
@@ -111,7 +140,12 @@ describe('the readings file', () => {
     expect(() => validateFixedReadings([{ find: 'esp', replace: '' }])).toThrow(/empty or space-edged replace/);
     expect(() => validateFixedReadings([{ find: 'Tagebücher*', replace: 'x' }])).toThrow(/inline markup/);
     expect(() => validateFixedReadings([{ find: 'esp', replace: 'ESP' }, { find: 'esp', replace: 'espionage' }]))
-      .toThrow(/two readings/);
+      .toThrow(/two book-wide readings/);
+    expect(() => validateFixedReadings([{ find: 'esp', replace: 'ESP', at: 'b1' }])).toThrow(/a spot needs both/);
+    expect(() => validateFixedReadings([{ find: 'esp', replace: 'ESP', at: 'b1', nth: -1 }])).toThrow(/whole number "nth"/);
+    expect(() => validateFixedReadings([
+      { find: 'esp', replace: 'ESP', at: 'b1', nth: 0 }, { find: 'esp', replace: 'especially', at: 'b1', nth: 0 },
+    ])).toThrow(/One spot, one reading/);
   });
 });
 
@@ -172,7 +206,7 @@ describe('clean-text handed fixed readings', () => {
     expect(rows.find((r) => r.parts === 'b1-2')!.text).toBe('DeChance reached out and touched the sphere with her ESP.');
 
     const receipt = JSON.parse(fs.readFileSync(`${recordsPath}.receipt.json`, 'utf8')) as CleanTextReceipt;
-    expect(receipt.fixedReadings).toEqual({ given: 2, applied: { 'Wolf IV': 1, esp: 1 } });
+    expect(receipt.fixedReadings).toEqual({ given: 2, applied: { 'Wolf IV': 1, esp: 1 }, missed: [] });
     expect(outcome.changed).toBe(2);
   });
 
@@ -229,6 +263,13 @@ describe('clean-forms', () => {
       expect(byKey.has(key)).toBe(false);
     }
     expect(byKey.get('Wolf IV')!.samples.map((s) => s.parts)).toEqual(['b1-1', 'b1-1']);
+    // Every occurrence, named as a spot reads it: block, which run of that spelling, and its sentence's end.
+    expect(byKey.get('esp')!.occurrences).toEqual([
+      { at: 'b1-2', nth: 0, printed: 'esp', sentence: expect.stringContaining('Her esp kept'), inSentence: 4, endsSentence: false },
+      { at: 'b1-2', nth: 0, printed: 'esp.', sentence: expect.stringContaining('with her esp.'), inSentence: 77, endsSentence: true },
+    ]);
+    expect(byKey.get('Wolf IV')!.occurrences.map((o) => [o.at, o.nth, o.endsSentence]))
+      .toEqual([['b1-1', 0, false], ['b1-1', 1, true]]);
     // A numeral in a heading still needs reading, whatever the heading's case.
     expect(byKey.get('PART IV')).toMatchObject({ kind: 'roman', count: 1 });
   });

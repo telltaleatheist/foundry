@@ -37,6 +37,7 @@ import { stripBom } from '../bom.js';
 import { readBookFile } from '../translate/bookrows.js';
 import { cleanBlocks } from './blocks.js';
 import { isPrintedForm } from './light-gate.js';
+import { wholeTokenOffsets } from './fixed-readings.js';
 import { CleanTextError } from './punctuate.js';
 import { cleanSentences } from './sentences.js';
 import { romanValue } from './tts-spoken-forms.js';
@@ -59,8 +60,26 @@ export interface PrintedForm {
    * reading replaces. A roman numeral's is its whole phrase ("Wolf IV").
    */
   printed: Record<string, number>;
-  /** Up to SAMPLES sentences, spread evenly across the book. */
+  /** Up to SAMPLES sentences, spread evenly across the book, with every printed spelling among them. */
   samples: { parts: string; sentence: string }[];
+  /**
+   * EVERY OCCURRENCE, in the book's order — what a reading AT A SPOT names
+   * (src/clean/fixed-readings.ts): the block's target key, which whole-token run
+   * of `printed` in that block it is (`wholeTokenOffsets`, the one definition),
+   * its sentence, and whether it ends that sentence — which is what decides
+   * whether a period after it is the sentence's or the abbreviation's.
+   */
+  occurrences: FormOccurrence[];
+}
+
+export interface FormOccurrence {
+  at: string;
+  nth: number;
+  printed: string;
+  sentence: string;
+  /** Where in `sentence` it starts — so a sentence printing it twice can say which. */
+  inSentence: number;
+  endsSentence: boolean;
 }
 
 export interface PrintedFormsFile {
@@ -83,8 +102,8 @@ function core(token: string): string {
  * numbers and left a fourth). A numeral in one still is a form: "Part IV" needs
  * reading whatever its case.
  */
-function heading(block: { target: { text: string; statedCategory: string } }): boolean {
-  if (/title|header/.test(block.target.statedCategory)) return true;
+function heading(block: { target: { text: string; statedCategory: string | null } }): boolean {
+  if (block.target.statedCategory !== null && /title|header/.test(block.target.statedCategory)) return true;
   const letters = block.target.text.replace(/[^\p{L}]/gu, '');
   return letters.length > 0 && letters.replace(/[^\p{Lu}]/gu, '').length / letters.length >= 0.7;
 }
@@ -118,20 +137,46 @@ function spread<T>(items: readonly T[], n: number): T[] {
   return Array.from({ length: n }, (_, k) => items[Math.round((k * (items.length - 1)) / (n - 1))]!);
 }
 
+/**
+ * THE SAMPLES: spread across the book, and every printed spelling among them. A
+ * form that is two things in one book often differs by its spelling ("esp" the
+ * sense, "esp." for especially), and a rare spelling a spread happens to miss is
+ * the one whose meaning nobody would be asked about.
+ */
+function samplesOf(occurrences: readonly FormOccurrence[]): { parts: string; sentence: string }[] {
+  const chosen = spread(occurrences, SAMPLES);
+  for (const spelling of new Set(occurrences.map((o) => o.printed))) {
+    if (chosen.some((o) => o.printed === spelling)) continue;
+    chosen.push(...occurrences.filter((o) => o.printed === spelling).slice(0, 2));
+  }
+  chosen.sort((a, b) => occurrences.indexOf(a) - occurrences.indexOf(b));
+  return chosen.map((o) => ({ parts: o.at, sentence: o.sentence }));
+}
+
 /** Every printed form of the book, most printed first within each kind. */
 export function collectPrintedForms(bookText: string, where: string): PrintedForm[] {
   const book = readBookFile(bookText, where);
   const { blocks } = cleanBlocks(book, where);
-  interface Gathering { kind: FormKind; key: string; printed: Map<string, number>; hits: { parts: string; sentence: string }[] }
+  interface Gathering { kind: FormKind; key: string; printed: Map<string, number>; hits: FormOccurrence[] }
   const forms = new Map<string, Gathering>();
   for (const block of blocks) {
     const inHeading = heading(block);
-    for (const span of cleanSentences(block.target.text)) {
-      const tokens = span.text.split(/\s+/).filter(Boolean);
+    const text = block.target.text;
+    for (const span of cleanSentences(text)) {
+      // The tokens WITH their offsets in the block, so an occurrence can be named.
+      const found = [...span.text.matchAll(/\S+/g)].map((m) => ({ text: m[0], at: span.start + m.index! }));
+      const tokens = found.map((t) => t.text);
       for (let i = 0; i < tokens.length; i++) {
         if (!isPrintedForm(tokens, i)) continue;
         const form = formOf(tokens, i, inHeading);
         if (form === null) continue;
+        // Which whole-token run of the printed spelling this is: the one inside
+        // this token (or, for "Wolf IV", starting in the token before it).
+        const from = form.printed.includes(' ') && i > 0 ? found[i - 1]!.at : found[i]!.at;
+        const to = found[i]!.at + found[i]!.text.length;
+        const offsets = wholeTokenOffsets(text, form.printed);
+        const nth = offsets.findIndex((o) => o >= from && o < to);
+        if (nth < 0) continue;
         const id = `${form.kind}\u0000${form.key}`;
         let gathering = forms.get(id);
         if (gathering === undefined) {
@@ -139,7 +184,10 @@ export function collectPrintedForms(bookText: string, where: string): PrintedFor
           forms.set(id, gathering);
         }
         gathering.printed.set(form.printed, (gathering.printed.get(form.printed) ?? 0) + 1);
-        gathering.hits.push({ parts: block.parts, sentence: span.text });
+        gathering.hits.push({
+          at: block.target.key, nth, printed: form.printed, sentence: span.text,
+          inSentence: offsets[nth]! - span.start, endsSentence: i === tokens.length - 1,
+        });
       }
     }
   }
@@ -152,7 +200,8 @@ export function collectPrintedForms(bookText: string, where: string): PrintedFor
       kind: g.kind,
       count: g.hits.length,
       printed: Object.fromEntries([...g.printed].sort((a, b) => b[1] - a[1])),
-      samples: spread(g.hits, SAMPLES),
+      samples: samplesOf(g.hits),
+      occurrences: g.hits,
     }));
 }
 

@@ -172,6 +172,8 @@ export function cleanKey(request: {
   removal?: RemovalRequest;
   /** Readings the run was handed (src/clean/fixed-readings.ts). None that applies here: the key it had. */
   fixed?: readonly FixedReading[];
+  /** The block's target key (a table's row key), which a reading AT A SPOT names. */
+  at?: string;
 }): string {
   const fields = [
     request.unit === 'sentence' ? SENTENCE_KEY_FORMAT : KEY_FORMAT,
@@ -186,7 +188,7 @@ export function cleanKey(request: {
   if (removal.length > 0) fields.push(removal);
   // A FIXED READING THAT APPLIES IS PART OF THE QUESTION, and one that does not
   // is not: the block is shown different words only where a reading touches it.
-  const fixed = request.fixed === undefined ? '' : fixedKeyField(request.text, request.fixed);
+  const fixed = request.fixed === undefined ? '' : fixedKeyField(request.text, request.fixed, request.at);
   if (fixed.length > 0) fields.push(fixed);
   return createHash('sha256').update(fields.join(NUL), 'utf8').digest('hex');
 }
@@ -205,7 +207,7 @@ export function cleanKey(request: {
  * either way.
  */
 export function triageKey(request: {
-  text: string; triageModel: string; removal?: RemovalRequest; fixed?: readonly FixedReading[];
+  text: string; triageModel: string; removal?: RemovalRequest; fixed?: readonly FixedReading[]; at?: string;
 }): string {
   const fields = [
     TRIAGE_KEY_FORMAT,
@@ -218,7 +220,7 @@ export function triageKey(request: {
   const removal = request.removal === undefined ? '' : removalKeyField(request.removal);
   if (removal.length > 0) fields.push(removal);
   // And it was judged on the words the readings left, which `cleanKey` says the same way.
-  const fixed = request.fixed === undefined ? '' : fixedKeyField(request.text, request.fixed);
+  const fixed = request.fixed === undefined ? '' : fixedKeyField(request.text, request.fixed, request.at);
   if (fixed.length > 0) fields.push(fixed);
   return createHash('sha256').update(fields.join(NUL), 'utf8').digest('hex');
 }
@@ -650,9 +652,9 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * a Table row holds the whole grid and half a grid is not one.
    */
   const keyOf = new Map<string, string>();
-  for (const block of blocks) keyOf.set(block.target.key, cleanKey({ text: block.target.text, model, unit, removal, fixed }));
+  for (const block of blocks) keyOf.set(block.target.key, cleanKey({ text: block.target.text, model, unit, removal, fixed, at: block.target.key }));
   const tableKey = new Map<string, string>();
-  for (const table of tables) tableKey.set(table.parts, cleanKey({ text: table.source, model, unit, removal, fixed }));
+  for (const table of tables) tableKey.set(table.parts, cleanKey({ text: table.source, model, unit, removal, fixed, at: table.parts }));
 
   /*
    * A TRIAGE'S "CLEAN" ROW ANSWERS THE BLOCK FOR A RUN GIVEN THE SAME TRIAGE —
@@ -660,15 +662,15 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * A run without `--triage` asks the cleaner about it, which is the point of
    * the row having its own key (`triageKey`).
    */
-  const answered = (source: string, key: string): boolean => records.get(key) !== undefined
-    || (triage !== null && records.get(triageKey({ text: source, triageModel: triage.model.id, removal, fixed })) !== undefined);
+  const answered = (source: string, key: string, at: string): boolean => records.get(key) !== undefined
+    || (triage !== null && records.get(triageKey({ text: source, triageModel: triage.model.id, removal, fixed, at })) !== undefined);
   const bankedTable = new Set<string>();
   for (const table of tables) {
-    if (answered(table.source, tableKey.get(table.parts)!)) bankedTable.add(table.parts);
+    if (answered(table.source, tableKey.get(table.parts)!, table.parts)) bankedTable.add(table.parts);
   }
   const outstanding = blocks.filter((block) => {
     if (block.cell !== undefined) return !bankedTable.has(block.parts);
-    return !answered(block.target.text, keyOf.get(block.target.key)!);
+    return !answered(block.target.text, keyOf.get(block.target.key)!, block.target.key);
   });
   const reused = blocks.length - outstanding.length;
   if (reused > 0) {
@@ -714,9 +716,15 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   if (fixed.length > 0) {
     const reads = Object.values(fixedRecord.applied).reduce((n, k) => n + k, 0);
     opts.log(
-      `clean-text: ${fixed.length} fixed reading(s) handed in; ${reads} occurrence(s) of `
-      + `${Object.keys(fixedRecord.applied).length} of them read across the blocks this run cleans.`,
+      `clean-text: ${fixed.length} fixed reading(s) handed in; ${reads} occurrence(s) read across the `
+      + 'blocks this run cleans.',
     );
+    for (const spot of fixedRecord.missed) {
+      opts.log(
+        `clean-text: a fixed reading for "${spot.find}" #${spot.nth} in ${spot.at} found no such occurrence `
+        + '(the block changed since it was decided); left to the cleanup.',
+      );
+    }
   }
 
   /*
@@ -892,7 +900,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
       const text = cleanText.get(block.target.key)!;
       if (block.cell === undefined) {
         if (text !== block.target.text) changed += 1;
-        appendRecord(block.parts, triageKey({ text: block.target.text, triageModel: triage.model.id, removal, fixed }), text);
+        appendRecord(block.parts, triageKey({ text: block.target.text, triageModel: triage.model.id, removal, fixed, at: block.target.key }), text);
         continue;
       }
       if (keptTables.has(block.parts)) continue;
@@ -905,7 +913,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
         continue;
       }
       if (spliced.text !== table.source) changed += 1;
-      appendRecord(table.parts, triageKey({ text: table.source, triageModel: triage.model.id, removal, fixed }), spliced.text);
+      appendRecord(table.parts, triageKey({ text: table.source, triageModel: triage.model.id, removal, fixed, at: table.parts }), spliced.text);
     }
   }
 

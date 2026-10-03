@@ -1736,6 +1736,14 @@ each form ONCE from sentences across the book, and this engine offers two doors:
   A find ending in a period consumes it, except where it also ends the block. A
   reading enters the cache key only of a block it applies to, so a glossary that
   grows re-asks those blocks and keeps every other answer.
+- **A reading AT A SPOT** (`"at"`: the block's target key, `"nth"`: which whole-token
+  run of the find in it, from 0) is for a form that means two things in one book —
+  "esp" the psychic sense and "esp." for especially. `clean-forms` lists every
+  occurrence named this way (with its sentence, its place in it, and whether it ends
+  it); the host places each in a meaning and hands back one reading per spot, printed
+  verbatim (the host says whether a period stays). A spot whose occurrence is gone —
+  the block changed since — is logged and left to the cleanup, never applied
+  elsewhere. Spots are read first, then book-wide readings over what is left.
 
 **n19 came with it, for two light-gate holes the inventory found.** A lower-case
 word spelled only with numeral letters ("did", "civil", "mill", "vivid") was taken
