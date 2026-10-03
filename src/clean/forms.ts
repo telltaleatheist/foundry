@@ -108,6 +108,12 @@ function heading(block: { target: { text: string; statedCategory: string | null 
   return letters.length > 0 && letters.replace(/[^\p{Lu}]/gu, '').length / letters.length >= 0.7;
 }
 
+/** Words that are never a name before a numeral. */
+const DETERMINERS: ReadonlySet<string> = new Set([
+  'the', 'a', 'an', 'this', 'that', 'these', 'those', 'his', 'her', 'its', 'our', 'their', 'my', 'your', 'every',
+  'each', 'no', 'any', 'some', 'many', 'all', 'as', 'of', 'in', 'on', 'and', 'or',
+]);
+
 /** What a printed-form token is, as a question — or null when it is the sentence pass's. */
 function formOf(tokens: readonly string[], i: number, heading: boolean): { kind: FormKind; key: string; printed: string } | null {
   const token = tokens[i]!;
@@ -119,10 +125,22 @@ function formOf(tokens: readonly string[], i: number, heading: boolean): { kind:
   // A sentence's own period is not part of a numeral or an acronym ("on Wolf IV.").
   const unstopped = bare.replace(/\.$/, '');
   if (/^[IVXLCDM]+$/.test(unstopped) && romanValue(unstopped) !== null) {
-    // WITH the word in front: "Wolf IV" is not "Henry IV".
+    /*
+     * A NUMERAL IS A NUMERAL WHERE A NUMERAL IS WHAT A BOOK PRINTS — after a
+     * name or a label ("Wolf IV", "Pius XI", "PART II", "World War I"), and then
+     * WITH that word, because "Wolf IV" is not "Henry IV". With none, only a run
+     * of I, V and X ("II", "IX" numbering a list) is one; "the DC" (Deutsche
+     * Christen) and "a CD" are capitals that happen to be legal numerals, and a
+     * lone "I" is the pronoun. Measured 2026-10-03 on God's People, whose "DC"
+     * was listed as the numeral 600 five times over ("the DC", "a DC", …).
+     */
     const before = i > 0 ? core(tokens[i - 1]!).replace(/['’]s$/, '') : '';
-    const phrase = before.length > 0 && /^\p{L}+$/u.test(before) ? `${before} ${unstopped}` : unstopped;
-    return { kind: 'roman', key: phrase, printed: phrase };
+    // A name's number is I, V and X — no ruler or pope reaches L — and "The DC",
+    // "Washington DC", "An IV" are not a name and its number.
+    const named = /^\p{Lu}[\p{L}'’-]+$/u.test(before) && romanValue(before.toUpperCase()) === null
+      && /^[IVX]+$/.test(unstopped) && !DETERMINERS.has(before.toLowerCase());
+    if (named) return { kind: 'roman', key: `${before} ${unstopped}`, printed: `${before} ${unstopped}` };
+    if (/^[IVX]{2,}$/.test(unstopped)) return { kind: 'roman', key: unstopped, printed: unstopped };
   }
   if (/^\p{Lu}{2,}$/u.test(unstopped)) return heading ? null : { kind: 'caps', key: unstopped, printed: unstopped };
   // A lower-case run of numeral letters that is not a valid numeral is a word ("did", "civil").
@@ -162,6 +180,18 @@ export function collectPrintedForms(bookText: string, where: string): PrintedFor
   for (const block of blocks) {
     const inHeading = heading(block);
     const text = block.target.text;
+    /*
+     * A CHAPTER'S CAPITALISED LEAD-IN IS TYPOGRAPHY, NOT ACRONYMS. Shift opens
+     * its sections "DONALD KEPT THE thick folder" — the first words set in
+     * capitals — and listed "THE", "KEPT" and "WAS" as forms. The block's opening
+     * run of words with no lower-case letter is skipped for capitals; the
+     * narrator reads them as the words they are.
+     */
+    let leadEnd = 0;
+    for (const m of text.matchAll(/\S+/g)) {
+      if (/\p{Ll}/u.test(m[0]) || !/\p{Lu}/u.test(m[0])) break;
+      leadEnd = m.index! + m[0].length;
+    }
     for (const span of cleanSentences(text)) {
       // The tokens WITH their offsets in the block, so an occurrence can be named.
       const found = [...span.text.matchAll(/\S+/g)].map((m) => ({ text: m[0], at: span.start + m.index! }));
@@ -177,6 +207,7 @@ export function collectPrintedForms(bookText: string, where: string): PrintedFor
         const offsets = wholeTokenOffsets(text, form.printed);
         const nth = offsets.findIndex((o) => o >= from && o < to);
         if (nth < 0) continue;
+        if (form.kind === 'caps' && offsets[nth]! < leadEnd) continue;
         const id = `${form.kind}\u0000${form.key}`;
         let gathering = forms.get(id);
         if (gathering === undefined) {

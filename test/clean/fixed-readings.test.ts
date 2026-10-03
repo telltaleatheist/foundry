@@ -250,6 +250,8 @@ describe('clean-forms', () => {
       // A title the person merged in mixed case: a heading by its category, not by its capitals.
       { text: 'CHAPTER SIX: In the Forest of the Night', category: 'Title' },
       { text: 'PART IV: The Return', category: 'Title' },
+      'The pastors of the DC split, and a DC paper said so; see II and III below. The DC met in Washington DC.',
+      'DONALD KEPT THE thick folder close, and the CDC never asked for it.',
       'He did not mind; the civil service was vivid and J. Smith said slowly.over and over.',
     ]);
     const forms = collectPrintedForms(text, where);
@@ -270,6 +272,13 @@ describe('clean-forms', () => {
     ]);
     expect(byKey.get('Wolf IV')!.occurrences.map((o) => [o.at, o.nth, o.endsSentence]))
       .toEqual([['b1-1', 0, false], ['b1-1', 1, true]]);
+    // Capitals that happen to be legal numerals are capitals; a run of I/V/X numbering a list is a numeral.
+    expect(byKey.get('DC')).toMatchObject({ kind: 'caps' });
+    expect([...byKey.keys()].some((k) => / DC$/.test(k))).toBe(false);
+    expect(byKey.get('II')).toMatchObject({ kind: 'roman' });
+    // A capitalised lead-in is typography: none of its words is a form.
+    for (const key of ['DONALD', 'KEPT', 'THE']) expect(byKey.has(key)).toBe(false);
+    expect(byKey.get('CDC')).toMatchObject({ kind: 'caps' });
     // A numeral in a heading still needs reading, whatever the heading's case.
     expect(byKey.get('PART IV')).toMatchObject({ kind: 'roman', count: 1 });
   });
