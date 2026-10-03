@@ -19,8 +19,9 @@
  *   - A ROMAN NUMERAL is listed WITH the word in front of it: "Wolf IV" (a
  *     planet, "Wolf Four") and "Henry IV" (a king, "Henry the Fourth") are
  *     different questions. Only a numeral spelled as a valid one counts.
- *   - A RUN OF CAPITALS ("SPD", "ESP") is a form — except inside a block set
- *     in capitals, which is a heading and folds its case at narration.
+ *   - A RUN OF CAPITALS ("SPD", "ESP") is a form — except inside a heading (a
+ *     title or section-header block, or one set in capitals), whose case the
+ *     narrator folds.
  *   - An ABBREVIATION is a form, keyed lower-case without a closing period, so
  *     "esp" and "esp." are one question; every printed spelling is listed.
  *   - NUMBERS are not forms: every one is its own reading, and the number rules
@@ -74,9 +75,17 @@ function core(token: string): string {
   return token.replace(/^[^\p{L}\p{N}&]+|[^\p{L}\p{N}&.]+$/gu, '');
 }
 
-/** A block set in capitals is a heading; the narrator folds its case, so its words are not acronyms. */
-function shouted(text: string): boolean {
-  const letters = text.replace(/[^\p{L}]/gu, '');
+/**
+ * A HEADING'S CAPITALS ARE NOT ACRONYMS. A block the book marks as a title or a
+ * section header, or one set mostly in capitals, is a heading, and the narrator
+ * folds a heading's case — so "CHAPTER ONE: Broken Men" lists no "CHAPTER" and no
+ * "ONE" (measured 2026-10-03: asked about them, the model lowered three chapter
+ * numbers and left a fourth). A numeral in one still is a form: "Part IV" needs
+ * reading whatever its case.
+ */
+function heading(block: { target: { text: string; statedCategory: string } }): boolean {
+  if (/title|header/.test(block.target.statedCategory)) return true;
+  const letters = block.target.text.replace(/[^\p{L}]/gu, '');
   return letters.length > 0 && letters.replace(/[^\p{Lu}]/gu, '').length / letters.length >= 0.7;
 }
 
@@ -116,12 +125,12 @@ export function collectPrintedForms(bookText: string, where: string): PrintedFor
   interface Gathering { kind: FormKind; key: string; printed: Map<string, number>; hits: { parts: string; sentence: string }[] }
   const forms = new Map<string, Gathering>();
   for (const block of blocks) {
-    const heading = shouted(block.target.text);
+    const inHeading = heading(block);
     for (const span of cleanSentences(block.target.text)) {
       const tokens = span.text.split(/\s+/).filter(Boolean);
       for (let i = 0; i < tokens.length; i++) {
         if (!isPrintedForm(tokens, i)) continue;
-        const form = formOf(tokens, i, heading);
+        const form = formOf(tokens, i, inHeading);
         if (form === null) continue;
         const id = `${form.kind}\u0000${form.key}`;
         let gathering = forms.get(id);

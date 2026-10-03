@@ -123,16 +123,20 @@ const TEXTS = [
   'Nobody present had read the report, and nobody said so out loud.',
 ];
 
-function bookFile(dir: string, texts: readonly string[] = TEXTS): string {
+/** A book of rows; a row is its text, or its text and the category the book gives it. */
+function bookFile(dir: string, texts: readonly (string | { text: string; category: string })[] = TEXTS): string {
   const header = {
     book: 3, engine: 'foundry-test', language: 'en',
     source: { pages: 1, unreadable: [], bankSha: 'sha256:test' },
     chapters: [], typography: null, seams: [], loose: { markers: [], notes: [] },
   };
-  const rows = texts.map((text, at) => ({
-    id: `b1-${at + 1}`, category: 'Text', text, page: 1, pages: [1], box: [0, 0, 100, 10],
-    parts: [{ src: `p1-${at + 1}`, page: 1, chars: [0, text.length] }],
-  }));
+  const rows = texts.map((row, at) => {
+    const { text, category } = typeof row === 'string' ? { text: row, category: 'Text' } : row;
+    return {
+      id: `b1-${at + 1}`, category, text, page: 1, pages: [1], box: [0, 0, 100, 10],
+      parts: [{ src: `p1-${at + 1}`, page: 1, chars: [0, text.length] }],
+    };
+  });
   const at = path.join(dir, 'book.jsonl');
   fs.writeFileSync(at, [JSON.stringify(header), ...rows.map((row) => JSON.stringify(row))].join('\n') + '\n');
   return at;
@@ -197,7 +201,7 @@ describe('clean-text handed fixed readings', () => {
 // ── The inventory ───────────────────────────────────────────────────────────────
 
 describe('clean-forms', () => {
-  const book = (texts: readonly string[]): { text: string; where: string } => {
+  const book = (texts: readonly (string | { text: string; category: string })[]): { text: string; where: string } => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clean-forms-'));
     const where = bookFile(dir, texts);
     return { text: fs.readFileSync(where, 'utf8'), where };
@@ -209,6 +213,9 @@ describe('clean-forms', () => {
       'Her esp kept trying to make sense of it, and she touched the sphere with her esp.',
       'The SPD refused, and Henry IV did nothing in 1843 [sic] about it.',
       'CHAPTER FOUR: THE ALIEN',
+      // A title the person merged in mixed case: a heading by its category, not by its capitals.
+      { text: 'CHAPTER SIX: In the Forest of the Night', category: 'Title' },
+      { text: 'PART IV: The Return', category: 'Title' },
       'He did not mind; the civil service was vivid and J. Smith said slowly.over and over.',
     ]);
     const forms = collectPrintedForms(text, where);
@@ -218,10 +225,12 @@ describe('clean-forms', () => {
     expect(byKey.get('esp')).toMatchObject({ kind: 'abbreviation', count: 2, printed: { esp: 1, 'esp.': 1 } });
     expect(byKey.get('SPD')).toMatchObject({ kind: 'caps', count: 1 });
     // Not forms: a number, a bracket, a heading's capitals, numeral-letter words, an initial, a typo.
-    for (const key of ['1843', 'sic', 'CHAPTER', 'FOUR', 'ALIEN', 'did', 'civil', 'vivid', 'j', 'slowly.over']) {
+    for (const key of ['1843', 'sic', 'CHAPTER', 'FOUR', 'SIX', 'ALIEN', 'did', 'civil', 'vivid', 'j', 'slowly.over']) {
       expect(byKey.has(key)).toBe(false);
     }
     expect(byKey.get('Wolf IV')!.samples.map((s) => s.parts)).toEqual(['b1-1', 'b1-1']);
+    // A numeral in a heading still needs reading, whatever the heading's case.
+    expect(byKey.get('PART IV')).toMatchObject({ kind: 'roman', count: 1 });
   });
 });
 

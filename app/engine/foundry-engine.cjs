@@ -31126,7 +31126,7 @@ var init_version = __esm({
     init_engine_import_meta_url();
     init_package();
     VERSION = package_default.version;
-    GIT_COMMIT = "src 237573b7ad1c".length > 0 ? "src 237573b7ad1c" : null;
+    GIT_COMMIT = "src 6a6b6ec361b0".length > 0 ? "src 6a6b6ec361b0" : null;
   }
 });
 
@@ -31233,11 +31233,11 @@ function parseMarkdown(source, page, furniture) {
       blocks.push({ kind: "html", xhtml: "<hr/>" });
       continue;
     }
-    const heading = HEADING2.exec(trimmed);
-    if (heading) {
+    const heading2 = HEADING2.exec(trimmed);
+    if (heading2) {
       flush();
-      const xhtml = inlineMarkdown(heading[2].trim());
-      blocks.push({ kind: "heading", level: heading[1].length, xhtml, text: plainText(xhtml) });
+      const xhtml = inlineMarkdown(heading2[2].trim());
+      blocks.push({ kind: "heading", level: heading2[1].length, xhtml, text: plainText(xhtml) });
       continue;
     }
     const bullet = BULLET.exec(line);
@@ -31520,12 +31520,12 @@ function consumeMarkdown(block) {
   };
   for (const line of block.text.split("\n")) {
     const trimmed = line.trim();
-    const heading = MD_HEADING.exec(trimmed);
+    const heading2 = MD_HEADING.exec(trimmed);
     const quoted = MD_QUOTE.exec(trimmed);
-    if (heading) {
+    if (heading2) {
       flushPlain();
       flushQuote();
-      out.push(sub(heading[1].length === 1 ? "Title" : "Section-header", heading[2].trim()));
+      out.push(sub(heading2[1].length === 1 ? "Title" : "Section-header", heading2[2].trim()));
       continue;
     }
     if (quoted) {
@@ -31682,11 +31682,11 @@ function entryShapedLines(blocks, except) {
   return lines;
 }
 function contentsEntryLines(blocks) {
-  const heading = blocks.find(
+  const heading2 = blocks.find(
     (b) => DISPLAY.has(b.category) && CONTENTS_HEADING.test(unemphasise(b.text))
   );
-  if (heading === void 0) return null;
-  const entries = entryShapedLines(blocks, heading);
+  if (heading2 === void 0) return null;
+  const entries = entryShapedLines(blocks, heading2);
   return entries.length < CONTENTS_ENTRIES ? null : entries;
 }
 function contentsEntryTitle(line) {
@@ -32894,8 +32894,8 @@ function proposeSections(pages, overlay = emptyOverlay(), listed = /* @__PURE__ 
 function sectionName(span, opens) {
   const label = opens?.label;
   if (label !== null && label !== void 0 && label.length > 0) return label;
-  const heading = span.find((b) => b.category === "Title" || b.category === "Section-header");
-  return heading === void 0 ? "" : headingLabel(heading.text);
+  const heading2 = span.find((b) => b.category === "Title" || b.category === "Section-header");
+  return heading2 === void 0 ? "" : headingLabel(heading2.text);
 }
 function foldDuplicateSections(blocks, starts, opens) {
   const folded = [];
@@ -73733,11 +73733,12 @@ __export(forms_exports, {
 function core2(token) {
   return token.replace(/^[^\p{L}\p{N}&]+|[^\p{L}\p{N}&.]+$/gu, "");
 }
-function shouted(text) {
-  const letters = text.replace(/[^\p{L}]/gu, "");
+function heading(block) {
+  if (/title|header/.test(block.target.statedCategory)) return true;
+  const letters = block.target.text.replace(/[^\p{L}]/gu, "");
   return letters.length > 0 && letters.replace(/[^\p{Lu}]/gu, "").length / letters.length >= 0.7;
 }
-function formOf(tokens, i, heading) {
+function formOf(tokens, i, heading2) {
   const token = tokens[i];
   const bare = core2(token).replace(/['’]s$/, "");
   if (/\d/.test(token) || /[[\]()&]/.test(token) || /-$/.test(token)) return null;
@@ -73750,7 +73751,7 @@ function formOf(tokens, i, heading) {
     const phrase = before.length > 0 && new RegExp("^\\p{L}+$", "u").test(before) ? `${before} ${unstopped}` : unstopped;
     return { kind: "roman", key: phrase, printed: phrase };
   }
-  if (new RegExp("^\\p{Lu}{2,}$", "u").test(unstopped)) return heading ? null : { kind: "caps", key: unstopped, printed: unstopped };
+  if (new RegExp("^\\p{Lu}{2,}$", "u").test(unstopped)) return heading2 ? null : { kind: "caps", key: unstopped, printed: unstopped };
   if (/^[ivxlcdm]+$/.test(unstopped) && romanValue(unstopped) === null) return null;
   if (!/^[\p{L}.]+$/u.test(bare)) return null;
   return { kind: "abbreviation", key: unstopped.toLowerCase(), printed: bare };
@@ -73764,12 +73765,12 @@ function collectPrintedForms(bookText, where) {
   const { blocks } = cleanBlocks(book, where);
   const forms = /* @__PURE__ */ new Map();
   for (const block of blocks) {
-    const heading = shouted(block.target.text);
+    const inHeading = heading(block);
     for (const span of cleanSentences(block.target.text)) {
       const tokens = span.text.split(/\s+/).filter(Boolean);
       for (let i = 0; i < tokens.length; i++) {
         if (!isPrintedForm(tokens, i)) continue;
-        const form = formOf(tokens, i, heading);
+        const form = formOf(tokens, i, inHeading);
         if (form === null) continue;
         const id = `${form.kind}\0${form.key}`;
         let gathering = forms.get(id);
@@ -97801,18 +97802,18 @@ function stampOf(row, attribute = categoryAttribute(row.category)) {
 function classOf2(align) {
   return align === "" ? "" : ` class="${align}"`;
 }
-function chapterBody(span, notes, column, images, format, heading) {
+function chapterBody(span, notes, column, images, format, heading2) {
   const out = [];
   const headings = [];
   const pagesSeen = /* @__PURE__ */ new Set();
   const openers = openingRun(span);
-  if (openers === 0 && heading !== null) {
+  if (openers === 0 && heading2 !== null) {
     out.push(blockElement(
       "Title",
       { outer: ` data-bf-cat="${categoryAttribute("Title")}"` },
       // The empty string strips a marker from a duplicated heading too —
       // the same ruling `worded` carries, one door over.
-      dotsInline(heading, { noteref: () => "" })
+      dotsInline(heading2, { noteref: () => "" })
     ));
   }
   let linked = 0;
@@ -99930,9 +99931,9 @@ function explodeElement(el, walk, book) {
     made.refs = [];
     return;
   }
-  const heading = HEADINGS.get(el.tag);
-  if (heading !== void 0) {
-    whole(heading);
+  const heading2 = HEADINGS.get(el.tag);
+  if (heading2 !== void 0) {
+    whole(heading2);
     return;
   }
   switch (el.tag) {
