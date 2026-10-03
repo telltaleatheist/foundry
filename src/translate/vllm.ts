@@ -120,6 +120,7 @@
  * local or billed, and neither needs to.
  */
 import { explainHttpRefusal } from '../backend/http-refusal.js';
+import { PARKED_EXIT_CODE } from '../vlm/endpoint.js';
 import {
   answerBudget, readUsage, recordUsage, takesThinkField, withBusyWait, type ChatTuning,
   type HttpResponse, type Transport,
@@ -160,6 +161,25 @@ import {
  * `anthropic.ts` declares its own list.
  */
 const BUSY_STATUSES = [429, 503, 409] as const;
+
+/**
+ * ── THE CHAT DOOR ALSO WAITS ON A LOST TRIP (2026-10-02) ───────────────────
+ *
+ * *Deathstalker: Hellworld*, block 1,238 of 4,654: Crucible lost two requests on
+ * the wire to a healthy engine (ReadError, the engine answering 200s with an
+ * empty queue) and answered `502 engine_unreachable`. Not on this list, so the
+ * pass ended there — and closing its session unloaded the model under it. A
+ * chat completion is safe to ask again, so 502 and 504 are weather here, inside
+ * the same bounded wait as a busy card.
+ *
+ * EXCEPT `upstream_rejected`, Crucible's other 502: the operator's key was
+ * refused by the upstream, which a person repairs and no wait changes.
+ */
+const CHAT_WAITS_ON = [...BUSY_STATUSES, 502, 504] as const;
+
+function chatWeather(response: HttpResponse): boolean {
+  return response.status !== 502 || !/"code"\s*:\s*"upstream_rejected"/.test(response.body);
+}
 
 /** The server did not do its job. Always names the endpoint. */
 export class VllmError extends Error {
@@ -628,7 +648,7 @@ export async function readChatAnswer(
   try {
     response = await withBusyWait(
       () => transport.post(`${base}/chat/completions`, body),
-      { retryOn: BUSY_STATUSES, where: `${base}/chat/completions` },
+      { retryOn: CHAT_WAITS_ON, waitsOn: chatWeather, where: `${base}/chat/completions` },
     );
   } catch (error) {
     return { text: null, degraded: (error as Error).message };
@@ -712,8 +732,22 @@ export async function complete(
       `${base}/chat/completions`,
       completionsBody(served.id, system, user, tuning, served.maxModelLen, served.defaults),
     ),
-    { retryOn: BUSY_STATUSES, where: `${base}/chat/completions` },
+    { retryOn: CHAT_WAITS_ON, waitsOn: chatWeather, where: `${base}/chat/completions` },
   );
+  if ((CHAT_WAITS_ON as readonly number[]).includes(response.status) && chatWeather(response)) {
+    /*
+     * WEATHER THAT OUTLASTED ITS BUDGET IS A PARK, NOT A FAILURE — the read
+     * pass's rule (`VlmParkedError`, vlm/endpoint.ts), for a text pass. Every
+     * answer that landed is already in the records file, so the same command run
+     * again asks only what is left; exit 75 tells the dispatcher to queue it
+     * again rather than redden the row.
+     */
+    throw Object.assign(new VllmError(
+      `parked: ${base}, for model "${served.id}", was still answering `
+      + `${explainHttpRefusal(response.status, '', response.body)} after the wait for it ran out. `
+      + 'Every answer that landed is recorded; run the same command again to ask the rest.',
+    ), { exitCode: PARKED_EXIT_CODE });
+  }
   if (response.status !== 200) {
     throw new VllmError(
       `${base}, for model "${served.id}", `

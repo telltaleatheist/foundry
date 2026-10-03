@@ -1687,7 +1687,7 @@ test('a server error ends the run at once, and the error is the FIRST one', asyn
   /*
    * With N in flight, two chunks can fail before either is reported, and the
    * one that surfaces must be the one that happened FIRST — the failure that
-   * ended the run, not whichever rejection the runtime settled last. The 502
+   * ended the run, not whichever rejection the runtime settled last. The 501
    * here answers in 5ms and the 500 in 40ms; the 500 was issued first.
    *
    * THE QUICK FAILURE WAS A 503 UNTIL 2026-09-20 and is a 502 now, because the
@@ -1695,6 +1695,8 @@ test('a server error ends the run at once, and the error is the FIRST one', asyn
    * 503 when no lane is free, so that status is now waited out rather than
    * fatal and would have made this a test about the busy ladder. Nothing about
    * WHICH error surfaces changed; only the status that stands for "broken".
+   * And a 501 since 2026-10-02, for the same reason: 502 joined the chat door's
+   * weather (Crucible's lost trip to an engine, vllm.ts `CHAT_WAITS_ON`).
    *
    * And nothing is left dangling: the run waits for the requests that were
    * already out rather than returning while they are in flight and leaving
@@ -1719,7 +1721,7 @@ test('a server error ends the run at once, and the error is the FIRST one', asyn
           }
           if (user.includes('Die Ordnung')) {
             await sleep(5);
-            return { status: 502, body: 'the quick failure' };
+            return { status: 501, body: 'the quick failure' };
           }
           return await base.post(url, body);
         } finally {
@@ -1733,7 +1735,7 @@ test('a server error ends the run at once, and the error is the FIRST one', asyn
         epubPath: epub, outPath: out, to: 'en', transport: dying, endpoint: ENDPOINT, concurrency: 4, log: quiet,
       }),
       (error: Error) => {
-        assert.match(error.message, /answered 502/);
+        assert.match(error.message, /answered 501/);
         assert.match(error.message, /the quick failure/);
         assert.doesNotMatch(error.message, /the slow failure/);
         return true;

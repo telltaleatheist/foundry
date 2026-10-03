@@ -121,6 +121,26 @@ describe('F3b — the engine\'s own deadline says so in a field', () => {
     expect(calls).toBe(2);
   });
 
+  test('a PARK from the door crosses the pass as a park — exit 75, asked once, not re-rolled', async () => {
+    const asks: NormalizerAsk[] = [
+      { key: 'b1-1', text: 'They met on the first floor.', segments: [28], previous: null, next: null },
+    ];
+    let calls = 0;
+    const runner: NumberNormalizerRunner = {
+      model: 'qwen3.5-9b',
+      async generate(): Promise<string> {
+        calls += 1;
+        throw Object.assign(new Error('parked: the engine was not reached'), { exitCode: 75 });
+      },
+      async release(): Promise<void> { /* nothing was loaded. */ },
+    };
+    const thrown = await askAboutEach(asks, runner, 'clean-text', 'system', undefined, 'every-block')
+      .then(() => null, (err: unknown) => err as Error & { exitCode?: number });
+    expect(thrown!.message).toMatch(/could not reach the model 'qwen3\.5-9b': parked: /);
+    expect(thrown!.exitCode).toBe(75);
+    expect(calls).toBe(1);
+  });
+
   test('a foreign runner\'s prose is still read, because that is all it offers', async () => {
     const asks: NormalizerAsk[] = [
       { key: 'b1-1', text: 'They met on the first floor.', segments: [28], previous: null, next: null },
@@ -234,5 +254,57 @@ describe('F3b — a busy Crucible is waited out, not treated as a broken server'
     await expect(complete(transport, CRUCIBLE, served, 'system', 'user', { temperature: 0 }))
       .rejects.toThrow();
     expect(transport.sent).toBe(1);
+  });
+});
+
+describe('a lost trip to the engine is weather, and weather that outlasts its wait PARKS', () => {
+  const served = { id: 'qwen3.5-9b', maxModelLen: 32768, defaults: null };
+  const answer = JSON.stringify({ choices: [{ message: { content: 'the answer' } }] });
+  /** Crucible's 502s, `retry-after: 0` so the bounded wait runs at once. */
+  const lost = '{"error":{"code":"engine_unreachable","message":"the engine serving \'qwen3.5-9b\' did not answer on 2 attempts: ReadError"}}';
+  const rejected = '{"error":{"code":"upstream_rejected","message":"the upstream refused the key"}}';
+  function transportSaying(first: { status: number; body: string }, times: number):
+    Transport & { sent: number } {
+    const fake = {
+      sent: 0,
+      async get(): Promise<HttpResponse> { throw new Error('not asked'); },
+      async post(): Promise<HttpResponse> {
+        fake.sent += 1;
+        if (fake.sent <= times) return { ...first, headers: { 'retry-after': '0' } };
+        return { status: 200, body: answer };
+      },
+    };
+    return fake;
+  }
+
+  test('Hellworld block 1,238: a 502 engine_unreachable is waited out and the book goes on', async () => {
+    const transport = transportSaying({ status: 502, body: lost }, 2);
+    expect(await complete(transport, CRUCIBLE, served, 'system', 'user', { temperature: 0 }))
+      .toBe('the answer');
+    expect(transport.sent).toBe(3);
+  });
+
+  test('504 is the same weather', async () => {
+    const transport = transportSaying({ status: 504, body: 'gateway timeout' }, 1);
+    expect(await complete(transport, CRUCIBLE, served, 'system', 'user', { temperature: 0 }))
+      .toBe('the answer');
+  });
+
+  test('upstream_rejected is the other 502 — a refused key — and is refused at once', async () => {
+    const transport = transportSaying({ status: 502, body: rejected }, 5);
+    const thrown = await complete(transport, CRUCIBLE, served, 'system', 'user', { temperature: 0 })
+      .then(() => null, (err: unknown) => err as Error & { exitCode?: number });
+    expect(thrown).not.toBeNull();
+    expect(thrown!.exitCode).toBeUndefined();
+    expect(transport.sent).toBe(1);
+  });
+
+  test('weather that never clears PARKS: exit 75, and the sentence says nothing is lost', async () => {
+    const transport = transportSaying({ status: 502, body: lost }, 10_000);
+    const thrown = await complete(transport, CRUCIBLE, served, 'system', 'user', { temperature: 0 })
+      .then(() => null, (err: unknown) => err as Error & { exitCode?: number });
+    expect(thrown!.exitCode).toBe(75);
+    expect(thrown!.message).toMatch(/^parked: /);
+    expect(thrown!.message).toMatch(/run the same command again/);
   });
 });

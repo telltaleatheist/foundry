@@ -366,6 +366,10 @@ function busyReason(status: number): string {
   // list a door waits on is the door's own (`BUSY_STATUSES`, vllm.ts).
   if (status === 503) return 'no lane free';
   if (status === 409) return 'the machine is held';
+  // A Crucible in front of an engine: the request was lost on the way to it, or
+  // the engine did not answer in time. The engine is there; the trip was not.
+  if (status === 502) return 'the engine was not reached';
+  if (status === 504) return 'the engine did not answer in time';
   return `busy (${status})`;
 }
 
@@ -411,6 +415,13 @@ export async function withBusyWait(
   options: {
     /** The statuses that mean "wait" on THIS door. Never Ollama's. */
     retryOn: readonly number[];
+    /**
+     * WHEN ONE STATUS SAYS TWO THINGS, the door tells them apart by the body. A
+     * Crucible's 502 is a lost trip to the engine (weather) or the operator's
+     * upstream key being refused (`upstream_rejected` — somebody has to repair
+     * it). Absent, every listed status is a wait.
+     */
+    waitsOn?: (response: HttpResponse) => boolean;
     /** The URL the wait is about, for the line. Never carries a credential. */
     where: string;
     /**
@@ -434,6 +445,7 @@ export async function withBusyWait(
   for (let attempt = 1; ; attempt += 1) {
     const response = await send();
     if (!options.retryOn.includes(response.status)) return response;
+    if (options.waitsOn !== undefined && !options.waitsOn(response)) return response;
     const said = retryAfterMs(response.headers);
     const wait = said ?? backoff;
     const waited = Date.now() - startedAt;
