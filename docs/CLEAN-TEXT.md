@@ -1710,6 +1710,41 @@ differently again, so it is never claimed here — that judgement is the model's
 and the live run measured it making it correctly.
 
 ---
+
+## Fixed readings and printed forms — a host's book glossary (n19, 2026-10-03)
+
+The sentence pass sees one sentence, and one sentence is often not enough to know
+what a printed form IS: *Deathstalker: Hellworld* prints "esp" 26 times for a
+psychic sense, and shown "touched the sphere with her esp." alone the model read
+it "especial" — the book came out saying "ESP" once and "especial" twice, and
+"Wolf the Fourth" for a planet. So a host (BookForge's narration glossary) decides
+each form ONCE from sentences across the book, and this engine offers two doors:
+
+- **`foundry clean-forms --book <book.jsonl> --out <forms.json>`** lists the book's
+  printed forms (`src/clean/forms.ts`), using the light gate's own `isPrintedForm`:
+  a roman numeral WITH the word in front of it ("Wolf IV" is not "Henry IV"), a
+  run of capitals outside a heading, an abbreviation (keyed lower-case without its
+  closing period, every spelling listed). Each with its count and up to six
+  sentences spread across the book. Numbers, brackets, line-break hyphens and typos
+  are not forms — they are read per sentence. It decides nothing.
+- **`--fixed-readings <readings.json>`** on `clean-text` and `clean-triage`
+  (`src/clean/fixed-readings.ts`) hands back the decided readings
+  (`{"format": "fixed-readings/v1", "readings": [{"find", "replace"}]}`). Each find
+  is read wherever it stands as a whole token run, after punctuation and before
+  anything is judged or asked, in BOTH commands — so a triage judges the words the
+  cleaner will see, and the model is never shown a form the book already decided.
+  A find ending in a period consumes it, except where it also ends the block. A
+  reading enters the cache key only of a block it applies to, so a glossary that
+  grows re-asks those blocks and keeps every other answer.
+
+**n19 came with it, for two light-gate holes the inventory found.** A lower-case
+word spelled only with numeral letters ("did", "civil", "mill", "vivid") was taken
+for a numeral and so left open to any reading — 372 "did"s in *The Pursuit of
+Power*; it is a printed form now only when `romanValue` reads it. And a numeral or
+run of capitals that ENDS a sentence ("on Wolf IV.", "the SPD.") was hidden by its
+period and so protected from every reading; it is a printed form now.
+
+---
 ---
 
 ## Files — in THIS repository, which owns them

@@ -1186,6 +1186,26 @@ const CT_REMOVE_ALSO: OptionSpec = {
   describe: 'Anything else this book prints that a narrator would not read, described in your own words. Added to the triage question and to the prompt of the cleaner; the model decides what fits.',
 };
 
+/**
+ * `--fixed-readings`, shared by clean-triage and clean-text: readings decided for
+ * the whole book before the run (src/clean/fixed-readings.ts). The two commands
+ * must be handed the same file, so the triage judges the words the cleaner sees.
+ */
+const CT_FIXED_READINGS: OptionSpec = {
+  name: 'fixed-readings',
+  type: 'string',
+  placeholder: '<readings.json>',
+  describe: 'A fixed-readings/v1 file: {"format": "fixed-readings/v1", "readings": [{"find": "Wolf IV", "replace": "Wolf Four"}, ...]}. Each find is read wherever it stands as a whole token run, before anything is judged or asked, and the model is never shown it.',
+};
+
+/** Read `--fixed-readings` into its list, or nothing. A file that is not one is refused by name. */
+async function cleanFixedReadings(args: ParsedArgs): Promise<import('./clean/fixed-readings.js').FixedReading[] | undefined> {
+  const file = optionalString(args, 'fixed-readings');
+  if (file === undefined) return undefined;
+  const { readFixedReadingsFile } = await import('./clean/fixed-readings.js');
+  return readFixedReadingsFile(file);
+}
+
 /** Read the two removal flags into one request, refusing a malformed switch by name. */
 async function cleanRemoval(args: ParsedArgs): Promise<import('./clean/removal.js').RemovalRequest> {
   const references = optionalString(args, 'remove-references');
@@ -1234,6 +1254,23 @@ const CTR_CONCURRENCY: OptionSpec = {
   describe: 'Groups in flight at once (each is one request of many questions). Default 2.',
 };
 
+/** `clean-forms` — the argv layer; the inventory is src/clean/forms.ts. */
+async function runCleanFormsCommand(args: ParsedArgs): Promise<void> {
+  const { runCleanForms } = await import('./clean/forms.js');
+  runCleanForms({
+    bookPath: requireString(args, 'book', 'the book file whose printed forms are listed'),
+    outPath: requireString(args, 'out', 'where the forms are written'),
+    log,
+  });
+}
+
+const CF_OUT: OptionSpec = {
+  name: 'out',
+  type: 'string',
+  placeholder: '<forms.json>',
+  describe: 'Where the printed-forms/v1 file is written.',
+};
+
 /** `clean-triage` — the argv layer; the pass is src/clean/triage.ts. */
 async function runCleanTriageCommand(args: ParsedArgs): Promise<void> {
   const concurrency = optionalString(args, 'concurrency');
@@ -1242,10 +1279,12 @@ async function runCleanTriageCommand(args: ParsedArgs): Promise<void> {
   }
   const unit = await cleanUnit(args);
   const removal = await cleanRemoval(args);
+  const fixedReadings = await cleanFixedReadings(args);
   const { runCleanTriage } = await import('./clean/triage.js');
   await runCleanTriage({
     ...(unit === undefined ? {} : { unit }),
     removal,
+    ...(fixedReadings === undefined ? {} : { fixedReadings }),
     bookPath: requireString(args, 'book', 'the book file whose blocks are judged'),
     outPath: requireString(args, 'out', 'where the verdicts are written'),
     endpoint: requireString(args, 'endpoint', 'the Crucible whose decide door is asked'),
@@ -1290,6 +1329,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
   }
   const unit = await cleanUnit(args);
   const removal = await cleanRemoval(args);
+  const fixedReadings = await cleanFixedReadings(args);
   const gateArg = optionalString(args, 'gate');
   if (gateArg !== undefined && gateArg !== 'on' && gateArg !== 'off' && gateArg !== 'light') {
     throw new UsageError(`--gate takes light, on or off, not "${gateArg}"`);
@@ -1297,7 +1337,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
   const gate = gateArg === undefined ? undefined : gateArg === 'light' ? 'light' as const : gateArg === 'on';
   const epubIn = optionalString(args, 'epub');
   if (epubIn !== undefined) {
-    const bookRoute = (['book', 'records', 'stamp', 'generation', 'triage', 'unit'] as const)
+    const bookRoute = (['book', 'records', 'stamp', 'generation', 'triage', 'unit', 'fixed-readings'] as const)
       .filter((name) => optionalString(args, name) !== undefined);
     if (bookRoute.length > 0) {
       throw new UsageError(
@@ -1352,6 +1392,7 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
     ...(unit === undefined ? {} : { unit }),
     ...(gate === undefined ? {} : { gate }),
     removal,
+    ...(fixedReadings === undefined ? {} : { fixedReadings }),
     log,
   });
 }
@@ -4061,15 +4102,35 @@ export const COMMANDS: readonly Command[] = [
     options: [
       CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_EPUB_IN, CT_EPUB_OUT,
       CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION, CT_TRIAGE, CT_UNIT, CT_GATE,
-      CT_REMOVE_REFERENCES, CT_REMOVE_ALSO,
+      CT_REMOVE_REFERENCES, CT_REMOVE_ALSO, CT_FIXED_READINGS,
     ],
     run: runCleanText,
+  },
+  {
+    name: 'clean-forms',
+    summary: 'List the printed forms of a book (abbreviations, roman numerals, capitals) with sentences from across it.',
+    usage: '--book <book.jsonl> --out <forms.json>',
+    detail: [
+      'THE INVENTORY HALF OF A BOOK GLOSSARY. Every token a narrator does not read as',
+      'printed — the light gate\'s own definition — grouped into the forms the book',
+      'uses: a roman numeral with the word in front of it ("Wolf IV" is not "Henry',
+      'IV"), a run of capitals outside a heading, an abbreviation (lower-cased, its',
+      'closing period dropped, every printed spelling listed). Each comes with its',
+      'count and up to six sentences spread across the book.',
+      '',
+      'Numbers, brackets, line-break hyphens and typos are not forms: they are read',
+      'sentence by sentence. Nothing here decides a reading. Whoever does hands the',
+      'answers to clean-triage and clean-text as --fixed-readings.',
+    ].join('\n'),
+    options: [CT_BOOK_IN, CF_OUT],
+    run: runCleanFormsCommand,
   },
   {
     name: 'clean-triage',
     summary: 'Judge which blocks of a book need cleaning at all, before clean-text is run.',
     usage: '--book <book.jsonl> --out <verdicts.json> --endpoint <crucible url> --model <decide model>'
-      + ' [--concurrency <n>] [--unit <sentence|block>] [--remove-references <on|off>] [--remove-also <text>]',
+      + ' [--concurrency <n>] [--unit <sentence|block>] [--remove-references <on|off>] [--remove-also <text>]'
+      + ' [--fixed-readings <readings.json>]',
     detail: [
       'THE FIRST HALF OF A TRIAGED CLEANUP. Owen, 2026-09-23: "we create a list of',
       'blocks that need to be cleaned with snap and then we bring snap down and load',
@@ -4095,7 +4156,10 @@ export const COMMANDS: readonly Command[] = [
       'A busy door (chat_queue_full) is waited out; a model that is not resident is',
       'refused by name.',
     ].join('\n'),
-    options: [CT_BOOK_IN, CTR_OUT, CTR_ENDPOINT, CTR_MODEL, CTR_CONCURRENCY, CT_UNIT, CT_REMOVE_REFERENCES, CT_REMOVE_ALSO],
+    options: [
+      CT_BOOK_IN, CTR_OUT, CTR_ENDPOINT, CTR_MODEL, CTR_CONCURRENCY, CT_UNIT, CT_REMOVE_REFERENCES, CT_REMOVE_ALSO,
+      CT_FIXED_READINGS,
+    ],
     run: runCleanTriageCommand,
   },
   {

@@ -121,6 +121,9 @@ import type {
 } from './tts-number-normalizer.js';
 import { PUNCTUATION_SPEC_VERSION } from './tts-punctuation.js';
 import {
+  applyFixedToAll, fixedKeyField, type FixedReading, type FixedReadingsRecord,
+} from './fixed-readings.js';
+import {
   NO_REMOVAL, removalKeyField, removalRecord, removesAnything, sameRemoval, withRemoval, type RemovalRequest,
 } from './removal.js';
 
@@ -167,6 +170,8 @@ export function cleanKey(request: {
   unit?: CleanUnit;
   /** What the run removes. Absent or nothing removed: the key every earlier record was filed under. */
   removal?: RemovalRequest;
+  /** Readings the run was handed (src/clean/fixed-readings.ts). None that applies here: the key it had. */
+  fixed?: readonly FixedReading[];
 }): string {
   const fields = [
     request.unit === 'sentence' ? SENTENCE_KEY_FORMAT : KEY_FORMAT,
@@ -179,6 +184,10 @@ export function cleanKey(request: {
   // there is one, so a run that removes nothing keeps every key it had.
   const removal = request.removal === undefined ? '' : removalKeyField(request.removal);
   if (removal.length > 0) fields.push(removal);
+  // A FIXED READING THAT APPLIES IS PART OF THE QUESTION, and one that does not
+  // is not: the block is shown different words only where a reading touches it.
+  const fixed = request.fixed === undefined ? '' : fixedKeyField(request.text, request.fixed);
+  if (fixed.length > 0) fields.push(fixed);
   return createHash('sha256').update(fields.join(NUL), 'utf8').digest('hex');
 }
 
@@ -195,7 +204,9 @@ export function cleanKey(request: {
  * Materialization reads the newest row per POSITION, so the book is uniform
  * either way.
  */
-export function triageKey(request: { text: string; triageModel: string; removal?: RemovalRequest }): string {
+export function triageKey(request: {
+  text: string; triageModel: string; removal?: RemovalRequest; fixed?: readonly FixedReading[];
+}): string {
   const fields = [
     TRIAGE_KEY_FORMAT,
     request.triageModel.trim(),
@@ -206,6 +217,9 @@ export function triageKey(request: { text: string; triageModel: string; removal?
   // "Found clean" is a verdict against the criteria asked, and a removal adds one.
   const removal = request.removal === undefined ? '' : removalKeyField(request.removal);
   if (removal.length > 0) fields.push(removal);
+  // And it was judged on the words the readings left, which `cleanKey` says the same way.
+  const fixed = request.fixed === undefined ? '' : fixedKeyField(request.text, request.fixed);
+  if (fixed.length > 0) fields.push(fixed);
   return createHash('sha256').update(fields.join(NUL), 'utf8').digest('hex');
 }
 
@@ -269,6 +283,8 @@ export interface CleanTextReceipt {
   triage?: CleanTriageSummary;
   /** What the run was asked to remove (src/clean/removal.ts). Absent in a receipt written before 2026-09-29. */
   removal?: RemovalRequest;
+  /** The readings the run was handed and how often each was read. Absent when it was handed none. */
+  fixedReadings?: FixedReadingsRecord;
 }
 
 export interface CleanTextOptions {
@@ -358,6 +374,12 @@ export interface CleanTextOptions {
    * proposes is accepted as one under every gate.
    */
   removal?: RemovalRequest;
+  /**
+   * `--fixed-readings`: readings decided for the whole book before this run
+   * (src/clean/fixed-readings.ts), applied to every block's stage-one text and
+   * so never asked about. The triage behind this run must be handed the same.
+   */
+  fixedReadings?: readonly FixedReading[];
   /** Injected so the tests drive the whole pass with no server and no GPU. */
   transport?: Transport;
   /** Injected so a test can settle every block without a transport at all. */
@@ -524,6 +546,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
 
   const unit = opts.unit ?? DEFAULT_CLEAN_UNIT;
   const removal = opts.removal ?? NO_REMOVAL;
+  const fixed = opts.fixedReadings ?? [];
   const triage = opts.triagePath === undefined ? null : readTriageFile(opts.triagePath);
   /*
    * A TRIAGE ASKED ABOUT OTHER REMOVALS JUDGED BY OTHER CRITERIA. A sentence it
@@ -627,9 +650,9 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * a Table row holds the whole grid and half a grid is not one.
    */
   const keyOf = new Map<string, string>();
-  for (const block of blocks) keyOf.set(block.target.key, cleanKey({ text: block.target.text, model, unit, removal }));
+  for (const block of blocks) keyOf.set(block.target.key, cleanKey({ text: block.target.text, model, unit, removal, fixed }));
   const tableKey = new Map<string, string>();
-  for (const table of tables) tableKey.set(table.parts, cleanKey({ text: table.source, model, unit, removal }));
+  for (const table of tables) tableKey.set(table.parts, cleanKey({ text: table.source, model, unit, removal, fixed }));
 
   /*
    * A TRIAGE'S "CLEAN" ROW ANSWERS THE BLOCK FOR A RUN GIVEN THE SAME TRIAGE —
@@ -638,7 +661,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * the row having its own key (`triageKey`).
    */
   const answered = (source: string, key: string): boolean => records.get(key) !== undefined
-    || (triage !== null && records.get(triageKey({ text: source, triageModel: triage.model.id, removal })) !== undefined);
+    || (triage !== null && records.get(triageKey({ text: source, triageModel: triage.model.id, removal, fixed })) !== undefined);
   const bankedTable = new Set<string>();
   for (const table of tables) {
     if (answered(table.source, tableKey.get(table.parts)!)) bankedTable.add(table.parts);
@@ -678,6 +701,22 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
   const cleanText = new Map<string, string>();
   for (const block of outstanding) {
     cleanText.set(block.target.key, punctuated.text.get(block.target.key)!);
+  }
+
+  /*
+   * ── AND THE READINGS THE BOOK WAS HANDED, STILL STAGE ONE ──────────────────
+   *
+   * After the punctuation and before anything is judged or asked, so the triage
+   * (which does the same) and the cleaner see the same words, and the model is
+   * never shown a form the whole book already decided (src/clean/fixed-readings.ts).
+   */
+  const fixedRecord = applyFixedToAll(cleanText, fixed);
+  if (fixed.length > 0) {
+    const reads = Object.values(fixedRecord.applied).reduce((n, k) => n + k, 0);
+    opts.log(
+      `clean-text: ${fixed.length} fixed reading(s) handed in; ${reads} occurrence(s) of `
+      + `${Object.keys(fixedRecord.applied).length} of them read across the blocks this run cleans.`,
+    );
   }
 
   /*
@@ -853,7 +892,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
       const text = cleanText.get(block.target.key)!;
       if (block.cell === undefined) {
         if (text !== block.target.text) changed += 1;
-        appendRecord(block.parts, triageKey({ text: block.target.text, triageModel: triage.model.id, removal }), text);
+        appendRecord(block.parts, triageKey({ text: block.target.text, triageModel: triage.model.id, removal, fixed }), text);
         continue;
       }
       if (keptTables.has(block.parts)) continue;
@@ -866,7 +905,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
         continue;
       }
       if (spliced.text !== table.source) changed += 1;
-      appendRecord(table.parts, triageKey({ text: table.source, triageModel: triage.model.id, removal }), spliced.text);
+      appendRecord(table.parts, triageKey({ text: table.source, triageModel: triage.model.id, removal, fixed }), spliced.text);
     }
   }
 
@@ -1048,6 +1087,7 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
     server: runner.serverFacts?.() ?? null,
     ...(triageSummary === undefined ? {} : { triage: triageSummary }),
     removal: removalRecord(removal),
+    ...(fixed.length > 0 ? { fixedReadings: fixedRecord } : {}),
   };
   const receiptOut = receiptPath(recordsPath);
   ensureDir(path.dirname(receiptOut));

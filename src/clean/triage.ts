@@ -50,6 +50,7 @@ import { CleanTextError } from './punctuate.js';
 import { NORMALIZER_VERSION } from './tts-number-normalizer.js';
 import { PUNCTUATION_SPEC_VERSION } from './tts-punctuation.js';
 import { NO_REMOVAL, removalRecord, removalTriageCriteria, type RemovalRequest } from './removal.js';
+import { applyFixedToAll, type FixedReading } from './fixed-readings.js';
 
 /** What a triage file is, spelled into it — a reader refuses any other. */
 export const TRIAGE_FORMAT = 'foundry-clean-triage/v1';
@@ -180,6 +181,12 @@ export interface CleanTriageOptions {
    * is sent to the cleaner. clean-text must be given the same.
    */
   removal?: RemovalRequest;
+  /**
+   * The readings the cleanup behind this will be handed (src/clean/fixed-readings.ts),
+   * applied to the judged text exactly as clean-text applies them, so a verdict's
+   * digest is of the words the cleaner will see. clean-text must be given the same.
+   */
+  fixedReadings?: readonly FixedReading[];
   /** Injected so the tests drive the whole triage with no server. */
   transport?: Transport;
   /** Injected so the tests do not wait out a Retry-After. */
@@ -403,6 +410,9 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
     throw new CleanTextError(`--book ${where} has no block with words in it, so there is nothing to triage.`);
   }
   const punctuated = punctuateAll(blocks);
+  // The readings the cleanup behind this will apply, applied here too: a verdict is
+  // about the words the cleaner will be shown (src/clean/fixed-readings.ts).
+  applyFixedToAll(punctuated.text, opts.fixedReadings ?? []);
   const unit = opts.unit ?? DEFAULT_CLEAN_UNIT;
   const removal = opts.removal ?? NO_REMOVAL;
   const units = triageUnits(blocks, punctuated.text, unit);

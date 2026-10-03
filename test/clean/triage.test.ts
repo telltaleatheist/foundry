@@ -379,3 +379,34 @@ describe('--unit sentence', () => {
     })).rejects.toThrow(/judged blocks, and this run asks about sentences/);
   });
 });
+
+// ── A book glossary: the triage and the cleaner see the same words (2026-10-03) ──
+
+describe('clean-triage handed fixed readings', () => {
+  test('judges the read words, and the cleaner given the same readings finds every verdict current', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'triage-fixed-'));
+    bookFile(dir, ['The pinnace circled Wolf IV once before it landed.', 'Nobody present had read the report.']);
+    const fixedReadings = [{ find: 'Wolf IV', replace: 'Wolf Four' }];
+    const door = fakeDoor(() => 0.01);
+    const out = path.join(dir, 'triage.json');
+    await runCleanTriage({
+      unit: 'sentence', bookPath: path.join(dir, 'book.jsonl'), outPath: out, endpoint: 'http://crucible:7100',
+      model: 'qwen3.5-0.8b', transport: door, sleep: noSleep, fixedReadings, log: () => {},
+    });
+    const asked = door.requests.flatMap((r) => Object.values(r.questions).map((q) => q.instructions)).join('\n');
+    expect(asked).toContain('Wolf Four');
+    expect(asked).not.toContain('Wolf IV');
+
+    // Every position judged clean, on the read words: a cleaner handed the same
+    // readings asks nothing, and one handed none finds the verdicts stale.
+    const same = stubCleaner();
+    const logged: string[] = [];
+    await runCleanText({
+      bookPath: path.join(dir, 'book.jsonl'), recordsPath: path.join(dir, 'records.jsonl'),
+      stampPath: path.join(dir, 'stamp.json'), endpoint: 'http://fake:8000/v1', runner: same, unit: 'sentence',
+      triagePath: out, fixedReadings, log: (line) => logged.push(line),
+    });
+    expect(same.seen.length).toBe(0);
+    expect(logged.join('\n')).not.toMatch(/judged on different text/);
+  });
+});

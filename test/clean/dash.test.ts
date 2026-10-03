@@ -49,5 +49,6 @@ test('the prompt states the rule, and the triage asks about it', () => {
   assert.match(narrationTextPrompt(), /A hyphen with NO spaces is a dash when the sentence breaks there/);
   const q = triageQuestion('b1#s0', 'sentence', "If you're wrong-if he is a bad guy.");
   assert.match(q.instructions, /a hyphen with no spaces standing where the sentence breaks/);
-  assert.equal(norm.NORMALIZER_VERSION, 'n18');
+  // The dash moved the rules to n18; a later bump carries it (n19, 2026-10-03).
+  assert.ok(Number(norm.NORMALIZER_VERSION.slice(1)) >= 18, norm.NORMALIZER_VERSION);
 });
