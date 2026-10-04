@@ -23,7 +23,11 @@
  *     title or section-header block, or one set in capitals), whose case the
  *     narrator folds.
  *   - An ABBREVIATION is a form, keyed lower-case without a closing period, so
- *     "esp" and "esp." are one question; every printed spelling is listed.
+ *     "esp" and "esp." are one question; every printed spelling is listed. One
+ *     that is ALSO an everyday word ("no", "art", "co", "rev") is a form only
+ *     where it is printed as the abbreviation: with its period ("No. 12"), or as
+ *     a title before a name ("Gen Patton"). Measured on Hellworld, 2026-10-03:
+ *     210 of its 213 "no"s were the word, and the guide's review was a wall of them.
  *   - NUMBERS are not forms: every one is its own reading, and the number rules
  *     read them per sentence. Nor are brackets, line-break hyphens, a run of
  *     dots, two words glued by a period ("slowly.over"), or a lone initial.
@@ -89,6 +93,20 @@ export interface PrintedFormsFile {
   forms: PrintedForm[];
 }
 
+/**
+ * ABBREVIATIONS THAT ARE ALSO EVERYDAY WORDS, lower-cased — the light gate's
+ * period-less list (src/clean/light-gate.ts) where it meets the dictionary. The
+ * gate rightly keeps every one from being rewritten; the INVENTORY lists one only
+ * where the book prints the abbreviation (see `formOf`).
+ */
+const WORDS_TOO: ReadonlySet<string> = new Set([
+  'no', 'nos', 'art', 'sec', 'rep', 'co', 'ed', 'col', 'rev', 'gen', 'mar', 'trans', 'ave',
+  'fig', 'figs', 'al', 'hon', 'sept', 'ser', 'pl', 'sen', 'maj',
+]);
+
+/** Of those, the ones a book prints bare as a TITLE before a name ("Gen Patton", "Rev Smith"). */
+const TITLES_TOO: ReadonlySet<string> = new Set(['rev', 'gen', 'col', 'sen', 'hon', 'maj']);
+
 /** The token with its outer punctuation (quotes, brackets, commas…) set aside — light-gate.ts's `core`. */
 function core(token: string): string {
   return token.replace(/^[^\p{L}\p{N}&]+|[^\p{L}\p{N}&.]+$/gu, '');
@@ -146,7 +164,15 @@ function formOf(tokens: readonly string[], i: number, heading: boolean): { kind:
   // A lower-case run of numeral letters that is not a valid numeral is a word ("did", "civil").
   if (/^[ivxlcdm]+$/.test(unstopped) && romanValue(unstopped) === null) return null;
   if (!/^[\p{L}.]+$/u.test(bare)) return null;
-  return { kind: 'abbreviation', key: unstopped.toLowerCase(), printed: bare };
+  const key = unstopped.toLowerCase();
+  if (WORDS_TOO.has(key) && !bare.endsWith('.')) {
+    // Bare, it is the word — unless it is a title set before a name ("Gen Patton").
+    const next = i + 1 < tokens.length ? core(tokens[i + 1]!) : '';
+    const title = TITLES_TOO.has(key) && /^\p{Lu}/u.test(unstopped) && /^\p{Lu}\p{Ll}/u.test(next)
+      && token === bare;
+    if (!title) return null;
+  }
+  return { kind: 'abbreviation', key, printed: bare };
 }
 
 /** Up to n items spread evenly from first to last. */

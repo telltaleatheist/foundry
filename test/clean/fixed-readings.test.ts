@@ -273,6 +273,23 @@ describe('clean-forms', () => {
     return { text: fs.readFileSync(where, 'utf8'), where };
   };
 
+  test('an abbreviation that is also a word is a form only where it is printed as the abbreviation', () => {
+    const { text, where } = book([
+      'There was no answer. No, he said, there is no way. He said no.',
+      'See the file, No. 12, and art. 4 of the code; the art of it was lost on Gen Patton.',
+      'The gen pop and the rev counter; Rev. Smith and Col Brandon came by, as did the Co. and its co-op.',
+    ]);
+    const byKey = new Map(collectPrintedForms(text, where).map((f) => [f.key, f]));
+    // "no" is listed for its dotted spellings only: "No. 12", and the sentence's "no." (the word, for the model to place).
+    expect(byKey.get('no')).toMatchObject({ count: 2, printed: { 'No.': 1, 'no.': 1 } });
+    expect(byKey.get('art')).toMatchObject({ count: 1, printed: { 'art.': 1 } });
+    // A title before a name is the abbreviation, bare or dotted; the same letters as a word are not.
+    expect(byKey.get('gen')).toMatchObject({ count: 1, printed: { Gen: 1 } });
+    expect(byKey.get('col')).toMatchObject({ count: 1, printed: { Col: 1 } });
+    expect(byKey.get('rev')).toMatchObject({ count: 1, printed: { 'Rev.': 1 } });
+    expect(byKey.get('co')).toMatchObject({ count: 1, printed: { 'Co.': 1 } });
+  });
+
   test('the forms a reading is asked about, and none of what the sentence pass reads', () => {
     const { text, where } = book([
       'The pinnace circled Wolf IV once. Never a dull moment on Wolf IV.',
