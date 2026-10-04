@@ -26,7 +26,18 @@
  *   AT A SPOT   {find, replace, at, nth}: read at ONE occurrence — the `nth`
  *               (0-based) whole-token run of `find` in the block whose target key
  *               is `at`. `replace` is printed verbatim: the caller, who knows
- *               which meaning this spot has, says whether a period stays.
+ *               which meaning this spot has, says whether a period stays. A spot
+ *               whose `replace` IS its `find` is KEPT: said as printed, decided.
+ *
+ * ── AND EVERY SPOT IS PROTECTED ──────────────────────────────────────────────
+ *
+ * A spot is a decision about that occurrence, so the sentence pass may not undo
+ * it: the span a spot left — its reading, or the form it kept — is handed to the
+ * cleaner as RESERVED (`FixedApplication.protected`), the same refusal the number
+ * rules' own spans get (`OVERLAPS_APPLIED`). Measured 2026-10-03 on Hellworld:
+ * Owen's "esp", decided as printed, was still read "especial" twice and "ESP"
+ * once by the sentence pass, because a reading that changed nothing protected
+ * nothing.
  *
  * A whole token run is one with no letter or digit touching it on either side.
  * Case-sensitive, exact. Spots are read first, against the block's own text;
@@ -130,7 +141,8 @@ export function validateFixedReadings(list: readonly unknown[], where = 'fixed r
         throw new CleanTextError(`${where}: "${find}" is read twice at ${one.at} #${one.nth as number}. One spot, one reading.`);
       }
       spots.add(spot);
-      if (find !== replace) out.push({ find, replace, at: one.at, nth: one.nth as number });
+      // A spot that changes nothing is KEPT — decided as printed, and protected.
+      out.push({ find, replace, at: one.at, nth: one.nth as number });
       return;
     }
     const earlier = bookWide.get(find);
@@ -217,10 +229,14 @@ function forBlock(readings: readonly FixedReading[], at: string | undefined): { 
 
 export interface FixedApplication {
   text: string;
-  /** find → how many times it was read in this text. */
+  /** find → how many times it was read in this text (a kept spot is not a reading). */
   applied: Map<string, number>;
   /** Spots whose occurrence was not in this text — the block changed since they were decided. */
   missed: FixedReading[];
+  /** The spans of `text` a spot decided — its reading or the form it kept — which nothing after may edit. */
+  protected: { at: number; end: number }[];
+  /** How many spots kept their form as printed. */
+  kept: number;
 }
 
 /** Apply the readings that belong to the block keyed `at` to its text. */
@@ -240,22 +256,40 @@ export function applyFixedReadings(text: string, readings: readonly FixedReading
   edits.sort((a, b) => b.at - a.at);
   let out = text;
   let floor = Infinity;
+  // Each spot's span in `out`, recorded back to front, so a later (earlier-placed)
+  // splice shifts every span already recorded after it.
+  let spans: { at: number; end: number }[] = [];
+  let kept = 0;
   for (const edit of edits) {
     if (edit.at + edit.length > floor) { missed.push(spots.find((s) => s.find === edit.find)!); continue; }
     out = out.slice(0, edit.at) + edit.replace + out.slice(edit.at + edit.length);
+    const delta = edit.replace.length - edit.length;
+    spans = spans.map((span) => ({ at: span.at + delta, end: span.end + delta }));
+    spans.push({ at: edit.at, end: edit.at + edit.replace.length });
     floor = edit.at;
-    applied.set(edit.find, (applied.get(edit.find) ?? 0) + 1);
+    if (edit.replace !== edit.find) applied.set(edit.find, (applied.get(edit.find) ?? 0) + 1);
+    else kept += 1;
   }
+  spans.sort((a, b) => a.at - b.at);
 
   // ── Then the book-wide readings, over what is left ────────────────────────
   const matcher = matcherFor(bookWide);
-  if (matcher === null) return { text: out, applied, missed };
+  if (matcher === null) return { text: out, applied, missed, protected: spans, kept };
   const byFind = new Map(bookWide.map((r) => [r.find, r.replace] as const));
   let result = '';
   let from = 0;
+  let shift = 0;
+  const shifted: { at: number; end: number }[] = [];
+  let nextSpan = 0;
   for (const hit of occurrences(out, matcher)) {
     const replace = byFind.get(hit.find)!;
     const end = hit.at + hit.find.length;
+    // A spot decided this span: a book-wide reading does not read it again.
+    if (spans.some((span) => hit.at < span.end && span.at < end)) continue;
+    while (nextSpan < spans.length && spans[nextSpan]!.end <= hit.at) {
+      shifted.push({ at: spans[nextSpan]!.at + shift, end: spans[nextSpan]!.end + shift });
+      nextSpan += 1;
+    }
     /*
      * A PERIOD THAT IS BOTH THE ABBREVIATION'S AND THE BLOCK'S. "3 vols." closing a
      * paragraph read "three volumes" would end the paragraph with no stop, so where
@@ -265,11 +299,16 @@ export function applyFixedReadings(text: string, readings: readonly FixedReading
      */
     const keepsStop = hit.find.endsWith('.') && !replace.endsWith('.')
       && /^["'’”)\]]*\s*$/u.test(out.slice(end));
-    result += out.slice(from, hit.at) + replace + (keepsStop ? '.' : '');
+    const said = replace + (keepsStop ? '.' : '');
+    result += out.slice(from, hit.at) + said;
+    shift += said.length - hit.find.length;
     from = end;
     applied.set(hit.find, (applied.get(hit.find) ?? 0) + 1);
   }
-  return { text: result + out.slice(from), applied, missed };
+  for (; nextSpan < spans.length; nextSpan += 1) {
+    shifted.push({ at: spans[nextSpan]!.at + shift, end: spans[nextSpan]!.end + shift });
+  }
+  return { text: result + out.slice(from), applied, missed, protected: shifted, kept };
 }
 
 /**
@@ -299,6 +338,8 @@ export interface FixedReadingsRecord {
   applied: Record<string, number>;
   /** Spots whose occurrence was not where they said — their block changed since. Left as printed. */
   missed: { at: string; find: string; nth: number }[];
+  /** How many spots were KEPT as printed (and protected) rather than read. */
+  kept: number;
 }
 
 /**
@@ -308,17 +349,30 @@ export interface FixedReadingsRecord {
 export function applyFixedToAll(
   texts: Map<string, string>,
   readings: readonly FixedReading[],
-): FixedReadingsRecord {
+): { record: FixedReadingsRecord; protected: Map<string, { at: number; end: number }[]> } {
   const applied: Record<string, number> = {};
   const missed: FixedReadingsRecord['missed'] = [];
+  const protectedBy = new Map<string, { at: number; end: number }[]>();
+  let kept = 0;
   if (readings.length > 0) {
     for (const [key, text] of texts) {
       const one = applyFixedReadings(text, readings, key);
       for (const spot of one.missed) missed.push({ at: spot.at!, find: spot.find, nth: spot.nth! });
-      if (one.applied.size === 0) continue;
+      if (one.protected.length > 0) protectedBy.set(key, one.protected);
+      kept += one.kept;
       texts.set(key, one.text);
       for (const [find, n] of one.applied) applied[find] = (applied[find] ?? 0) + n;
     }
   }
-  return { given: readings.length, applied, missed };
+  return { record: { given: readings.length, applied, missed, kept }, protected: protectedBy };
+}
+
+/** The protected spans of a block that fall inside [start, end) — a sentence of it — in the sentence's own offsets. */
+export function protectedWithin(
+  spans: readonly { at: number; end: number }[] | undefined,
+  start: number,
+  end: number,
+): { at: number; end: number }[] {
+  if (spans === undefined) return [];
+  return spans.filter((s) => s.at >= start && s.end <= end).map((s) => ({ at: s.at - start, end: s.end - start }));
 }

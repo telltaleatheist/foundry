@@ -2453,6 +2453,13 @@ export interface NormalizerAsk {
   previous: string | null;
   /** The neighbour after it, same. */
   next: string | null;
+  /**
+   * Spans of `text` already DECIDED by the caller — a book's fixed readings
+   * (src/clean/fixed-readings.ts) — which no edit may touch: reserved exactly as
+   * the number rules' own spans are, and refused `OVERLAPS_APPLIED`. Absent:
+   * nothing is reserved beyond the rules', which is every run without fixed readings.
+   */
+  protected?: readonly { at: number; end: number }[];
 }
 
 /** What the loop settled about one ask. */
@@ -2532,6 +2539,16 @@ function ruleSpansInApplied(
     shift += delta;
   }
   return spans;
+}
+
+/** The offset in the rule-applied text of an ORIGINAL offset no rule rewrite covers. */
+function toAppliedOffset(ruled: NumberRuleOutcome, at: number): number {
+  let shift = 0;
+  for (const edit of ruled.rewrites) {
+    if (edit.at + edit.find.length <= at) shift += edit.replace.length - edit.find.length;
+    else break;
+  }
+  return at + shift;
 }
 
 /** The offset in the ORIGINAL text of a rule-applied offset no rule span covers. */
@@ -2856,8 +2873,12 @@ export async function askAboutEach(
     // Validated against the text the model was SHOWN, then moved back onto
     // the original: the two differ by exactly the rules' own length deltas.
     const spans = ruleSpansInApplied(ruled);
+    // The caller's decided spans, moved onto the rule-applied text the edits are judged against.
+    const decided = (one.protected ?? []).map((p) => ({
+      at: toAppliedOffset(ruled, p.at), end: toAppliedOffset(ruled, p.end),
+    }));
     const { accepted, records } = validateNumberEdits(
-      ruled.text, ruled.segments, [...own, ...incoming], spans, judged);
+      ruled.text, ruled.segments, [...own, ...incoming], [...spans, ...decided], judged);
     for (const record of records) {
       if (record.status !== 'NOT_FOUND') continue;
       const home = carriedTo(one.key, record.find);

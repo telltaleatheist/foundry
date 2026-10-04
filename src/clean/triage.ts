@@ -413,6 +413,7 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
   // The readings the cleanup behind this will apply, applied here too: a verdict is
   // about the words the cleaner will be shown (src/clean/fixed-readings.ts).
   applyFixedToAll(punctuated.text, opts.fixedReadings ?? []);
+  // (Protection is the cleaner's concern: a triage edits nothing.)
   const unit = opts.unit ?? DEFAULT_CLEAN_UNIT;
   const removal = opts.removal ?? NO_REMOVAL;
   const units = triageUnits(blocks, punctuated.text, unit);

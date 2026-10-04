@@ -121,7 +121,7 @@ import type {
 } from './tts-number-normalizer.js';
 import { PUNCTUATION_SPEC_VERSION } from './tts-punctuation.js';
 import {
-  applyFixedToAll, fixedKeyField, type FixedReading, type FixedReadingsRecord,
+  applyFixedToAll, fixedKeyField, protectedWithin, type FixedReading, type FixedReadingsRecord,
 } from './fixed-readings.js';
 import {
   NO_REMOVAL, removalKeyField, removalRecord, removesAnything, sameRemoval, withRemoval, type RemovalRequest,
@@ -712,12 +712,12 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * (which does the same) and the cleaner see the same words, and the model is
    * never shown a form the whole book already decided (src/clean/fixed-readings.ts).
    */
-  const fixedRecord = applyFixedToAll(cleanText, fixed);
+  const { record: fixedRecord, protected: fixedSpans } = applyFixedToAll(cleanText, fixed);
   if (fixed.length > 0) {
     const reads = Object.values(fixedRecord.applied).reduce((n, k) => n + k, 0);
     opts.log(
-      `clean-text: ${fixed.length} fixed reading(s) handed in; ${reads} occurrence(s) read across the `
-      + 'blocks this run cleans.',
+      `clean-text: ${fixed.length} fixed reading(s) handed in; ${reads} occurrence(s) read and `
+      + `${fixedRecord.kept} kept as printed across the blocks this run cleans — every one protected from the model.`,
     );
     for (const spot of fixedRecord.missed) {
       opts.log(
@@ -807,10 +807,17 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
 
   const asks = askedPieces.map((piece) => {
     const index = orderOf.get(piece.key)!;
+    // The spans the book's fixed readings decided, in this piece's own offsets: no edit may touch them.
+    const blockSpans = fixedSpans.get(piece.block.target.key);
+    const span = piece.sentence === undefined ? null : sentencesOf.get(piece.block.target.key)![piece.sentence]!;
+    const reserved = span === null
+      ? protectedWithin(blockSpans, 0, piece.text.length)
+      : protectedWithin(blockSpans, span.start, span.end);
     return {
       key: piece.key,
       text: piece.text,
       segments: segmentsAfter(piece.text),
+      ...(reserved.length > 0 ? { protected: reserved } : {}),
       /*
        * The neighbours are the pieces either side IN THE PLAN'S OWN ORDER — the
        * sentences either side at `--unit sentence`, crossing into the next block

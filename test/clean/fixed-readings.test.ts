@@ -206,8 +206,40 @@ describe('clean-text handed fixed readings', () => {
     expect(rows.find((r) => r.parts === 'b1-2')!.text).toBe('DeChance reached out and touched the sphere with her ESP.');
 
     const receipt = JSON.parse(fs.readFileSync(`${recordsPath}.receipt.json`, 'utf8')) as CleanTextReceipt;
-    expect(receipt.fixedReadings).toEqual({ given: 2, applied: { 'Wolf IV': 1, esp: 1 }, missed: [] });
+    expect(receipt.fixedReadings).toEqual({ given: 2, applied: { 'Wolf IV': 1, esp: 1 }, missed: [], kept: 0 });
     expect(outcome.changed).toBe(2);
+  });
+
+  test('a spot is protected from the model: kept as printed, or read, the model cannot undo it', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clean-fixed-keep-'));
+    const recordsPath = path.join(dir, 'records.jsonl');
+    // A model that does what the sentence pass did to Hellworld: "esp." -> "especial", and re-reads the planet.
+    const meddler: NumberNormalizerRunner = {
+      model: 'a stub that rewrites decided spots',
+      async generate(input: string): Promise<string> {
+        if (input.includes('her esp.')) return '{"edits": [{"find": "esp.", "replace": "especial"}]}';
+        if (input.includes('Wolf Four')) return '{"edits": [{"find": "Wolf Four", "replace": "Wolf the Fourth"}]}';
+        return '{"edits": []}';
+      },
+      async release(): Promise<void> { /* nothing was loaded. */ },
+    };
+    await runCleanText({
+      bookPath: bookFile(dir), recordsPath, stampPath: path.join(dir, 'stamp.json'),
+      endpoint: 'http://fake:8000/v1', runner: meddler, concurrency: 1, gate: 'light', log: () => {},
+      fixedReadings: [
+        { find: 'Wolf IV', replace: 'Wolf Four', at: 'b1-1', nth: 0 },
+        // Kept as printed: Owen's "esp" is said "essp".
+        { find: 'esp.', replace: 'esp.', at: 'b1-2', nth: 0 },
+      ],
+    });
+    const rows = fs.readFileSync(recordsPath, 'utf8').trim().split(/\r?\n/).map((l) => JSON.parse(l) as { parts: string; text: string });
+    expect(rows.find((r) => r.parts === 'b1-1')!.text).toBe('The pinnace circled Wolf Four once before it landed.');
+    expect(rows.find((r) => r.parts === 'b1-2')!.text).toBe('DeChance reached out and touched the sphere with her esp.');
+    const receipt = JSON.parse(fs.readFileSync(`${recordsPath}.receipt.json`, 'utf8')) as CleanTextReceipt;
+    expect(receipt.fixedReadings).toEqual({ given: 2, applied: { 'Wolf IV': 1 }, missed: [], kept: 1 });
+    const refused = receipt.units.flatMap((u) => u.edits).filter((e) => e.find === 'esp.' || e.find === 'Wolf Four');
+    expect(refused.length).toBeGreaterThan(0);
+    expect(refused.filter((e) => e.status === 'APPLIED')).toEqual([]);
   });
 
   test('a glossary that grows re-asks only the blocks it touches', async () => {
