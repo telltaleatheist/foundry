@@ -246,13 +246,7 @@ function unitLine(unit: StageOneUnit, asked: boolean): string {
 }
 
 /**
- * The guide for a SENTENCE run: the same classes, said of a line. Derived from
- * `TRIAGE_GUIDE` so the two can never list different things, and a block run's
- * state stays byte-identical to what it was.
- */
-/**
- * The state every sentence question shares: one line of framing, then WORKED
- * EXAMPLES — the criteria shown, not only stated.
+ * WORKED EXAMPLES — the criteria shown, not only stated.
  *
  * Measured 2026-09-24 on Working Towards the Führer (qwen3.5-2b, the question
  * alone): AUC 0.69, and of the 41 sentences printing something to read it
@@ -264,28 +258,52 @@ function unitLine(unit: StageOneUnit, asked: boolean): string {
  * its answer. The examples are written for this and are NOT that book's
  * sentences, so a measurement on it still measures the model.
  *
- * In the state because the state is the shared prefix the door primes once per
- * group: the examples cost one read, not one per question.
+ * Every example is one of the criteria said as a sentence (2026-10-10: the
+ * first fifteen, plus one for each criterion that had none — e.g., Dr. and St.,
+ * an ampersand, the two scripture forms the list names, a range, capitals for
+ * emphasis, a citation in brackets, an unspaced hyphen used as a dash, a
+ * numbered part — and the things the list says do NOT count: Mr. and Mrs., a
+ * dagger, a hyphen inside one word). None is a rule of its own. The USA/USSR
+ * line shows the criterion's own "such as FBI or NATO": measured on The Hitler
+ * Conspiracies, without it the 9B skipped well-known initialisms (SS, UK, USA,
+ * USSR, RAF, UFO) in eight sentences the old prompt sent on; with it, four.
+ *
+ * They also carry the shared prefix past two of the 9B's 528-token cache blocks
+ * (see `sentenceState`): measured with qwen3.5-9b's own tokenizer and chat
+ * template, 2026-10-10, the shared prefix is 1,150 tokens with nothing removed
+ * and 1,191 with references removed — 1,056 of either reused. Cutting ~95
+ * tokens from this list drops the reuse to 528; measure before trimming it.
  */
-const SENTENCE_TRIAGE_STATE = [
-  'You are checking the sentences of a book, one at a time, before a text-to-speech voice reads them aloud.',
-  'A sentence needs to be cleaned when something in it is printed one way and spoken another. Examples, with the right answer:',
-  '',
+const SENTENCE_EXAMPLES = [
   '"After 1871, the new empire was governed from Berlin." -> A (Yes): a year.',
   '"By the mid-1890s the movement had lost its way." -> A (Yes): a decade.',
   '"On 3 May 1905 the strike began." -> A (Yes): a date.',
+  '"The war years 1914-18 changed everything." -> A (Yes): a range of years.',
   '"The war cost the treasury 4.5 million pounds." -> A (Yes): a decimal number.',
   '"The crowd numbered some 300 people." -> A (Yes): a number.',
   '"It is reprinted in The Letters, ed. John Smith, with notes." -> A (Yes): an abbreviation said in full.',
+  '"Some states, e.g. Bavaria, kept their own police." -> A (Yes): an abbreviation said in full.',
+  '"Dr. Weiss preached at St. Anne\'s that Easter." -> A (Yes): abbreviations said in full.',
+  '"The firm of Krupp & Sons built the guns." -> A (Yes): an ampersand.',
+  '"The sermon took Rom. 5:17 as its text." -> A (Yes): a scripture reference.',
+  '"Paul writes of love in 1 Cor. 13:4." -> A (Yes): an abbreviated book of scripture and a verse.',
   '"The KPD refused to join the coalition." -> A (Yes): a run of capitals.',
+  '"Both the USA and the USSR sent observers." -> A (Yes): acronyms, the well-known ones too, like FBI or NATO.',
+  '"This, he insisted, must NEVER happen again." -> A (Yes): a word in capitals for emphasis.',
   '"He wrote to Weber [the finance minister] that night." -> A (Yes): a bracketed insertion.',
+  '"The figure has often been disputed (Smith 1987)." -> A (Yes): a citation in brackets.',
   '"The plan failed - as everyone expected - within a week." -> A (Yes): a hyphen with spaces used as a dash.',
+  '"He hesitated-then he signed the order." -> A (Yes): a hyphen with no spaces used as a dash.',
   '"Frederick III reigned for only ninety-nine days." -> A (Yes): a roman numeral after a ruler\'s name.',
+  '"Part IV turns to the years of war." -> A (Yes): a roman numeral.',
   '"What had seemed impossible now looked merely difficult." -> B (No): ordinary prose.',
+  '"Mr. and Mrs. Becker kept the shop for thirty years." -> B (No): Mr. and Mrs. alone do not count.',
   '"The ministers never met again as a body.²⁷" -> B (No): a superscript note number does not count.',
+  '"The order was never put in writing.†" -> B (No): a dagger used as a reference mark does not count.',
   '"In this sense the *idea* mattered more than the man." -> B (No): asterisks marking emphasis do not count.',
+  '"A well-known pastor led the half-hearted protest." -> B (No): a hyphen joining one word does not count.',
   '"She left the city in the spring and did not return." -> B (No): ordinary prose, even with no punctuation to speak of.',
-].join('\n');
+];
 
 /**
  * The criteria, as they are listed in `TRIAGE_GUIDE` — its bullet lines and the
@@ -294,6 +312,42 @@ const SENTENCE_TRIAGE_STATE = [
 const TRIAGE_CRITERIA = TRIAGE_GUIDE.split('\n')
   .filter((line) => line.startsWith('- ') || line.startsWith('Superscript') || line.startsWith('Ordinary prose'))
   .join('\n');
+
+/**
+ * The state every sentence question of a run shares: the framing, the criteria,
+ * then the worked examples. A function of the removal ONLY — never of a group,
+ * a sentence, a counter or a clock — so it is byte-identical for every question
+ * of a run, which is what lets the engine reuse it.
+ *
+ * ── WHY THE CRITERIA ARE HERE AND NOT IN THE QUESTION (2026-10-10) ──────────
+ *
+ * Until 2026-10-10 each question carried the sentence and THEN the criteria
+ * (Owen's words, 2026-09-24: *"does this sentence need to be cleaned?
+ * [sentence] here are the criteria …"*). The engine reuses a prompt's prefix
+ * only in whole blocks of its KV cache — 528 tokens on qwen3.5-9b under vLLM,
+ * 784 on the 27B — and only up to the first token that differs. With the
+ * sentence in the middle the shared prefix was 456 tokens, under one block, so
+ * every question re-read all ~830 of its tokens: "Prefix cache hit rate: 0.0%"
+ * on every long run. Now the criteria and the examples come first and every
+ * question ENDS with its sentence, so the shared part is past two 9B blocks
+ * (1,056 tokens reused of ~1,200) and only the sentence and the door's closing
+ * lines are read per question. Owen approved the reorder, wording
+ * included, provided triage holds (measured in the commit that made it).
+ */
+function sentenceState(removal: RemovalRequest): string {
+  return [
+    'You are checking the sentences of a book, one at a time, before a text-to-speech voice reads them aloud.',
+    'A sentence needs to be cleaned when anything in it is printed one way and spoken another, or is printed but not meant to be spoken.',
+    '',
+    'Here are the criteria a sentence meets if it needs to be cleaned:',
+    withRemovalCriteria(TRIAGE_CRITERIA, removal),
+    '',
+    'Examples, with the right answer:',
+    ...SENTENCE_EXAMPLES,
+    '',
+    'Each question gives one sentence of the book. Answer A (Yes) if it needs to be cleaned by the criteria above, B (No) if it does not.',
+  ].join('\n');
+}
 
 /**
  * The state one request is asked over.
@@ -306,15 +360,14 @@ const TRIAGE_CRITERIA = TRIAGE_GUIDE.split('\n')
  * sentences that print something to read from the 171 that print nothing —
  * AUC 0.55, a coin — and "After 1933, as head of government …" scored LOWEST.
  * The model had to find a line by its label among 64 before it could judge it.
- * So each question now ASKS about its sentence, in the words Owen gave
- * (`triageQuestion`): *"does this sentence need to be cleaned? [sentence] here
- * are the criteria a sentence should meet if it needs to be cleaned:
- * [criteria]"*. The state is one line of framing every question shares.
+ * So each question ASKS about its sentence (`triageQuestion`), and the state is
+ * what every question of the run shares: the criteria and the worked examples
+ * (`sentenceState`).
  */
 export function groupState(
   units: readonly StageOneUnit[], group: Group, unit: CleanUnit = 'block', removal: RemovalRequest = NO_REMOVAL,
 ): string {
-  if (unit === 'sentence') return SENTENCE_TRIAGE_STATE;
+  if (unit === 'sentence') return sentenceState(removal);
   const lines: string[] = [];
   for (let i = group.from; i < group.to; i += 1) {
     lines.push(unitLine(units[i]!, i >= group.askFrom && i < group.askTo));
@@ -350,21 +403,18 @@ export type TriageQuestion =
  * The question asked of one position.
  *
  * At `--unit block` it names the block, which the state lists. At `--unit
- * sentence` it ASKS, with the sentence and then the criteria in the question
- * itself — a \`choice\` of Yes/No, because the door's \`yesno\` renders its text as a
- * statement to be judged true or false, and this is a question.
+ * sentence` it ASKS, and ENDS with the sentence: the criteria it is judged by —
+ * the removal's among them — are in the state (`sentenceState`), so everything
+ * before the sentence is the same for every question of a run. A \`choice\` of
+ * Yes/No, because the door's \`yesno\` renders its text as a statement to be
+ * judged true or false, and this is a question.
  */
-export function triageQuestion(
-  parts: string, unit: CleanUnit = 'block', text?: string, removal: RemovalRequest = NO_REMOVAL,
-): TriageQuestion {
+export function triageQuestion(parts: string, unit: CleanUnit = 'block', text?: string): TriageQuestion {
   if (unit === 'sentence') {
     if (text === undefined) throw new Error(`triageQuestion: a sentence question needs its sentence (${parts}).`);
     return {
       type: 'choice',
-      instructions: 'Does this sentence need to be cleaned?\n\n'
-        + `${text.replace(/\s+/g, ' ').trim()}\n\n`
-        + 'Here are the criteria a sentence meets if it needs to be cleaned:\n'
-        + withRemovalCriteria(TRIAGE_CRITERIA, removal),
+      instructions: `Does this sentence need to be cleaned?\n\n${text.replace(/\s+/g, ' ').trim()}`,
       options: SENTENCE_OPTIONS,
     };
   }
@@ -432,7 +482,7 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
     const body = JSON.stringify({
       model: opts.model,
       state: groupState(units, group, unit, removal),
-      questions: Object.fromEntries(asked.map((one) => [one.parts, triageQuestion(one.parts, unit, one.text, removal)])),
+      questions: Object.fromEntries(asked.map((one) => [one.parts, triageQuestion(one.parts, unit, one.text)])),
     });
     const reply = await askDecide(transport, url, body, {
       who: 'clean-triage', fail: (message) => new CleanTextError(message), sleep, log: opts.log,

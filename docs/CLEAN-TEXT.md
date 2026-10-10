@@ -755,6 +755,12 @@ So both halves ask about SENTENCES by default:
   (Owen: *"at least 30 characters. if its less, combine with the next sentence"*).
 - `clean-triage` asks one yes/no per sentence, keyed `<block>#s<i>`; the file says
   `"unit": "sentence"`, and `clean-text` refuses a triage made at the other unit.
+  The decide state holds the framing, the criteria and the worked examples, and is
+  byte-identical for every question of a run; each question is "Does this sentence
+  need to be cleaned?" and then the sentence, LAST (2026-10-10). That order is what
+  lets vLLM reuse the shared ~1,150 tokens in whole 528-token blocks on qwen3.5-9b:
+  measured on The Hitler Conspiracies (4,189 sentences), 0 % prefix reuse and 756 s
+  before, 84 % and 194 s after, AUC 0.967 → 0.973.
 - `clean-text` asks each flagged sentence with the sentences either side as context.
   Each answer is applied to its own sentence; when a block's last sentence settles
   the block is put back (`reassemble`: the text between sentences byte for byte) and

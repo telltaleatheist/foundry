@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 
 import { lightGateRefusal, unspacedDashReading } from '../../src/clean/light-gate.js';
 import { narrationTextPrompt } from '../../src/clean/prompt.js';
-import { triageQuestion } from '../../src/clean/triage.js';
+import { groupState } from '../../src/clean/triage.js';
 import * as norm from '../../src/clean/tts-number-normalizer.js';
 
 const D = '—';
@@ -47,8 +47,8 @@ test('the validator accepts the reading under every gate, and the gate stays shu
 
 test('the prompt states the rule, and the triage asks about it', () => {
   assert.match(narrationTextPrompt(), /A hyphen with NO spaces is a dash when the sentence breaks there/);
-  const q = triageQuestion('b1#s0', 'sentence', "If you're wrong-if he is a bad guy.");
-  assert.match(q.instructions, /a hyphen with no spaces standing where the sentence breaks/);
+  const state = groupState([], { from: 0, to: 1, askFrom: 0, askTo: 1 }, 'sentence');
+  assert.match(state, /a hyphen with no spaces standing where the sentence breaks/);
   // The dash moved the rules to n18; a later bump carries it (n19, 2026-10-03).
   assert.ok(Number(norm.NORMALIZER_VERSION.slice(1)) >= 18, norm.NORMALIZER_VERSION);
 });

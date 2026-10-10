@@ -55,8 +55,8 @@ test('no removal: the prompt, the triage criteria and the keys are exactly what 
   assert.strictEqual(triageKey({ text: base.text, triageModel: 'm', removal: NO_REMOVAL }),
     triageKey({ text: base.text, triageModel: 'm' }));
 
-  const q = triageQuestion('b1#s0', 'sentence', base.text, NO_REMOVAL);
-  assert.strictEqual(q.instructions, triageQuestion('b1#s0', 'sentence', base.text).instructions);
+  const sentence = { from: 0, to: 1, askFrom: 0, askTo: 1 };
+  assert.strictEqual(groupState([], sentence, 'sentence', NO_REMOVAL), groupState([], sentence, 'sentence'));
 });
 
 // ── Asked: every place the question is made hears it ───────────────────────────
@@ -69,11 +69,16 @@ test('the box and the person\'s words reach the cleaner\'s prompt and the triage
   assert.match(prompt, /photo credits/);
   assert.match(prompt, /"replace" is empty/);
 
-  const q = triageQuestion('b1#s0', 'sentence', 'He left at dawn.', { references: true, also: 'photo credits' });
-  assert.match(q.instructions, /a printed reference a narrator would not read aloud/);
-  assert.match(q.instructions, /photo credits/);
+  // A sentence run hears them in its state — the criteria every question shares —
+  // and the question itself is only the sentence, whatever is removed.
+  const sentence = { from: 0, to: 1, askFrom: 0, askTo: 1 };
+  const state = groupState([], sentence, 'sentence', { references: true, also: 'photo credits' });
+  assert.match(state, /a printed reference a narrator would not read aloud/);
+  assert.match(state, /photo credits/);
   // Among the criteria, before the lines that close the list.
-  assert.ok(q.instructions.indexOf('photo credits') < q.instructions.indexOf('Ordinary prose'));
+  assert.ok(state.indexOf('photo credits') < state.indexOf('Ordinary prose'));
+  assert.strictEqual(triageQuestion('b1#s0', 'sentence', 'He left at dawn.').instructions,
+    'Does this sentence need to be cleaned?\n\nHe left at dawn.');
 
   // The block guide carries them too, and is the old guide byte for byte without them.
   const unit = { parts: 'b1', text: 'He left at dawn.', category: 'text' } as never;

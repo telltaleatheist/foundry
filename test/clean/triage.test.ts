@@ -315,17 +315,39 @@ describe('--unit sentence', () => {
     const { file } = await triage(dir, door, 'sentence');
     expect(Object.keys(door.requests[0]!.questions))
       .toEqual(['b1-1#s0', 'b1-1#s1', 'b1-1#s2', 'b1-2#s0', 'b1-2#s1']);
-    // The question ASKS, with the sentence and then the criteria, and offers A. Yes / B. No.
+    // The question ASKS and ENDS with its sentence, and offers A. Yes / B. No.
     const q = door.requests[0]!.questions['b1-1#s1'] as unknown as { type: string; instructions: string; options: Record<string, string> };
     expect(q.type).toBe('choice');
     expect(q.options).toEqual({ yes: 'Yes', no: 'No' });
-    expect(q.instructions.startsWith(
-      'Does this sentence need to be cleaned?\n\nIts report was read by the FBI in the spring of that year.\n\n'
-      + 'Here are the criteria a sentence meets if it needs to be cleaned:\n- any digit or number',
-    )).toBe(true);
+    expect(q.instructions).toBe(
+      'Does this sentence need to be cleaned?\n\nIts report was read by the FBI in the spring of that year.',
+    );
+    // The criteria are in the state, which every question shares — the prefix the engine reuses.
+    expect(door.requests[0]!.state).toContain(
+      'Here are the criteria a sentence meets if it needs to be cleaned:\n- any digit or number',
+    );
     expect(door.requests[0]!.state).not.toContain('Its report');
     expect(file.unit).toBe('sentence');
     expect(Object.entries(file.blocks).filter(([, v]) => v.needsCleaning).map(([k]) => k)).toEqual(['b1-1#s1']);
+  });
+
+  test('every request of a run carries the SAME state, and every question ends with its sentence', async () => {
+    // The engine reuses a prompt's prefix only up to the first byte that differs
+    // (2026-10-10): a state that moved between groups, or a question that put
+    // anything after its sentence, would make every question a cold read.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'triage-'));
+    const many = Array.from({ length: 150 }, (_, i) => `Paragraph number ${i} was written by somebody long ago.`);
+    bookFile(dir, many);
+    const door = fakeDoor(() => 0.02);
+    await triage(dir, door, 'sentence');
+    expect(door.requests.length).toBeGreaterThan(1);
+    expect(new Set(door.requests.map((r) => r.state)).size).toBe(1);
+    for (const request of door.requests) {
+      for (const question of Object.values(request.questions) as unknown as { instructions: string }[]) {
+        expect(question.instructions.startsWith('Does this sentence need to be cleaned?\n\nParagraph number ')).toBe(true);
+        expect(question.instructions.endsWith('was written by somebody long ago.')).toBe(true);
+      }
+    }
   });
 
   test('only the flagged sentence is asked, and the block is written back whole with the edit in place', async () => {
