@@ -30,7 +30,8 @@
  *     210 of its 213 "no"s were the word, and the guide's review was a wall of them.
  *   - NUMBERS are not forms: every one is its own reading, and the number rules
  *     read them per sentence. Nor are brackets, line-break hyphens, a run of
- *     dots, two words glued by a period ("slowly.over"), or a lone initial.
+ *     dots, two words glued by a period ("slowly.over"), or a lone letter,
+ *     dotted or not ("J.", the "m" of "ten p m", the "C" of "4004 B C").
  */
 
 import * as fs from 'node:fs';
@@ -143,6 +144,10 @@ function formOf(tokens: readonly string[], i: number, heading: boolean): { kind:
   if (/\p{Script=Han}|\p{Script=Cyrillic}|\p{Script=Greek}/u.test(bare)) return null;
   // A sentence's own period is not part of a numeral or an acronym ("on Wolf IV.").
   const unstopped = bare.replace(/\.$/, '');
+  // A LONE LETTER is said as the letter it is — one of a spelled-out run ("ten p m", "4004 B C",
+  // "A C Milan"), never a numeral or an abbreviation. The Pursuit of Power, 2026-10-10: "m" and "c"
+  // were listed as numerals, and the model gave them "morning" and "Before Christ".
+  if (/^\p{L}$/u.test(unstopped)) return null;
   if (/^[IVXLCDM]+$/.test(unstopped) && romanValue(unstopped) !== null) {
     /*
      * A NUMERAL IS A NUMERAL WHERE A NUMERAL IS WHAT A BOOK PRINTS — after a

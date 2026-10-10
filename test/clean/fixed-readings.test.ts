@@ -290,6 +290,21 @@ describe('clean-forms', () => {
     expect(byKey.get('co')).toMatchObject({ count: 1, printed: { 'Co.': 1 } });
   });
 
+  test('a lone letter is never a form — a letter of a spelled-out run is said as the letter it is', () => {
+    // The Pursuit of Power, 2026-10-10: a step whose text read "ten p m", "4004 B C" and "A C Milan"
+    // listed "m" and "c" as lower-case numerals, and the model gave them "morning" and "Before Christ".
+    const { text, where } = book([
+      'The police moved the closing time for public dances forward to ten p m, and at ten a m it sent a signal.',
+      'They had dated the creation of the world to 4004 B C. A C Milan was founded in 1899.',
+      'See appendix iv and the notes in xix.',
+    ]);
+    const byKey = new Map(collectPrintedForms(text, where).map((f) => [f.key, f]));
+    for (const key of ['m', 'c', 'p', 'a', 'b']) expect(byKey.has(key)).toBe(false);
+    // A lower-case numeral of two letters or more still is one.
+    expect(byKey.get('iv')).toMatchObject({ kind: 'abbreviation' });
+    expect(byKey.get('xix')).toMatchObject({ kind: 'abbreviation' });
+  });
+
   test('the forms a reading is asked about, and none of what the sentence pass reads', () => {
     const { text, where } = book([
       'The pinnace circled Wolf IV once. Never a dull moment on Wolf IV.',
