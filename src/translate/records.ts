@@ -81,6 +81,7 @@ import * as path from 'node:path';
 
 import { stripBom } from '../bom.js';
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 
 /** Something is wrong with the records file itself, or with the flags about it. */
 export class TranslateRecordsError extends Error {
@@ -337,7 +338,7 @@ export function swapPendingRecordsIntoPlace(recordsPath: string, pending: string
     );
   }
   ensureDir(path.dirname(resolved));
-  fs.renameSync(pendingResolved, resolved);
+  replaceFileSync(pendingResolved, resolved);
 }
 
 export interface RecordsOutcome {

@@ -45,6 +45,7 @@ import * as path from 'node:path';
 
 import { stripBom } from '../bom.js';
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 import { askDecide, decideDeadline, decideUrl } from '../backend/decide-door.js';
 import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
 import { servedModels } from '../translate/vllm.js';
@@ -620,7 +621,7 @@ export async function runAnalyzeRank(opts: AnalyzeRankOptions): Promise<AnalyzeR
   ensureDir(path.dirname(out));
   const partial = `${out}.partial`;
   fs.writeFileSync(partial, `${JSON.stringify(file)}\n`, 'utf8');
-  fs.renameSync(partial, out);
+  replaceFileSync(partial, out);
 
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
   log(

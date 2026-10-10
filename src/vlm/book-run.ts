@@ -45,6 +45,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 import {
   bookFile,
   figureName,
@@ -347,7 +348,7 @@ export async function buildBookFile(opts: BookRunOptions): Promise<BookRunReport
     from: cutFrom === null ? null : cutFrom.kind,
   };
   fs.writeFileSync(pending, formatBookFile({ ...book, figures }), 'utf8');
-  fs.renameSync(pending, resolved);
+  replaceFileSync(pending, resolved);
 
   opts.log(
     `vlm-book: ${rows.length - shelved.length} block(s) from ${parsed.length} page(s) — `

@@ -66,6 +66,7 @@
  */
 import * as crypto from 'crypto';
 import { promises as fs } from 'fs';
+import { replaceFile } from '../fs-replace.js';
 import * as path from 'path';
 
 import { hasLetter } from './ai-cleanup-prepass.js';
@@ -3334,8 +3335,8 @@ export async function normalizeTextBlocks(
     units,
   };
   await fs.writeFile(stagingRecord, JSON.stringify(record, null, 2), 'utf8');
-  await fs.rename(stagingRecord, recordPath);
-  await fs.rename(stagingText, textPath);
+  await replaceFile(stagingRecord, recordPath);
+  await replaceFile(stagingText, textPath);
 
   console.log(
     `[TTS-NUMBERS] ${appliedSpans} number(s) read as words over `

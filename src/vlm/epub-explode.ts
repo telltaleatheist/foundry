@@ -82,6 +82,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 import { decodeEntities, findElements, parseXml, type XmlElement, type XmlNode } from '../epub/xml.js';
 import { containerFromMembers, resolveHref } from '../translate/book.js';
 import { readZip, type ZipMember } from '../translate/unzip.js';
@@ -1461,7 +1462,7 @@ export async function explodeEpub(opts: EpubExplodeOptions): Promise<EpubExplode
     from: 'epub' as const,
   };
   fs.writeFileSync(pending, formatBookFile({ ...made.book, figures }), 'utf8');
-  fs.renameSync(pending, resolved);
+  replaceFileSync(pending, resolved);
 
   const flow = made.book.rows.length;
   const notes = made.book.rows.filter((row) => row.category === 'Footnote').length;

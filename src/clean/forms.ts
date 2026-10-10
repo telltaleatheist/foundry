@@ -37,6 +37,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 import { stripBom } from '../bom.js';
 import { readBookFile } from '../translate/bookrows.js';
 import { cleanBlocks } from './blocks.js';
@@ -277,7 +278,7 @@ export function runCleanForms(opts: { bookPath: string; outPath: string; log: (m
   ensureDir(path.dirname(out));
   const partial = `${out}.partial`;
   fs.writeFileSync(partial, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
-  fs.renameSync(partial, out);
+  replaceFileSync(partial, out);
   const byKind = new Map<FormKind, number>();
   for (const form of forms) byKind.set(form.kind, (byKind.get(form.kind) ?? 0) + 1);
   opts.log(

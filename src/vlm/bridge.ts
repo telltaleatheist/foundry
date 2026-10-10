@@ -42,6 +42,7 @@ import VLM_PAGE_SOURCE from './vlm_page.py' with { type: 'text' };
 import { withoutEndpointHeaders } from '../backend/endpoint-headers.js';
 import { defaultLocalPythonCandidates } from '../backend/probe.js';
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 import type { VlmModelDef } from './models.js';
 
 export class VlmBridgeError extends Error {
@@ -334,7 +335,7 @@ function scriptPath(): string {
     // must never hand python a half-written script.
     const partial = `${materialised}.${process.pid}.part`;
     fs.writeFileSync(partial, VLM_PAGE_SOURCE, 'utf8');
-    fs.renameSync(partial, materialised);
+    replaceFileSync(partial, materialised);
   }
   return materialised;
 }

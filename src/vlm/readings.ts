@@ -57,6 +57,7 @@ import * as path from 'node:path';
 
 import { stripBom } from '../bom.js';
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 import { VERSION } from '../version.js';
 
 /**
@@ -374,7 +375,7 @@ export function writeCompletionMarker(
   ensureDir(path.dirname(markerPath));
   const tmp = `${markerPath}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
-  fs.renameSync(tmp, markerPath);
+  replaceFileSync(tmp, markerPath);
   return record;
 }
 
@@ -442,7 +443,7 @@ export function writeRenderMode(readingsPath: string, mode: VlmRenderMode): void
   ensureDir(path.dirname(modePath));
   const tmp = `${modePath}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(mode, null, 2)}\n`, 'utf8');
-  fs.renameSync(tmp, modePath);
+  replaceFileSync(tmp, modePath);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -589,7 +590,7 @@ export function writePendingRequest(readingsPath: string, ask: ReadingsAsk): Pen
   ensureDir(path.dirname(requestPath));
   const tmp = `${requestPath}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
-  fs.renameSync(tmp, requestPath);
+  replaceFileSync(tmp, requestPath);
   return record;
 }
 
@@ -658,7 +659,7 @@ export function swapPendingIntoPlace(
 
   fs.rmSync(completionMarkerPath(resolved), { force: true });
   ensureDir(path.dirname(resolved));
-  fs.renameSync(pendingResolved, resolved);
+  replaceFileSync(pendingResolved, resolved);
   fs.rmSync(`${pendingResolved}.request`, { force: true });
   return writeCompletionMarker(resolved, completion);
 }

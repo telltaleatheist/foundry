@@ -97,6 +97,7 @@ import * as path from 'node:path';
 
 import { stripBom } from '../bom.js';
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 import { VERSION } from '../version.js';
 import { formatBookFile, parseBookFile, type BookFile, type BookRow } from './book-file.js';
 
@@ -463,7 +464,7 @@ export function mintVttBook(opts: VttBookOptions): VttBookReport {
       + 'and it is refused here rather than handed on as a book.',
     );
   }
-  fs.renameSync(pending, resolved);
+  replaceFileSync(pending, resolved);
 
   opts.log(
     `vtt-book: ${parsed.cues.length} cue(s) as ${book.rows.length} row(s), `

@@ -37,6 +37,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 import { stripBom } from '../bom.js';
 import { readBookFile } from '../translate/bookrows.js';
 import { deadlineForConcurrency, fetchTransport, type Transport } from '../translate/transport.js';
@@ -534,7 +535,7 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
   ensureDir(path.dirname(out));
   const partial = `${out}.partial`;
   fs.writeFileSync(partial, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
-  fs.renameSync(partial, out);
+  replaceFileSync(partial, out);
 
   const flagged = Object.values(file.blocks).filter((v) => v.needsCleaning).length;
   const seconds = ((Date.now() - started) / 1000).toFixed(1);

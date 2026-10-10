@@ -68,6 +68,7 @@ import * as path from 'node:path';
 
 import { stripBom } from '../bom.js';
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 import { VERSION } from '../version.js';
 import type { Verification } from './verify.js';
 
@@ -350,7 +351,7 @@ export class AnalysisReport {
     } finally {
       fs.closeSync(handle);
     }
-    fs.renameSync(part, this.outPath);
+    replaceFileSync(part, this.outPath);
     if (this.appendPath !== this.outPath && fs.existsSync(this.appendPath)) {
       fs.unlinkSync(this.appendPath);
     }

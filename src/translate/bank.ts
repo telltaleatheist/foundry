@@ -102,6 +102,7 @@ import * as path from 'node:path';
 
 import { stripBom } from '../bom.js';
 import { ensureDir } from '../fsdirs.js';
+import { replaceFileSync } from '../fs-replace.js';
 
 /** Something is wrong with the bank itself — the file, or the flags about it. */
 export class TranslateBankError extends Error {
@@ -347,7 +348,7 @@ export function swapPendingBankIntoPlace(bankPath: string, pending: string | nul
     );
   }
   ensureDir(path.dirname(resolved));
-  fs.renameSync(pendingResolved, resolved);
+  replaceFileSync(pendingResolved, resolved);
 }
 
 export type BankAction =
