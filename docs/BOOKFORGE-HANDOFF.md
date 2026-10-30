@@ -522,6 +522,37 @@ A host that ignores `after` runs the two side by side: the cleanup then starts
 without its verdicts file and `clean-text` refuses `--triage` by name, which is a
 failed row rather than a wrong book.
 
+### 8d. The analysis pair — the fifth and sixth request shapes (2026-10-30)
+
+> Owen, 2026-10-30: *"analysis is grayed out in foundry/bookforge."*
+
+The Analysis tile is offered in a hosted window now, and its dialog's Add to queue
+calls `FoundryHostQueue.enqueue` **twice**, exactly as §8c's cleanup does:
+
+1. `AnalysisRankRequest` — kind **`analysis-rank`**: `{inputPath, outputPath,
+   reportPath, categories, at?}`. `outputPath` is the rank file
+   (`<report>.rank.json`, `analysisRankFileFor`) and is the row's product. It lands
+   nothing in the tree.
+2. The `AnalyzeRequest` — kind **`analysis`** — carrying **`ranksPath`** (that same
+   file) and **`after`** = the host's id for row 1. Its product is the report
+   (`outputPath`), and it lands an `analysis` step under the step it was run
+   against; `runJob` writes that step, as it writes every landing.
+
+**WHAT THE HOST HAS TO LEARN:**
+
+- **The kinds.** Both GPU rows. The ranking is placed on a Crucible's `decide` class
+  (it POSTs `/v1/decide`), the check on the `analysis` class (a chat door). Labels:
+  "Analysis — ranking", "Analysis".
+- **Their progress lines**: `analyze: rank <n>/<m>` (phase **`rank`**) and
+  `analyze: verify <n>/<m> (<category>)` (phase **`verify`**).
+- **The cascade.** A failed ranking takes the check with it (there is nothing to
+  verify); a host honouring `after` has this already.
+
+BookForge learned both in `electron/foundry-host-queue.ts` (`FoundryJobKind`,
+`labelFor`) and `electron/queue-steps/foundry-job.ts` (`resourceFor`,
+`crucibleClass`, the venue's act list). A hosted window whose host keeps NO queue
+is still refused at `queue:enqueue-analysis`, by name.
+
 ## 9. Ground rules worth inheriting
 
 Whatever route you take, these are the invariants the formats promise:

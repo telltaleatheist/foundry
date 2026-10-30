@@ -730,5 +730,6 @@ What that is, clause by clause:
   there, and the book categories' lines are first drafts. Both are follow-up
   work against reference books; the rank file keeps the rating map so the
   spans can be re-read without the card.
-- **BookForge parity**: the deprecated BookForge analysis is not touched;
-  this reaches BookForge by the normal re-vendor, later.
+- **BookForge parity**: the deprecated BookForge analysis is not touched.
+  This one reached BookForge on 2026-10-30: the tile is offered hosted and the
+  pair waits in BookForge's queue (docs/BOOKFORGE-HANDOFF.md §8d).
