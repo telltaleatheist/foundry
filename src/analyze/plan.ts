@@ -177,7 +177,8 @@ const UNTUNED_BOOK_CATEGORIES: readonly RankPlan[] = [
       + 'endorses striking children as discipline, including infants and toddlers, or instructs parents on '
       + 'the implement, the number of licks, or making it hurt. An approving story counts as endorsement: '
       + 'the author or someone the author holds up as an example switching or spanking a child, or a child '
-      + 'imitating it with approval.',
+      + 'imitating it with approval. Mocking someone for punishing a child ineffectively or inconsistently, '
+      + 'while prescribing a firmer or more consistent way, counts as endorsement.',
     tuned: false,
   },
   {
@@ -188,7 +189,8 @@ const UNTUNED_BOOK_CATEGORIES: readonly RankPlan[] = [
       "Says a child must obey instantly, completely and without question, or that a child's will must be "
       + 'broken. The author asserts that children must submit to parental authority without delay, complaint '
       + 'or any show of displeasure, and that resistance must be defeated. An approving story of a child '
-      + 'being made to submit counts as endorsement.',
+      + 'being made to submit counts as endorsement, and so does mocking a parent who fails to make a child '
+      + 'submit while prescribing a firmer way.',
     tuned: false,
   },
   {

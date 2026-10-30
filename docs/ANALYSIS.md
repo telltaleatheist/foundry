@@ -366,7 +366,13 @@ server that will not say its loaded context — each ends the run by name.
   propositions say that **an approving story counts as endorsement**; without
   that sentence the verifier read the book's anecdotes (a five-month-old
   switched off the stairs, an Amish father spanking a twelve-month-old) as
-  narration and rejected them — recall 0.88 without it. Still `tuned: false`:
+  narration and rejected them — recall 0.88 without it. The punishment and
+  obedience propositions also say that **mocking a parent who punishes
+  ineffectively, while prescribing a firmer way, counts** (added unmeasured):
+  "Switch Your Kids" ranked 0.81–0.96 and was rejected by both the 8-bit and
+  4-bit 27B as "criticism or resignation", because it opens by scorning a
+  mother who spanks by hand on the diaper before it prescribes "consistently
+  rewarding every transgression with a switching". Still `tuned: false`:
   one book is a measurement, not a calibration.
 - **The dialog lists every category with a one-line gloss** (`about` in
   `app/shared/analysis-categories.ts` — the reader's words, never a model's
