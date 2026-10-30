@@ -354,7 +354,24 @@ server that will not say its loaded context — each ends the run by name.
   *"write one line for each in briefcase's style"*) and are `tuned: false`,
   named untuned in the report. **A category the user writes** is ranked by the
   first sentence of its description (≤ 140 characters, briefcase's
-  `customOptionText`) and verified against the whole of it, untuned.
+  `customOptionText`) and verified against the whole of it, untuned. The
+  dialog keeps up to 600 characters (240 until 2026-10-30), because the
+  sentences after the first are the verifier's and were measured to matter.
+- **The child-training five** (2026-10-30) — child-physical-punishment,
+  absolute-obedience, children-as-animals, wifely-submission, anti-expertise
+  — written for *To Train Up a Child*, which the twelve above barely touch.
+  Measured once against a hand reference of that book (274 marks over every
+  block; 9B rank, 27B-8bit verify on the Mac): 109 findings, 0.94 matching a
+  mark of their own category, 0.92 of the clear marks found. Their
+  propositions say that **an approving story counts as endorsement**; without
+  that sentence the verifier read the book's anecdotes (a five-month-old
+  switched off the stairs, an Amish father spanking a twelve-month-old) as
+  narration and rejected them — recall 0.88 without it. Still `tuned: false`:
+  one book is a measurement, not a calibration.
+- **The dialog lists every category with a one-line gloss** (`about` in
+  `app/shared/analysis-categories.ts` — the reader's words, never a model's
+  line). Unticking is for that run only; a category the person adds is kept
+  for every book.
 - `misinformation` stays excluded — measured 19/20 verified false positives
   under the entailment ranker, and briefcase's snap ranker skips it by default
   for the same reason. At most 25 categories (26 letters, one for none).

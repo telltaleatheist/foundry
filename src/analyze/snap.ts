@@ -503,9 +503,21 @@ export function readPlan(categoriesPath: string | null | undefined, log: (line: 
   return plan;
 }
 
-/** The context the served model is loaded at, from `/v1/models`. Refused by name when unstated. */
+/**
+ * The context the served model is loaded at, from the OpenAI door's listing. Refused by name when unstated.
+ *
+ * THE OPENAI DOOR'S LIST, NOT THE SERVER'S OWN `/v1/models`. Crucible's own
+ * `/v1/models` is its catalog — a bare array of every model it knows, resident
+ * or not — and read as an OpenAI listing it has no `data` and lists nothing,
+ * so every ranking was refused as "not serving" with the model resident
+ * (found 2026-10-30, the first run of the feature against a live 2.x server).
+ * The resident models and the context each was loaded at are published on the
+ * door the chat acts already use, `<server>/openai/v1/models`, with
+ * `max_model_len` — which is the fact this function exists to read.
+ */
 async function loadedContextOf(transport: Transport, endpoint: string, model: string): Promise<number> {
-  const served = await servedModels(transport, endpoint);
+  const server = endpoint.trim().replace(/\/+$/, '').replace(/\/v1$/, '');
+  const served = await servedModels(transport, `${server}/openai`);
   const row = served.find((one) => one.id === model);
   if (row === undefined) {
     throw new AnalyzeError(
