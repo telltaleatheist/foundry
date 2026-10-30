@@ -130,7 +130,7 @@ export async function runLoop(o: LoopOptions): Promise<LoopResult> {
     throw new Error(`the history does not fit a ${o.context}-token window even with only the last round kept (about ${Math.round(size(wired) * tokensPerChar)} tokens + ${o.maxTokens} for the reply); give the model a larger context or a smaller --max-tokens`);
   }
 
-  async function chat(messages: Msg[], round: number, final: boolean): Promise<{ message: Msg; usage: any; ms: number; cut: boolean }> {
+  async function chat(messages: Msg[], round: number, final: boolean): Promise<{ message: Msg; usage: any; ms: number; cut: boolean; reasoning: string | null }> {
     const { wired, chars } = wire(messages, round);
     const body: Record<string, unknown> = {
       model: o.model,
@@ -175,6 +175,8 @@ export async function runLoop(o: LoopOptions): Promise<LoopResult> {
           usage: json.usage,
           ms: Date.now() - t0,
           cut: json.choices[0].finish_reason === 'length',
+          // Thinking, split out by the server (Crucible 2.0.33): logged, never sent back.
+          reasoning: typeof m.reasoning === 'string' && m.reasoning.length > 0 ? m.reasoning : null,
         };
       }
       if ((res.status === 429 || res.status >= 500) && attempt < 4) {
@@ -315,8 +317,10 @@ After a <function_calls> block, stop and wait: the results come back in the next
       let usage: any;
       let ms: number;
       let cut = false;
+      let reasoning: string | null = null;
       if (o.transport === 'crucible') {
         const reply = await chat(messages, round, final);
+        reasoning = reply.reasoning;
         messages.push({ ...reply.message, round });
         calls = (reply.message.tool_calls ?? []).map((c) => ({ id: c.id, name: c.function.name, arguments: c.function.arguments }));
         prose = reply.message.content;
@@ -336,6 +340,7 @@ After a <function_calls> block, stop and wait: the results come back in the next
       if (prose) finalText = prose;
       console.log(`round ${round}: ${(ms / 1000).toFixed(1)}s, in ${usage?.prompt_tokens ?? '?'} out ${usage?.completion_tokens ?? '?'}, ${calls.length} calls${o.status ? `, ${o.status()}` : ''}`);
       if (prose) console.log(`  says: ${clip(prose, 300)}`);
+      if (reasoning) console.log(`  thought (${reasoning.length} chars): …${clip(reasoning.slice(-300), 300)}`);
       if (calls.length === 0) {
         if (final) break;
         // A reply cut off at the token limit before it called anything is not
