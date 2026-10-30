@@ -397,6 +397,21 @@ server that will not say its loaded context — each ends the run by name.
   where every call failed refuses rather than writing a clean-looking report.
   The `VERIFICATION_EMPHASIS` ladder is not ported: one grader, the measured
   one.
+- **Suggested for this book** (2026-10-30). Owen: *"it skims through the book
+  and suggests categories based on the subject matter … if it looks at this
+  book in tandem with my existing categories, i would hope that it would
+  conclude that we're looking for things that are very unusual."* The dialog's
+  "Suggest from this book" sends the dialog's model 16 evenly spaced excerpts
+  (front matter skipped, up to 32k characters, fitted to the window), the
+  chapter list, and every existing category as the brief; one schema-bound
+  chat answers a theme and up to six proposals in the add form's shape. Add
+  saves one exactly as a typed category is saved; nothing is saved otherwise.
+  `shared/category-suggestions.ts` (prompt, excerpts, parse) and
+  `electron/suggest-categories.ts`. Measured once on *To Train Up a Child* with
+  only the twelve original categories as the brief (PC, 27B-4bit): 58 s load,
+  27 s answer, and it proposed physical punishment, children as less than
+  human, absolute parental authority, pain as love and ignoring a crying
+  infant.
 
 ---
 
