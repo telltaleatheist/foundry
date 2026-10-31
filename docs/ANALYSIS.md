@@ -404,8 +404,12 @@ server that will not say its loaded context — each ends the run by name.
   "Suggest from this book" sends the dialog's model 16 evenly spaced excerpts
   (front matter skipped, up to 32k characters, fitted to the window), the
   chapter list, and every existing category as the brief; one schema-bound
-  chat answers a theme and up to six proposals in the add form's shape. Add
-  saves one exactly as a typed category is saved; nothing is saved otherwise.
+  chat, STREAMED, answers a theme and up to six proposals in the add form's
+  shape; each is saved into the reader's categories and lit the moment its
+  object closes, with a progress bar, a rough time left and Stop under the
+  button (no time is promised while the server has it in another client's
+  line). The pencil changes one in place; the ✕ removes it. Every category in
+  the dialog is a lit box now, the export dialog's card, not a checkbox.
   `shared/category-suggestions.ts` (prompt, excerpts, parse) and
   `electron/suggest-categories.ts`. Measured once on *To Train Up a Child* with
   only the twelve original categories as the brief (PC, 27B-4bit): 58 s load,
