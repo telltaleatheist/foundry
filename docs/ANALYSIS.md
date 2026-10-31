@@ -410,6 +410,11 @@ server that will not say its loaded context — each ends the run by name.
   button (no time is promised while the server has it in another client's
   line). The pencil changes one in place; the ✕ removes it. Every category in
   the dialog is a lit box now, the export dialog's card, not a checkbox.
+  An optional note says what the reader expects ("anti-evolution
+  pseudoscience"): the prompt makes it the strongest guide, and six of the
+  sixteen excerpts start where its words are thickest; the rest stay evenly
+  spaced. A lit box writes in the ordinary text colours; accent on accent
+  was unreadable.
   `shared/category-suggestions.ts` (prompt, excerpts, parse) and
   `electron/suggest-categories.ts`. Measured once on *To Train Up a Child* with
   only the twelve original categories as the brief (PC, 27B-4bit): 58 s load,
