@@ -237,6 +237,12 @@ export interface FixedApplication {
   protected: { at: number; end: number }[];
   /** How many spots kept their form as printed. */
   kept: number;
+  /**
+   * WHERE EVERY READING LANDED in `text`, in order: each spot that was read or
+   * kept, and each book-wide occurrence that was read. What a readings-only pass
+   * records so a later cleanup can be handed those places (src/clean/apply-readings.ts).
+   */
+  placed: { reading: FixedReading; at: number; end: number }[];
 }
 
 /** Apply the readings that belong to the block keyed `at` to its text. */
@@ -246,26 +252,26 @@ export function applyFixedReadings(text: string, readings: readonly FixedReading
   const { spots, bookWide } = forBlock(readings, at);
 
   // ── The spots, against the block's own text, back to front ────────────────
-  const edits: { at: number; length: number; replace: string; find: string }[] = [];
+  const edits: { at: number; length: number; replace: string; find: string; spot: FixedReading }[] = [];
   for (const spot of spots) {
     if (spot.at !== at) continue; // a cell's spot belongs to that cell's own text
     const offset = wholeTokenOffsets(text, spot.find)[spot.nth!];
     if (offset === undefined) { missed.push(spot); continue; }
-    edits.push({ at: offset, length: spot.find.length, replace: spot.replace, find: spot.find });
+    edits.push({ at: offset, length: spot.find.length, replace: spot.replace, find: spot.find, spot });
   }
   edits.sort((a, b) => b.at - a.at);
   let out = text;
   let floor = Infinity;
   // Each spot's span in `out`, recorded back to front, so a later (earlier-placed)
   // splice shifts every span already recorded after it.
-  let spans: { at: number; end: number }[] = [];
+  let spans: { at: number; end: number; reading: FixedReading }[] = [];
   let kept = 0;
   for (const edit of edits) {
     if (edit.at + edit.length > floor) { missed.push(spots.find((s) => s.find === edit.find)!); continue; }
     out = out.slice(0, edit.at) + edit.replace + out.slice(edit.at + edit.length);
     const delta = edit.replace.length - edit.length;
-    spans = spans.map((span) => ({ at: span.at + delta, end: span.end + delta }));
-    spans.push({ at: edit.at, end: edit.at + edit.replace.length });
+    spans = spans.map((span) => ({ ...span, at: span.at + delta, end: span.end + delta }));
+    spans.push({ at: edit.at, end: edit.at + edit.replace.length, reading: edit.spot });
     floor = edit.at;
     if (edit.replace !== edit.find) applied.set(edit.find, (applied.get(edit.find) ?? 0) + 1);
     else kept += 1;
@@ -273,13 +279,18 @@ export function applyFixedReadings(text: string, readings: readonly FixedReading
   spans.sort((a, b) => a.at - b.at);
 
   // ── Then the book-wide readings, over what is left ────────────────────────
+  const bare = (list: readonly { at: number; end: number }[]): { at: number; end: number }[] => list.map(({ at: a, end }) => ({ at: a, end }));
   const matcher = matcherFor(bookWide);
-  if (matcher === null) return { text: out, applied, missed, protected: spans, kept };
+  if (matcher === null) {
+    return { text: out, applied, missed, protected: bare(spans), kept, placed: spans.map(({ reading, at: a, end }) => ({ reading, at: a, end })) };
+  }
   const byFind = new Map(bookWide.map((r) => [r.find, r.replace] as const));
+  const bookWideOf = new Map(bookWide.map((r) => [r.find, r] as const));
   let result = '';
   let from = 0;
   let shift = 0;
-  const shifted: { at: number; end: number }[] = [];
+  const shifted: { at: number; end: number; reading: FixedReading }[] = [];
+  const readHere: { at: number; end: number; reading: FixedReading }[] = [];
   let nextSpan = 0;
   for (const hit of occurrences(out, matcher)) {
     const replace = byFind.get(hit.find)!;
@@ -287,7 +298,7 @@ export function applyFixedReadings(text: string, readings: readonly FixedReading
     // A spot decided this span: a book-wide reading does not read it again.
     if (spans.some((span) => hit.at < span.end && span.at < end)) continue;
     while (nextSpan < spans.length && spans[nextSpan]!.end <= hit.at) {
-      shifted.push({ at: spans[nextSpan]!.at + shift, end: spans[nextSpan]!.end + shift });
+      shifted.push({ ...spans[nextSpan]!, at: spans[nextSpan]!.at + shift, end: spans[nextSpan]!.end + shift });
       nextSpan += 1;
     }
     /*
@@ -300,15 +311,18 @@ export function applyFixedReadings(text: string, readings: readonly FixedReading
     const keepsStop = hit.find.endsWith('.') && !replace.endsWith('.')
       && /^["'’”)\]]*\s*$/u.test(out.slice(end));
     const said = replace + (keepsStop ? '.' : '');
-    result += out.slice(from, hit.at) + said;
+    result += out.slice(from, hit.at);
+    readHere.push({ at: result.length, end: result.length + said.length, reading: bookWideOf.get(hit.find)! });
+    result += said;
     shift += said.length - hit.find.length;
     from = end;
     applied.set(hit.find, (applied.get(hit.find) ?? 0) + 1);
   }
   for (; nextSpan < spans.length; nextSpan += 1) {
-    shifted.push({ at: spans[nextSpan]!.at + shift, end: spans[nextSpan]!.end + shift });
+    shifted.push({ ...spans[nextSpan]!, at: spans[nextSpan]!.at + shift, end: spans[nextSpan]!.end + shift });
   }
-  return { text: result + out.slice(from), applied, missed, protected: shifted, kept };
+  const placed = [...shifted, ...readHere].sort((a, b) => a.at - b.at).map(({ reading, at: a, end }) => ({ reading, at: a, end }));
+  return { text: result + out.slice(from), applied, missed, protected: bare(shifted), kept, placed };
 }
 
 /**

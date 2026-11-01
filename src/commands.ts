@@ -1198,6 +1198,17 @@ const CT_FIXED_READINGS: OptionSpec = {
   describe: 'A fixed-readings/v1 file: {"format": "fixed-readings/v1", "readings": [{"find": "Wolf IV", "replace": "Wolf Four"}, ...]}. Each find is read wherever it stands as a whole token run, before anything is judged or asked, and the model is never shown it.',
 };
 
+/**
+ * `--readings-only`: write the `--fixed-readings` into the book and do nothing
+ * else (src/clean/apply-readings.ts). No server, no model, no punctuation, no
+ * number rules, no removal, no triage.
+ */
+const CT_READINGS_ONLY: OptionSpec = {
+  name: 'readings-only',
+  type: 'boolean',
+  describe: 'Write the --fixed-readings into the book and nothing else: no model, no server, no punctuation, no number rules. Records and stamp as a cleanup; <records>.applied.json says where each reading landed.',
+};
+
 /** Read `--fixed-readings` into its list, or nothing. A file that is not one is refused by name. */
 async function cleanFixedReadings(args: ParsedArgs): Promise<import('./clean/fixed-readings.js').FixedReading[] | undefined> {
   const file = optionalString(args, 'fixed-readings');
@@ -1304,6 +1315,37 @@ async function runCleanTriageCommand(args: ParsedArgs): Promise<void> {
  * which is what exit code 2 means (src/cli.ts).
  */
 async function runCleanText(args: ParsedArgs): Promise<void> {
+  /*
+   * ── READINGS ONLY: THE ONE DOOR THAT NEEDS NO SERVER ───────────────────────
+   *
+   * Checked first, because every flag below it is about a model or a stage this
+   * route does not have — and one of those given here is a request composed for
+   * the other route, refused by name rather than ignored.
+   */
+  if (flag(args, 'readings-only')) {
+    const foreign = (['endpoint', 'model', 'server', 'concurrency', 'triage', 'unit', 'gate', 'remove-references',
+      'remove-also', 'epub', 'out'] as const).filter((name) => optionalString(args, name) !== undefined);
+    if (foreign.length > 0) {
+      throw new UsageError(
+        `--readings-only writes the --fixed-readings into the book and asks nobody anything, so `
+        + `${foreign.map((n) => `--${n}`).join(', ')} ha${foreign.length === 1 ? 's' : 've'} nothing to say to it.`,
+      );
+    }
+    const readings = await cleanFixedReadings(args);
+    if (readings === undefined) {
+      throw new UsageError('--readings-only needs --fixed-readings: the readings are the whole of what it writes.');
+    }
+    const { runApplyReadings } = await import('./clean/apply-readings.js');
+    await runApplyReadings({
+      bookPath: requireString(args, 'book', 'the book file the readings are written into'),
+      recordsPath: requireString(args, 'records', 'where the read text is written'),
+      stampPath: requireString(args, 'stamp', 'where the narration text stamp is written'),
+      fixedReadings: readings,
+      ...(optionalString(args, 'generation') === undefined ? {} : { generation: optionalString(args, 'generation')! }),
+      log,
+    });
+    return;
+  }
   /*
    * ── TWO DOORS, AND ASKING FOR BOTH IS REFUSED BEFORE A BYTE IS READ ─────────
    *
@@ -3905,6 +3947,8 @@ export const COMMANDS: readonly Command[] = [
       + ' [--generation <id>] [--endpoint <url>] [--model <name>] [--server <openai|ollama|anthropic>]'
       + ' [--concurrency <n>] [--triage <verdicts.json>] [--unit <sentence|block>] [--gate <light|on|off>]'
       + ' [--remove-references <on|off>] [--remove-also <text>]'
+      + '  |  --readings-only --book <book.jsonl> --records <out.records.jsonl> --stamp <out.stamp.json>'
+      + ' --fixed-readings <readings.json> [--generation <id>]'
       + '  |  --epub <in.epub> --out <out.epub> [--endpoint <url>] [--model <name>]'
       + ' [--server <openai|ollama|anthropic>] [--concurrency <n>]',
     detail: [
@@ -4104,7 +4148,7 @@ export const COMMANDS: readonly Command[] = [
     options: [
       CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_EPUB_IN, CT_EPUB_OUT,
       CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION, CT_TRIAGE, CT_UNIT, CT_GATE,
-      CT_REMOVE_REFERENCES, CT_REMOVE_ALSO, CT_FIXED_READINGS,
+      CT_REMOVE_REFERENCES, CT_REMOVE_ALSO, CT_FIXED_READINGS, CT_READINGS_ONLY,
     ],
     run: runCleanText,
   },
