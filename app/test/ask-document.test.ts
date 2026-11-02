@@ -13,7 +13,7 @@ import type { AskMark, AskRowState, AskView } from '../shared/ask';
 
 const VIEW: AskView = {
   title: 'A Test Book',
-  struck: 2,
+  struck: 2, struckBlocks: [], loose: { numbers: [], notes: [] },
   chapters: [{ id: 'e-1', title: 'One' }, { id: 'e-5', title: 'Two' }],
   blocks: [
     { id: 'e-1', text: 'Chapter One', category: 'Section-header', chapter: 0 },
@@ -38,9 +38,9 @@ function tools() {
   return { box, run };
 }
 
-test('the nine tools are offered, each with a schema', () => {
+test('the fifteen tools are offered, each with a schema', () => {
   const { box } = tools();
-  expect(box.tools.map((t) => t.name)).toEqual(['outline', 'read', 'search', 'mark', 'revise', 'revise_pattern', 'recategorize', 'unmark', 'marks_summary']);
+  expect(box.tools.map((t) => t.name)).toEqual(['outline', 'read', 'search', 'mark', 'revise', 'revise_pattern', 'recategorize', 'rename_chapter', 'join', 'split', 'restore', 'link_footnote', 'highlight', 'unmark', 'marks_summary']);
   for (const t of box.tools) expect((t.parameters as { type: string }).type).toBe('object');
 });
 
@@ -59,7 +59,7 @@ test('a span selects each start and what follows it, up to the next chapter', ()
   expect(box.items()).toEqual([]); // a dry run marks nothing
   run('mark', { span: { start: '^Study questions$', until: '^Chapter' }, reason: 'study question' });
   expect(box.items().map((m) => m.id)).toEqual(['e-3', 'e-4', 'e-7', 'e-8', 'e-9']);
-  expect(box.counts()).toEqual({ struck: 5, revised: 0, retyped: 0 });
+  expect(box.counts()).toMatchObject({ struck: 5, revised: 0, retyped: 0, joined: 0 });
 });
 
 test('a pattern can be held to one chapter, and a range is inclusive', () => {
@@ -110,7 +110,7 @@ test('revise_pattern changes many blocks at once, dry run first, and skips what 
   // A Watchtower-style book: a paragraph number before the prose, and one
   // paragraph whose prose itself opens with a number.
   const view: AskView = {
-    title: 'Numbered', struck: 0, chapters: [{ id: 'p-1', title: 'One' }],
+    title: 'Numbered', struck: 0, struckBlocks: [], loose: { numbers: [], notes: [] }, chapters: [{ id: 'p-1', title: 'One' }],
     blocks: [
       { id: 'p-1', text: '1 The earth is old, they say.', category: 'Text', chapter: 0 },
       { id: 'p-2', text: '2 “Who made it?” we ask.', category: 'Text', chapter: 0 },
@@ -253,7 +253,7 @@ test('marks group by reason in the order each reason first appears', () => {
 
 const RETYPE_VIEW: AskView = {
   title: 'A Footnoted Book',
-  struck: 0,
+  struck: 0, struckBlocks: [], loose: { numbers: [], notes: [] },
   chapters: [{ id: 'e-1', title: 'One' }],
   blocks: [
     { id: 'e-1', text: 'ONE', category: 'Section-header', chapter: 0 },
@@ -277,7 +277,7 @@ test('recategorize by pattern within a kind: dry run first, then headings that s
   expect(dry).toContain('e-3 [Footnote → Section-header; starts chapter "THE SECOND PART"]');
   expect(box.items()).toEqual([]);
   run('recategorize', { category_is: 'Footnote', pattern: '^[A-Z* ]+$', category: 'Section-header', starts_chapter: true, reason: 'heading read as a footnote' });
-  expect(box.counts()).toEqual({ struck: 0, revised: 0, retyped: 2 });
+  expect(box.counts()).toMatchObject({ struck: 0, revised: 0, retyped: 2, joined: 0 });
   expect(box.items()).toEqual([
     { id: 'e-3', kind: 'category', reason: 'heading read as a footnote', before: 'THE *SECOND* PART', from: 'Footnote', to: 'Section-header', chapter: { start: true, title: 'THE SECOND PART' }, chapterBefore: null },
     { id: 'e-5', kind: 'category', reason: 'heading read as a footnote', before: 'THE THIRD PART', from: 'Footnote', to: 'Section-header', chapter: { start: true, title: 'THE THIRD PART' }, chapterBefore: null },
