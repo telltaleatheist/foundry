@@ -35,7 +35,8 @@
  * session record (`AskSession`, kept in `<project>/ops/ask-sessions.jsonl`) is
  * where a reason lives.
  */
-import type { BookOp } from './ops';
+import type { AskChainStep } from './ask-presets';
+import type { BookOp, Replayed } from './ops';
 
 /** One block as the person sees it when they ask: live, after every pending op. */
 export interface AskBlock {
@@ -372,10 +373,89 @@ export interface AskSession {
   readonly highlights?: readonly AskHighlight[];
   /** True when the run stopped at the round limit. Absent on a run kept before it was recorded. */
   readonly hitLimit?: boolean;
+  /** Which step of a run of presets this run was. Absent on an ordinary question. */
+  readonly chain?: AskChainStep;
   /** How many marks were not landed because their block had changed during the run. */
   readonly skipped: number;
   readonly rounds: number;
   readonly seconds: number;
+}
+
+/**
+ * THE BOOK AS THE PERSON SEES IT — the pane's replay, live rows to work on and
+ * struck rows kept apart (readable on purpose), shelved rows left out entirely
+ * (they are not in the flow, so not on the paper, and an edit of one would be
+ * about text nobody can see).
+ *
+ * THE PANE'S REPLAY INCLUDES ITS PENDING STACK, which is what lets a run of presets'
+ * later step see the earlier steps' marks: each step's landing is pushed onto
+ * that stack before the next step reads this.
+ */
+export function askViewOf(book: Replayed, title: string): AskView {
+  const starts = new Map(book.chapters.map((c, i) => [c.id, i]));
+  const blocks: AskBlock[] = [];
+  const struckBlocks: AskBlock[] = [];
+  let chapter = -1;
+  for (const row of book.rows) {
+    if (row.shelf !== undefined) continue;
+    const at = starts.get(row.id);
+    if (at !== undefined) chapter = at;
+    const block: AskBlock = {
+      id: row.id, text: row.text, category: row.category, chapter,
+      ...(row.refs === undefined || row.refs.length === 0 ? {} : { refs: row.refs.map((r) => ({ block: r.block, at: r.at, len: r.len })) }),
+    };
+    if (row.struck === true) struckBlocks.push(block);
+    else blocks.push(block);
+  }
+  return {
+    title,
+    blocks,
+    chapters: book.chapters.map((c) => ({ id: c.id, title: c.title })),
+    struck: struckBlocks.length,
+    struckBlocks,
+    loose: {
+      numbers: book.loose.markers.map((m) => ({ block: m.block, at: m.at, len: m.len, printed: m.printed })),
+      notes: [...book.loose.notes],
+    },
+  };
+}
+
+/**
+ * WHAT THE REVIEW CARD SHOWS for a book's latest run — that run, or, when it
+ * was a step of a run of presets, every step of that chain together, each step's
+ * reasons labelled with the step's name ("Front & back matter — copyright
+ * page"), so the four runs are reviewed as the one press they were.
+ *
+ * `keyOf` is a row's identity across the steps: two steps may each have a mark
+ * on one block (a retyping in Chapters, a strike in Front & back matter), and
+ * `askMarkKey` alone would make them one row.
+ */
+export interface AskReview {
+  readonly request: string;
+  readonly model: string;
+  readonly items: readonly AskMark[];
+  readonly skipped: number;
+  readonly groups: readonly AskGroup[];
+  keyOf(item: AskMark): string;
+}
+
+export function reviewOf(sessions: readonly AskSession[], latest: AskSession): AskReview {
+  const steps = latest.chain === undefined
+    ? [latest]
+    : sessions.filter((one) => one.chain?.chain === latest.chain!.chain)
+      .sort((a, b) => a.chain!.index - b.chain!.index);
+  const keys = new Map<AskMark, string>();
+  steps.forEach((one, n) => { for (const item of one.items) keys.set(item, `${n}:${askMarkKey(item)}`); });
+  return {
+    request: latest.chain === undefined ? latest.request : `Presets: ${steps.map((one) => one.chain!.step).join(', ')}`,
+    model: latest.model,
+    items: steps.flatMap((one) => one.items),
+    skipped: steps.reduce((sum, one) => sum + one.skipped, 0),
+    groups: steps.flatMap((one) => groupByReason(one.items).map((g) => (one.chain === undefined
+      ? g
+      : { reason: `${one.chain.step} — ${g.reason}`, items: g.items }))),
+    keyOf: (item) => keys.get(item) ?? askMarkKey(item),
+  };
 }
 
 /** The current state of one block, as a plan reads it off the pane's replay. */

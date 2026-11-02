@@ -75,7 +75,7 @@ import { JobModelComponent } from '../job-model/job-model.component';
             </p>
           }
           @for (one of exchanges(); track one.session.id) {
-            <div class="msg person">{{ one.session.request }}</div>
+            <div class="msg person" [title]="one.session.request">{{ one.session.chain === undefined ? one.session.request : one.session.chain.step }}</div>
             <button class="working" (click)="toggle(one.session.id)">
               <span class="twist">{{ unfolded().has(one.session.id) ? '▾' : '▸' }}</span>
               Worked for {{ duration(one.session.seconds) }} · {{ one.session.rounds }} {{ one.session.rounds === 1 ? 'round' : 'rounds' }}
@@ -123,8 +123,14 @@ import { JobModelComponent } from '../job-model/job-model.component';
               </button>
             }
           }
+          @if (chainOver(); as over) {
+            <p class="note">{{ over }}</p>
+          }
           @if (live(); as now) {
-            <div class="msg person">{{ now.request }}</div>
+            @if (chainSaid(); as step) {
+              <p class="chain">{{ step }}</p>
+            }
+            <div class="msg person">{{ now.chain === undefined ? now.request : now.chain.step }}</div>
             @if (now.phase === 'running' || now.phase === 'landing') {
               <button class="working active" (click)="liveFolded.set(!liveFolded())">
                 <span class="spinner" aria-hidden="true"></span>
@@ -193,6 +199,7 @@ import { JobModelComponent } from '../job-model/job-model.component';
             @if (busy()) {
               <button class="ghost" [disabled]="live()?.runId === null || live()?.phase === 'landing'" (click)="stop()">Stop</button>
             } @else {
+              <button class="ghost" title="Run kept questions on this book, one after another" (click)="ui.openAskPresets()">Presets</button>
               <button class="ghost" [disabled]="exchanges().length === 0 && live() === null && continuing() === null" title="Start fresh: the model forgets this thread. Nothing on the book is undone." (click)="newChat()">New question</button>
               <button class="primary" [disabled]="!canSend()" (click)="send()">Send</button>
             }
@@ -323,6 +330,7 @@ import { JobModelComponent } from '../job-model/job-model.component';
     .bar { display: flex; align-items: center; gap: 6px; }
     .bar .model { flex: 1; min-width: 0; }
 
+    .chain { margin: 0; font-size: 11px; font-weight: 600; color: var(--accent); }
     .places-head { margin: 2px 0 0; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
     .places { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
     .place {
@@ -443,7 +451,31 @@ export class AskPanelComponent {
   protected readonly canSend = computed(() =>
     this.tab() !== null && !this.busy() && this.modelReady() && this.server() !== null && this.draft().trim().length > 0);
 
+  /** "Presets: step 2 of 3 — Front & back matter" while the book's chain runs. */
+  protected readonly chainSaid = computed(() => {
+    const tab = this.tab();
+    return tab === null ? null : this.asks.chainSaid().get(tab.path) ?? null;
+  });
+
+  /** The sentence the book's last chain ended on, while nothing newer is running. */
+  protected readonly chainOver = computed(() => {
+    const tab = this.tab();
+    if (tab === null || this.busy()) return null;
+    return this.asks.chainOver().get(tab.path) ?? null;
+  });
+
   constructor() {
+    void this.asks.loadPresets();
+    // The Presets modal sends with this panel's choice of model, and starts "Add preset" from its box.
+    effect(() => {
+      this.asks.presetContext.set({
+        server: this.server(),
+        model: this.model(),
+        ready: this.modelReady(),
+        busy: this.busy(),
+        draft: this.draft(),
+      });
+    });
     effect(() => {
       const tab = this.tab();
       if (tab !== null) untracked(() => { void this.asks.loadLatest(tab.path); });

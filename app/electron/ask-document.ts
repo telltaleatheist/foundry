@@ -758,6 +758,13 @@ export function isAskMark(value: unknown): value is AskMark {
   }
 }
 
+function isChainStep(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const c = value as Record<string, unknown>;
+  return typeof c['chain'] === 'string' && typeof c['step'] === 'string'
+    && typeof c['index'] === 'number' && typeof c['of'] === 'number';
+}
+
 function isHighlight(value: unknown): value is AskHighlight {
   if (typeof value !== 'object' || value === null) return false;
   const h = value as Record<string, unknown>;
@@ -773,6 +780,7 @@ function isSession(value: unknown): value is AskSession {
     // Both absent on a run kept before they existed.
     && (s['highlights'] === undefined || (Array.isArray(s['highlights']) && s['highlights'].every(isHighlight)))
     && (s['hitLimit'] === undefined || typeof s['hitLimit'] === 'boolean')
+    && (s['chain'] === undefined || isChainStep(s['chain']))
     && typeof s['skipped'] === 'number' && typeof s['rounds'] === 'number' && typeof s['seconds'] === 'number';
 }
 
