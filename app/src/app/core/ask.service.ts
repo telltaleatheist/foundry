@@ -5,6 +5,7 @@ import {
   planLanding,
   planUndo,
   type AskBlock,
+  type AskHighlight,
   type AskMark,
   type AskPlan,
   type AskProgress,
@@ -92,6 +93,25 @@ export class AskService {
   /** Which tab each run was started from, so the landing finds its pane. */
   private readonly tabOf = new Map<string, string>();
 
+  /**
+   * THE PLACE THE PERSON CLICKED in a run's "Found N places" list — lit on its
+   * book's paper (book-view's `hitLight`, the analysis light's own runs) until
+   * another is clicked or the same one is clicked again. Keyed
+   * `ask:<session>:<index>`, which is never an analysis finding's key.
+   */
+  readonly pointed = signal<{ readonly projectDir: string; readonly key: string; readonly highlight: AskHighlight } | null>(null);
+
+  /** Light a place and bring it into view, or put it down when it is already lit. */
+  point(tabId: string, projectDir: string, key: string, highlight: AskHighlight): void {
+    const now = this.pointed();
+    if (now !== null && now.key === key && now.projectDir === projectDir) {
+      this.pointed.set(null);
+      return;
+    }
+    this.pointed.set({ projectDir, key, highlight });
+    this.stacks.bookStackFor(tabId)?.reveal(highlight.id);
+  }
+
   constructor() {
     api?.ask.onProgress((frame) => { void this.heard(frame); });
   }
@@ -131,7 +151,7 @@ export class AskService {
     const view = askViewOf(book, tab.title);
     this.setRun(projectDir, {
       phase: 'running', runId: null, request, status: 'Starting…', round: 0, maxRounds: 0,
-      says: null, struck: 0, revised: 0, retyped: 0, message: null, steps: [], startedAt: Date.now(),
+      says: null, struck: 0, revised: 0, retyped: 0, tally: '', message: null, steps: [], startedAt: Date.now(),
     });
     try {
       const runId = await api.ask.start({ projectDir, request, server, model, view });
@@ -157,7 +177,7 @@ export class AskService {
     if (frame.state === 'running') {
       this.setRun(frame.projectDir, {
         ...run, runId: frame.runId, status: frame.status, round: frame.round, maxRounds: frame.maxRounds,
-        says: frame.says, struck: frame.struck, revised: frame.revised, retyped: frame.retyped,
+        says: frame.says, struck: frame.struck, revised: frame.revised, retyped: frame.retyped, tally: frame.tally,
         steps: withStep(run.steps, frame, run.says),
       });
       return;
@@ -189,6 +209,8 @@ export class AskService {
       model: result.model,
       summary: result.summary,
       items: landed.acted,
+      highlights: result.highlights,
+      hitLimit: result.hitLimit,
       skipped: plan.skipped.length + landed.refused,
       rounds: result.rounds,
       seconds: result.seconds,
@@ -210,6 +232,9 @@ export class AskService {
         : `${saidChanges(landed.acted.length)} ${landed.acted.length === 1 ? 'is' : 'are'} waiting with your other edits; one undo takes ${landed.acted.length === 1 ? 'it' : 'them all'} back.`,
       skippedSentence(plan.skipped),
       landed.refused > 0 ? `${saidBlocks(landed.refused)} would not take the correction, and each one said why.` : '',
+      result.highlights.length > 0
+        ? `It pointed at ${result.highlights.length} ${result.highlights.length === 1 ? 'place' : 'places'}, listed under its reply.` : '',
+      result.hitLimit ? `It stopped at its limit of ${result.rounds - 1} rounds before it finished; Keep going picks up where it left off.` : '',
       kept ?? '',
       result.threadProblem ?? '',
     ].filter((s) => s.length > 0).join(' ');
@@ -258,6 +283,8 @@ export interface AskRunState {
   readonly struck: number;
   readonly revised: number;
   readonly retyped: number;
+  /** Everything the run holds so far, as a line — main's `tallySaid`. Empty before the first round. */
+  readonly tally: string;
   /** The closing sentence: what landed, or why nothing did. */
   readonly message: string | null;
   /** What the model did, round by round, for the thread's "Working" line. */
@@ -289,7 +316,7 @@ function withStep(steps: readonly AskStep[], frame: Extract<AskProgress, { state
 function failed(message: string, request: string): AskRunState {
   return {
     phase: 'failed', runId: null, request, status: '', round: 0, maxRounds: 0,
-    says: null, struck: 0, revised: 0, retyped: 0, message, steps: [], startedAt: Date.now(),
+    says: null, struck: 0, revised: 0, retyped: 0, tally: '', message, steps: [], startedAt: Date.now(),
   };
 }
 
@@ -301,23 +328,29 @@ function failed(message: string, request: string): AskRunState {
 export function askViewOf(book: Replayed, title: string): AskView {
   const starts = new Map(book.chapters.map((c, i) => [c.id, i]));
   const blocks: AskBlock[] = [];
+  const struckBlocks: AskBlock[] = [];
   let chapter = -1;
-  let struck = 0;
   for (const row of book.rows) {
     if (row.shelf !== undefined) continue;
     const at = starts.get(row.id);
     if (at !== undefined) chapter = at;
-    if (row.struck === true) {
-      struck += 1;
-      continue;
-    }
-    blocks.push({ id: row.id, text: row.text, category: row.category, chapter });
+    const block: AskBlock = {
+      id: row.id, text: row.text, category: row.category, chapter,
+      ...(row.refs === undefined || row.refs.length === 0 ? {} : { refs: row.refs.map((r) => ({ block: r.block, at: r.at, len: r.len })) }),
+    };
+    if (row.struck === true) struckBlocks.push(block);
+    else blocks.push(block);
   }
   return {
     title,
     blocks,
     chapters: book.chapters.map((c) => ({ id: c.id, title: c.title })),
-    struck,
+    struck: struckBlocks.length,
+    struckBlocks,
+    loose: {
+      numbers: book.loose.markers.map((m) => ({ block: m.block, at: m.at, len: m.len, printed: m.printed })),
+      notes: [...book.loose.notes],
+    },
   };
 }
 

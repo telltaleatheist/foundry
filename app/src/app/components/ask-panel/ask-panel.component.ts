@@ -12,7 +12,7 @@ import {
   viewChild,
 } from '@angular/core';
 
-import type { AskSession } from '@shared/ask';
+import type { AskHighlight, AskSession } from '@shared/ask';
 
 import { AskService, type AskRunState, type AskStep } from '../../core/ask.service';
 import type { BookStack } from '../../core/book-stacks.service';
@@ -96,8 +96,26 @@ import { JobModelComponent } from '../job-model/job-model.component';
                 <span class="quiet">The model wrote no reply.</span>
               }
             </div>
+            @if (one.session.highlights; as places) {
+              @if (places.length > 0) {
+                <p class="places-head">Found {{ places.length }} {{ places.length === 1 ? 'place' : 'places' }}</p>
+                <ul class="places">
+                  @for (place of places; track $index) {
+                    <li>
+                      <button class="place" [class.on]="isPointed(one.session.id, $index)" (click)="point(one.session.id, $index, place)">
+                        <span class="place-note">{{ place.note }}</span>
+                        <span class="place-quote">{{ place.quote === null ? place.id : '“' + place.quote + '”' }}</span>
+                      </button>
+                    </li>
+                  }
+                </ul>
+              }
+            }
             @if (one.closing; as closing) {
               <p class="note">{{ closing }}</p>
+            }
+            @if (one.latest && one.session.hitLimit === true && live() === null) {
+              <button class="ghost review" [disabled]="busy() || !modelReady() || server() === null" title="Send a follow-up that carries on from the model's note" (click)="keepGoing()">Keep going</button>
             }
             @if (one.latest && one.session.items.length > 0) {
               <button class="ghost review" (click)="ui.openAskReview()">
@@ -111,8 +129,8 @@ import { JobModelComponent } from '../job-model/job-model.component';
               <button class="working active" (click)="liveFolded.set(!liveFolded())">
                 <span class="spinner" aria-hidden="true"></span>
                 Working… {{ now.round > 0 ? 'round ' + now.round + ' of ' + now.maxRounds : '' }}
-                @if (now.struck + now.revised + now.retyped > 0) {
-                  · {{ now.struck }} marked{{ now.revised > 0 ? ', ' + now.revised + ' revised' : '' }}{{ now.retyped > 0 ? ', ' + now.retyped + ' retyped' : '' }}
+                @if (now.tally.length > 0) {
+                  · {{ now.tally }}
                 }
               </button>
               @if (liveOpen()) {
@@ -305,6 +323,23 @@ import { JobModelComponent } from '../job-model/job-model.component';
     .bar { display: flex; align-items: center; gap: 6px; }
     .bar .model { flex: 1; min-width: 0; }
 
+    .places-head { margin: 2px 0 0; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+    .places { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+    .place {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+      width: 100%; padding: 5px 8px; text-align: left;
+      background: var(--bg-input); color: var(--text-primary);
+      border: 1px solid var(--border-subtle); border-radius: var(--radius-md);
+      font-family: inherit; cursor: pointer;
+    }
+    .place:hover { border-color: var(--border-strong); }
+    .place.on { border-color: var(--accent); }
+    .place-note { font-size: 12px; line-height: 1.35; }
+    .place-quote {
+      font-size: 11px; line-height: 1.35; color: var(--text-tertiary);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+    }
+
     .primary, .ghost {
       display: inline-flex; align-items: center; justify-content: center;
       height: 28px; padding: 0 12px;
@@ -440,6 +475,28 @@ export class AskPanelComponent {
     void this.asks.start(tab, this.pane(), message, this.server(), this.model());
   }
 
+  /**
+   * KEEP GOING — a run that stopped at its round limit, continued as a follow-up
+   * on its thread. The model's note says where it was, so nothing it did is lost
+   * and the person has nothing to word.
+   */
+  protected keepGoing(): void {
+    const tab = this.tab();
+    if (tab === null || this.busy() || !this.modelReady() || this.server() === null) return;
+    this.liveFolded.set(false);
+    void this.asks.start(tab, this.pane(), KEEP_GOING, this.server(), this.model());
+  }
+
+  /** Light a place the model pointed at, and go to it; clicking it again puts it down. */
+  protected point(sessionId: string, index: number, place: AskHighlight): void {
+    const tab = this.tab();
+    if (tab !== null) this.asks.point(tab.id, tab.path, placeKey(sessionId, index), place);
+  }
+
+  protected isPointed(sessionId: string, index: number): boolean {
+    return this.asks.pointed()?.key === placeKey(sessionId, index);
+  }
+
   protected stop(): void {
     const tab = this.tab();
     if (tab !== null) void this.asks.cancel(tab.path);
@@ -474,4 +531,12 @@ export class AskPanelComponent {
   protected elapsed(run: AskRunState): string {
     return this.duration(Math.max(0, Math.round((Date.now() - run.startedAt) / 1000)));
   }
+}
+
+/** What Keep going sends: the note carries the rest. */
+const KEEP_GOING = 'Continue where you left off.';
+
+/** A place's key in the lit map — never an analysis finding's. */
+function placeKey(sessionId: string, index: number): string {
+  return `ask:${sessionId}:${index}`;
 }

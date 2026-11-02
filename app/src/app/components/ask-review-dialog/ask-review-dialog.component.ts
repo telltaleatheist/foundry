@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 
-import { askMarkKey, askRowStates, groupByReason, planUndo, retypeSaid, type AskMark } from '@shared/ask';
+import { askMarkKey, askRowStates, groupByReason, planUndo, retypeSaid, structureSaid, type AskMark } from '@shared/ask';
 import type { ReplayedRow } from '@shared/ops';
 import { wordDiff, type ChangeRange } from '@shared/word-diff';
 
@@ -90,10 +90,10 @@ import { UiService } from '../../core/ui.service';
                   @let moved = movedWhy().get(key(item));
                   @let undoing = isUndoing(item);
                   <div class="row" [class.ghost]="moved !== undefined" [class.open]="opened().has(key(item))">
-                    <button class="at" (click)="travel(book, item.id)">
+                    <button class="at" (click)="travel(book, goesTo(item))">
                       <span class="at-id">{{ item.id }}</span>
-                      @if (pageOf(item.id) > 0) {
-                        <span class="at-page">≈ {{ pageOf(item.id) }}</span>
+                      @if (pageOf(goesTo(item)) > 0) {
+                        <span class="at-page">≈ {{ pageOf(goesTo(item)) }}</span>
                       }
                     </button>
 
@@ -104,6 +104,11 @@ import { UiService } from '../../core/ui.service';
                         <p class="q-line">{{ shown(key(item), item.before) }}</p>
                         <p class="q-line q-after q-retype" [class.undoing]="undoing">
                           <span class="arrow">→ </span>{{ retyped(item) }}
+                        </p>
+                      } @else if (item.kind === 'join' || item.kind === 'split' || item.kind === 'restore' || item.kind === 'link') {
+                        <p class="q-line" [class.struck]="item.kind === 'restore' && undoing">{{ shown(key(item), item.before) }}</p>
+                        <p class="q-line q-after q-retype" [class.undoing]="undoing" [title]="renamedOnUndo(item)">
+                          <span class="arrow">→ </span>{{ structure(item) }}
                         </p>
                       } @else {
                         <p class="q-line">
@@ -462,6 +467,30 @@ export class AskReviewDialogComponent {
   /** A mark's row identity: a block's retyping and its revision are two rows. */
   protected key(item: AskMark): string {
     return askMarkKey(item);
+  }
+
+  /**
+   * WHERE A MARK'S BLOCK IS NOW, for its row's jump: a joined block lives in
+   * the one it went into, and a split block in its first half.
+   */
+  protected goesTo(item: AskMark): string {
+    if (item.kind === 'join') return item.into;
+    if (item.kind === 'split') return `${item.id}/1`;
+    return item.id;
+  }
+
+  /** What a join, a split, a restore or a link does, said for its row. */
+  protected structure(item: Extract<AskMark, { kind: 'join' | 'split' | 'restore' | 'link' }>): string {
+    return structureSaid(item);
+  }
+
+  /** The one thing undoing a join or a split cannot give back: the blocks' names. */
+  protected renamedOnUndo(item: AskMark): string {
+    if (item.kind === 'join' || item.kind === 'split') {
+      return 'Undo puts the words, kinds and chapter back exactly; the blocks come back under new names (…/1, …/2).';
+    }
+    if (item.kind === 'link') return 'A link cannot be undone from here yet: this program has no unlink.';
+    return '';
   }
 
   /** What a retyping does, said for its row. */
