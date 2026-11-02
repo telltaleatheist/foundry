@@ -59,7 +59,7 @@ import {
   type CrucibleClient,
 } from '@crucible/client';
 
-import { askToolbox, clip, type AskToolbox } from './ask-tools';
+import { askToolbox, clip, roundSaid, tallySaid, type AskSaid, type AskToolbox } from './ask-tools';
 import { writeAtomically } from './atomic';
 import { openSession, type HeldSession } from './crucible-dispatch';
 import { topRankedCrucible } from './crucible-models';
@@ -514,8 +514,22 @@ export async function loop(
       round,
     });
     if (reply.content !== null && reply.content.trim().length > 0) summary = reply.content.trim();
-    const { struck, revised, retyped } = box.counts();
-    progress(round, reply.content, `Round ${round + 1}: ${calls.length === 0 ? 'no tool calls' : calls.map((c) => c.function.name).join(', ')} · ${struck} marked${revised > 0 ? `, ${revised} revised` : ''}${retyped > 0 ? `, ${retyped} retyped` : ''}`);
+
+    /*
+     * THE CALLS RUN BEFORE THE ROUND IS SAID, so its line can say what each one
+     * did (`read ch 12 (e-400–e-460)`, `search "Caption" → 14`) and its tally
+     * counts this round's marks rather than the last one's. The tools word it
+     * (ask-tools.ts `roundSaid`); this only joins it to the round.
+     */
+    const said: AskSaid[] = [];
+    for (const call of calls) {
+      const result = box.call(call.function.name, call.function.arguments);
+      said.push(result.said);
+      let content = result.content;
+      if (round + 1 >= ASK_MAX_ROUNDS) content += '\n\nNo more tool calls can be made. Write your summary for the person now.';
+      history.push({ message: { role: 'tool', toolCallId: call.id, content }, round });
+    }
+    progress(round, reply.content, `Round ${round + 1}: ${roundSaid(said)} · ${tallySaid(box.counts())}`);
 
     if (calls.length === 0) {
       if (final) return done(round + 1);
@@ -531,26 +545,6 @@ export async function loop(
         continue;
       }
       return done(round + 1);
-    }
-
-    for (const call of calls) {
-      const tool = box.tools.find((t) => t.name === call.function.name);
-      let content: string;
-      try {
-        if (tool === undefined) {
-          throw new Error(`there is no tool "${call.function.name}"; the tools are ${box.tools.map((t) => t.name).join(', ')}`);
-        }
-        const parsed: unknown = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          throw new Error('the arguments must be a JSON object');
-        }
-        content = tool.run(parsed as Record<string, unknown>);
-      } catch (err) {
-        // A refusal is the tool's answer; the model reads it and corrects itself.
-        content = `couldn't run ${call.function.name}: ${(err as Error).message}`;
-      }
-      if (round + 1 >= ASK_MAX_ROUNDS) content += '\n\nNo more tool calls can be made. Write your summary for the person now.';
-      history.push({ message: { role: 'tool', toolCallId: call.id, content }, round });
     }
   }
 }

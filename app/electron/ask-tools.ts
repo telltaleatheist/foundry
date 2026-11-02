@@ -46,12 +46,32 @@ const CATEGORIES: readonly string[] = PDF_BLOCK_CATEGORIES.map((c) => c.id);
 /** The kinds a chapter may be started at: a heading, which is what a chapter's first block is. */
 const HEADINGS: ReadonlySet<string> = new Set(['Title', 'Section-header']);
 
+/**
+ * WHAT ONE CALL DID, for the person watching the run (Owen, 2026-11-02: the
+ * working lines read *"read, read, read, read, etc"*). A verb and what it did it
+ * to — `read` / `ch 12 (e-400–e-460)` — so a round of ten reads can say the verb
+ * once (`roundSaid`). Worded HERE, by the tool that knows its own arguments and
+ * result, and nowhere else; the loop only joins them.
+ */
+export interface AskSaid {
+  readonly verb: string;
+  readonly detail: string;
+}
+
+/** A call's answer: what the model reads, and what the person is shown. */
+export interface AskResult {
+  readonly content: string;
+  readonly said: AskSaid;
+}
+
 /** One tool as the chat sends it, and its handler. */
 export interface AskTool {
   readonly name: string;
   readonly description: string;
   readonly parameters: Readonly<Record<string, unknown>>;
-  run(args: Record<string, unknown>): string;
+  run(args: Record<string, unknown>): AskResult;
+  /** What a call was aimed at, said without running it — the phrase a refusal is shown under. */
+  aim(args: Record<string, unknown>): AskSaid;
 }
 
 type Mark = { kind: 'strike'; reason: string } | { kind: 'text'; reason: string; after: string };
@@ -60,6 +80,12 @@ type Retype = { reason: string; to: string; chapter: AskChapterChange | null };
 /** The tools, and the marks they keep. */
 export interface AskToolbox {
   readonly tools: readonly AskTool[];
+  /**
+   * Run one call as the model sent it — its name and its arguments' JSON. A
+   * refusal is an answer (see the head of this file): its sentence goes back to
+   * the model, and the person is shown the call's aim and "refused".
+   */
+  call(name: string, args: string | null | undefined): AskResult;
   /** Every mark, in reading order. */
   items(): AskMark[];
   /** How many blocks are marked for removal, how many revised, and how many retyped. */
@@ -77,6 +103,76 @@ export interface AskToolbox {
 export function clip(text: string, n: number): string {
   const flat = text.replace(/\s+/g, ' ');
   return flat.length <= n ? flat : `${flat.slice(0, n)}…`;
+}
+
+/** How many details one verb shows in a round before "+N more". */
+const SAID_PER_VERB = 3;
+/** The longest a round's line runs, tally aside. */
+const SAID_MAX = 220;
+
+/**
+ * A ROUND'S CALLS AS ONE LINE: each verb once, in the order it was first used,
+ * with up to three of its details and a count of the rest —
+ * `read ch 3 (e-1–e-40), ch 4 (e-41–e-80), ch 7 (e-200–e-239) +7 more; search "Caption" → 14`.
+ */
+export function roundSaid(said: readonly AskSaid[]): string {
+  if (said.length === 0) return 'no tool calls';
+  const groups = new Map<string, string[]>();
+  for (const s of said) {
+    const held = groups.get(s.verb);
+    if (held === undefined) groups.set(s.verb, [s.detail]);
+    else held.push(s.detail);
+  }
+  const parts = [...groups.entries()].map(([verb, details]) => {
+    const shown = details.filter((d) => d.length > 0);
+    const more = shown.length > SAID_PER_VERB ? ` +${shown.length - SAID_PER_VERB} more` : '';
+    const list = shown.slice(0, SAID_PER_VERB).join(', ');
+    // A verb with nothing to add (outline, twice) says how many times.
+    const times = shown.length === 0 && details.length > 1 ? ` ×${details.length}` : '';
+    return `${verb}${list.length > 0 ? ` ${list}` : ''}${more}${times}`;
+  });
+  return clip(parts.join('; '), SAID_MAX);
+}
+
+/** The running tally after a round: only what there is, or that there is nothing yet. */
+export function tallySaid(counts: { struck: number; revised: number; retyped: number }): string {
+  const parts = [
+    counts.struck > 0 ? `${counts.struck} marked` : '',
+    counts.revised > 0 ? `${counts.revised} revised` : '',
+    counts.retyped > 0 ? `${counts.retyped} retyped` : '',
+  ].filter(Boolean);
+  return parts.length === 0 ? 'nothing marked yet' : parts.join(', ');
+}
+
+/** A reason or a pattern as a round's line quotes it. */
+function quoted(value: unknown, n = 32): string {
+  return typeof value === 'string' && value.trim().length > 0 ? `"${clip(value.trim(), n)}"` : '';
+}
+
+/** Words joined with single spaces, empty ones left out. */
+function words(...parts: string[]): string {
+  return parts.filter((p) => p.length > 0).join(' ');
+}
+
+/** Which blocks a selector's arguments name, said briefly: `e-12, e-40`, `/Fig\./`, `e-1–e-9`, `in ch 4`. */
+function selectorSaid(a: Record<string, unknown>): string {
+  const inChapter = a['chapter'] === undefined ? '' : `in ch ${String(a['chapter'])}`;
+  if (Array.isArray(a['ids'])) {
+    const ids = a['ids'].filter((id): id is string => typeof id === 'string');
+    return words(ids.length <= 2 ? ids.join(', ') : `${ids[0]}…${ids.at(-1)} (${ids.length})`, inChapter);
+  }
+  if (typeof a['pattern'] === 'string') return words(`/${clip(a['pattern'], 24)}/`, inChapter);
+  const range = a['range'];
+  if (typeof range === 'object' && range !== null) {
+    const r = range as Record<string, unknown>;
+    return `${String(r['from'])}–${String(r['to'])}`;
+  }
+  const span = a['span'];
+  if (typeof span === 'object' && span !== null) {
+    const s = span as Record<string, unknown>;
+    return words(`from /${clip(String(s['start']), 16)}/`, inChapter);
+  }
+  return inChapter;
 }
 
 interface Live extends AskBlock {
@@ -297,12 +393,14 @@ export function askToolbox(view: AskView): AskToolbox {
         });
         const before = live.filter((b) => b.chapter === -1).length;
         const { struck, revised, retyped } = counts();
-        return [
+        const content = [
           `"${view.title}": ${live.length} live blocks, ${view.struck} already struck by the person (hidden), ${struck} marked, ${revised} revised, ${retyped} retyped.`,
           before ? `${before} blocks before the first chapter.` : '',
           ...rows,
         ].filter(Boolean).join('\n');
+        return { content, said: { verb: 'outline', detail: '' } };
       },
+      aim: () => ({ verb: 'outline', detail: '' }),
     },
     {
       name: 'read',
@@ -323,6 +421,7 @@ export function askToolbox(view: AskView): AskToolbox {
         let i = a['chapter'] !== undefined ? live.findIndex((b) => b.chapter === Number(a['chapter'])) : position(a['from']);
         if (i < 0) throw new Error(`chapter ${String(a['chapter'])} has no live blocks`);
         const out: string[] = [];
+        const read: Live[] = [];
         let lastChapter = -2;
         for (; i < live.length && out.length < count; i += 1) {
           const b = live[i]!;
@@ -332,9 +431,20 @@ export function askToolbox(view: AskView): AskToolbox {
             lastChapter = b.chapter;
           }
           out.push(line(b, a['full'] === true ? 2000 : 200));
+          read.push(b);
         }
         out.push(i < live.length ? `(next: ${live[i]!.id})` : '(end of book)');
-        return out.join('\n');
+        const first = read[0];
+        const last = read.at(-1);
+        const which = first === undefined ? 'nothing'
+          : first === last ? `(${first.id})` : `(${first.id}–${last!.id})`;
+        return { content: out.join('\n'), said: { verb: 'read', detail: words(this.aim(a).detail, which) } };
+      },
+      aim(a) {
+        const only = typeof a['only'] === 'string' && a['only'] !== 'all' ? a['only'] : '';
+        const where = a['chapter'] !== undefined ? `ch ${String(a['chapter'])}`
+          : typeof a['from'] === 'string' ? `from ${a['from']}` : 'from the start';
+        return { verb: 'read', detail: only.length > 0 ? `${only} in ${where}` : where };
       },
     },
     {
@@ -359,7 +469,16 @@ export function askToolbox(view: AskView): AskToolbox {
         const hits = live.filter((b) => keep(b) && (kind === null || categoryOf(b) === kind)
           && (a['chapter'] === undefined || b.chapter === Number(a['chapter'])) && re.test(textOf(b)));
         const show = Math.min(30, Math.max(1, Number(a['show'] ?? 10)));
-        return `${hits.length} matches (${hits.filter(struckMark).length} already marked). By chapter: ${perChapter(hits) || 'none'}\n${examples(hits, show)}`;
+        return {
+          content: `${hits.length} matches (${hits.filter(struckMark).length} already marked). By chapter: ${perChapter(hits) || 'none'}\n${examples(hits, show)}`,
+          said: { verb: 'search', detail: `${this.aim(a).detail} → ${hits.length}` },
+        };
+      },
+      aim(a) {
+        const only = typeof a['only'] === 'string' && a['only'] !== 'all' ? a['only'] : '';
+        const kind = typeof a['category_is'] === 'string' ? `[${a['category_is']}]` : '';
+        const where = a['chapter'] === undefined ? '' : `in ch ${String(a['chapter'])}`;
+        return { verb: 'search', detail: words(quoted(a['pattern'], 28), only, kind, where) };
       },
     },
     {
@@ -382,18 +501,25 @@ export function askToolbox(view: AskView): AskToolbox {
         const retyped = fresh.filter(retypedMark).length;
         const summary = `${blocks.length} blocks (${blocks.length - fresh.length} already marked). By chapter: ${perChapter(blocks) || 'none'}`;
         if (a['dry_run'] === true) {
-          return `WOULD MARK ${summary}${revised > 0 ? `; ${revised} of them are revised, and marking drops the revision` : ''}`
-            + `${retyped > 0 ? `; ${retyped} of them are retyped, and marking drops the retyping` : ''}\n${examples(blocks, 12)}`;
+          return {
+            content: `WOULD MARK ${summary}${revised > 0 ? `; ${revised} of them are revised, and marking drops the revision` : ''}`
+              + `${retyped > 0 ? `; ${retyped} of them are retyped, and marking drops the retyping` : ''}\n${examples(blocks, 12)}`,
+            said: { verb: 'dry run:', detail: words(`${fresh.length} would be marked`, quoted(reason)) },
+          };
         }
         for (const b of fresh) {
           marks.set(b.id, { kind: 'strike', reason });
           retypes.delete(b.id);
         }
-        return `MARKED ${fresh.length} new as "${reason}". ${summary}.`
-          + (revised > 0 ? ` ${revised} had been revised; the revision is dropped, since the block goes.` : '')
-          + (retyped > 0 ? ` ${retyped} had been retyped; the retyping is dropped, since the block goes.` : '')
-          + ` ${totals()}`;
+        return {
+          content: `MARKED ${fresh.length} new as "${reason}". ${summary}.`
+            + (revised > 0 ? ` ${revised} had been revised; the revision is dropped, since the block goes.` : '')
+            + (retyped > 0 ? ` ${retyped} had been retyped; the retyping is dropped, since the block goes.` : '')
+            + ` ${totals()}`,
+          said: { verb: 'marked', detail: words(String(fresh.length), quoted(reason)) },
+        };
       },
+      aim: (a) => ({ verb: 'mark', detail: words(selectorSaid(a), quoted(a['reason'])) }),
     },
     {
       name: 'revise',
@@ -435,14 +561,26 @@ export function askToolbox(view: AskView): AskToolbox {
         if (after.trim().length === 0) {
           throw new Error(`that would leave ${id} empty; use mark to remove a block`);
         }
-        if (a['dry_run'] === true) return `WOULD REVISE ${id}:\n- ${clip(before, 400)}\n+ ${clip(after, 400)}`;
+        if (a['dry_run'] === true) {
+          return {
+            content: `WOULD REVISE ${id}:\n- ${clip(before, 400)}\n+ ${clip(after, 400)}`,
+            said: { verb: 'dry run:', detail: words(`${id} would change`, quoted(reason)) },
+          };
+        }
         if (after === b.text) {
           marks.delete(id);
-          return `${id} is back to its original text, so it is no longer revised. ${totals()}`;
+          return {
+            content: `${id} is back to its original text, so it is no longer revised. ${totals()}`,
+            said: { verb: 'revised', detail: `${id} back to its original` },
+          };
         }
         marks.set(id, { kind: 'text', reason, after });
-        return `REVISED ${id} as "${reason}":\n- ${clip(before, 300)}\n+ ${clip(after, 300)}\n${totals()}`;
+        return {
+          content: `REVISED ${id} as "${reason}":\n- ${clip(before, 300)}\n+ ${clip(after, 300)}\n${totals()}`,
+          said: { verb: 'revised', detail: words(id, quoted(reason)) },
+        };
       },
+      aim: (a) => ({ verb: 'revise', detail: words(typeof a['id'] === 'string' ? a['id'] : '', quoted(a['reason'])) }),
     },
     /*
      * ── THE SAME CHANGE ACROSS MANY BLOCKS (Owen, 2026-10-30) ───────────────
@@ -505,15 +643,26 @@ export function askToolbox(view: AskView): AskToolbox {
         };
         const where = `By chapter: ${perChapter(changes.map((c) => c.b)) || 'none'}`;
         const refused = emptied > 0 ? ` ${emptied} block(s) skipped because the change would leave them empty (use mark to remove a block).` : '';
+        const pattern = `/${clip(a['find'], 24)}/`;
         if (a['dry_run'] === true) {
-          return `WOULD REVISE ${changes.length} blocks. ${where}.${refused}\n${show(12)}`;
+          return {
+            content: `WOULD REVISE ${changes.length} blocks. ${where}.${refused}\n${show(12)}`,
+            said: { verb: 'dry run:', detail: words(`${changes.length} would change`, pattern, quoted(reason)) },
+          };
         }
         for (const c of changes) {
           if (c.after === c.b.text) marks.delete(c.b.id);
           else marks.set(c.b.id, { kind: 'text', reason, after: c.after });
         }
-        return `REVISED ${changes.length} blocks as "${reason}". ${where}.${refused}\n${show(6)}\n${totals()}`;
+        return {
+          content: `REVISED ${changes.length} blocks as "${reason}". ${where}.${refused}\n${show(6)}\n${totals()}`,
+          said: { verb: 'revised', detail: words(String(changes.length), pattern, quoted(reason)) },
+        };
       },
+      aim: (a) => ({
+        verb: 'revise',
+        detail: words(typeof a['find'] === 'string' ? `/${clip(a['find'], 24)}/` : '', quoted(a['reason'])),
+      }),
     },
     /*
      * ── WHAT KIND OF BLOCK IT IS (Owen, 2026-11-01) ─────────────────────────
@@ -603,10 +752,28 @@ export function askToolbox(view: AskView): AskToolbox {
           const picked = changes.length <= n ? changes : Array.from({ length: n }, (_, i) => changes[Math.floor(i * step)]!);
           return picked.map((c) => `${c.b.id} [${categoryOf(c.b)} → ${c.retype.to}${chapterSaid(c.retype.chapter)}] ${clip(textOf(c.b), 140)}`).join('\n');
         };
-        if (a['dry_run'] === true) return `WOULD RETYPE ${changes.length} blocks. ${where}.${notes}\n${show(12)}`;
+        const chapters = changes.filter((c) => c.retype.chapter?.start === true).length;
+        const toSaid = words(`→ ${to}`, chapters > 0 ? `(${chapters} start chapters)` : '', quoted(reason));
+        if (a['dry_run'] === true) {
+          return {
+            content: `WOULD RETYPE ${changes.length} blocks. ${where}.${notes}\n${show(12)}`,
+            said: { verb: 'dry run:', detail: `${changes.length} would be retyped ${toSaid}` },
+          };
+        }
         for (const c of changes) retypes.set(c.b.id, c.retype);
-        return `RETYPED ${changes.length} blocks as "${reason}". ${where}.${notes}\n${show(6)}\n${totals()}`;
+        return {
+          content: `RETYPED ${changes.length} blocks as "${reason}". ${where}.${notes}\n${show(6)}\n${totals()}`,
+          said: { verb: 'retyped', detail: `${changes.length} ${toSaid}` },
+        };
       },
+      aim: (a) => ({
+        verb: 'retype',
+        detail: words(
+          typeof a['id'] === 'string' ? a['id'] : selectorSaid(a),
+          typeof a['category_is'] === 'string' ? `[${a['category_is']}]` : '',
+          typeof a['category'] === 'string' ? `→ ${a['category']}` : '',
+        ),
+      }),
     },
     {
       name: 'unmark',
@@ -632,8 +799,12 @@ export function askToolbox(view: AskView): AskToolbox {
             if (retypes.delete(b.id)) n += 1;
           }
         }
-        return `Unmarked ${n}. ${totals()}`;
+        return {
+          content: `Unmarked ${n}. ${totals()}`,
+          said: { verb: 'unmarked', detail: words(String(n), byReason ? quoted(a['reason']) : selectorSaid(a)) },
+        };
       },
+      aim: (a) => ({ verb: 'unmark', detail: a['reason'] !== undefined ? quoted(a['reason']) : selectorSaid(a) }),
     },
     {
       name: 'marks_summary',
@@ -653,21 +824,49 @@ export function askToolbox(view: AskView): AskToolbox {
           const retype = retypes.get(b.id);
           if (retype !== undefined) add('category', retype.reason, b);
         }
-        if (groups.size === 0) return 'Nothing marked, revised or retyped yet.';
+        const checked = { verb: 'checked its work', detail: '' };
+        if (groups.size === 0) return { content: 'Nothing marked, revised or retyped yet.', said: checked };
         const said = { strike: 'marked', text: 'revised', category: 'retyped' } as const;
-        return [...groups.entries()].map(([key, g]) => {
+        const content = [...groups.entries()].map(([key, g]) => {
           const reason = key.slice(key.indexOf('\u0000') + 1);
           return `"${reason}" (${said[g.kind]}): ${g.blocks.length}\n${examples(g.blocks, 3)}`;
         }).join('\n\n');
+        return { content, said: checked };
       },
+      aim: () => ({ verb: 'checked its work', detail: '' }),
     },
   ];
 
   return {
     tools,
     counts,
+    call(name, args) {
+      const tool = tools.find((t) => t.name === name);
+      if (tool === undefined) {
+        return {
+          content: `couldn't run ${name}: there is no tool "${name}"; the tools are ${tools.map((t) => t.name).join(', ')}`,
+          said: { verb: name, detail: 'is not a tool' },
+        };
+      }
+      let parsed: Record<string, unknown> = {};
+      try {
+        const value: unknown = args ? JSON.parse(args) : {};
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+          throw new Error('the arguments must be a JSON object');
+        }
+        parsed = value as Record<string, unknown>;
+        return tool.run(parsed);
+      } catch (err) {
+        // A refusal is the tool's answer; the model reads it and corrects itself.
+        const aim = tool.aim(parsed);
+        return {
+          content: `couldn't run ${name}: ${(err as Error).message}`,
+          said: { verb: aim.verb, detail: words(aim.detail, 'refused') },
+        };
+      }
+    },
     state() {
-      const summary = tools.find((t) => t.name === 'marks_summary')!.run({});
+      const summary = tools.find((t) => t.name === 'marks_summary')!.run({}).content;
       return `[The work so far, as the tools hold it now. ${totals()}]\n${summary}`;
     },
     items() {
