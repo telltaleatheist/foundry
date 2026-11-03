@@ -23,6 +23,8 @@ import {
   appliedReadingsPathFor, runApplyReadings, type AppliedReadingsFile,
 } from '../../src/clean/apply-readings.js';
 import { applyFixedReadings, wholeTokenOffsets, type FixedReading } from '../../src/clean/fixed-readings.js';
+import { runCleanText } from '../../src/clean/run.js';
+import type { NumberNormalizerRunner } from '../../src/clean/tts-number-normalizer.js';
 import { TranslationRecords } from '../../src/translate/records.js';
 
 function bookFile(dir: string, texts: readonly string[]): string {
@@ -133,5 +135,55 @@ describe('a readings-only pass', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apply-readings-'));
     bookFile(dir, TEXTS);
     await expect(run(dir, [])).rejects.toThrow(/handed no readings/);
+  });
+});
+
+/*
+ * THE GUIDE APPLIED AFTER ITS CLEANUP (BookForge, Owen 2026-11-02): the cleanup is
+ * handed the guide's places KEPT (`replace` = `find`) and a readings-only pass over
+ * the cleaned book writes them in. Nothing new on this side does it — a kept spot
+ * has always been protected and written by nobody — so this holds the two passes to
+ * composing: the printed word survives a model that rewrites it, at the same spot,
+ * and the pass after finds it there.
+ */
+describe('a cleanup that keeps the guide’s places, then the readings written into what it made', () => {
+  test('the kept word survives the model, and the readings pass after the cleanup reads it', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'apply-after-clean-'));
+    const texts = ['The USMC landed, and the USMC held the ridge for 3 days.', 'A plain line the model is shown.'];
+    bookFile(dir, texts);
+    const guide: FixedReading[] = [
+      { find: 'USMC', replace: 'U S M C', at: 'b1-1', nth: 0 },
+      { find: 'USMC', replace: 'U S M C', at: 'b1-1', nth: 1 },
+    ];
+    // A model that does what a sentence pass does to an acronym.
+    const asked: string[] = [];
+    const meddler: NumberNormalizerRunner = {
+      model: 'a stub that respells the acronym',
+      async generate(input: string): Promise<string> {
+        asked.push(input);
+        if (input.includes('USMC')) return '{"edits": [{"find": "USMC", "replace": "U.S.M.C."}]}';
+        return '{"edits": []}';
+      },
+      async release(): Promise<void> { /* nothing was loaded. */ },
+    };
+    const cleanRecords = path.join(dir, 'clean', 'k.clean.records.jsonl');
+    await runCleanText({
+      bookPath: path.join(dir, 'book.jsonl'), recordsPath: cleanRecords, stampPath: path.join(dir, 'clean', 'k.clean.stamp.json'),
+      endpoint: 'http://fake:8000/v1', runner: meddler, concurrency: 1, gate: 'light', log: () => {},
+      fixedReadings: guide.map((r) => ({ ...r, replace: r.find })),
+    });
+    const cleaned = newestText(cleanRecords, 'b1-1')!;
+    // It was cleaned (the number rules ran, the model was shown the sentence) and the word is as printed.
+    expect(cleaned).toContain('three days');
+    expect(asked.some((input) => input.includes('USMC'))).toBe(true);
+    expect(wholeTokenOffsets(cleaned, 'USMC').length).toBe(2);
+    expect(cleaned).not.toContain('U.S.M.C.');
+
+    // The cleaned step's book, and the guide's readings written into it.
+    const after = fs.mkdtempSync(path.join(os.tmpdir(), 'apply-after-clean-'));
+    bookFile(after, [cleaned, newestText(cleanRecords, 'b1-2') ?? texts[1]!]);
+    const { records, applied } = await run(after, guide);
+    expect(newestText(records, 'b1-1')).toBe(cleaned.replace(/USMC/g, 'U S M C'));
+    expect(applied.applied.map((a) => [a.at, a.nthBefore, a.replace])).toEqual([['b1-1', 0, 'U S M C'], ['b1-1', 1, 'U S M C']]);
   });
 });
