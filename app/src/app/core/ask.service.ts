@@ -270,7 +270,7 @@ export class AskService {
       this.tabOf.set(runId, tab.id);
       const now = this.runFor(projectDir);
       if (now !== null && now.runId === null && now.phase === 'running') this.setRun(projectDir, { ...now, runId });
-      await api.crucible.rememberJobModel('ask', model);
+      await api.crucible.rememberJobModel('ask', model, server ?? undefined);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.setRun(projectDir, failed(message, request));

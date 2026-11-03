@@ -18,6 +18,7 @@ import { AskService, type AskRunState, type AskStep } from '../../core/ask.servi
 import type { BookStack } from '../../core/book-stacks.service';
 import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
+import { api } from '../../core/foundry';
 import { JobModelComponent } from '../job-model/job-model.component';
 
 /**
@@ -185,17 +186,38 @@ import { JobModelComponent } from '../job-model/job-model.component';
             (input)="draft.set(box.value)"
             (keydown.enter)="enter($event)"
           ></textarea>
-          <div class="bar">
-            <div class="model">
-              <app-job-model
-                kind="ask"
-                [topRanked]="true"
-                [value]="model()"
-                (valueChange)="model.set($event)"
-                (ready)="modelReady.set($event)"
-                (listedOn)="server.set($event)"
-              />
+          <!--
+            SERVER, THEN MODEL, EACH THE PANEL'S WIDTH (Owen, 2026-11-02). They
+            used to share the button row, which squeezed the model dropdown to
+            nothing and wrapped its billing line a word a line over the buttons.
+            The model list is the chosen server's own (app-job-model, reading
+            main's one list); changing the server reads it again.
+          -->
+          <div class="pick">
+            <div class="field">
+              <label class="label" for="ask-server">Server</label>
+              @if (servers().length > 0) {
+                <select id="ask-server" [disabled]="busy()" [value]="server() ?? ''" (change)="choose($any($event.target).value)">
+                  @for (one of servers(); track one) {
+                    <option [value]="one" [selected]="one === server()">{{ one }}</option>
+                  }
+                </select>
+              } @else {
+                <select id="ask-server" disabled [title]="serversProblem() ?? 'Add one under Settings › Crucible Servers.'"><option>{{ serversProblem() === null ? 'No Crucible server' : 'Servers could not be read' }}</option></select>
+              }
             </div>
+            <app-job-model
+              kind="ask"
+              [topRanked]="true"
+              [server]="pinned()"
+              [value]="model()"
+              (valueChange)="model.set($event)"
+              (ready)="modelReady.set($event)"
+              (listedOn)="server.set($event)"
+            />
+          </div>
+          <div class="bar">
+            <span class="spacer"></span>
             @if (busy()) {
               <button class="ghost" [disabled]="live()?.runId === null || live()?.phase === 'landing'" (click)="stop()">Stop</button>
             } @else {
@@ -327,8 +349,15 @@ import { JobModelComponent } from '../job-model/job-model.component';
       color: var(--text-tertiary);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .bar { display: flex; align-items: center; gap: 6px; }
-    .bar .model { flex: 1; min-width: 0; }
+    .pick { display: flex; flex-direction: column; gap: 8px; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .label {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--text-tertiary);
+    }
+    .pick select { width: 100%; min-width: 0; }
+    .bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .bar .spacer { flex: 1; }
 
     .chain { margin: 0; font-size: 11px; font-weight: 600; color: var(--accent); }
     .places-head { margin: 2px 0 0; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
@@ -380,8 +409,18 @@ export class AskPanelComponent {
   /** The dropdown's value; `''` is Automatic. */
   protected readonly model = signal('');
   protected readonly modelReady = signal(false);
-  /** The server the dropdown's list was read from, which is where the run goes. */
+  /** The server the model list was read from, which is where the run goes. */
   protected readonly server = signal<string | null>(null);
+  /**
+   * The server the person picked here, or '' before they have — when the
+   * model list asks main for the remembered one, else the top-ranked one, and
+   * says which on `listedOn`.
+   */
+  protected readonly pinned = signal('');
+  /** The registered Crucible servers that are switched on, by name. */
+  protected readonly servers = signal<readonly string[]>([]);
+  /** Why the servers could not be read, said on the empty box. */
+  protected readonly serversProblem = signal<string | null>(null);
   /** Which finished runs' "Working" lines are open, by session id. */
   protected readonly unfolded = signal<ReadonlySet<string>>(new Set());
   /**
@@ -464,7 +503,25 @@ export class AskPanelComponent {
     return this.asks.chainOver().get(tab.path) ?? null;
   });
 
+  /** A server picked: the model list is read from it, keeping the model only if it offers it. */
+  protected choose(name: string): void {
+    if (name.length === 0 || name === this.server()) return;
+    this.pinned.set(name);
+  }
+
+  private async loadServers(): Promise<void> {
+    if (!api) return;
+    try {
+      const view = await api.crucible.settings();
+      this.servers.set(view.servers.filter((one) => one.enabled).map((one) => one.name));
+    } catch (err) {
+      this.servers.set([]);
+      this.serversProblem.set(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   constructor() {
+    void this.loadServers();
     void this.asks.loadPresets();
     // The Presets modal sends with this panel's choice of model, and starts "Add preset" from its box.
     effect(() => {

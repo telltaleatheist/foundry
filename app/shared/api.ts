@@ -1589,7 +1589,8 @@ export interface FoundryApi {
      */
     jobModels(kind: JobModelKind, server: string | null): Promise<JobModelOffer>;
     /** Remember the model this kind of job was just sent with — `''` (Automatic) too. */
-    rememberJobModel(kind: JobModelKind, value: string): Promise<void>;
+    /** Remember the choice — and, where the picker chose one, the server — as this kind's default. */
+    rememberJobModel(kind: JobModelKind, value: string, server?: string): Promise<void>;
     /**
      * Start fetching one subject. Answers the TASK ID — the pull itself reports
      * on {@link onPullProgress}, because a model is gigabytes and no invoke

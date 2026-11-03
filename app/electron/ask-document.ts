@@ -63,7 +63,7 @@ import { askToolbox, clip, roundSaid, tallySaid, type AskSaid, type AskToolbox }
 import { AskHistory } from '../shared/ask-history';
 import { writeAtomically } from './atomic';
 import { openSession, type HeldSession } from './crucible-dispatch';
-import { topRankedCrucible } from './crucible-models';
+import { isWeather, topRankedCrucible } from './crucible-models';
 import { clientFor, crucibleServerNamed, resolveEngine } from './crucible-registry';
 import { bookAtPosition, opsDir } from './projects';
 import { JOB_MODEL_CEILING_B } from '../shared/job-models';
@@ -642,13 +642,8 @@ export function fitter(window: number | null, maxTokens: number, toolChars: numb
 /** Where dropped rounds were. */
 export const DROPPED_NOTE = '[Earlier rounds were removed. The tools hold the work so far.]';
 
-/** True for what a wait can end: a server that did not answer, a 429, a 5xx. */
-export function isWeather(err: unknown): boolean {
-  if (err instanceof CrucibleUnreachable) return true;
-  if (err instanceof CrucibleServerError) return true;
-  if (err instanceof CrucibleRefused) return err.status === 429 || err.status === 408;
-  return false;
-}
+/** True for what a wait can end — one rule, kept beside the model listing that also retries on it. */
+export { isWeather };
 
 /** One chat, with weather retried inside {@link ATTEMPTS} and a growing wait. */
 export async function chatWithin(

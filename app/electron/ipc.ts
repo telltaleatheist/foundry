@@ -4091,8 +4091,8 @@ export function registerIpc(): void {
   ipcMain.handle('crucible:job-models', (_event, kind: JobModelKind, server: string | null) =>
     jobModelOffer(kind, server));
   /** The dialog's choice, remembered after its enqueue succeeded — `''` (Automatic) too. */
-  ipcMain.handle('crucible:remember-job-model', (_event, kind: JobModelKind, value: string) => {
-    rememberJobModel(kind, value);
+  ipcMain.handle('crucible:remember-job-model', (_event, kind: JobModelKind, value: string, server?: string) => {
+    rememberJobModel(kind, value, typeof server === 'string' ? server : undefined);
   });
 
   /**
