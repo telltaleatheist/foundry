@@ -284,7 +284,7 @@ import { JobModelComponent } from '../job-model/job-model.component';
     }
     .plus:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
     .plus:disabled { opacity: 0.4; cursor: default; }
-    .convs { border-bottom: 1px solid var(--border-subtle); }
+    .convs { flex-shrink: 0; border-bottom: 1px solid var(--border-subtle); }
     .conv-head {
       display: flex; align-items: baseline; gap: 6px; width: 100%;
       padding: 4px 12px 6px; background: transparent; border: none; text-align: left; cursor: pointer;
@@ -292,7 +292,7 @@ import { JobModelComponent } from '../job-model/job-model.component';
     .conv-head:hover { background: var(--bg-hover); }
     .conv-now { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .conv-count { font-size: 11px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
-    .conv-list { list-style: none; margin: 0; padding: 0 0 6px; max-height: 40%; overflow-y: auto; }
+    .conv-list { list-style: none; margin: 0; padding: 0 0 6px; max-height: 280px; overflow-y: auto; }
     .conv { display: flex; align-items: center; gap: 4px; padding: 0 8px 0 12px; }
     .conv.on .conv-title { font-weight: 600; }
     .conv-pick {
