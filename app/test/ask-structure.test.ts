@@ -1,4 +1,4 @@
-import { afterAll, expect, mock, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -11,7 +11,10 @@ import * as path from 'node:path';
  * ops that take it back — replayed, so the words that come out are the proof.
  */
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-ask-structure-'));
-mock.module('electron', () => ({app:{getPath:()=>userData,getName:()=> 'Foundry',getVersion:()=> 'test',getAppPath:()=>path.dirname(import.meta.dir),isPackaged:false,on:()=>{},whenReady:async()=>{}},BrowserWindow:class{},dialog:{},ipcMain:{handle:()=>{},on:()=>{}},nativeImage:{},net:{},protocol:{},session:{},shell:{}}));
+// The platform port (electron/platform.ts) in place of the electron mock this
+// file had until 2026-11-04: nothing it imports reaches Electron any more.
+import { useTestPlatform } from './platform-fixture';
+useTestPlatform(()=>userData);
 afterAll(() => fs.rmSync(userData, { recursive: true, force: true }));
 const { askToolbox } = await import('../electron/ask-tools');
 const { askRowStates, planLanding, planUndo, structureSaid, retypeSaid } = await import('../shared/ask');

@@ -13,20 +13,14 @@
  * holds: the release channel owns "latest", the app asks `GET /v1/info` first,
  * and a channel older than what runs is a refusal by name with nothing spawned.
  */
-import { expect, mock, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-mock.module('electron', () => ({
-  app: {
-    getPath: (name: string) => path.join(os.tmpdir(), 'foundry-install-latest-test', name),
-    getName: () => 'Foundry', getVersion: () => 'test',
-    getAppPath: () => path.dirname(import.meta.dir), isPackaged: false,
-    on: () => {}, whenReady: async () => {},
-  },
-  BrowserWindow: class {}, dialog: {}, ipcMain: { handle: () => {}, on: () => {} },
-  nativeImage: {}, net: {}, protocol: {}, session: {}, shell: {},
-}));
+// The platform port (electron/platform.ts) in place of the electron mock this
+// file had until 2026-11-04: nothing it imports reaches Electron any more.
+import { useTestPlatform } from './platform-fixture';
+useTestPlatform((name: string) => path.join(os.tmpdir(), 'foundry-install-latest-test', name));
 
 const bootstrap = await import('@crucible/bootstrap');
 const installer = await import('../electron/crucible-install');

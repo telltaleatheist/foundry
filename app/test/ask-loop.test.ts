@@ -1,4 +1,4 @@
-import { afterAll, expect, mock, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -9,7 +9,10 @@ import * as path from 'node:path';
  * window is still the hard limit; and only weather is retried.
  */
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-ask-loop-'));
-mock.module('electron', () => ({app:{getPath:()=>userData,getName:()=> 'Foundry',getVersion:()=> 'test',getAppPath:()=>path.dirname(import.meta.dir),isPackaged:false,on:()=>{},whenReady:async()=>{}},BrowserWindow:class{},dialog:{},ipcMain:{handle:()=>{},on:()=>{}},nativeImage:{},net:{},protocol:{},session:{},shell:{}}));
+// The platform port (electron/platform.ts) in place of the electron mock this
+// file had until 2026-11-04: nothing it imports reaches Electron any more.
+import { useTestPlatform } from './platform-fixture';
+useTestPlatform(()=>userData);
 const loop = await import('../electron/ask-document');
 const sdk = await import('@crucible/client');
 afterAll(() => fs.rmSync(userData, { recursive: true, force: true }));

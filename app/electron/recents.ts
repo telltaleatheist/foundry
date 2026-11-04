@@ -16,8 +16,7 @@
 import { promises as fsp, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 
-import { app } from 'electron';
-
+import { userDataDir } from './platform';
 import { readJson } from '../shared/json';
 import type { RecentDocument, RecentKind } from '../shared/types';
 
@@ -25,7 +24,7 @@ import type { RecentDocument, RecentKind } from '../shared/types';
 const LIMIT = 20;
 
 function recentsFile(): string {
-  return path.join(app.getPath('userData'), 'recents.json');
+  return path.join(userDataDir(), 'recents.json');
 }
 
 let cache: RecentDocument[] | null = null;
@@ -41,8 +40,10 @@ let cache: RecentDocument[] | null = null;
  */
 function load(): RecentDocument[] {
   if (cache !== null) return cache;
+  // Outside the try, so an unset platform is refused rather than read as "no file".
+  const file = recentsFile();
   try {
-    const parsed: unknown = readJson(readFileSync(recentsFile(), 'utf8'));
+    const parsed: unknown = readJson(readFileSync(file, 'utf8'));
     cache = Array.isArray(parsed) ? parsed.filter(isRecent) : [];
   } catch {
     cache = [];

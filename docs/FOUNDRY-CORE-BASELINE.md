@@ -25,3 +25,18 @@ app/test/crucible-lifecycle.test.ts` → 29 pass, 4 fail), so they are not test-
 
 Not investigated — out of scope for a no-change move; a step that turns one green or red is a
 change to report, either way.
+
+## After step 1 (the four Electron edges cut)
+
+| Check | Result |
+| --- | --- |
+| IPC channel names | `--check`: unchanged (handle 158, invoke 159, listen 20, push 19) |
+| `bun test` | **1335 tests across 70 files: 1331 pass, the same 4 fail** (by name, as above). The +4 tests / +1 file is the new keeper `app/test/lib-no-electron.test.ts`; 1327 + 4 = 1331. The `error:` lines printed by passing tests are the same set as before. |
+| Typecheck | the same one error, `app/shared/types.ts(14,1) TS6133 LlmServerKind` |
+| App build | exit 0, same template / surface keeper lines, same budget warning |
+| Engine bundle | `--check` current (src b004a63d2ce7); `src/` untouched, bundle not rebuilt |
+| Load smoke | `node app/tools/checks/lib-loads-without-electron.cjs`: all 40 compiled library modules in `dist/electron` load with `electron` unresolvable; `readAppSettings()` before `setPlatform` refuses by name; `window.js` (control) is refused |
+
+19 of the 20 `app/test` files that mocked `electron` no longer do — they call
+`useTestPlatform` (app/test/platform-fixture.ts) with the directories their mock's `getPath`
+returned. `hosted-runner.test.ts` keeps its mock because it imports `mount.ts` (app-side).

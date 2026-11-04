@@ -22,7 +22,7 @@
  * awaits and then fails: the await is what the test needs, and a failed row is
  * what lets it observe the row settle without an engine.
  */
-import { beforeAll, expect, mock, test } from 'bun:test';
+import { beforeAll, expect, test } from 'bun:test';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
@@ -30,25 +30,10 @@ import type { GenerateRequest, Job } from '../shared/types';
 
 const APP_DIR = path.dirname(import.meta.dir);
 
-mock.module('electron', () => ({
-  app: {
-    getPath: (name: string) => path.join(os.tmpdir(), 'foundry-cpu-lane-pump-test', name),
-    getName: () => 'Foundry',
-    getVersion: () => '0.0.0-test',
-    getAppPath: () => APP_DIR,
-    isPackaged: false,
-    on: () => {},
-    whenReady: async () => {},
-  },
-  BrowserWindow: class {},
-  dialog: {},
-  ipcMain: { handle: () => {}, on: () => {} },
-  nativeImage: {},
-  net: {},
-  protocol: {},
-  session: {},
-  shell: {},
-}));
+// The platform port (electron/platform.ts) in place of the electron mock this
+// file had until 2026-11-04: nothing it imports reaches Electron any more.
+import { useTestPlatform } from './platform-fixture';
+useTestPlatform((name: string) => path.join(os.tmpdir(), 'foundry-cpu-lane-pump-test', name));
 
 type Queue = typeof import('../electron/job-queue');
 let queue: Queue;

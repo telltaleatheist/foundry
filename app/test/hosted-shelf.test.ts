@@ -14,11 +14,13 @@
  * and typechecked by neither program, which is the honest trade: the gates keep
  * measuring what they were written to measure.
  *
- * ── The electron mock ──────────────────────────────────────────────────────
+ * ── The platform, which used to be an electron mock ────────────────────────
  *
- * `job-queue` reaches `app.getPath` through half of main, and `electron` outside
- * an Electron process is a path string rather than a module. The mock is the
- * smallest surface that lets the graph load; nothing under test touches it.
+ * `job-queue` reached `app.getPath` through half of main, and `electron` outside
+ * an Electron process is a path string rather than a module, so this file mocked
+ * it. Since 2026-11-04 those paths come through electron/platform.ts and the
+ * graph loads without Electron; `useTestPlatform` hands it the same directories
+ * the mock did. Nothing under test touches it.
  *
  * The reading server needs none: a pump that finds nothing to do declares drain,
  * and `noteQueueIdle` answers immediately unless this process OWNS a server
@@ -33,25 +35,10 @@ import type { CleanRequest, GenerateRequest, Job } from '../shared/types';
 
 const APP_DIR = path.dirname(import.meta.dir);
 
-mock.module('electron', () => ({
-  app: {
-    getPath: (name: string) => path.join(os.tmpdir(), 'foundry-hosted-shelf-test', name),
-    getName: () => 'Foundry',
-    getVersion: () => '0.0.0-test',
-    getAppPath: () => APP_DIR,
-    isPackaged: false,
-    on: () => {},
-    whenReady: async () => {},
-  },
-  BrowserWindow: class {},
-  dialog: {},
-  ipcMain: { handle: () => {}, on: () => {} },
-  nativeImage: {},
-  net: {},
-  protocol: {},
-  session: {},
-  shell: {},
-}));
+// The platform port (electron/platform.ts) in place of the electron mock this
+// file had until 2026-11-04: nothing it imports reaches Electron any more.
+import { useTestPlatform } from './platform-fixture';
+useTestPlatform((name: string) => path.join(os.tmpdir(), 'foundry-hosted-shelf-test', name));
 
 type Queue = typeof import('../electron/job-queue');
 type Host = typeof import('../electron/host');

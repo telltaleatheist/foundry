@@ -7,9 +7,10 @@
  *
  * `host.ts` is a LEAF — it imports one type, so anything at the bottom of the
  * graph may ask "am I hosted" without a cycle. This holds mutable per-project
- * state and pushes at windows, which means it imports `window.ts`, and putting
- * that inside the leaf would drag a BrowserWindow into `app-settings.ts`. Two
- * small modules, one of which stays importable from everywhere.
+ * state and pushes at windows (through `platform.ts` since 2026-11-04; it
+ * imported `window.ts` before), and putting that inside the leaf would make
+ * every importer of `host` a pusher too. Two small modules, one of which stays
+ * importable from everywhere.
  *
  * ── What lives here, and how long ───────────────────────────────────────────
  *
@@ -39,7 +40,14 @@ import type {
   HostInvokeContext, HostNodeAction, HostOffers, HostOperationOffer, HostOperationState, HostStatus,
 } from '../shared/host-ops';
 import { fold } from '../shared/original';
-import { broadcast } from './window';
+/*
+ * THE PUSH COMES THROUGH THE PLATFORM PORT, not from `window.ts` (2026-11-04).
+ * Importing the window module here was the one line that dragged BrowserWindow
+ * into everything that reaches `host` — app-settings, the Crucible files, the
+ * queue. `mountFoundry` hands `platform.ts` the window module's own broadcast,
+ * so a push does exactly what it did; only the import stopped being Electron.
+ */
+import { broadcast } from './platform';
 
 /**
  * ONE OPERATION A HOST CONTRIBUTES — the offer, plus the doing.

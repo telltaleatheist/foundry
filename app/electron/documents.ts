@@ -13,44 +13,18 @@ import * as path from 'node:path';
 import { BrowserWindow, dialog } from 'electron';
 
 import { readPdfMetadata } from './engine';
+import { admit } from './openable';
 import { importDocument, isManaged, noteProjectTitle } from './projects';
 import { forgetRecent, rememberRecent } from './recents';
 import { foundryWindow } from './window';
 import type { RecentKind } from '../shared/types';
 
-/**
- * The renderer is a page on http://localhost:4260 (dev) or file:// (packaged),
- * and neither may load an arbitrary `file://` URL as an image. So the app serves
- * the bytes itself, on a scheme of its own — and what it will serve is what is
- * in here.
- *
- * The list is ALLOW-LIST rather than path-check: a renderer that was talked into
- * asking for `C:\Users\…\id_rsa` gets a refusal rather than meeting a cleverer
- * path check that has to stay right forever.
+/*
+ * THE ALLOW-LIST LIVES IN openable.ts (2026-11-04), so the work code can admit a
+ * path without importing this file's window half. Re-exported here because this
+ * is still the door every open passes through, and ipc.ts asks it for both.
  */
-const openable = new Set<string>();
-
-/**
- * The allow-list question, asked in ONE place — for `document:read-bytes`, which
- * hands an opened document to the app's own pdf.js viewer, and for every other
- * door that reads a path the renderer named. A second copy of
- * `openable.has(path.resolve(…))` is a second authorization path, and the day one
- * copy learns a new rule is the day the other one is a hole. Null means no.
- */
-export function admitted(candidate: string): string | null {
-  const resolved = path.resolve(candidate);
-  return openable.has(resolved) ? resolved : null;
-}
-
-/**
- * MAIN RESOLVED IT, SO MAIN ADMITS IT — for the paths this process composes and
- * then hands to a renderer that is about to open them. Never for a path the
- * renderer named: a door that grants access for being asked a question is not a
- * gate.
- */
-export function admit(target: string): void {
-  openable.add(path.resolve(target));
-}
+export { admit, admitted } from './openable';
 
 /** The two extensions this app opens, and the only two the allow-list admits. */
 const OPENABLE_EXTENSIONS: Readonly<Record<string, RecentKind>> = {
@@ -76,7 +50,7 @@ export async function openDocument(candidate: string): Promise<string | null> {
   } catch {
     return null;
   }
-  openable.add(resolved);
+  admit(resolved);
   // Recorded here and only here, for the same reason the allow-list is: this is
   // the one function every open passes through. A document already inside a
   // project is remembered too, and flagged, because a tab closed by accident has
@@ -138,7 +112,7 @@ export async function openDocument(candidate: string): Promise<string | null> {
      */
     const working = path.join(imported.dir, ...imported.entry.split('/'));
     if (working.toLowerCase() !== resolved.toLowerCase() && await stillThere(working)) {
-      openable.add(working);
+      admit(working);
       /*
        * AND RECENTS FOLLOWS IT. The row is what Home and the reopen path use, so
        * a row naming the outside original would send somebody straight back into

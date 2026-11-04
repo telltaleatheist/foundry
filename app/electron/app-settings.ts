@@ -17,10 +17,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { app } from 'electron';
-
 import { writeAtomicallySync } from './atomic';
 import { hostedLibraryDir } from './host';
+import { userDataDir } from './platform';
 import { clampAskPresets, clampCheckedPresets, type AskPreset } from '../shared/ask-presets';
 import { readJson } from '../shared/json';
 import {
@@ -378,13 +377,18 @@ export function defaultLibraryDir(): string {
  */
 
 function settingsFile(): string {
-  return path.join(app.getPath('userData'), 'app-settings.json');
+  // userData through the platform port (2026-11-04), asked at the moment of use
+  // exactly as `app.getPath` was — see platform.ts.
+  return path.join(userDataDir(), 'app-settings.json');
 }
 
 /** Whatever the file holds, as an object; null when absent or unreadable. */
 function readRaw(): Record<string, unknown> | null {
+  // The path is asked OUTSIDE the try: an unset platform is misconfiguration and
+  // must surface as its own sentence, not read as an absent file and defaults.
+  const file = settingsFile();
   try {
-    const parsed: unknown = readJson(fs.readFileSync(settingsFile(), 'utf8'));
+    const parsed: unknown = readJson(fs.readFileSync(file, 'utf8'));
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : null;

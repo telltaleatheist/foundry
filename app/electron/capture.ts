@@ -58,8 +58,6 @@ import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
 import { promisify } from 'node:util';
-import { app, nativeImage } from 'electron';
-
 import { PDFDocument } from 'pdf-lib';
 
 import type {
@@ -97,6 +95,13 @@ import { GUTTER_RULE, gutterOf, lumaFromBgra } from '../shared/gutter';
 import { beginMint, cancelHere, mintCancelled, noteMintPage, settleMint } from './job-queue';
 import { currentArrangement, ledgerOf, readManifest, recordMint } from './projects';
 import { writeAtomically } from './atomic';
+/*
+ * THE TEMP DIR AND THE IMAGE CODEC COME THROUGH THE PLATFORM PORT (2026-11-04).
+ * They were `app.getPath('temp')` and `nativeImage`, the only two reasons this
+ * file imported Electron; `mountFoundry` hands over Electron's own `nativeImage`,
+ * so every decode, resize and encode below runs exactly the code it ran before.
+ */
+import { images, tempDir, type PlatformImage } from './platform';
 
 // Re-exported so a caller that already imports this module does not need to
 // know the constant lives one directory over.
@@ -992,7 +997,7 @@ async function gutteredRecipe(projectDir: string, recipe: CaptureRecipe): Promis
     // `createFromPath` answers an empty image for a file it cannot read as well
     // as for one that is not there, and both mean the same thing here: leave
     // the field absent and let a later open have another go.
-    const image = nativeImage.createFromPath(path.join(derived, photo.thumb));
+    const image = images().createFromPath(path.join(derived, photo.thumb));
     if (image.isEmpty()) {
       photos.push(photo);
       continue;
@@ -1276,9 +1281,9 @@ const THUMB_EDGE = 640;
  * two copies of one picture that must agree, since the gutter is a fraction of
  * the frame the person is looking at. One resize, two readings.
  */
-function thumbnailOf(png: Buffer, image: { width: number; height: number }): Electron.NativeImage {
+function thumbnailOf(png: Buffer, image: { width: number; height: number }): PlatformImage {
   const wide = image.width >= image.height;
-  return nativeImage.createFromBuffer(png).resize({
+  return images().createFromBuffer(png).resize({
     ...(wide ? { width: THUMB_EDGE } : { height: THUMB_EDGE }),
     quality: 'best',
   });
@@ -1299,7 +1304,7 @@ function thumbnailOf(png: Buffer, image: { width: number; height: number }): Ele
  * `toBitmap()` is BGRA at scale factor 1, which is what an image built from a
  * buffer has; `lumaFromBgra` is where that order is written down.
  */
-function gutterFromImage(image: Electron.NativeImage): CaptureGutter | null {
+function gutterFromImage(image: PlatformImage): CaptureGutter | null {
   if (image.isEmpty()) return null;
   const { width, height } = image.getSize();
   if (width < 2 || height < 2) return null;
@@ -1660,7 +1665,7 @@ export async function intakePhotos(projectDir: string, paths: readonly string[])
         frame = { width: decoded.width, height: decoded.height };
         png = await encodePng(decoded);
       } else {
-        const image = nativeImage.createFromBuffer(bytes);
+        const image = images().createFromBuffer(bytes);
         if (image.isEmpty()) {
           refused.push({ file: name, why: 'it could not be decoded as an image — the file may be damaged' });
           continue;
@@ -2201,7 +2206,7 @@ const PDF_STAGE = 'foundry-pdf-pages';
 const pdfStages = new Map<string, string>();
 
 function pdfStageRoot(): string {
-  return path.join(app.getPath('temp'), PDF_STAGE);
+  return path.join(tempDir(), PDF_STAGE);
 }
 
 /**

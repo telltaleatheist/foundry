@@ -12,7 +12,10 @@ import * as path from 'node:path';
  * remembered value, and the door that reads one server's two lists.
  */
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-job-models-'));
-mock.module('electron', () => ({app:{getPath:()=>userData,getName:()=> 'Foundry',getVersion:()=> 'test',getAppPath:()=>path.dirname(import.meta.dir),isPackaged:false,on:()=>{},whenReady:async()=>{}},BrowserWindow:class{},dialog:{},ipcMain:{handle:()=>{},on:()=>{}},nativeImage:{},net:{},protocol:{},session:{},shell:{}}));
+// The platform port (electron/platform.ts) in place of the electron mock this
+// file had until 2026-11-04: nothing it imports reaches Electron any more.
+import { useTestPlatform } from './platform-fixture';
+useTestPlatform(()=>userData);
 const rule = await import('../shared/job-models');
 const offer = await import('../shared/job-model-offer');
 const settings = await import('../electron/app-settings');

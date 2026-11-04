@@ -88,8 +88,6 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { constants as fsconst, createReadStream, promises as fsp, type Dirent } from 'node:fs';
 import * as path from 'node:path';
 
-import { app } from 'electron';
-
 /*
  * THE ONE FOREIGN LIBRARY IN THIS FILE, and it is here for the heal. A project
  * minted before Wave 41 holds page images and no container; `pagesAsPdf` binds

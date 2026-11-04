@@ -6,22 +6,14 @@
  * only the host knows, so an operation may register `stateAt` and the offer
  * says `stateful` (`host-ops:state`, electron/host-ops.ts).
  */
-import { expect, mock, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-mock.module('electron', () => ({
-  app: { getPath: (name: string) => path.join(os.tmpdir(), 'foundry-host-op-state-test', name), on: () => {} },
-  BrowserWindow: { getAllWindows: () => [] },
-  ipcMain: { handle: () => {}, on: () => {} },
-  dialog: {},
-  nativeImage: {},
-  net: {},
-  protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} },
-  screen: {},
-  session: {},
-  shell: {},
-}));
+// The platform port (electron/platform.ts) in place of the electron mock this
+// file had until 2026-11-04: nothing it imports reaches Electron any more.
+import { useTestPlatform } from './platform-fixture';
+useTestPlatform((name: string) => path.join(os.tmpdir(), 'foundry-host-op-state-test', name));
 
 const { hostOperationOffers, hostOperationStates, recordHostOperations } = await import('../electron/host-ops');
 

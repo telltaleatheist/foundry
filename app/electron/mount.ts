@@ -92,7 +92,7 @@ import * as path from 'node:path';
 import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 
-import { net, protocol, session } from 'electron';
+import { app, nativeImage, net, protocol, session } from 'electron';
 
 import { bookFigureFile } from './book';
 import { captureServedFile } from './capture';
@@ -103,9 +103,10 @@ import {
 } from './host-ops';
 import { connectLocalEngine, registerIpc } from './ipc';
 import * as queue from './job-queue';
+import { setPlatform } from './platform';
 import { ledgerOf, listProjects, onImportLanded, projectDirOf, readManifest } from './projects';
 import { identifyCleanup, identifyExport } from './workspace';
-import { foundryWindow, isDev, openWindow, whenRendererReady } from './window';
+import { broadcast, foundryWindow, isDev, openWindow, whenRendererReady } from './window';
 import { stepOf } from '../shared/ledger';
 import { deferralFor } from '../shared/pending';
 import { carriedFromPlan, DEFAULT_CLEAN_TEXT_MODEL, DEFAULT_OLLAMA_ENDPOINT } from '../shared/pipeline';
@@ -487,6 +488,21 @@ function applyContentSecurityPolicy(): void {
  * until two Foundries were fighting over one queue.
  */
 export function mountFoundry(host?: FoundryHost): void {
+  /*
+   * ── THE PLATFORM FIRST, before anything below can reach it ─────────────────
+   *
+   * The work code asks `platform.ts` for userData, temp, the window push and the
+   * image codec instead of importing Electron (2026-11-04, FOUNDRY-CORE-PLAN
+   * step 1). This is where the Electron answers are handed over, for the
+   * standalone shell and a host alike — both mount through here, so neither can
+   * forget. The paths stay functions so they are asked when used, as before.
+   */
+  setPlatform({
+    userDataDir: () => app.getPath('userData'),
+    tempDir: () => app.getPath('temp'),
+    broadcast,
+    image: nativeImage,
+  });
   /*
    * ── EVERY EXPORT THAT LANDS, HEARD ONCE AND PASSED ON TWICE ────────────────
    *

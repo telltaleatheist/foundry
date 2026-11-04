@@ -42,8 +42,7 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 
-import { app } from 'electron';
-
+import { userDataDir } from './platform';
 import type { CudaFacts, SystemProfile } from '../shared/types';
 
 /** Long enough for a cold nvidia-smi on a laptop; short enough to not be a hang. */
@@ -169,7 +168,9 @@ async function probeCuda(platform: NodeJS.Platform): Promise<CudaFacts> {
  */
 async function probeFreeDiskMB(): Promise<number | null> {
   const candidates: string[] = [];
-  try { candidates.push(app.getPath('userData')); } catch { /* not ready; try home */ }
+  // The platform's userData, which throws before the mount set it — the same
+  // "not ready; try home" this always had for `app.getPath` (2026-11-04).
+  try { candidates.push(userDataDir()); } catch { /* not ready; try home */ }
   candidates.push(os.homedir());
 
   for (const dir of candidates) {

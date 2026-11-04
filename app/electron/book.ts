@@ -62,7 +62,8 @@ import { promises as fsp } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { admit } from './documents';
+// From the allow-list's own file, not documents.ts — that one holds the window.
+import { admit } from './openable';
 import { writeBookFile, writeEpubBook } from './engine';
 import { writeAtomically } from './atomic';
 import { CurateBridgeError, rekeyCuration } from '../shared/curate-bridge';

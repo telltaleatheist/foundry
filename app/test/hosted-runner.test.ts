@@ -60,6 +60,9 @@ mock.module('electron', () => ({
   session: {},
   shell: {},
 }));
+// The work code asks the platform port, not this mock, for its paths (2026-11-04).
+import { useTestPlatform } from './platform-fixture';
+useTestPlatform((name: string) => path.join(os.tmpdir(), 'foundry-hosted-runner-test', name));
 
 type Queue = typeof import('../electron/job-queue');
 type Workspace = typeof import('../electron/workspace');

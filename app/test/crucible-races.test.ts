@@ -2,16 +2,10 @@ import { afterEach, expect, mock, spyOn, test } from 'bun:test';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-mock.module('electron', () => ({
-  app: {
-    getPath: (name: string) => path.join(os.tmpdir(), 'foundry-crucible-races-test', name),
-    getName: () => 'Foundry', getVersion: () => 'test',
-    getAppPath: () => path.dirname(import.meta.dir), isPackaged: false,
-    on: () => {}, whenReady: async () => {},
-  },
-  BrowserWindow: class {}, dialog: {}, ipcMain: { handle: () => {}, on: () => {} },
-  nativeImage: {}, net: {}, protocol: {}, session: {}, shell: {},
-}));
+// The platform port (electron/platform.ts) in place of the electron mock this
+// file had until 2026-11-04: nothing it imports reaches Electron any more.
+import { useTestPlatform } from './platform-fixture';
+useTestPlatform((name: string) => path.join(os.tmpdir(), 'foundry-crucible-races-test', name));
 
 const registry = await import('../electron/crucible-registry');
 const dispatch = await import('../electron/crucible-dispatch');

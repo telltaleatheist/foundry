@@ -6,29 +6,14 @@
  * that mattered at the bottom. `engineSentence` takes the closing
  * `foundry: …` block; the full stderr still goes to the console.
  */
-import { expect, mock, test } from 'bun:test';
+import { expect, test } from 'bun:test';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-mock.module('electron', () => ({
-  app: {
-    getPath: (name: string) => path.join(os.tmpdir(), 'foundry-engine-sentence-test', name),
-    getName: () => 'Foundry',
-    getVersion: () => '0.0.0-test',
-    getAppPath: () => path.dirname(import.meta.dir),
-    isPackaged: false,
-    on: () => {},
-    whenReady: async () => {},
-  },
-  BrowserWindow: class {},
-  dialog: {},
-  ipcMain: { handle: () => {}, on: () => {} },
-  nativeImage: {},
-  net: {},
-  protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} },
-  session: {},
-  shell: {},
-}));
+// The platform port (electron/platform.ts) in place of the electron mock this
+// file had until 2026-11-04: nothing it imports reaches Electron any more.
+import { useTestPlatform } from './platform-fixture';
+useTestPlatform((name: string) => path.join(os.tmpdir(), 'foundry-engine-sentence-test', name));
 
 const { engineSentence } = await import('../electron/job-queue');
 
