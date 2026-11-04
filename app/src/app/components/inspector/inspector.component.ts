@@ -18,7 +18,7 @@ import { ProjectsService } from '../../core/projects.service';
 import { BookStacksService, type BookStack } from '../../core/book-stacks.service';
 import { StageService } from '../../core/stage.service';
 import { AskPanelComponent } from '../ask-panel/ask-panel.component';
-import { chapterSpan } from '../book-view/flow';
+import { chapterSpan } from '@shared/flow';
 
 /**
  * The inspector — what the focused book IS, down the right-hand side.

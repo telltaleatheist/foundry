@@ -20,8 +20,8 @@
  * something invisible.
  */
 
-import type { BookSeam } from '@shared/book';
-import type { ReplayedRow } from '@shared/ops';
+import type { BookSeam } from './book';
+import type { ReplayedRow } from './ops';
 
 /** Two blocks in reading order, which is the order a join has to happen in. */
 export interface FlowPair {

@@ -5,7 +5,7 @@
  */
 import { expect, test } from 'bun:test';
 
-import { chapterSpan } from '../src/app/components/book-view/flow';
+import { chapterSpan } from '../shared/flow';
 
 const row = (id: string, extra: Record<string, unknown> = {}) =>
   ({ id, category: 'Text', text: id, ...extra }) as never;

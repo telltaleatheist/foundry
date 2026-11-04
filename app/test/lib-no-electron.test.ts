@@ -28,6 +28,16 @@
  *
  * shared/ is stricter, because the renderer compiles it: no `node:` builtins,
  * no packages, nothing outside shared/ (plan §1b — true today, now enforced).
+ *
+ * browser/ (step 2, 2026-11-04) is the renderer-only half of the library — the
+ * modules that need a canvas — and is held to the same rule with one widening:
+ * it may import shared/ as well as itself, and still nothing node, nothing
+ * electron, no packages.
+ *
+ * STEP 2 LEFT APP_SIDE AS IT WAS. ipc.ts, mount.ts and documents.ts gave their
+ * work to library files (doors-*.ts, mount-work.ts, document-intake.ts), and each
+ * still keeps a dialog, a window or the scheme registration, so each still
+ * reaches electron and stays listed.
  */
 import { expect, test } from 'bun:test';
 import * as fs from 'node:fs';
@@ -37,6 +47,7 @@ import * as ts from 'typescript';
 const APP = path.dirname(import.meta.dir);
 const ELECTRON = path.join(APP, 'electron');
 const SHARED = path.join(APP, 'shared');
+const BROWSER = path.join(APP, 'browser');
 
 const APP_SIDE = new Set([
   'main.ts',
@@ -100,6 +111,31 @@ test('no library file under app/electron reaches electron, directly or transitiv
 test('every APP_SIDE file still reaches electron (else it is library and leaves the list)', () => {
   const stale = [...APP_SIDE].filter((f) => chainToElectron(path.join(ELECTRON, f)) === null);
   expect(stale).toEqual([]);
+});
+
+function importsOutside(root: string, allowed: readonly string[]): string[] {
+  const offenders: string[] = [];
+  const visit = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { visit(full); continue; }
+      if (!entry.name.endsWith('.ts')) continue;
+      for (const spec of importsOf(full)) {
+        const where = path.relative(APP, full).replace(/\\/g, '/');
+        if (!spec.startsWith('.')) { offenders.push(`${where} imports '${spec}'`); continue; }
+        const target = resolveLocal(full, spec);
+        if (allowed.every((dir) => path.relative(dir, target).startsWith('..'))) {
+          offenders.push(`${where} imports '${spec}' (outside ${allowed.map((dir) => path.basename(dir) + '/').join(' and ')})`);
+        }
+      }
+    }
+  };
+  visit(root);
+  return offenders;
+}
+
+test('browser/ imports nothing but shared/ and browser/ (no node:, no packages, no electron)', () => {
+  expect(importsOutside(BROWSER, [BROWSER, SHARED])).toEqual([]);
 });
 
 test('shared/ imports nothing but shared/ (no node:, no packages, no electron)', () => {

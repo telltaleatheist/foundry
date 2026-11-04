@@ -14,7 +14,7 @@ import { analysisCategoryHue, analysisCategoryName } from '@shared/analysis-cate
 import { AnalysisViewService } from '../../core/analysis-view.service';
 import { BookStacksService } from '../../core/book-stacks.service';
 import { StageService } from '../../core/stage.service';
-import type { AnalysisHit } from '../../core/analysis';
+import type { AnalysisHit } from '@shared/analysis';
 
 /**
  * THE HITS PANEL — what the analysis found, in the slot Compare would have had.

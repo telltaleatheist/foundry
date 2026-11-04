@@ -12,7 +12,7 @@ import {
   signal,
 } from '@angular/core';
 
-import { Rectifier } from '../capture-editor/rectify';
+import { Rectifier } from '@browser/rectify';
 import { CaptureCardComponent } from './capture-card.component';
 
 /** One page on the table, as the grid needs to draw it. */

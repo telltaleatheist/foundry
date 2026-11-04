@@ -19,7 +19,7 @@ import type { CaptureQuad, CaptureSplit } from '@shared/types';
 // them.
 import type { CaptureScope } from '../../core/capture.service';
 import { CapturePageEditorComponent } from './capture-page-editor.component';
-import { type Dimensions, type FractionQuad } from './geometry';
+import { type Dimensions, type FractionQuad } from '@browser/geometry';
 
 /**
  * ONE PHOTOGRAPH IN THE FILMSTRIP along the modal's foot.

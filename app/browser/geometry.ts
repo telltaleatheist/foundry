@@ -106,7 +106,7 @@ export function toFractions(quad: PixelQuad, of: Dimensions): FractionQuad {
  * array by one, four turns are the identity EXACTLY with no floating-point
  * drift, and negative turns are anticlockwise.
  */
-export { turnQuad as rotate } from '@shared/capture';
+export { turnQuad as rotate } from '../shared/capture';
 
 /*
  * THE WHOLE FRAME AND THE SPLIT GEOMETRY USED TO BE HERE and are not any more.

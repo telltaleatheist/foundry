@@ -40,3 +40,16 @@ change to report, either way.
 19 of the 20 `app/test` files that mocked `electron` no longer do — they call
 `useTestPlatform` (app/test/platform-fixture.ts) with the directories their mock's `getPath`
 returned. `hosted-runner.test.ts` keeps its mock because it imports `mount.ts` (app-side).
+
+## After step 2 (ipc.ts, mount.ts and documents.ts thinned; six renderer modules moved)
+
+| Check | Result |
+| --- | --- |
+| IPC channel names | handle 158, invoke 159, listen 20, push 19 — every name and every handle/invoke/listen row unchanged. **One row's FILE column moved**, and it is the one push whose body left ipc.ts: `push acts:gates-changed` is now `electron/doors-crucible.ts` (`gatesChanged`, which broadcasts through platform's `broadcast` — the same function mount hands over). `--check` showed exactly that `-`/`+` pair and nothing else; the baseline was re-written with `--write` to record it. Every other push stayed in ipc.ts because its `broadcast(...)` is a wiring line that stayed. |
+| `bun test` | **1336 tests across 70 files: 1332 pass, the same 4 fail** (by name, as above). +1 test: `lib-no-electron.test.ts` now also holds `app/browser/` to importing only `browser/` and `shared/`. |
+| Typecheck | the same one error, `app/shared/types.ts(14,1) TS6133 LlmServerKind` |
+| App build | exit 0, same template keeper line (106 literals), same surface keeper line (12 files, 6 checked), same budget warning (initial 1.11 MB) |
+| Engine bundle | `--check` current (src b004a63d2ce7); `src/` untouched |
+| Load smoke | `lib-loads-without-electron.cjs`: **50** library modules load with electron unresolvable (40 + `doors-*.ts` ×8, `mount-work`, `document-intake`); refusal before `setPlatform` and the `window.js` control as before |
+| Exported surface | mount.js, ipc.js, documents.js: identical runtime keys (`typeof`, arity) with a stub electron, and identical names + checker type strings from the TS program, before vs after |
+| suite-order.sh | 3 shuffled orders: every order 1332 pass / the same 4 fail, nothing order-dependent (the script reports "failed" because it counts the 4 pre-existing failures) |

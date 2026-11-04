@@ -14,7 +14,7 @@ import {
   type AnalysisHit,
   type AnalysisLegendEntry,
   type LitRange,
-} from './analysis';
+} from '@shared/analysis';
 
 /**
  * THE ANALYSIS BEING LOOKED AT — the report, and the one placement both surfaces

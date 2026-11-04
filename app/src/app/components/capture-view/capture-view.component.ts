@@ -21,7 +21,7 @@ import {
   CaptureEditorModalComponent,
   type EditorFrame,
 } from '../capture-editor/capture-editor-modal.component';
-import type { FractionQuad } from '../capture-editor/geometry';
+import type { FractionQuad } from '@browser/geometry';
 import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
 import { CaptureRailComponent, type Population } from '../capture-rail/capture-rail.component';
 import { LedgerService } from '../../core/ledger.service';

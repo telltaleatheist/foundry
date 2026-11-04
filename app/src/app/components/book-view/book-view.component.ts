@@ -39,15 +39,15 @@ import { AnalysisViewService } from '../../core/analysis-view.service';
 import { AskService } from '../../core/ask.service';
 import { ChangesService } from '../../core/changes.service';
 import { StageService } from '../../core/stage.service';
-import type { LitRange } from '../../core/analysis';
+import type { LitRange } from '@shared/analysis';
 import { AnalysisPickerComponent } from '../analysis-panel/analysis-picker.component';
 import { ComparePickerComponent } from '../compare/compare-picker.component';
 import { BookStacksService, type BookStack } from '../../core/book-stacks.service';
 import { type Tab } from '../../core/documents.service';
 import { NoticeService } from '../../core/notice.service';
-import { editionFlow, editionPieces } from './edition';
-import { chapterOrder, flowNeighbours, seamJoins, sharedAnchor } from './flow';
-import { readTable, type TableRow } from './table';
+import { editionFlow, editionPieces } from '@shared/edition';
+import { chapterOrder, flowNeighbours, seamJoins, sharedAnchor } from '@shared/flow';
+import { readTable, type TableRow } from '@shared/table';
 
 /**
  * THE BOOK — a proof sheet on a dark workbench, and the one surface this app

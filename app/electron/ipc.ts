@@ -16,55 +16,35 @@
  * a thing this app will open. `admitted` (electron/documents.ts) is where that is
  * decided, once, for every door that reads.
  */
-import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
-import { TERMINAL_OUTCOME_STATES } from '@crucible/bootstrap';
-import { startPairing, pollPairing, type Pairing } from '@crucible/client';
+import { startPairing, pollPairing } from '@crucible/client';
 import { RemotePairingSessions } from './crucible-remote-pairing';
 
 import { actGates } from './act-gates';
 import {
-  clampCrucibleUrl,
-  sameCrucibleAddress,
   readAppSettings,
-  writeAppSettings,
-  type CrucibleServerEntry,
+  writeAppSettings
 } from './app-settings';
-import { probeCloud, writeCloudProviders } from './cloud-providers';
+import { probeCloud } from './cloud-providers';
 import { openCrucibleUi } from './crucible-ui';
 import {
-  coordinateEveryServer,
-  prepareFoundryForUse,
   coordinateServer,
   coordinationStates,
-  onCoordination,
+  onCoordination
 } from './crucible-coordinate';
 import {
-  addCrucibleServer,
-  addLocalCrucible,
-  cloudSettingsView,
-  crucibleServers,
-  crucibleServerViews,
-  crucibleServerNamed,
-  crucibleSettingsView,
-  computeSlots,
-  forgetEngineTargets,
-  clientFor,
-  engineClientFor,
+  cloudSettingsView, crucibleServerNamed,
+  crucibleSettingsView, engineClientFor,
   probeCrucible,
   slotAvailability,
-  probeCrucibleAt,
-  removeCrucibleServer,
-  writeCrucibleServers,
+  probeCrucibleAt
 } from './crucible-registry';
 import { readCapability } from './crucible-dispatch';
-import { readEngineSettings, testUpstream, writeEngineSettings } from './crucible-settings';
-import { crucibleFaultWords, crucibleRunState, startCrucible } from './crucible-start';
+import { readEngineSettings, testUpstream } from './crucible-settings';
 import { engineCatalog, jobModelOffer, pullSubject, rememberJobModel, removeModel } from './crucible-models';
 import {
   cancelAsk, deleteAskConversation, readAskConversations, readAskSessions, renameAskConversation, saveAskSession, startAsk,
@@ -81,28 +61,22 @@ import type {
   UpstreamProbe,
 } from '../shared/engine-settings';
 import { crucibleInstallPlan } from './crucible-install';
-import { crucibleInstallDoor, runInstallNarrated } from './crucible-install-door';
+import { crucibleInstallDoor } from './crucible-install-door';
 import {
   crucibleUninstallAvailability,
-  crucibleUninstallDryRun,
-  crucibleUninstallPerform,
-  uninstallStoppedTheEngine,
+  crucibleUninstallDryRun
 } from './crucible-uninstall';
 import type {
   CrucibleUninstallFlags,
   CrucibleUninstallPlan,
   CrucibleUninstallRun,
 } from '../shared/uninstall-wire';
-import { pairingFileRead, readConnectCode } from './crucible-pairing';
-import { anyServerServing, forgetCrucibleFacts, refreshCrucibleFacts } from './crucible-provider';
+import { anyServerServing } from './crucible-provider';
 import {
-  tidySlotName,
   type CloudProviderEdit,
   type ConnectCodePreview,
   type CrucibleProbe,
-  type CrucibleServerEdit,
-  type LocalCrucibleAdd,
-  type NewJobsWaitFor,
+  type CrucibleServerEdit, type NewJobsWaitFor
 } from '../shared/slots';
 import {
   ensureCapture,
@@ -130,913 +104,79 @@ import {
   savePendingStack,
   viewExportedBook,
 } from './book';
-import { admit, admitted, openDocument, promptForDocument } from './documents';
+import { admitted, openDocument, promptForDocument } from './documents';
 import {
   engineInfo,
   readEpubMetadata,
   stampMintMetadata,
   readPdfMetadata,
-  runDoctor,
-  writeEpubMetadata,
-  writePdfMetadata,
+  runDoctor
 } from './engine';
 import { catalogForThisMachine, onEnvInstallProgress } from './env-install';
-import { foundryHost, hosted, hostMintMeta, hostPassOffer } from './host';
+import { hosted, hostMintMeta } from './host';
 import {
-  actOnHostNode, hostNodesFor, hostOffers, hostOperationStates, hostOpensStatus, hostStatus,
-  invokeHostOperation, openHostStatus,
+  actOnHostNode, hostNodesFor, hostOffers, hostOperationStates, hostOpensStatus, hostStatus, openHostStatus
 } from './host-ops';
 import type { HostNodeAction } from '../shared/host-ops';
 import * as queue from './job-queue';
-import { finishSetup, finishPreparedSetup, setupState } from './setup';
+import { setupState } from './setup';
 import { probeSystem } from './system-probe';
 import {
-  createCaptureProject,
-  deletableStep,
-  deleteDocument,
-  deleteProject,
-  deleteStep,
-  describeStepDelete,
-  documentAssets,
-  documentAtPosition,
-  documentAtStep,
-  exportInTray,
-  goToStep,
-  inspectProject,
-  type DocumentRemoval,
-  type ProjectInventory,
-  isArchived,
-  isManaged,
-  listProjects,
-  metadataDir,
-  onProjectsChanged,
-  positionStepId,
-  projectDirOf,
-  readAnalysisReport,
+  createCaptureProject, exportInTray,
+  goToStep, listProjects, onProjectsChanged, readAnalysisReport,
   readManifest,
-  readStepLedger,
-  recordMetadata,
-  recordMintMeta,
-  standForDocument,
+  readStepLedger, recordMintMeta,
+  standForDocument
 } from './projects';
 import {
   clearRecents,
-  forgetRecent,
-  forgetRecentsUnder,
-  listRecents,
+  forgetRecent, listRecents
 } from './recents';
-import { readSettings, writeSettings } from './settings';
+import { readSettings } from './settings';
 import { answerLetGo, broadcast, foundryWindow } from './window';
+import { confirmClose, confirmReRead, confirmUnapplied, confirmRemoveModel } from './doors-questions';
+import { deleteLedgerStep, describeProjectDelete, deleteProjectFolder, describeDocumentDelete, openExportDeleteDoor, deleteDocumentFile, describeLedgerStepDelete, openStepDeleteDoor } from './doors-delete';
+import { invokeHostOperationAt, documentAtPositionAdmitted, documentAtStepAdmitted } from './doors-ledger';
+import { planExportFrom, planTranslationFor, planSimplificationFor, hostPassOfferFor, planCleanupFor, planAnalysisFor } from './doors-plan';
+import { namedServerOr, afterRegistryChanged, adoptPairingFile, registerApprovedPairing, saveCrucibleServers, addCrucibleServerDoor, addLocalCrucibleDoor, parseConnectCode, testConnectCode, addConnectCode, putEngineSettings, runInstallAndCoordinate, restartWindows, uninstallCrucible, offerCrucibleStart, startCrucibleAndConnect, saveCloudProviders, sweepAtStartup } from './doors-crucible';
+import { readDocumentBytes, recordsBusy, refuseHostedLibraryMove, readAskPresets, saveAskPresets, writeSettingsOutsideHost, finishSetupFor } from './doors-library';
+import { admittedPdf, writePdfMetadataFor, exportedBook, writeEpubMetadataFor } from './doors-meta';
+import { enqueueJob, enqueueTextPassFor, enqueueTriagedCleanupFor, enqueueAnalysisFor, runJobNow } from './doors-queue';
+import { planReading } from './workspace';
 import {
-  identifyAnalysis, identifyCleanup, identifyExport, identifySimplification,
-  identifyTranslation, planReading,
-} from './workspace';
-import { fold, isBook } from '../shared/original';
-import {
-  ANALYSIS_CATEGORY_IDS,
-  type CustomAnalysisCategory,
+  type CustomAnalysisCategory
 } from '../shared/analysis-categories';
-import { cleanupInEffect, positionOf } from '../shared/ledger';
 import type { ReadAsk } from '../shared/ledger';
-import { admitPending, deferralFor, pendingStepOf, rowMinting, withPending } from '../shared/pending';
-import type { Deferral } from '../shared/pending';
 import type { BookOp, PendingStack } from '../shared/ops';
-import { RE_READ_CANCEL, RE_READ_PROCEED } from '../shared/reread';
 import type { ReReadPrompt } from '../shared/reread';
 import type {
-  AppQuestion,
   Asked,
   BackendSettingsPatch,
   CaptureRecipe,
   CloseAnswer,
   CloseWarning,
-  ConversionKind,
-  DeletionPrompt,
-  DocumentDeletion,
-  EnvInstallRequest,
-  Job,
-  JobRequest,
-  LedgerStep,
-  MetadataPatch,
-  MetadataWriteOutcome,
-  MintMeta,
-  StepLedgerView,
-  ProjectDocument,
-  ProjectFacsimile,
-  ProjectFinal,
-  ProjectLedger,
-  ProjectSummary,
-  StepRow,
-  ReReadAnswer,
-  RewriteMode,
-  StepDeletion,
-  TextPassRequest,
+  ConversionKind, DocumentDeletion,
+  EnvInstallRequest, JobRequest, MetadataWriteOutcome,
+  MintMeta, ReReadAnswer,
+  RewriteMode, TextPassRequest,
   AnalyzeRequest,
   CleanRequest,
   ModelClass,
   UnappliedAnswer,
-  UnappliedWarning,
+  UnappliedWarning
 } from '../shared/types';
 
-/**
- * The closing question's buttons — the words, beside the answers they mean.
- *
- * ── The lookup table that used to be here, and why it is gone ───────────────
- *
- * A NATIVE BOX ANSWERED WITH AN INDEX, and an index was the wrong thing for this
- * dialog to hold in its head: the box had two buttons for a file copy and three
- * for a set of corrections, so `response === 0` meant "close it" in one shape and
- * "save first" in the other. Two shapes, two meanings, one number — and the way
- * that went wrong was silent, because both were valid answers and neither threw.
- * The defence was to look the answer up by its own LABEL, through a `Record` that
- * lived right here.
- *
- * The card answers with the KEY of the button that was pressed, and the key is a
- * `CloseAnswer` — so the label is now nothing but the words on a button, the
- * table has nobody left to serve, and the compiler checks what a `Record` keyed
- * by prose used to check at runtime. The labels stay written once because two
- * spellings of one button is still two spellings.
- */
-const KEEP = 'Keep it open';
-const CLOSE = 'Close it';
 /*
- * The book pane's two, which say what its own gestures are called rather than
- * borrowing the pair above. "Save these corrections" is the block editor's verb
- * over the block editor's noun, and neither is what a person did on the proof
- * sheet. DISCARD keeps its weight and has earned more of it: closing itself no
- * longer scraps a stack (Owen's reversal, 2026-08-22 — see `aboutTheEdits`), so
- * this button is now the only gesture in the app that throws unapplied work
- * away, and "Close it" was never the word for that.
+ * THE FOUR NAMES THIS FILE USED TO DEFINE, re-exported so ipc.js offers what it
+ * always did. The bodies moved to the doors-*.ts library files on 2026-11-04
+ * (docs/FOUNDRY-CORE-PLAN.md step 2); what stayed here is the table of
+ * registrations and the halves that need a window, a dialog or the shell.
  */
-const APPLY = 'Apply these changes, then close';
-const DISCARD = 'Discard them and close';
-/*
- * And the unapplied card's two.
- *
- * ── THE RULING THAT MADE THEM TWO (Owen, 2026-08-22, verbatim) ──────────────
- *
- * *"if the user has 'this book' selected with un-applied changes, the export
- * option shouldnt be grayed out. but any action they take, whether it's
- * switching to a different step or narrating or anything at all, should ask if
- * they want to apply changes in a modal. discard/apply changes. if they hit
- * discard, it does whatever action they selected to the step theyre on after
- * dropping changes they made. if they hit apply changes, the action they select
- * is executed after applying all changes. and maybe there should be another
- * apply changes button somewhere obvious. the button on the side of the
- * workbench works but it isnt obvious"*
- *
- * `APPLY_AND_CONTINUE`, `WITHOUT_THEM` AND `CANCEL` STOOD HERE. The first was
- * "Apply them and continue" and is now simply "Apply changes" — the ruling's own
- * words, and the same words the second obvious button in the book pane wears, so
- * there is ONE name in this app for the one press. The second, "Continue without
- * them", is retired with the answer behind it (`UnappliedAnswer` carries the
- * argument). The third was a button; a cancel is now the app's own dismissal —
- * Escape or a click outside — because a card with three buttons where one of
- * them is "do nothing" makes the two that mean something harder to read, and the
- * ruling asked for two.
- *
- * DISCARD WEARS THE ERROR COLOUR HERE TOO, on the closing card's precedent and
- * for its reason: this is now the SECOND gesture in the app that can throw
- * unapplied work away, and a button that destroys has to be aimed at rather than
- * fallen onto. It is the only difference in weight between the two answers —
- * both are legitimate, one is irreversible.
- */
-const APPLY_CHANGES = 'Apply changes';
-const DISCARD_CHANGES = 'Discard changes';
-
-/**
- * Whether a path sits inside a directory, on Windows' terms.
- *
- * Case-insensitively and separator-blind, because one folder is spelled three
- * ways here, and with the separator APPENDED to the folder first — so a project
- * called `Kershaw-a1b2c3d4` cannot claim a job writing into
- * `Kershaw-a1b2c3d4-notes` beside it and block a delete that has nothing to do
- * with it.
- *
- * Note what this is NOT: it is not the check that decides what may be erased.
- * That is `deletableProjectDir`, which proves a path is a direct child of the
- * projects directory. This one only answers "is that run writing in here".
- */
-function within(dir: string, filePath: string): boolean {
-  const fold = (target: string): string => path.resolve(target).replace(/\\/g, '/').toLowerCase();
-  return fold(filePath).startsWith(`${fold(dir).replace(/\/+$/, '')}/`);
-}
-
-/**
- * A byte count as a person reads it — for the delete dialog, which has to say
- * how much of the disk is about to be handed back.
- *
- * Binary units, one decimal, and no `Intl` unit formatting: this goes into a
- * sentence that already reads plainly, and "1.4 GB" is the whole of what is
- * being communicated.
- */
-/**
- * WAS THE NARRATION CLEANUP IN EFFECT where this host act was ordered from — the
- * one field of `HostInvokeContext`, answered against the project's own ledger.
- *
- * ── Why the node id has to be resolved rather than trusted ──────────────────
- *
- * `nodeId` is three different things (`HostOperation.invoke`, electron/host-ops.ts):
- * a ledger step id when the act was ordered from a row Foundry made, one of the
- * HOST's own ids when it was chained onto work that has not happened yet, and
- * `export:<file>` when it came off an export row. Only the first names a position
- * this app can ask a question about, so the lookup is `stepOf`-shaped and every
- * other shape falls to the same answer as a step that is not there.
- *
- * ── FALSE IS THE ANSWER FOR EVERY OTHER SHAPE, AND IT IS NOT A SHRUG ────────
- *
- * `HostInvokeContext.cleaned` documents it: nothing HERE says these words were
- * cleaned. A host that needs the distinction between "not cleaned" and "Foundry
- * could not tell" has the durable record on the file itself — the OPF's
- * `bookforge:narration-text`, written by the compile — which is the answer a
- * narration should act on in any case. Inventing a third state on this seam would
- * be a tri-state boolean crossing a process boundary to say "ask the file",
- * which the host can do unconditionally.
- *
- * IT NEVER THROWS. An unreadable manifest, a project that has moved, a ledger this
- * build refuses — none of those is a reason to fail a button somebody pressed, and
- * the console keeps the record.
- */
-async function cleanupAtNode(projectDir: string, nodeId: string): Promise<boolean> {
-  try {
-    const view = await readStepLedger(projectDir);
-    if (view === null) return false;
-    /*
-     * ── THE PROMISES ARE IN THE WALK, AS OF 2026-09-07 ────────────────────────
-     *
-     * Owen's pending-node ruling makes a narration orderable from a cleanup that
-     * has not landed, which is exactly the shape this field exists to describe. So
-     * the ledger is composed with the live queue's promises in it and the ordinary
-     * `cleanupInEffect` answers through the chain unchanged (`withPending`,
-     * shared/pending.ts, argues why a composed ledger beats an extra parameter on
-     * five walks).
-     *
-     * TRUE HERE IS NOT A GUESS. The file the host will narrate is made by
-     * `exportEpubFromStep`, which is itself chained behind the same promise and
-     * cannot produce a book until it lands — so by the time there is anything to
-     * act on, either the words are cleaned or the whole chain was cancelled by
-     * name. Answering false instead would send the host to clean a book Foundry is
-     * already cleaning, which is the duplicated-hour failure `HostInvokeContext`
-     * was written to prevent.
-     */
-    const composed = withPending(view.ledger, promisedStepsIn(projectDir, view.ledger));
-    const step = composed.steps.find((row) => row.id === nodeId) ?? null;
-    return step === null ? false : cleanupInEffect(composed, step);
-  } catch (err) {
-    console.error(
-      `[ipc] could not tell whether ${nodeId} in ${projectDir} stands under a cleanup `
-      + `(${err instanceof Error ? err.message : String(err)}); the host is told it does not.`,
-    );
-    return false;
-  }
-}
-
-/**
- * EVERY QUEUE ROW ABOUT THIS BOOK, from whichever list is scheduling.
- *
- * `shelfJobs()` AND NOT `listJobs()`, which is the whole of what makes this work
- * hosted: with a host queue registered the rows in this window are the HOST's, and
- * the promises a person clicked in the tree were drawn from those. Asking Foundry's
- * own list would answer empty for every chain there is.
- *
- * FILTERED BY THE PRODUCT'S PROJECT, whole path against whole path through
- * `projectDirOf` — this codebase's oldest house rule, and it matters here because
- * the shelf is one global list across every book on the machine.
- */
-function rowsIn(projectDir: string): Job[] {
-  return queue.shelfJobsFor(projectDir);
-}
-
-/**
- * A RUNNING GHOST IS LOCKED, and the tree is not the door — Owen's ruling
- * (2026-09-08): *"maybe we turn it red while its running and lock it. the user
- * has to remove it from the queue itself. again, if it's removed as a ghost,
- * everything under it is removed as well. that simplifies the logic so it doesnt
- * hit a bug where narration is trying to run on the wrong thing, or nothing at
- * all."*
- *
- * THE LAST CLAUSE IS THE REASON AND IT IS NOT TIDINESS. Stopping a run from here
- * means deciding, at the moment the work is half done, what becomes of everything
- * chained under it — and the two queues answer that differently (a host's remove
- * drops the subtree, this app's cancel marks it). One door, the queue's own, is
- * one answer; two doors is where a narration ends up pointed at a step nobody is
- * going to make. A QUEUED ghost is untouched by this: nothing has begun, and its
- * delete is still the removal `promisedDeletion` describes.
- */
-function refuseRunningGhost(row: Job): void {
-  if (row.state !== 'running') return;
-  const label = row.title ?? path.basename(row.outputPath);
-  throw new Error(
-    `“${label}” is running, so it cannot be removed from here. Stop it in the queue, which takes `
-    + 'everything queued behind it away in the same gesture — the one place that can end a run and '
-    + 'settle what happens to the work waiting on it.',
-  );
-}
-
-/**
- * A DELETE PRESSED ON A GHOST — the id is minted by a live row, not held by the
- * ledger, and `stepOf` would refuse it by name ("This ledger has no step called
- * …", which is what Owen saw, 2026-09-08). A promise is a queue row, so the
- * question is answered from the queue: what goes is the row and every row chained
- * behind it, and the removal is the queue's own — which hosted forwards to the
- * host's `remove`, whose cascade is the same one the tree draws.
- *
- * NULL FOR A REAL STEP, and the ordinary delete goes on exactly as it did.
- */
-/**
- * DROP ONE STEP — the door a HOST reaches, and the one the handler runs.
- *
- * BookForge lists a Foundry export as a version nested under its parent book,
- * and Owen's ruling of 2026-09-17 makes those two rows one fact: deleting the
- * version there must drop the step here. That host lives in another process's
- * renderer and can never send this app's `ipcMain` message, so what it needs is
- * a FUNCTION — re-exported through `mount.ts` beside `exportEpubFromStep`.
- *
- * IT IS A HOLDER RATHER THAN THE BODY ITSELF because the body belongs to
- * `registerIpc`'s scope: the two proofs it must run (`refuseBusyStepDelete`,
- * and `refuseBusyJob` under it) close over locals there. Lifting those to module
- * scope to satisfy this caller would be rearranging the file around its newest
- * reader. So the body is assigned once, where it is written, and this is the
- * only way in from outside — which keeps ONE body rather than a copy shaped like
- * it. A copy would have to carry the ghost branch, both busy proofs and the
- * subtree cascade, and the first edit to either would leave a press in Foundry
- * and a press in BookForge deleting different things.
- *
- * BEFORE `registerIpc` RUNS IT REFUSES BY NAME. Answering "deleted" from an app
- * that has not mounted would be the silent success this codebase refuses
- * everywhere else.
- */
-let stepDeleteDoor: ((projectDir: string, stepId: string) => Promise<unknown>) | null = null;
-
-export function deleteLedgerStep(projectDir: string, stepId: string): Promise<unknown> {
-  if (stepDeleteDoor === null) {
-    return Promise.reject(new Error(
-      'Foundry has not been mounted, so there is no ledger to delete a step from. '
-      + '`mountFoundry` must run before a host can drop a step.'));
-  }
-  return stepDeleteDoor(projectDir, stepId);
-}
-
-/**
- * DELETE ONE EXPORT FOR A HOST — the file in `final/` and its `manifest.final`
- * row, nothing else. A holder for the same reason `deleteLedgerStep` is one:
- * the body's busy proof lives in `registerIpc`'s scope, and this keeps one body.
- */
-let exportDeleteDoor: ((filePath: string) => Promise<DocumentRemoval>) | null = null;
-
-export function deleteExport(filePath: string): Promise<DocumentRemoval> {
-  if (exportDeleteDoor === null) {
-    return Promise.reject(new Error(
-      'Foundry has not been mounted, so there is no library to delete an export from. '
-      + '`mountFoundry` must run before a host can delete one.'));
-  }
-  return exportDeleteDoor(filePath);
-}
-
-function promisedDeletion(projectDir: string, stepId: string): StepDeletion | null {
-  const rows = rowsIn(projectDir);
-  const row = rowMinting(rows, stepId);
-  if (row === null) return null;
-  refuseRunningGhost(row);
-  // The chain behind it, transitively, by `after` — the cascade's own edge.
-  const going: Job[] = [row];
-  const seen = new Set<string>([row.id]);
-  for (let i = 0; i < going.length; i += 1) {
-    for (const other of rows) {
-      if (other.after === going[i]!.id && !seen.has(other.id)) {
-        seen.add(other.id);
-        going.push(other);
-      }
-    }
-  }
-  const nameOf = (one: Job): string => one.title ?? path.basename(one.outputPath);
-  const label = nameOf(row);
-  return {
-    stepId,
-    label,
-    queued: true,
-    casualties: going.map((one, at) => ({
-      id: one.mints ?? one.id,
-      label: nameOf(one),
-      cost: at === 0
-        ? `“${nameOf(one)}” is ${one.state === 'running' ? 'running' : 'queued'} and has made nothing yet — `
-          + 'removing it makes nothing and destroys nothing.'
-        : `“${nameOf(one)}” was to be made from it, and leaves the queue with it.`,
-      stale: false,
-    })),
-    belongings: null,
-    files: [],
-  };
-}
-
-/**
- * THE PROMISES THIS BOOK'S QUEUE ROWS MAKE, as synthetic steps — the list every
- * walk in main composes a ledger with.
- *
- * The orphan rule is `admitPending`'s and is applied here rather than at each
- * caller: a row whose parent is neither a step nor another live promise is not
- * drawn and is not walked, which is the derivation half of Owen's cascade and must
- * be one rule rather than two implementations that can disagree about what the
- * window is showing.
- */
-function promisedStepsIn(projectDir: string, ledger: ProjectLedger): LedgerStep[] {
-  return admitPending(ledger, rowsIn(projectDir))
-    .map(pendingStepOf)
-    .filter((step): step is LedgerStep => step !== null);
-}
-
-/**
- * WHAT A PLAN IS AIMED AT — a real row, a promised one, or a refusal naming the id.
- *
- * ── The one resolution, made once for four doors ────────────────────────────
- *
- * Every plan door now takes an optional step id, because a person can press an act
- * on a card that is not the position: a landed row further up the tree, or — since
- * Owen's ruling — a row that has not landed at all. The three outcomes are decided
- * here so that the four doors cannot come to three answers about what an id means,
- * and so that the REFUSAL is spelled once.
- *
- * A LEDGER STEP answers `{ at: step }`, and the plan is composed against it exactly
- * as it would be against the position.
- *
- * A LIVE PROMISE answers `{ deferral }`, and the plan composes only what is
- * deterministic (`WorkspacePlan.deferred`).
- *
- * NEITHER IS A REFUSAL, and it names both halves of what it looked in. That
- * sentence is the one a person sees if they press an act on a card whose row left
- * the queue in the same instant — the derivation would have taken the card off the
- * screen a repaint later, and this is what happens if the press wins the race.
- *
- * NO `from` AT ALL IS THE POSITION, which is every press this app had before this
- * wave and is what the dock still sends.
- */
-async function aimedAt(
-  source: string,
-  from?: string,
-): Promise<{ at: LedgerStep | null; deferral?: Deferral }> {
-  if (from === undefined || from.length === 0) return { at: null };
-  const dir = projectDirOf(source);
-  if (dir === null) {
-    throw new Error(
-      `This document does not belong to a project in this app’s library, so “${from}” cannot be a `
-      + 'step of it.',
-    );
-  }
-  const view = await readStepLedger(dir);
-  if (view === null) {
-    throw new Error(`${dir} is no longer a project in this app’s library.`);
-  }
-  const step = view.ledger.steps.find((row) => row.id === from) ?? null;
-  if (step !== null) return { at: step };
-  const deferral = deferralFor(view.ledger, rowsIn(dir), from);
-  if (deferral === null) {
-    throw new Error(
-      `“${from}” is not a step of this book and no queued work will make it, so there is nothing to `
-      + 'make this from. Click a step that exists and press again.',
-    );
-  }
-  return { at: null, deferral };
-}
-
-/**
- * THE ROW A HOST'S OWN WORK MUST WAIT BEHIND, when the act was ordered from
- * something that has not happened yet — `HostInvokeContext.pendingRow`.
- *
- * ONE LOOKUP FOR BOTH SHAPES OF ID. A promised STEP and a promised EXPORT are told
- * apart everywhere else in this feature (`exportOfNodeId`), and here they are not:
- * `Job.mints` carries whichever id the row is going to land, so asking "which live
- * row mints this" answers for a narration ordered from a grayed cleanup and for one
- * ordered from a grayed EPUB with the same line.
- *
- * UNDEFINED FOR EVERY ORDINARY PRESS — a landed step, a file in the tray — which is
- * every host act before this wave, and means "nothing to wait for".
- */
-function pendingRowAt(projectDir: string, nodeId: string): string | undefined {
-  return rowMinting(rowsIn(projectDir), nodeId)?.id;
-}
-
-function sizeOnDisk(bytes: number): string {
-  const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return unit === 0 ? `${bytes} bytes` : `${value.toFixed(1)} ${units[unit]}`;
-}
-
-/**
- * SOMETHING THAT DECIDES A TILE MOVED. Say so; say nothing about what.
- *
- * The dock's gates are composed in main off three facts (act-gates.ts), and every
- * one of them is changed by a door in this file: the SERVER REGISTRY, whose
- * capability reads are the only thing that lights a text tile (`afterRegistryChanged`
- * below is that door), the page reader's directory, and the settings file. The
- * hardware probe and Ollama's library were two more until 2026-09-15, and both
- * described a machine that does not run the work.
- *
- * Without this push a person would connect an engine and watch Translate stay gray
- * until they restarted the app — which is the exact failure Owen's rule was written
- * to prevent, arriving from the other direction.
- *
- * NO PAYLOAD, on `projects:changed`'s reasoning. The gates are one composed
- * answer and composing them costs a probe, so this says only that the machine
- * moved and the renderer asks again through `acts:gates`. Pushing the shape
- * would give the app two writers of it, and the pushed copy would be the one
- * that goes stale.
- */
-function gatesChanged(): void {
-  broadcast('acts:gates-changed', null);
-}
-
-/**
- * THE REGISTRY CHANGED — everything that follows from that, in one place.
- *
- * Adding, enabling, renaming or removing a server moves three things at once and
- * they have to move in this order:
- *
- *   1. FORGET the cached capability answers. They were measured against the old
- *      list and every one of them may now be wrong; a fifteen-second stale
- *      window after a deliberate press is the one case a person reads as the app
- *      ignoring them (`crucible-provider.ts`).
- *   2. MEASURE again, so the deletion below is decided on what the servers say
- *      NOW rather than on a silence that has not been broken yet. `unknown` is
- *      not a permission to delete, so skipping this would simply mean nothing
- *      happens — which is safe and is also not what somebody who just registered
- *      their local Crucible is expecting to see.
- *   3. APPLY docs/SLOTS.md §5b: if a LOCAL Crucible now serves `pages`, Foundry's
- *      own copy of the page reader is a duplicate and goes, out loud.
- *
- * THE REMOVAL IS ANNOUNCED TWICE OVER, on purpose. `acts:gates-changed` moves
- * the OCR tile's sentence, and `models:changed` moves the two cards that draw
- * the files themselves — they are different questions with different readers,
- * and one push doing both would be a card re-reading an inventory because a
- * tooltip changed.
- */
-/**
- * THE REGISTERED SERVER OF THAT NAME, or a rejection that says the name.
- *
- * The four `crucible:engine-*` doors take a NAME, and the address and the token
- * behind it are looked up here — `crucible:open`'s rule, so nothing a renderer
- * holds could send a key to an engine this app has not been told about.
- *
- * IT THROWS RATHER THAN ANSWERING NULL. A card drew that row a moment ago, so a
- * missing name means the registry moved underneath it (another window saved, or
- * the host's list changed hosted); "there is no server called X" is the honest
- * sentence and the card's next read redraws the list.
- */
-function namedServerOr(serverName: string): CrucibleServerEntry {
-  const entry = crucibleServerNamed(serverName);
-  if (entry === null) throw new Error(`there is no registered server called ${serverName}`);
-  return entry;
-}
-
-async function afterRegistryChanged(): Promise<void> {
-  /*
-   * THE RESOLVED HOPS GO FIRST, AND BEFORE THE CAPABILITY ANSWERS, because the
-   * capability read is made THROUGH one (crucible docs/PHASE17-ORCHESTRATOR.md
-   * §6, `engineClientFor`). Re-pointing an entry from a tray to its engine — or
-   * the other way — changes which process every later read reaches, and a
-   * refresh that ran against a remembered hop would fill the capability cache
-   * from the machine the person has just stopped naming.
-   */
-  forgetEngineTargets();
-  forgetCrucibleFacts();
-  await refreshCrucibleFacts();
-  /*
-   * THE AUTOMATIC REMOVAL WENT WITH THE THING IT REMOVED. SLOTS.md 5b had a
-   * Crucible on this machine take over page reading, at which point Foundry
-   * deleted its own copy of the reader and printed a receipt. Foundry has no
-   * copy of anything to delete (2026-09-17), so the gates are still re-read --
-   * a registry change moves the OCR tile -- and nothing is swept.
-   */
-  gatesChanged();
-}
-
-/**
- * COORDINATE WITH A SERVER BECAUSE SOMETHING CONNECTED US TO IT.
- *
- * crucible `docs/PHASE14-ENVPACKS.md` §4a: every time Foundry finds a Crucible
- * it makes sure that Crucible has what Foundry needs — nobody presses anything.
- * The moments are app start (every enabled server), a server being added, and a
- * server being switched back on or newly named by a registry save; all of them
- * go through `crucible-coordinate.ts`'s one function, which is also what makes
- * two of them arriving together ONE run.
- *
- * A FAILED COORDINATION NEVER FAILS THE ACT THAT TRIGGERED IT. The server was
- * added, the switch was flipped; what did not happen is a conversation with a
- * machine, and that is the coordination STATE's to say, in the row. So this
- * catches everything and logs ONE line — and `coordinateServer` is already
- * written never to throw, which makes this the belt to that braces rather than
- * the place the outcome is decided.
- */
-async function coordinateWithServer(name: string, because: string): Promise<void> {
-  try {
-    const state = await coordinateServer(name);
-    console.log(`[crucible] "${name}" coordinated ${because}: ${state.phase}`);
-  } catch (err) {
-    console.error(
-      `[crucible] could not coordinate with "${name}" ${because}: `
-      + `${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-/**
- * WHICH SERVERS A REGISTRY SAVE CONNECTED US TO — new by name, or switched on.
- *
- * `crucible:save` replaces the whole list in one message (see
- * `writeCrucibleServers` for why it is one door), so "what just changed" is a
- * DIFF and there is nowhere else to take it from. Two answers count as a
- * connection and the rest do not:
- *
- *   - a name the registry did not have before is a server this app has just met;
- *   - `enabled` going false → true is the exact reverse of the one gesture that
- *     means "not that one" (Owen, 2026-09-14), so switching it back on is the
- *     moment to find out what it is missing.
- *
- * A RENAMED, RE-ADDRESSED OR RE-TOKENED ROW IS NOT IN THIS LIST unless its name
- * is new, and that is the honest reading of a card that saves on every edit: a
- * person dragging rows around has connected to nothing, and coordinating with
- * six servers because one of them moved up the order would be this app spending
- * somebody's afternoon on a reorder.
- */
-function serversConnectedBySave(
-  before: readonly { name: string; enabled: boolean }[],
-  after: readonly { name: string; enabled: boolean }[],
-): string[] {
-  const was = new Map(before.map((entry) => [entry.name.toLowerCase(), entry.enabled]));
-  return after
-    .filter((entry) => {
-      if (!entry.enabled) return false;
-      const previously = was.get(entry.name.toLowerCase());
-      return previously === undefined || previously === false;
-    })
-    .map((entry) => entry.name);
-}
-
-/**
- * THE FIRST OF PHASE15 §5.1's THREE WAYS IN: the connect code a Crucible left on
- * this machine, read and registered under THE NAME THE LINE CARRIES, with nobody
- * typing anything.
- *
- * ── Why it is here and not in crucible-pairing.ts ───────────────────────────
- *
- * Because it WRITES THE REGISTRY, and everything that writes the registry ends
- * in `afterRegistryChanged` above — forget the capability answers, measure
- * again, apply docs/SLOTS.md §5b — which is this module's and deliberately
- * private to it. A second caller that wrote an entry and did not take that pass
- * would leave a registered engine behind gates that still say there is none, and
- * that is the exact failure the pass was written for. crucible-pairing.ts reads
- * a file; this decides what the app does about what it read.
- *
- * ── THERE IS NO RESERVED NAME. THE LINE NAMES THE SERVER ────────────────────
- *
- * This used to register the entry as `local`, and the doc-comment here used to
- * justify that word as parity with BookForge. Owen's ruling ends both halves:
- * *"it shouldnt be named 'local' anywhere. it might not be local. a local
- * crucible server shouldnt be treated any differently than a remote crucible
- * server. it should all be entered the exact same way… bookforge shouldnt even
- * know if it's local because it doesnt mater."* BookForge deleted its own
- * reserved identity (their `24b7bf67`), so there is nothing left to be in parity
- * with either.
- *
- * What replaces it was already in the line. A pairing file IS A CONNECT CODE the
- * machine left on disk — same spelling, same `parsePairing`, same `{name, url,
- * token}` — so this registers it EXACTLY as a pasted one is registered, through
- * {@link registerPairing}, which is the one writer both doors share. The name is
- * the server's own (`crucible@example-pc-wsl`, whatever the operator called it),
- * which is the same name a person would see in the preview if they pasted the
- * line by hand.
- *
- * RE-READING STILL FIXES A ROTATED TOKEN rather than growing a second row:
- * `addCrucibleServer` replaces an existing NAME in place, keeping its rank and
- * its enabled state, and the name is stable because it comes out of the line.
- *
- * ── IT DECLINES WHEN THIS URL IS ALREADY REGISTERED ─────────────────────────
- *
- * Not when ANY loopback entry is — that was the same "local is special"
- * assumption one layer down, and wrong on its own terms: somebody with a tailnet
- * Crucible registered AND a pairing file on disk got neither, because the
- * tailnet row's address happened to be loopback. The question actually being
- * asked is "do I already have THIS server", so the test is the clamped URL
- * against the registry's, which is name-free and locality-free. It is also
- * `addLocalCrucible`'s test (crucible-registry.ts), which has keyed on the URL
- * all along.
- *
- * ── HOSTED, THE REGISTRY IS THE HOST'S AND THIS DOES NOTHING ────────────────
- *
- * Refused at the door as well as skipped at the call, because `addCrucibleServer`
- * throws hosted (`refuseHostedRegistryChange`) and an unguarded startup call
- * would put that throw in a console every time BookForge opened the window.
- *
- * ── WHAT THE FILE NAMES IS WHAT IS REGISTERED, EVEN IF IT IS A TRAY ─────────
- *
- * crucible docs/PHASE17-ORCHESTRATOR.md §6: *"the pairing line an app reads is
- * the ENGINE's"* — on Windows the orchestrator writes the guest's line verbatim
- * — so this ordinarily registers an engine and the hop below never fires. When
- * a line names an ORCHESTRATOR anyway, registering it is still CORRECT and is
- * left alone: `resolveEngine` (crucible-registry.ts) follows the hop for every
- * call that does work, and the one door that does not is the console button,
- * which should open the process the person's machine actually named (see
- * `openCrucibleUi`, which argues it). Rewriting the address here would be this
- * app storing a fact it derived over the fact the machine stated.
- */
-export async function adoptPairingFile(): Promise<LocalCrucibleAdd> {
-  if (hosted()) {
-    return {
-      outcome: 'failed',
-      code: 'no_local_config',
-      message: 'The servers are the host application\'s while Foundry is running inside it.',
-    };
-  }
-  const read = await pairingFileRead();
-  if (read.found === 'absent') {
-    // Debug volume, one line, and the SAME sentence the button shows — see
-    // crucible-pairing.ts: an absent file is a fact about this machine.
-    console.log(`[pairing] no pairing file at ${read.path} — nothing has left a code here.`);
-    return {
-      outcome: 'failed',
-      code: 'no_local_config',
-      message: `No Crucible has left a connect code on this machine (${read.path}). `
-        + 'Install one here, or connect to one somewhere else.',
-    };
-  }
-  if (read.found === 'refused') {
-    console.error(`[pairing] refused: ${read.message}`);
-    return { outcome: 'failed', code: 'config_unreadable', message: read.message };
-  }
-  /*
-   * THE ADDRESS DECIDES, NOT THE ADDRESS'S SHAPE. Clamped first because that is
-   * what the registry stored its own rows through, then compared with
-   * `sameCrucibleAddress` — the registry's one duplicate rule, which also
-   * settles host case and a default port.
-   *
-   * IT MUST BE THE SAME RULE THE WRITER USES, and that is not tidiness. Since
-   * the writer began refusing a duplicate address, a check here that was even
-   * slightly narrower would let a line through to `registerPairing` that the
-   * writer then THREW on — turning this function's clean "already registered,
-   * nothing to do" into a caught `config_unreadable`, on the startup path, on
-   * every launch. The two rules being one is what keeps that unreachable.
-   */
-  const url = clampCrucibleUrl(read.pairing.url);
-  const already = crucibleServers().find(
-    (entry) => url !== null && sameCrucibleAddress(entry.url, url),
-  );
-  if (already !== undefined) {
-    return {
-      outcome: 'failed',
-      code: 'already_registered',
-      message: `${read.pairing.url} is already registered as "${already.name}".`,
-    };
-  }
-  /*
-   * A LINE THE REGISTRY WILL NOT TAKE IS A FACT, NOT A CRASH. `registerPairing`
-   * goes through the one writer, which refuses BY NAME — a name with a `:` in
-   * it, an address that is not http(s) — and this is the one road nobody
-   * pressed: mount.ts calls it at startup and does not await it, on the stated
-   * contract that it *"cannot reject"*. So the refusal is caught and worn as the
-   * third outcome the type already has, which is also the sentence the "Look
-   * again" button shows.
-   */
-  let name: string;
-  try {
-    name = registerPairing(read.pairing, '');
-  } catch (err) {
-    const said = err instanceof Error ? err.message : String(err);
-    console.error(`[pairing] ${read.path} could not be registered: ${said}`);
-    return {
-      outcome: 'failed',
-      code: 'config_unreadable',
-      message: `${read.path} names a server this app cannot store: ${said}`,
-    };
-  }
-  await afterRegistryChanged();
-  console.log(`[pairing] registered "${name}" at ${read.pairing.url} from ${read.path}.`);
-  // A server this app has just met, by the same rule as `crucible:add`:
-  // finding it is the request (PHASE14 §4a), so it is coordinated with now.
-  void coordinateWithServer(name, 'it was found in the pairing file');
-  return {
-    outcome: 'added',
-    servers: crucibleServerViews(),
-    serverName: name,
-    url: read.pairing.url,
-    configPath: read.path,
-  };
-}
-
-/**
- * THE ENGINE ON THIS MACHINE, CONNECTED WITHOUT ANYBODY BEING ASKED.
- *
- * Owen, 2026-09-15, on opening the wizard to three doors over a Crucible that
- * was already running here: *"this should be idiot proof. it should check to
- * see if a server is installed here. if it is, it just connects. seamlessly…
- * it shouldnt talk about crucible unless it needs to, or to ask the user to add
- * a crucible server."*
- *
- * ── WHY TWO READS AND NOT ONE ─────────────────────────────────────────────
- *
- * There are two files a Crucible on this machine may have left, and which one
- * exists is not something a person should have to know:
- *
- *   * `<CRUCIBLE_HOME>/pairing` — the connect code, written by the installer.
- *     {@link adoptPairingFile}. Present on a machine somebody installed with a
- *     current Crucible.
- *   * that server's own `config.toml` — {@link addLocalCrucible}, the door
- *     labelled "Use the Crucible on this machine". Present on every machine
- *     with a server on it, including ones whose pairing file was never written
- *     or has been tidied away.
- *
- * The pairing file goes first because it is PHASE15 §5.1's own order and it
- * carries the server's chosen name; the config is the fallback that catches the
- * rest. A machine with neither has no engine here, which is a fact and the one
- * case where the wizard has something to say.
- *
- * ── `already_registered` IS A SUCCESS HERE, AND THAT IS THE WHOLE POINT ───
- *
- * Both doors refuse an address the registry already holds, and they are right
- * to: adding it twice would be two GPU lanes over one card. But the question
- * THIS function asks is not "did I write a row", it is *"is the engine on this
- * machine connected"* — and a door refusing because the row is already there
- * answers that with yes. Owen pressed the local door on exactly this machine
- * and was shown *"http://127.0.0.1:7100 is already registered as \"local\".
- * Rename or remove that entry first"*, which is a true sentence about the
- * registry and a useless one about his situation: he was connected and was
- * being told to dismantle it. So the refusal is READ rather than shown, the
- * second read is skipped, and nothing is drawn.
- *
- * ── IT SPENDS NOTHING AND CANNOT REJECT ───────────────────────────────────
- *
- * Two file reads and, at most, one registry write. No model is loaded, no job
- * is placed, and the network is touched only by the coordination the writers
- * already start for a server this app has just met (PHASE14 §4a). Every arm
- * answers a {@link LocalCrucibleAdd}, so `mount.ts` can call it unawaited on a
- * path that runs before the window exists.
- */
-export async function connectLocalEngine(): Promise<LocalCrucibleAdd> {
-  if (hosted()) return { outcome: 'failed', code: 'no_local_config',
-    message: 'The local connection belongs to the host application.' };
-  const local = await addLocalCrucible('');
-  if (local.outcome === 'added') {
-    console.log(`[engine] registered "${local.serverName}" at ${local.url} from ${local.configPath}.`);
-    await afterRegistryChanged();
-    /*
-     * THE SAME MOMENT THE DOOR TAKES, because this IS that door: finding a
-     * server is the request (PHASE14 §4a), and a row that arrived without
-     * anybody pressing anything still has to be coordinated with or the tiles
-     * stay dark until something else asks.
-     */
-    void coordinateWithServer(local.serverName, 'a Crucible was found on this machine');
-    return local;
-  }
-  if (local.code === 'already_registered') {
-    console.log(`[engine] ${local.message} Nothing to connect.`);
-    return local;
-  }
-  console.log(`[engine] no Crucible on this machine: ${local.message}`);
-  return local;
-}
-
-/**
- * REGISTER ONE PAIRING LINE — the ONE writer behind both doors that take one.
- *
- * A pairing FILE is a connect code the machine left on disk, and a pasted
- * connect code is the same line off somebody's operator page. Owen's ruling —
- * *"it should all be entered the exact same way"* — means the two cannot differ
- * in how they name the server, so they do not differ in the code either: same
- * `addCrucibleServer`, same refusals, same `slotNameRefusal` clamp on the way to
- * disk, same name source.
- *
- * THE NAME IS THE LINE'S UNLESS SOMEBODY TYPED ONE. `typed` is the connect-code
- * card's Name box: the preview filled it with the code's own name and a person
- * may have renamed it before pressing Add, and a door that re-read the name out
- * of the line would silently throw that away. Empty — which is what the pairing
- * file's path passes, because there is no box on that road — means the line's
- * own name.
- *
- * It answers THE NAME AS STORED, because that is what the caller has to
- * coordinate with and log: `addCrucibleServer` tidies whitespace, and a
- * coordination keyed on the untidied string would be a run under a name no card
- * draws.
- *
- * NO TOKEN CROSSES OUT OF HERE. The line carries one; it goes into the registry
- * and nowhere else, which is crucible-registry.ts's standing rule.
- */
-function registerPairing(pairing: Pairing, typed: string): string {
-  const wanted = tidySlotName(typed);
-  const name = wanted.length > 0 ? wanted : tidySlotName(pairing.name);
-  addCrucibleServer(name, pairing.url, pairing.token);
-  return name;
-}
+export { adoptPairingFile, connectLocalEngine } from './doors-crucible';
+export { deleteExport, deleteLedgerStep } from './doors-delete';
 
 export function registerIpc(): void {
-  const pairingSessions = new RemotePairingSessions(async (pairing) => {
-    const existing = crucibleServers().find((entry) => sameCrucibleAddress(entry.url, pairing.url));
-    const stored = registerPairing(pairing, existing === undefined ? '' : existing.name);
-    await afterRegistryChanged();
-    void coordinateWithServer(stored, 'remote pairing was approved');
-  }, startPairing, pollPairing);
+  const pairingSessions = new RemotePairingSessions(registerApprovedPairing, startPairing, pollPairing);
   const pairingWindows = new Set<number>();
   ipcMain.handle('foundry:crucible-pair-start', async (event, address: string) => {
     if (hosted()) throw new Error('Manage server connections in the host application.');
@@ -1197,27 +337,13 @@ export function registerIpc(): void {
      * that had not caught up would tell somebody else's queue that a book was
      * cleaned when it was not.
      */
-    async (
+    (
       _event,
       operationId: string,
       projectDir: string,
       nodeId: string,
       settings: Record<string, unknown> = {},
-    ) => {
-      /*
-       * AND WHICH ROW THIS WORK IS DOWNSTREAM OF, when the act was ordered from
-       * something that has not happened yet (`HostInvokeContext.pendingRow`).
-       * Composed in main for `cleaned`'s reason exactly: it is a fact about the
-       * queue that is scheduling, and a renderer's mirror of that queue can be a
-       * repaint behind — which here would mean telling somebody else's scheduler to
-       * wait for a row that finished a moment ago, or not to wait at all.
-       */
-      const pendingRow = pendingRowAt(projectDir, nodeId);
-      return invokeHostOperation(operationId, projectDir, nodeId, settings, {
-        cleaned: await cleanupAtNode(projectDir, nodeId),
-        ...(pendingRow !== undefined ? { pendingRow } : {}),
-      });
-    },
+    ) => invokeHostOperationAt(operationId, projectDir, nodeId, settings),
   );
 
   /*
@@ -1298,13 +424,7 @@ export function registerIpc(): void {
    * page of it, so the scan is resident regardless and streaming would only add
    * a second copy.
    */
-  ipcMain.handle('document:read-bytes', async (_event, target: string) => {
-    const resolved = admitted(target);
-    if (resolved === null) {
-      throw new Error(`${target} was never opened in this app.`);
-    }
-    return fsp.readFile(resolved);
-  });
+  ipcMain.handle('document:read-bytes', (_event, target: string) => readDocumentBytes(target));
 
   /**
    * Save a copy of an open document where the user says — the PDF tab's Save.
@@ -1457,135 +577,9 @@ export function registerIpc(): void {
    */
   ipcMain.handle(
     'document:confirm-close',
-    (_event, warning: CloseWarning): Asked<CloseAnswer> => ({
-      kind: 'ask',
-      /*
-       * THE STACK LEADS WHEN THERE IS ONE, ahead of the other, and the reason
-       * survived the reversal that changed everything else on this card. It used
-       * to lead because it was the only loss: unapplied changes were in memory
-       * and closing destroyed them, while the filed copy was merely old. They are
-       * on disk now (`savePendingStack`) and closing destroys nothing — but the
-       * stack is still the sentence somebody needs first, because it is the one
-       * that decides whether the next book this app makes is the book they are
-       * looking at. "Your copy is out of date" over the top of that would bury the
-       * question under the footnote.
-       */
-      question: warning.edits !== null && warning.edits > 0
-        ? aboutTheEdits(warning, warning.edits)
-        : aboutTheCopy(warning),
-    }),
+    (_event, warning: CloseWarning): Asked<CloseAnswer> => confirmClose(warning),
   );
 
-  /**
-   * THE CARD ABOUT A STACK NOBODY APPLIED — and it no longer says the work will
-   * be lost, because that stopped being true.
-   *
-   * ── The ruling this card used to report, and the ruling that replaced it ────
-   *
-   * It used to say, truthfully, that closing threw the stack away: the stack was
-   * a LIFO in memory and nothing else, "Apply writes and clears; closing without
-   * applying scraps it" (docs/RENDERER.md §3). Then a real project lost real work
-   * to it — the pane's changes were never applied, the export silently lacked
-   * them, and the stack went with a window that closed without this card ever
-   * being drawn (user report, 2026-08-21). Owen reversed the ruling the next day:
-   * unapplied work is never silently scrapped. It is written to a sidecar as it
-   * is made (`savePendingStack`, electron/book.ts) and put back the next time the
-   * book is opened at the same step.
-   *
-   * SO THE FRIGHTENING SENTENCE WOULD NOW BE THE LIE, and it is gone. What is
-   * left is a card about a CHOICE rather than about a loss — record these as a
-   * step now, or leave them held and come back to them — plus the one button that
-   * still destroys, which is the one place in this app allowed to.
-   *
-   * WHICH IS WHY THE OFFER IS STILL A BUTTON. A dialog whose only route to
-   * recording the work is *cancel, find Apply, close again* has made the person
-   * do the app's job. Apply is offered first and is what Enter takes; Discard is
-   * last and wears the error colour, so the button that destroys has to be aimed
-   * at — and now it is the ONLY thing that destroys, which is what makes it
-   * meaningful.
-   *
-   * NO COUNT OF WHAT KIND. "5 changes" is what the card says, not "3 strikes, a
-   * relabel and an edit" — the changes themselves are on the paper behind the
-   * dialog, in the cancel marks and the changed paragraphs, and that is a better
-   * description of them than a tally of verbs would be.
-   */
-  function aboutTheEdits(warning: CloseWarning, edits: number): AppQuestion {
-    const changes = edits === 1 ? '1 change' : `${edits} changes`;
-    /*
-     * The filed copy, when this tab owes that as well. Kept to a clause and put
-     * last: it is the smaller loss, and the buttons are about the stack.
-     */
-    const alsoTheCopy = warning.modified
-      ? [
-        'The copy you filed for yourself is also older than this one, and closing does not bring '
-        + 'it up to date. Export the book again to replace it.',
-      ]
-      : [];
-    return {
-      title: 'Apply these changes before closing?',
-      message: `“${warning.title}” has ${changes} that have not been applied.`,
-      detail: [
-        'Changes made on the book are held while you work so that taking one back is instant, and '
-        + 'they are not written down as a step until you apply them. Closing keeps them held: they '
-        + 'come back the next time you open this book at the same step.',
-        'What they are NOT part of until you apply them is anything made from this book — an '
-        + 'export, a translation or a rewrite is built from the recorded steps, so it would be made '
-        + 'without them.',
-        'Applying now records all of them as one row in Steps, which you can stand on, branch from '
-        + 'and delete afterwards. Discarding is the one thing that throws them away for good.',
-        ...alsoTheCopy,
-      ],
-      choices: [
-        { key: 'save', label: APPLY },
-        { key: 'keep', label: KEEP },
-        { key: 'close', label: DISCARD, danger: true },
-      ],
-      preferred: 'save',
-      dismissed: 'keep',
-      checkbox: null,
-    };
-  }
-
-  /**
-   * The filed copy is older than the book in front of you — the one thing left
-   * for this half of the question to say.
-   *
-   * ── The sentence that died here, and why it could not stay ──────────────────
-   *
-   * This function used to fork on `warning.unsaved` and say, for a book with no
-   * copy anywhere the user chose, that nothing else on the machine knew about it.
-   * `questionBefore` (core/documents.service.ts) no longer asks anything for a bare
-   * `unsaved`, so that branch became unreachable the moment the ruling landed —
-   * and it was also, by then, untrue: the book is in its project, Home lists it,
-   * and the way a copy leaves this app is the export modal (docs/WORKBENCH.md
-   * §6). A branch that can never run, phrased as advice about a gesture that no
-   * longer exists, is worse than no branch at all, so both went.
-   *
-   * What is left is a real state with a real remedy: a copy the person themselves
-   * put somewhere, which this book has moved on from.
-   */
-  function aboutTheCopy(warning: CloseWarning): AppQuestion {
-    return {
-      title: 'Close with edits unsaved?',
-      message: `“${warning.title}” has been edited since you saved it.`,
-      detail: [
-        'Every edit went straight into Foundry\'s working copy of the book as you made it, so '
-        + 'nothing here is lost — the project keeps it and Home will still list it.',
-        'The copy you filed for yourself is the older version, and closing does not bring it up '
-        + 'to date. Export the book again to replace it.',
-      ],
-      // The safe answer is FOCUSED and the ending one is LAST, which is this
-      // app's rule for every card that can destroy something: Enter cannot
-      // reach the button that ends the session's way back.
-      choices: [
-        { key: 'keep', label: KEEP },
-        { key: 'close', label: CLOSE, danger: true },
-      ],
-      preferred: 'keep',
-      dismissed: 'keep',
-      checkbox: null,
-    };
-  }
 
   /**
    * "Read this book again?" — the queue confirm, `BANK-LIFECYCLE.md` §3.
@@ -1623,27 +617,7 @@ export function registerIpc(): void {
    */
   ipcMain.handle(
     'reading:confirm-re-read',
-    (_event, prompt: ReReadPrompt): Asked<ReReadAnswer> => ({
-      kind: 'ask',
-      question: {
-        /*
-         * THE HEADLINE IS THE PROMPT'S OWN, AND IT IS SAID ONCE. The native box
-         * had a title bar and a message and this question filled both with the
-         * same sentence, which cost nothing when one of them was window chrome
-         * and would be a card saying "Read this book again?" twice.
-         */
-        title: prompt.message,
-        message: prompt.detail,
-        detail: [],
-        choices: [
-          { key: 'leave', label: RE_READ_CANCEL },
-          { key: 'again', label: RE_READ_PROCEED, danger: true },
-        ],
-        preferred: 'leave',
-        dismissed: 'leave',
-        checkbox: null,
-      },
-    }),
+    (_event, prompt: ReReadPrompt): Asked<ReReadAnswer> => confirmReRead(prompt),
   );
 
   // ── Projects ─────────────────────────────────────────────────────────────
@@ -1698,10 +672,7 @@ export function registerIpc(): void {
    */
   ipcMain.handle(
     'workspace:plan-export',
-    async (_event, inputPath: string, kind: ConversionKind, from?: string) => {
-      const aim = await aimedAt(inputPath, from);
-      return identifyExport(inputPath, kind, aim.deferral === undefined ? aim.at : aim.deferral.landed, aim.deferral);
-    },
+    (_event, inputPath: string, kind: ConversionKind, from?: string) => planExportFrom(inputPath, kind, from),
   );
   /*
    * A translation is asked ABOUT a file the renderer already has open, so the
@@ -1727,16 +698,8 @@ export function registerIpc(): void {
    */
   ipcMain.handle(
     'workspace:plan-translation',
-    async (_event, inputPath: string, targetLanguage: string, from?: string) => {
-      const source = admitted(inputPath);
-      if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
-      // THE ROW THIS IS AIMED AT — the position, a landed step the tree pressed on,
-      // or a promise. See `aimedAt` and the export door above, where the widening
-      // is argued in full.
-      const aim = await aimedAt(source, from);
-      const plan = await identifyTranslation(source, targetLanguage, aim.at, aim.deferral);
-      return { ...plan, inputPath: plan.sourcePath };
-    },
+    (_event, inputPath: string, targetLanguage: string, from?: string) =>
+      planTranslationFor(inputPath, targetLanguage, from),
   );
 
   /*
@@ -1749,13 +712,7 @@ export function registerIpc(): void {
    */
   ipcMain.handle(
     'workspace:plan-simplify',
-    async (_event, inputPath: string, mode: RewriteMode, from?: string) => {
-      const source = admitted(inputPath);
-      if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
-      const aim = await aimedAt(source, from);
-      const plan = await identifySimplification(source, mode, aim.at, aim.deferral);
-      return { ...plan, inputPath: plan.sourcePath };
-    },
+    (_event, inputPath: string, mode: RewriteMode, from?: string) => planSimplificationFor(inputPath, mode, from),
   );
 
   /*
@@ -1788,31 +745,11 @@ export function registerIpc(): void {
    * card closed unpressed must leave no trace. Standalone, and for a host with no
    * `passOffer`, it is null before anything is read.
    */
-  ipcMain.handle('host-ops:pass-offer', async (_event, inputPath: string, from?: string) => {
-    if (foundryHost()?.passOffer === undefined) return null;
-    const source = admitted(inputPath);
-    if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
-    const dir = projectDirOf(source);
-    if (dir === null) return null;
-    const aim = await aimedAt(source, from);
-    let at: string | null = null;
-    if (aim.deferral === undefined) {
-      if (aim.at !== null) at = aim.at.id;
-      else {
-        const view = await readStepLedger(dir);
-        at = view === null ? null : positionOf(view.ledger)?.id ?? null;
-      }
-    }
-    return hostPassOffer({ kind: 'clean', projectDir: dir, at, deferredFrom: aim.deferral?.from ?? null });
-  });
+  ipcMain.handle('host-ops:pass-offer', (_event, inputPath: string, from?: string) =>
+    hostPassOfferFor(inputPath, from));
 
-  ipcMain.handle('workspace:plan-clean', async (_event, inputPath: string, from?: string) => {
-    const source = admitted(inputPath);
-    if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
-    const aim = await aimedAt(source, from);
-    const plan = await identifyCleanup(source, aim.at, aim.deferral);
-    return { ...plan, inputPath: plan.sourcePath };
-  });
+  ipcMain.handle('workspace:plan-clean', (_event, inputPath: string, from?: string) =>
+    planCleanupFor(inputPath, from));
 
   /*
    * AN ANALYSIS IS ADMITTED THE SAME WAY A TRANSLATION IS, and for the identical
@@ -1842,34 +779,8 @@ export function registerIpc(): void {
    * deliberate act of saving, and the string that arrives here is always one main
    * itself minted.
    */
-  ipcMain.handle('workspace:plan-analysis', async (_event, inputPath: string, categories: string[]) => {
-    const source = admitted(inputPath);
-    if (source === null) throw new Error(`${inputPath} was never opened in this app.`);
-    const asked = Array.isArray(categories) ? categories : [];
-    const mine = readAppSettings().analysisCategories.map((one) => one.id);
-    const known = [...ANALYSIS_CATEGORY_IDS, ...mine];
-    const unknown = asked.filter((one) => !known.includes(one));
-    if (unknown.length > 0) {
-      throw new Error(
-        `This build does not know a category called “${unknown[0]}”, so it cannot analyse against it.`,
-      );
-    }
-    /*
-     * IN PLAN ORDER, ALWAYS, and normalised here rather than trusted from the
-     * window. The list is the step's own QUESTION (`PARAMS_OF.analysis`) and
-     * `identityOf` compares it as JSON — so two spellings of one checklist would
-     * be two questions, and a re-analysis would branch beside the row it meant to
-     * refresh. One order, decided in one place, on the engine's own ordering —
-     * with the user's own categories after the built-ins, in the order their
-     * settings file holds them, which is the order they added them.
-     */
-    const ordered = known.filter((one) => asked.includes(one));
-    if (ordered.length === 0) {
-      throw new Error('Pick at least one category — an analysis with nothing to look for finds nothing.');
-    }
-    const plan = await identifyAnalysis(source, ordered);
-    return { ...plan, inputPath: plan.sourcePath };
-  });
+  ipcMain.handle('workspace:plan-analysis', (_event, inputPath: string, categories: string[]) =>
+    planAnalysisFor(inputPath, categories));
 
   /**
    * ONE ANALYSIS STEP'S REPORT, for the panel that draws it.
@@ -1954,525 +865,19 @@ export function registerIpc(): void {
    * are what make the warning worth reading — a renderer composing its own would
    * arrive at "Are you sure?" within a month.
    */
-  /**
-   * The two refusals, in one place because both callers owe both of them.
-   *
-   * NEITHER IS ADVISORY. `describe` runs them so the app does not put a warning
-   * on screen for something it is going to refuse a click later; `delete` runs
-   * them because that is where the authorization has to be. A renderer's word
-   * about what is open or what is queued is not a fact main may act on when the
-   * action is a recursive delete.
-   */
-  function refuseProjectDelete(project: { dir: string; title: string }): void {
-    refuseBusyJob(project);
-  }
 
-  /**
-   * The narrower refusal: a job writing into this folder, and nothing else.
-   *
-   * IT IS SPLIT OUT BECAUSE A DOCUMENT DELETE OWES ONLY THIS HALF. Deleting the
-   * whole project while any book from it is open is a working tree pulled out
-   * from under a reader; deleting ONE generated file while a DIFFERENT document
-   * of the same project is open is the ordinary case — read the scan, throw away
-   * the EPUB you did not like — and refusing it because something else in the
-   * folder happened to be open would make the button useless exactly when it is
-   * wanted. The renderer closes the file's own tab before asking (open-documents).
-   *
-   * THREE CALLERS NOW, AND THEY SHARE THE FACT RATHER THAN THE SENTENCE. What is
-   * the same for all of them is finding the job: which run is about to write into
-   * this folder, and whether it is going or waiting. What differs is the
-   * CONSEQUENCE — a project delete erases the folder the engine is writing into, a
-   * step delete destroys a payload it may be in the middle of producing — so the
-   * clause after "so" is the caller's, and everything before it is written once
-   * here. A second copy of the job search is how the day comes that one of them
-   * learns about a new job state and the other does not.
-   */
-  function refuseBusyJob(
-    project: { dir: string; title: string },
-    /** The clause after "so", ending in what to do about it. */
-    consequence = `“${project.title}” cannot be deleted — the engine is writing into that `
-      + 'folder from another process, and erasing it underneath would leave half a project on '
-      + 'disk and a run writing into nothing. Cancel it in the shelf first, then delete.',
-  ): void {
-    /*
-     * A JOB WRITING INTO IT IS THE SAME HAZARD AS AN OPEN BOOK, and worse in
-     * one way: the engine is a separate process holding a file open in
-     * `generated/`, so the recursive remove fails PART WAY on Windows and
-     * leaves a project half erased — while the run carries on writing into a
-     * directory the catalogue no longer describes.
-     *
-     * Every state but `held`, `queued` and `running` is finished with the
-     * folder: a done, failed or cancelled row names a path nothing is holding.
-     *
-     * `held` counts even though nothing is writing yet. It is a job CONFIGURED
-     * to write here — the output path is already chosen and the readings bank
-     * already named — so deleting the folder under it would leave a row in the
-     * shelf that fails the moment somebody presses Start, for a reason nothing
-     * in the error would connect to a project they erased ten minutes earlier.
-     */
-    const busy = queue.listJobs().find((job) =>
-      (job.state === 'running' || job.state === 'queued' || job.state === 'held')
-      && within(project.dir, job.outputPath));
-    if (busy !== undefined) {
-      throw new Error(
-        `A ${busy.kind} job is ${busy.state === 'running' ? 'running' : 'waiting to run'} into `
-        + `“${project.title}” right now, so ${consequence}`,
-      );
-    }
-  }
+  ipcMain.handle('projects:describe', (_event, dir: string) => describeProjectDelete(dir));
 
-  /**
-   * The warning, composed where the facts are.
-   *
-   * Every sentence the native box used to carry, kept verbatim — the size on
-   * disk, the readings bank, the filed copy, and the flat statement that this is
-   * a real delete. The only thing that changed is that it comes back as data
-   * instead of being drawn by the OS.
-   */
-  function describeProject(project: ProjectInventory): DeletionPrompt {
-    /*
-     * THE BANK IS THE COST RULE IN ITS PUREST FORM (`ProjectStep.costly`). It is
-     * the stored result of the expensive pass — which is exactly why a rerun is
-     * free, and exactly why nothing in this app ever sweeps it. Erasing it is
-     * the one loss in a project delete that no amount of time gets back.
-     */
-    const bank = project.readings > 0
-      ? `It holds a readings bank of ${project.readings.toLocaleString()} pages the model has `
-        + 'already read. That is hours of GPU, it is the one thing in here that cannot be made '
-        + 'again from anything else on this disk, and once it is gone a future conversion of this '
-        + 'book pays for every page from scratch.'
-      : 'There is no readings bank in it, so nothing in here costs GPU-hours to make again.';
-    /*
-     * AND THE CURATION, which is the one thing in here that is IRREPLACEABLE
-     * rather than merely expensive (`ProjectStep.retention`). A bank can be read
-     * again for money and hours. A person going through four hundred pages
-     * saying which blocks are running heads and where the chapters start cannot
-     * be reproduced by anything, at any price, and it is quoted before the bank
-     * for exactly that reason.
-     */
-    const curation = project.amendments > 0
-      ? `It also holds ${project.amendments.toLocaleString()} corrections you made by hand about `
-        + 'the blocks on those pages — strikes, categories, wording and chapter starts. Nothing '
-        + 'can make those again: they are judgements about the book, not output.'
-      : '';
-    const filed = project.filed
-      ? ' The copy you filed into this project\'s own folder is inside it and goes with it.'
-      : '';
-    const made = project.documents === 0
-      ? 'nothing has been made from it yet'
-      : project.documents === 1
-        ? 'the one document Foundry has made from it'
-        : `the ${project.documents} documents Foundry has made from it`;
-    return {
-      message: `“${project.title}” will be deleted from this computer.`,
-      detail: [
-        /*
-         * THE IMPORT LEADS, because it is the most expensive thing in the folder
-         * and the only one that is IRREPLACEABLE rather than merely costly
-         * (`ProjectStep.costly`). A model pass can be run again for money and
-         * hours; the file the user handed over came from somewhere only they
-         * know, and Foundry treats it as the only copy in the world.
-         */
-        'The file you imported goes with it. Foundry keeps no other copy of it and cannot '
-        + 'fetch it again — wherever you got it from is the only place it still exists.',
-        `${project.dir} and everything under it goes: ${made}, every working copy and every `
-        + `edit in them, and the undo history. ${sizeOnDisk(project.bytes)} in all.${filed}`,
-        ...(curation.length > 0 ? [curation] : []),
-        bank,
-        'This is a real delete. The folder is removed from the disk — it is not moved aside, '
-        + 'Foundry keeps no copy of it anywhere else, and there is nothing that will bring it back.',
-      ],
-      confirm: 'Delete this project',
-    };
-  }
+  ipcMain.handle('projects:delete', (_event, dir: string) => deleteProjectFolder(dir));
 
-  ipcMain.handle('projects:describe', async (_event, dir: string) => {
-    const project = await inspectProject(dir);
-    refuseProjectDelete(project);
-    return describeProject(project);
-  });
 
-  ipcMain.handle('projects:delete', async (_event, dir: string) => {
-    const project = await inspectProject(dir);
-    refuseProjectDelete(project);
+  ipcMain.handle('documents:describe', (_event, filePath: string): Promise<DocumentDeletion> =>
+    describeDocumentDelete(filePath));
 
-    await deleteProject(project.dir);
-    // The recents list is keyed by file and a project is a folder of them, so
-    // every row pointing inside goes with it. Otherwise the app would keep a
-    // last-opened time for — and `listProjects` would keep dating a row by — a
-    // book whose bytes it destroyed a moment ago.
-    forgetRecentsUnder(project.dir);
-    return `Deleted “${project.title}”. ${project.dir} and everything in it is gone from this computer.`;
-  });
 
-  /**
-   * One document out of a project: what would happen, and then doing it.
-   *
-   * THE ORIGINAL IS NOT DELETABLE ON ITS OWN, and that is the whole reason this
-   * pair describes before it acts. Every other document in a project was made
-   * FROM the original; erasing it leaves a folder of outputs with no source,
-   * which is not a project any more. So `describe` reports `original: true` and
-   * hands back the PROJECT's warning, and `delete` refuses that path outright —
-   * the renderer is expected to run the project delete instead, and a renderer
-   * that ignored the flag gets a sentence rather than a half-emptied folder.
-   *
-   * `shared/original.ts` decides which document that is, and both sides import
-   * it: the flag main sets and the row the nav draws come from one rule.
-   *
-   * The listing comes from `listProjects`, which is the one function that says
-   * what a project contains — the same answer Home and the side nav are drawn
-   * from, so a row the user can see is a row this can find.
-   */
-  async function findDocument(filePath: string): Promise<{
-    project: ProjectSummary;
-    document: ProjectDocument;
-  }> {
-    const target = fold(filePath);
-    for (const project of await listProjects()) {
-      const document = project.documents.find((row) => fold(row.path) === target);
-      if (document !== undefined) return { project, document };
-    }
-    throw new Error(
-      `${filePath} is not a document in any of Foundry's projects, so there is nothing here to `
-      + 'delete. Files outside the library are the file manager\'s business, not this app\'s.',
-    );
-  }
+  openExportDeleteDoor();
 
-  /**
-   * The same question asked of the TRAY, which is a different catalogue.
-   *
-   * ── The bug this closes ─────────────────────────────────────────────────────
-   *
-   * The library tree draws a ✕ on export rows, and every one of them threw:
-   * `findDocument` searches `project.documents` — the CHAIN, what each step
-   * produced — while an export row comes from `manifest.final` by way of
-   * `filedDocuments`. Two catalogues, and the delete only knew one, so pressing
-   * the ✕ on a file this app had just made produced "is not a document in any
-   * of Foundry's projects" — a sentence written for a path somebody typed from
-   * outside the library, shown for a row the app drew from its own manifest.
-   *
-   * ── Why a separate door instead of teaching `findDocument` about final/ ─────
-   *
-   * Because an export is not a document in the sense the delete pair means. It
-   * has no steps, no retention, no origin; it can never be the book the project
-   * is built on; nothing was made FROM it. Folding it into the document lookup
-   * would put a row in front of `isBook`, `documentAssets` and the original's
-   * refusal — three questions that have no answer for a file in the tray — and
-   * the first one to guess would be a bug nobody could see coming.
-   *
-   * `final/` is the user's own tray (`projects.ts`, `filedDocuments`): they may
-   * have already moved it onto a reader or deleted it themselves, which is why
-   * a row whose file has gone is a REMOVAL and not an error.
-   */
-  async function findExport(filePath: string): Promise<{
-    project: ProjectSummary;
-    made: ProjectFinal;
-    label: string;
-  } | null> {
-    const target = fold(filePath);
-    for (const project of await listProjects()) {
-      for (const made of project.exports) {
-        // Whole paths, never basenames — this project holds `generated/Book.pdf`
-        // and `final/Book.pdf` at once, and the layer is the only thing telling
-        // them apart. The oldest house rule in this codebase.
-        if (fold(path.join(project.dir, ...made.file.split('/'))) !== target) continue;
-        return { project, made, label: path.basename(made.file) };
-      }
-    }
-    return null;
-  }
-
-  /**
-   * And the same question asked of the FACSIMILES, which is a third catalogue —
-   * or rather a third listing, since nothing catalogues these at all.
-   *
-   * ── The same bug, one row further down the tree ─────────────────────────────
-   *
-   * The nav draws a ✕ on facsimile rows exactly as it draws one on exports, and
-   * every one of them threw the sentence written for a path somebody typed from
-   * outside the library. A facsimile is in NEITHER of the two lookups above it:
-   * `project.documents` is the chain and `project.exports` is `manifest.final`,
-   * while `ProjectSummary.facsimiles` is composed by scanning `generated/` for
-   * the name each read step's id makes (`facsimilesOf`, electron/projects.ts).
-   * Three listings, and the delete knew two.
-   *
-   * ── Why a third door and not a branch in either of the others ───────────────
-   *
-   * `findExport`'s argument, and it applies harder here. An export at least has a
-   * row in the manifest; a facsimile has nothing — no steps, no retention, no
-   * origin, nothing made FROM it, and no catalogue entry to strike out. Every
-   * question the document path asks (`isBook`, `documentAssets`, the original's
-   * refusal) is a question with no answer for a page-for-page reprint, and the
-   * first one to guess would be the bug nobody sees coming.
-   *
-   * AND IT IS THE CHEAPEST THING IN THE PROJECT TO LOSE, which is why its card is
-   * one line shorter than an export's: the bank it reprints is kept whatever
-   * happens, so the reprint is seconds of offline arithmetic away for as long as
-   * the reading exists.
-   */
-  async function findFacsimile(filePath: string): Promise<{
-    project: ProjectSummary;
-    made: ProjectFacsimile;
-    label: string;
-  } | null> {
-    const target = fold(filePath);
-    for (const project of await listProjects()) {
-      for (const made of project.facsimiles) {
-        // Whole paths with their layer, never basenames — the same rule spelled
-        // out above `findExport`, and a facsimile lives in `generated/` beside a
-        // cast and a rotated predecessor of itself.
-        if (fold(path.join(project.dir, ...made.file.split('/'))) !== target) continue;
-        return { project, made, label: path.basename(made.file) };
-      }
-    }
-    return null;
-  }
-
-  ipcMain.handle('documents:describe', async (_event, filePath: string): Promise<DocumentDeletion> => {
-    /*
-     * THE TRAY IS ASKED FIRST, and the question it gets is its own. Removing an
-     * export takes the file and its row and nothing else: no chain to unpick, no
-     * working tree, no history, and nothing was ever made from it. Saying so in
-     * one sentence is the honest card — the document card's paragraph about the
-     * readings bank surviving would be reassurance about a danger that was never
-     * on the table.
-     */
-    const filed = await findExport(filePath);
-    if (filed !== null) {
-      // `final/` is the user's own tray, so the file may legitimately not be
-      // there — moved onto a reader, handed to somebody, deleted by hand. That
-      // is a row to clear, not an error to raise, and it changes the sentence.
-      const gone = await fsp.access(filePath).then(() => false, () => true);
-      return {
-        prompt: {
-          message: `“${filed.label}” will be removed from “${filed.project.title}”.`,
-          detail: [
-            gone
-              ? 'That file is no longer on the disk — moved or deleted somewhere else — so this '
-                + 'clears the row that still lists it.'
-              : 'The file is deleted from the disk. Foundry keeps no copy of it anywhere else.',
-            'Nothing else changes: this is one of the finished documents you exported, and the '
-            + 'book, its readings and every step it was made from stay exactly as they are. You '
-            + 'can export it again at any time.',
-          ],
-          confirm: gone ? 'Remove this row' : 'Delete this export',
-        },
-        original: false,
-        projectDir: filed.project.dir,
-        missing: gone,
-      };
-    }
-
-    /*
-     * THEN THE REPRINTS, and their card is the shortest one in this app because
-     * there is genuinely almost nothing to warn anybody about. A facsimile is a
-     * rendering of a bank that is kept whatever else happens: no step points at
-     * it, nothing was made from it, and the reading it reprints is untouched by
-     * its going. Saying so plainly is the honest card — the document card's
-     * paragraph about the bank surviving reads as reassurance about a danger that
-     * was never on the table, which is how people learn to skip these.
-     */
-    const reprint = await findFacsimile(filePath);
-    if (reprint !== null) {
-      // The listing stats before it draws a row, so this is the window between
-      // that stat and this click — somebody tidying `generated/` by hand, a
-      // window holding a tree from a minute ago. A row to clear, not an error.
-      const gone = await fsp.access(filePath).then(() => false, () => true);
-      return {
-        prompt: {
-          message: `“${reprint.label}” will be deleted from “${reprint.project.title}”.`,
-          detail: [
-            gone
-              ? 'That file is no longer on the disk — moved or deleted somewhere else — so this '
-                + 'clears the row that still lists it.'
-              : 'The file is deleted from the disk. Foundry keeps no copy of it anywhere else.',
-            'The readings bank and every step in this project stay exactly as they are. This is '
-            + 'the pages of one reading reprinted, nothing is made from it, and you can make it '
-            + 'again from that reading at any time — it costs seconds and no GPU.',
-          ],
-          confirm: gone ? 'Remove this row' : 'Delete this facsimile',
-        },
-        original: false,
-        projectDir: reprint.project.dir,
-        missing: gone,
-      };
-    }
-
-    const { project, document } = await findDocument(filePath);
-    const inventory = await inspectProject(project.dir);
-
-    if (isBook(project.documents, document.path, project.dir)) {
-      // The original's delete IS the project's, so it owes the project's
-      // refusals — including the open-book one this file's own delete does not.
-      refuseProjectDelete(inventory);
-      const prompt = describeProject(inventory);
-      return {
-        prompt: {
-          ...prompt,
-          message: `“${document.label}” is the original this project is built on.`,
-          detail: [
-            'Deleting it deletes the whole project — every document in this folder was made from '
-            + 'it, and what would be left is a set of outputs with nothing they came from.',
-            ...prompt.detail,
-          ],
-        },
-        original: true,
-        projectDir: project.dir,
-        missing: document.missing,
-      };
-    }
-
-    refuseBusyJob(inventory);
-    const gone = document.missing
-      ? 'That file is already gone from the disk; what is left is its row in this project\'s '
-        + 'catalogue, and this clears it.'
-      : `${document.path} is removed from the disk. It is not moved aside and Foundry keeps no `
-        + 'copy of it anywhere else.';
-
-    /*
-     * WHAT ELSE GOES, NAMED. A delete that quietly takes more than the thing it
-     * was pointed at is the exact surprise these cards exist to prevent — and
-     * "5 earlier versions" is not a detail, it is most of what is about to be
-     * removed by weight. Where nothing extra goes, nothing extra is said: a
-     * sentence listing zero of three things reads as boilerplate and teaches
-     * people to skip the paragraph that matters.
-     */
-    const extras = await documentAssets(document.path);
-    const also: string[] = [];
-    if (extras.archivedVersions > 0) {
-      also.push(extras.archivedVersions === 1
-        ? 'the one earlier version of it a rerun set aside'
-        : `the ${extras.archivedVersions} earlier versions of it that reruns set aside`);
-    }
-
-    return {
-      prompt: {
-        message: `“${document.label}” will be deleted from “${project.title}”.`,
-        detail: [
-          gone,
-          ...(also.length > 0
-            ? [`${sentenceList(also)} ${also.length === 1 ? 'goes' : 'go'} with it — everything in `
-              + 'this project that belongs to this document and to nothing else.']
-            : []),
-          'The project and everything else in it stays, including the original and the readings '
-          + 'bank — the hours of GPU that let this document be made again by converting the book a '
-          + 'second time.',
-        ],
-        confirm: document.missing ? 'Remove this row' : 'Delete this document',
-      },
-      original: false,
-      projectDir: project.dir,
-      missing: document.missing,
-    };
-  });
-
-  /** `a`, `a and b`, `a, b and c` — the app writes sentences, not bullet lists. */
-  function sentenceList(parts: readonly string[]): string {
-    if (parts.length <= 1) return parts[0] ?? '';
-    return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
-  }
-
-  /*
-   * THE HOST'S DOOR ONTO THE SAME DELETE, for one export in `final/`. Owen,
-   * 2026-09-28: deleting an EPUB on BookForge's screen deletes THAT EPUB —
-   * its file here and its row in `manifest.final` — and nothing upstream of
-   * it. BookForge used to drop the STEP the export was cast from instead,
-   * which took an AI-cleanup pass and its history with it and left the nav
-   * drawing an export whose file was gone.
-   *
-   * The busy proof when the tray still lists it; `deleteDocument` either way,
-   * because a row whose file already left is exactly the one worth striking.
-   */
-  exportDeleteDoor = async (filePath: string) => {
-    const filed = await findExport(filePath);
-    if (filed !== null) refuseBusyJob(filed.project);
-    const removed = await deleteDocument(filePath);
-    forgetRecentsUnder(filePath);
-    return removed;
-  };
-
-  ipcMain.handle('documents:delete', async (_event, filePath: string) => {
-    /*
-     * The tray again, and asked again rather than trusted from the describe —
-     * same rule as the busy-job proof below: this is the call that unlinks
-     * something, and the catalogue may have moved under it.
-     *
-     * `deleteDocument` already does exactly the right thing with a `final/`
-     * path: it strikes the row out of `manifest.final` by LAYER (`inLayer`),
-     * removes the file, and sweeps nothing else, because an export has no
-     * working tree, no archived predecessors and no history to sweep. Only the
-     * lookup above it was blind.
-     */
-    const filed = await findExport(filePath);
-    if (filed !== null) {
-      /*
-       * THE BUSY PROOF COSTS A QUEUE LOOKUP, NOT AN INVENTORY. This line paid
-       * `inspectProject` for years of habit — a recursive byte-measure of the
-       * whole project plus a line-count of every bank — to hand a function
-       * that reads `{dir, title}` against the QUEUE. On a captured project
-       * that walk is hundreds of files including a shoot's worth of
-       * photographs, and through a cold antivirus it is tens of milliseconds
-       * a stat: Owen pressed Delete on one EPUB and watched nothing happen
-       * for thirty seconds (2026-08-23). The summary in hand already carries
-       * both fields.
-       */
-      refuseBusyJob(filed.project);
-      const removed = await deleteDocument(filePath);
-      forgetRecentsUnder(filePath);
-      return removed.wasMissing
-        ? `Removed “${filed.label}” from “${filed.project.title}” — the file was already gone.`
-        : `Deleted “${filed.label}” from “${filed.project.title}”.`;
-    }
-
-    /*
-     * The reprints, asked again for the same reason the tray is: this is the call
-     * that unlinks something and the listing may have moved under it.
-     *
-     * `deleteDocument` is already right for a `generated/` facsimile, and it is
-     * right by construction rather than by luck. THE MANIFEST NEEDS NOTHING DONE
-     * TO IT: a facsimile is in no list in `project.json`, so the documents filter
-     * matches no chain (nothing names this file as a step's payload), and
-     * `working.files` and `final` are asked only about their own layers. THE ROW
-     * GOES BECAUSE THE FILE DOES: `facsimilesOf` composes the name from the read
-     * step's id and stats it, so the listing is the directory's answer and a
-     * deleted file is a listing with one fewer row in it the next time anything
-     * asks. And the SWEEP is exactly what it should be: the archived copies of
-     * this same name beside it, which for a name carrying a step's own id can
-     * only be earlier reprints of that same reading.
-     */
-    const reprint = await findFacsimile(filePath);
-    if (reprint !== null) {
-      // The cheap busy proof, for the export branch's measured reason.
-      refuseBusyJob(reprint.project);
-      const removed = await deleteDocument(filePath);
-      forgetRecentsUnder(filePath);
-      return removed.wasMissing
-        ? `Removed “${reprint.label}” from “${reprint.project.title}” — the file was already gone.`
-        : `Deleted “${reprint.label}” from “${reprint.project.title}”.`;
-    }
-
-    const { project, document } = await findDocument(filePath);
-    // Proven again, not trusted from the describe: a job can be queued between
-    // the question and the answer, and this is the call that unlinks something.
-    // The proof reads the queue, so it is handed the summary and not an
-    // inventory — the export branch above carries the thirty seconds that
-    // distinction was measured to cost.
-    refuseBusyJob(project);
-
-    if (isBook(project.documents, document.path, project.dir)) {
-      throw new Error(
-        `“${document.label}” is the original “${project.title}” is built on, so it cannot be `
-        + 'deleted by itself — every other document in the folder was made from it. Delete the '
-        + 'project instead.',
-      );
-    }
-
-    const removed = await deleteDocument(document.path);
-    forgetRecentsUnder(document.path);
-    return removed.wasMissing
-      ? `Removed “${removed.label}” from “${removed.title}” — the file was already gone.`
-      : `Deleted “${removed.label}” from “${removed.title}”.`;
-  });
+  ipcMain.handle('documents:delete', (_event, filePath: string) => deleteDocumentFile(filePath));
 
   /*
    * ── A document's own record ──────────────────────────────────────────────
@@ -2494,215 +899,21 @@ export function registerIpc(): void {
    * in the tray is the claim being exercised instead (`exportInTray`, which
    * `export:save-copy` and `book:view` are gated on for the same reason).
    */
-  /**
-   * THE STEP FOR A METADATA EDIT — written after the document, and never instead
-   * of it.
-   *
-   * ── What this is the second half of ─────────────────────────────────────────
-   *
-   * The write above is what the user SEES: the package or the Info dictionary
-   * changes and the pane in front of them says the new title at once. This is what
-   * SURVIVES it. An export is cast fresh from the bank and a working tree's package
-   * is not one of its inputs, so before this existed the correction was silently
-   * absent from every book the app filed afterwards (docs/WORKBENCH.md §9). The
-   * payload here is what materialisation replays.
-   *
-   * ── The file before the step, which is the rule and not a preference ───────
-   *
-   * A step is a pointer at a retained payload, so a step recorded before its
-   * payload exists is a row somebody can click, render from, and be shown a
-   * refusal by. The uuid makes the write collision-free by construction — two Applies a
-   * millisecond apart cannot land on one name — so there is no file here to
-   * overwrite and nothing to serialise against.
-   *
-   * ── A LANDING THAT FAILS IS A CONSOLE LINE, NOT A FAILED WRITE ─────────────
-   *
-   * By the time this runs the document has been edited: the values are in the
-   * book, visibly, and reporting failure would tell somebody their correction did
-   * not happen while leaving it done. What is actually lost is the RECORD of it,
-   * which is worth a named line in the terminal and is not worth turning a
-   * successful edit into a refusal.
-   *
-   * ── Absent for two ordinary states, and neither is an error ────────────────
-   *
-   * A patch with no changed fields in it is a read wearing a Save button, and a
-   * document outside every project — a file the user opened off their own disk —
-   * has no ledger for a row to go in. Both answer undefined, and the dialog knows
-   * that means there is nothing to adopt.
-   */
-  const landMetadata = async (
-    inside: string,
-    kind: MetadataPatch['kind'],
-    patch: Record<string, string | undefined>,
-  ): Promise<StepLedgerView | undefined> => {
-    const fields: Record<string, string> = {};
-    for (const [field, value] of Object.entries(patch)) {
-      if (typeof value !== 'string' || value.trim().length === 0) continue;
-      fields[field] = value;
-    }
-    const named = Object.keys(fields);
-    if (named.length === 0) return undefined;
-    const dir = projectDirOf(inside);
-    if (dir === null) return undefined;
-    try {
-      const name = `${randomUUID()}.json`;
-      await fsp.mkdir(metadataDir(dir), { recursive: true });
-      const body: MetadataPatch = { kind, fields };
-      await fsp.writeFile(path.join(metadataDir(dir), name), `${JSON.stringify(body, null, 2)}\n`, 'utf8');
-      // PROJECT-RELATIVE WITH FORWARD SLASHES, as every payload is: the ledger's
-      // spelling of a path is not this platform's, and a payload that carried a
-      // backslash would be a row no other machine could resolve.
-      return await recordMetadata(dir, `metadata/${name}`, { fields: named });
-    } catch (err) {
-      console.error(
-        `[meta] the ${kind} record was written, but the step for it could not be: `
-        + `${err instanceof Error ? err.message : String(err)}. The document carries the values; `
-        + 'the history does not, so anything made from here will not carry them.',
-      );
-      return undefined;
-    }
-  };
 
-  /*
-   * The PDF's path goes through `admitted` — the SAME allow-list the pdf.js
-   * viewer's bytes go through, and the same function, so this door can never
-   * drift from that one. A renderer that was talked into naming some other file
-   * is refused here rather than by a path check that has to stay right forever.
-   */
-  const admittedPdf = (candidate: string): string => {
-    const resolved = admitted(candidate);
-    if (resolved === null) {
-      throw new Error(`"${candidate}" is not a document this app has open, so its metadata is not ours to read.`);
-    }
-    return resolved;
-  };
   ipcMain.handle('meta:read-pdf', (_event, filePath: string) =>
     readPdfMetadata(admittedPdf(filePath)));
-  /**
-   * The PDF a metadata WRITE may touch, which is not simply "one that is open".
-   *
-   * ── THE APP NEVER SILENTLY WRITES OUTSIDE ITS LIBRARY ──────────────────────
-   *
-   * `admitted` answers for anything the user has opened, INCLUDING their own
-   * file on their own disk — that is what it is for; it is a read gate. Handing
-   * that answer to `pdf-meta --out` meant that editing the title of a document
-   * in the window between opening it and the background import finishing (or in
-   * any case where the import failed and the tab never moved) re-emitted the
-   * user's own `E:\…` PDF through pdf-lib and renamed the result over it. A
-   * whole-document rewrite of a file this app was only ever asked to LOOK at.
-   *
-   * So a write resolves to the project's working copy or it does not happen. An
-   * unmanaged path is refused with the reason and with what to do about it,
-   * rather than being quietly redirected — a metadata dialog that reported
-   * success against a file the user was not looking at would be its own bug.
-   *
-   * ── AND `archive/` IS INSIDE THE LIBRARY AND STILL NOT WRITABLE ────────────
-   *
-   * `isManaged` answers true for every layer of a project on purpose (its own
-   * header says so), and that was a complete gate for exactly as long as no
-   * surface ever put an archived path in front of a writer. Standing on the origin
-   * row now shows the untouched original (`documentAtPosition`, projects.ts), so
-   * the dialog's `tab.path` can be that file — and a title edit made there would
-   * re-emit the only copy of somebody's scan this program knows of through
-   * pdf-lib, silently, in the one place the app promises it does not. The refusal
-   * names the row rather than the folder: a step is named by the action it was.
-   */
-  const writablePdf = (candidate: string): string => {
-    const resolved = admittedPdf(candidate);
-    if (isArchived(resolved)) {
-      throw new Error(
-        'This is the document exactly as you imported it, which Foundry keeps and never writes to. '
-        + 'Step forward off the import in the history panel and edit the copy this app works on.',
-      );
-    }
-    if (isManaged(resolved)) return resolved;
-    throw new Error(
-      `"${resolved}" is your own file, outside Foundry's library, and this app does not write to `
-      + 'documents it did not make. Foundry keeps a copy of every document you open — open this '
-      + 'one from Home and edit that, and your original stays exactly as it is.',
-    );
-  };
   ipcMain.handle(
     'meta:write-pdf',
-    async (_event, filePath: string, patch: Record<string, string | undefined>): Promise<MetadataWriteOutcome> => {
-      // Resolved once and used for both halves: the write goes to the working
-      // copy, and the step is filed against the project that copy is in. Asking
-      // `writablePdf` twice would be two answers about one document, and the
-      // refusals it makes are the ones that decide whether there is anything to
-      // record at all.
-      const working = writablePdf(filePath);
-      const outcome = await writePdfMetadata(working, patch);
-      if (!outcome.ok) return outcome;
-      const landed = await landMetadata(working, 'pdf', patch);
-      return landed === undefined ? outcome : { ...outcome, landed };
-    },
+    (_event, filePath: string, patch: Record<string, string | undefined>): Promise<MetadataWriteOutcome> =>
+      writePdfMetadataFor(filePath, patch),
   );
 
-  /**
-   * THE EPUB A METADATA READ OR WRITE MAY TOUCH — a finished export, and nothing
-   * else in the library.
-   *
-   * ── Why this is not `admittedPdf` with a different extension ────────────────
-   *
-   * `admitted` answers for documents that came in through `openDocument` — the
-   * menu, a drop, argv, the dialog. An export never came in through any of them:
-   * `openExportView` (core/documents.service.ts) makes its tab out of a path read
-   * off a history row, and the pane behind it asks `book:view` rather than opening
-   * a file. So the allow-list says no to every export there is, and a door that
-   * admitted the path for being asked about it would not be a gate at all.
-   *
-   * The tray is the honest test and it is already this app's answer to exactly
-   * this question twice over — `export:save-copy` copies out of it, `book:view`
-   * explodes out of it — so this asks the same function and inherits whatever
-   * that rule becomes.
-   *
-   * ── NO `archive/` TEST HERE, WHICH IS NOT AN OVERSIGHT ─────────────────────
-   *
-   * The PDF write needs one because `documentAtPosition` can put the untouched
-   * original in front of the dialog, and `isManaged` is true of it. `final/` and
-   * `archive/` are different folders by construction: a path this answers for is
-   * two segments deep under `final`, so the archived scan cannot reach here and a
-   * refusal about it would be a sentence nobody can make the app say.
-   *
-   * ── AND THE EXTENSION, BECAUSE A TRAY HOLDS MORE THAN BOOKS ────────────────
-   *
-   * `final/` also holds plain-text exports, and `epub-meta` handed one would fail
-   * somewhere inside a zip reader with a sentence about a container. Refused here,
-   * in words about what the file is.
-   */
-  const exportedBook = (candidate: string): string => {
-    const resolved = path.resolve(candidate);
-    if (exportInTray(resolved) === null || !resolved.toLowerCase().endsWith('.epub')) {
-      throw new Error(
-        `"${candidate}" is not one of this library’s exported books, and this app edits the record `
-        + 'of a book it made rather than of a file it was shown.',
-      );
-    }
-    return resolved;
-  };
   ipcMain.handle('meta:read-epub', (_event, filePath: string) =>
     readEpubMetadata(exportedBook(filePath)));
   ipcMain.handle(
     'meta:write-epub',
-    async (_event, filePath: string, patch: Record<string, string | undefined>): Promise<MetadataWriteOutcome> => {
-      // Resolved once and used for both halves, on the PDF door's rule above: the
-      // container and the step are two facts about ONE document, and asking the
-      // gate twice would be two answers about it.
-      const book = exportedBook(filePath);
-      const outcome = await writeEpubMetadata(book, patch);
-      if (!outcome.ok) return outcome;
-      /*
-       * THE STEP IS THE HALF THAT MATTERS MORE HERE THAN IT DOES FOR A SCAN. A
-       * PDF's working copy is what every later rendering is read from, so an edit
-       * to it is at least durable in the file. An export is a CAST — the next one
-       * comes out of the bank, which never knew the title was corrected — so
-       * without this the correction would live only in the one container the
-       * person happened to have open, and every book filed after it would quietly
-       * go back to being wrong.
-       */
-      const landed = await landMetadata(book, 'epub', patch);
-      return landed === undefined ? outcome : { ...outcome, landed };
-    },
+    (_event, filePath: string, patch: Record<string, string | undefined>): Promise<MetadataWriteOutcome> =>
+      writeEpubMetadataFor(filePath, patch),
   );
   /*
    * ── The mint metadata — who the book says it is, per project ──────────────
@@ -2761,72 +972,6 @@ export function registerIpc(): void {
    * import is deleting the project, and the project ✕ does that with its own
    * ceremony and its own accounting of what it costs.
    */
-  /**
-   * A job writing into this project, and a delete that would take its payload.
-   *
-   * ── Why the delete owes this and the other two calls do not ─────────────────
-   *
-   * A held, queued or running job is a run that HAS ALREADY CHOSEN where its
-   * output goes: the bank is named, the EPUB's path is composed, and the parent
-   * step was captured when somebody pressed the button. Deleting a step while one
-   * waits is aimed at exactly the file that run is about to write — the reading
-   * whose bank it is filling, or the translation whose EPUB it is composing — and
-   * the two possible orders are both wrong. Destroy the payload first and the run
-   * finishes into a folder whose catalogue no longer describes it, leaving hours
-   * of GPU nothing in this app names. Let the run land first and it appends
-   * against a parent this delete has just taken off the ledger, which `landStep`
-   * survives by falling back to the position, but only by filing the work
-   * somewhere nobody chose.
-   *
-   * SO THE STEP DELETE REFUSES, on the project delete's own terms and with the
-   * same vocabulary — the shelf is where a person cancels a job, and the sentence
-   * says so. Coarse on purpose: ANY job writing into this project, not just one
-   * whose output happens to be a payload in the doomed subtree. The narrower test
-   * would have to predict where a run that has not started will write, and being
-   * clever about that is how a delete comes to race a job it decided was unrelated.
-   *
-   * ── THE OTHER TWO ARE NOT UNSAFE, AND REFUSING THEM WOULD BE ITS OWN BUG ────
-   *
-   * `ledger:go` writes one field of the manifest and touches nothing else. The
-   * design already defends the case it looks dangerous in: a job captures its
-   * parent at enqueue (`Job.parentStep`) and every path it will read or write at
-   * PLAN time (`planRendering`), precisely so that clicking through the history
-   * while a run waits cannot retarget it. Moving the pointer is a repaint, it is free, and
-   * people do it while they wait — refusing it during a three-hour reading would
-   * take the history panel away for the whole time it is most wanted, to prevent
-   * nothing.
-   *
-   * `book:apply` writes `ops/<uuid>.jsonl`, a path no job can be about to
-   * write, and appends a step of its own. It is the one action in this app that
-   * retains IRREPLACEABLE work — somebody's judgements about four hundred blocks —
-   * and refusing to let a person land those because a machine is busy would be
-   * this app declining to keep the only thing in a project it cannot make again.
-   * The interesting case is an Apply made while a re-read is running, and the
-   * ledger already has the right answer for it: the payload is retained, and when
-   * the reading lands and replaces its parent, `markStale` dims the step rather
-   * than destroying it (the retention rule: user labour is never destroyed by a
-   * re-run). That is the designed outcome, not a race.
-   */
-  /*
-   * THE OTHER REFUSAL IS NOT HERE, AND THAT IS DELIBERATE. A book this window has
-   * open cannot have its working tree unlinked, and `describeStepDelete` and
-   * `deleteStep` both refuse that case themselves (electron/projects.ts,
-   * `refuseOpenPayload`) — because deciding it needs the sweep, which needs the
-   * manifest, which is that module's. It is the document delete's model rather
-   * than the project delete's: the narrow test on the tree this step's own payload
-   * serves, plus the renderer closing the tab between the confirm and the call.
-   */
-  const refuseBusyStepDelete = async (projectDir: string, stepId: string): Promise<void> => {
-    // `deletableStep` proves the directory, names the step, AND runs the refusal
-    // that never lifts — the origin is not a deletable step at any hour — so this
-    // never tells somebody to cancel a job for a delete that would refuse them
-    // afterwards anyway.
-    const subject = await deletableStep(projectDir, stepId);
-    refuseBusyJob(subject, `“${subject.label}” cannot be deleted yet — that run is about to write `
-      + 'into this project, and destroying a step\'s files while it does would leave the job '
-      + 'finishing into a history this app no longer has. Cancel it in the shelf, or let it land, '
-      + 'then delete the step.');
-  };
 
   /*
    * ── THE CAPTURE STAGE, REGISTERED AND NOT YET ANSWERING ───────────────────
@@ -2963,20 +1108,7 @@ export function registerIpc(): void {
    * a row per click of the Steps accordion would be bookkeeping about a gesture
    * that is meant to be free.
    */
-  ipcMain.handle('ledger:document-at', async (_event, projectDir: string) => {
-    const resolved = await documentAtPosition(projectDir);
-    if (resolved !== null) admit(resolved);
-    /*
-     * A NULL IS AN ORDINARY ANSWER AND NOTHING IS FIRED AT IT ANY MORE. There
-     * used to be a `towardTheFlowingBook` here: when a position resolved to the
-     * scan, or to nothing, this handler asked the queue to cast the project's
-     * flowing book so the pane would have an EPUB to unpack. The pane reads the
-     * book file now — a read, a save and a translation all open the proof sheet
-     * — so a position that names no separate document names none, and the panes
-     * correctly keep what they have (docs/RENDERER.md §7).
-     */
-    return resolved;
-  });
+  ipcMain.handle('ledger:document-at', (_event, projectDir: string) => documentAtPositionAdmitted(projectDir));
   /*
    * THE SAME ANSWER FOR A ROW NOBODY IS STANDING ON — Compare's document resolve.
    *
@@ -2996,11 +1128,8 @@ export function registerIpc(): void {
    * NOT REMEMBERED AS A RECENT, on `document-at`'s own rule: nothing was opened,
    * somebody put a second view on a row of a book they already have open.
    */
-  ipcMain.handle('ledger:document-at-step', async (_event, projectDir: string, stepId: string) => {
-    const resolved = await documentAtStep(projectDir, stepId);
-    if (resolved !== null) admit(resolved);
-    return resolved;
-  });
+  ipcMain.handle('ledger:document-at-step', (_event, projectDir: string, stepId: string) =>
+    documentAtStepAdmitted(projectDir, stepId));
   /*
    * THE QUEUE'S HALF OF THE CORRECTION DOOR.
    *
@@ -3014,13 +1143,6 @@ export function registerIpc(): void {
    * deleted (docs/RENDERER.md §7). There is one door onto a translation's words
    * now, and it is the pane's.
    */
-  const recordsBusy = (recordsFile: string): string | null => (
-    queue.producing(recordsFile)
-      ? 'A translation is writing this book\'s records right now, so the correction was not '
-        + 'recorded — the edit is on screen and in this copy of the book. Let the run finish '
-        + '(or cancel it) and make the edit again.'
-      : null
-  );
   /*
    * THE BOOK ITSELF — the rows the renderer draws, off the file the reflow made.
    *
@@ -3189,169 +1311,15 @@ export function registerIpc(): void {
    */
   ipcMain.handle(
     'book:confirm-unapplied',
-    (_event, warning: UnappliedWarning): Asked<UnappliedAnswer> => {
-      const changes = warning.edits === 1 ? '1 change' : `${warning.edits} changes`;
-      const them = warning.edits === 1 ? 'it' : 'them';
-      /*
-       * WHAT THE ACT WOULD BE MADE FROM — and standing is the odd one out, which
-       * is exactly why it needs its own sentence rather than a fifth spelling of
-       * the make-act line. A move makes nothing; what it costs is that the stack
-       * cannot come with it, because ops are a delta against the step they were
-       * made on and carrying them would apply somebody's decisions to a book they
-       * never made them about.
-       */
-      const runs = warning.act === 'stand'
-        ? 'Changes on the book belong to the step they were made on, so moving to another step '
-          + 'cannot take them along. They would be left behind here.'
-        : (warning.act === 'translate'
-          ? 'The translation would be made from'
-          : warning.act === 'simplify'
-            ? 'The rewrite would be made from'
-            : warning.act === 'clean'
-              ? 'The cleaned text would be made from'
-              : warning.act === 'export'
-                ? 'The exported book would be'
-                : 'The work would be made from')
-          + ' the book as it was recorded, which is the book WITHOUT those changes — changes reach '
-          + 'anything made from this book only once they are applied as a step.';
-      // What happens the moment the card closes, in the words of the thing the
-      // person pressed. The card's own title says nothing about the act, so this
-      // is the only place it is named.
-      const then = warning.act === 'translate'
-        ? 'the translation is set up'
-        : warning.act === 'simplify'
-          ? 'the rewrite is set up'
-          : warning.act === 'clean'
-            ? 'the cleanup is set up'
-            : warning.act === 'export'
-              ? 'the export is set up'
-              : warning.act === 'stand'
-                ? 'the step you clicked is opened'
-                : 'the work goes ahead';
-      return {
-        kind: 'ask',
-        question: {
-          title: warning.edits === 1
-            ? '1 change is not applied yet'
-            : `${warning.edits} changes are not applied yet`,
-          message: `“${warning.title}” has ${changes} on the page that have not been applied.`,
-          detail: [
-            runs,
-            `Apply changes records all of ${them} as one row in Steps, and then ${then} from the `
-            + 'book you are looking at.',
-            `Discard changes throws ${them} away for good — nothing puts ${them} back — and then `
-            + `${then} from the book as it was recorded.`,
-            'Leave it as it is walks away from the whole question: nothing is applied, nothing is '
-            + 'discarded, and nothing runs.',
-          ],
-          /*
-           * THE WAY OUT IS A BUTTON AGAIN — Owen's ruling, 2026-08-23: *"lets add
-           * a cancel button to that, so the user doesnt have to do anything if
-           * they dont want."* The two-answer version kept cancel alive as Escape
-           * and the scrim, and the detail said so in words — which is a way out
-           * only for somebody who reads the small print of a card they were
-           * interrupted by. Between the two others, so the destructive button
-           * stays LAST and keeps having to be aimed at; Apply stays first and is
-           * still what Enter takes.
-           */
-          choices: [
-            { key: 'apply', label: APPLY_CHANGES },
-            { key: 'cancel', label: 'Leave it as it is' },
-            { key: 'discard', label: DISCARD_CHANGES, danger: true },
-          ],
-          preferred: 'apply',
-          /*
-           * A DISMISSAL IS STILL A CANCEL — Escape and the scrim mean the same
-           * thing the middle button says, because somebody stepping away from a
-           * question and somebody pressing "leave it" have decided the same
-           * nothing.
-           */
-          dismissed: 'cancel',
-          checkbox: null,
-        },
-      };
-    },
+    (_event, warning: UnappliedWarning): Asked<UnappliedAnswer> => confirmUnapplied(warning),
   );
-  ipcMain.handle('ledger:describe-delete', async (_event, projectDir: string, stepId: string) => {
-    /*
-     * A ghost first — but only where the ledger does NOT hold the id. A row can
-     * still say `running` after the step it minted has landed (`admitPending`
-     * carries that window's whole argument), and in it a real step's delete must
-     * stay a real step's delete rather than becoming a refusal about a promise.
-     */
-    const held = await readStepLedger(projectDir);
-    const real = held !== null && held.ledger.steps.some((step) => step.id === stepId);
-    const promised = real ? null : promisedDeletion(projectDir, stepId);
-    if (promised !== null) return promised;
-    // Proven BEFORE the card is composed, so a warning is never put on screen for
-    // something the delete would refuse a click later.
-    await refuseBusyStepDelete(projectDir, stepId);
-    return describeStepDelete(projectDir, stepId);
-  });
-  stepDeleteDoor = async (projectDir: string, stepId: string) => {
-
-    /*
-     * A GHOST IS REMOVED FROM THE QUEUE, not deleted from a ledger it is not in.
-     * A row still waiting leaves by `remove`; one already running leaves by
-     * `cancel`, which is the only door a running row has. Hosted, both forward
-     * to the host's queue, whose cascade takes the promised subtree with it; the
-     * view that comes back is the ledger as it was, because nothing in it moved
-     * — the tree's ghosts are derived from the rows and go with the next push.
-     */
-    const standing = await readStepLedger(projectDir);
-    const promised = standing !== null && standing.ledger.steps.some((step) => step.id === stepId)
-      ? null
-      : rowMinting(rowsIn(projectDir), stepId);
-    if (promised !== null) {
-      /*
-       * `remove`, WHICH TAKES THE SUBTREE — a host's own removal stops nothing
-       * because nothing has begun, and drops every row chained behind it
-       * (BookForge's `queue-engine.removeStep`); this app's does the same to its
-       * own list. A RUNNING one never reaches this line: `refuseRunningGhost`
-       * above turned the press into a sentence, because ending a run and
-       * settling what happens to the work waiting on it is the queue's own door
-       * and must not be two doors (Owen, 2026-09-08).
-       */
-      refuseRunningGhost(promised);
-      queue.remove(promised.id);
-      const view = await readStepLedger(projectDir);
-      if (view === null) throw new Error(`${projectDir} has no history to show after the removal.`);
-      return view;
-    }
-    // Proven again, never trusted from the describe: a job can be queued between
-    // the question and the answer, and this is the call that unlinks something.
-    await refuseBusyStepDelete(projectDir, stepId);
-    return deleteStep(projectDir, stepId);
-  };
+  ipcMain.handle('ledger:describe-delete', (_event, projectDir: string, stepId: string) =>
+    describeLedgerStepDelete(projectDir, stepId));
+  openStepDeleteDoor();
   ipcMain.handle('ledger:delete', (_event, projectDir: string, stepId: string) =>
     deleteLedgerStep(projectDir, stepId));
 
   // ── The library folder ───────────────────────────────────────────────────
-  /*
-   * ── HOSTED, THE LIBRARY IS NOT THIS APP'S TO MOVE ─────────────────────────
-   *
-   * BookForge opens the Foundry window over books that live inside ITS data
-   * directory, and its own metadata maps each book to a project folder by path
-   * (docs/BOOKFORGE-HANDOFF.md §8). A Foundry settings screen that could point
-   * `libraryDir` somewhere else would strand every one of those mappings — the
-   * host would go on naming folders under a root nothing writes to any more, and
-   * nothing in either app would say what had happened.
-   *
-   * So the two doors that CHANGE it refuse, and the one that REPORTS it answers
-   * as it always did: `readAppSettings` returns the host's directory while a host
-   * is mounted (electron/app-settings.ts), so `library:dir` names the folder the
-   * books are actually in, which is what every caller of it wanted to know. The
-   * refusal is a sentence rather than a silent no-op because a control that
-   * appears to work and does nothing is the worse failure — the renderer hides
-   * the control when `hosted()` is true, and this is what backs that up.
-   */
-  const refuseHostedLibraryMove = (): void => {
-    if (!hosted()) return;
-    throw new Error(
-      'This library belongs to the app Foundry is running inside, which keeps your books with '
-      + 'the rest of its own data. Move them from there, not from here.',
-    );
-  };
   /*
    * ── THE USER'S OWN ANALYSIS CATEGORIES ────────────────────────────────────
    *
@@ -3421,17 +1389,9 @@ export function registerIpc(): void {
   ipcMain.handle('ask:rename-conversation', (_event, projectDir: string, id: string, title: string) =>
     renameAskConversation(projectDir, id, title));
   // Ask's presets are the app's, kept in app-settings.json (shared/ask-presets.ts).
-  ipcMain.handle('ask:presets', (): AskPresetsKept => {
-    const kept = readAppSettings();
-    return { presets: kept.askPresets, checked: kept.askPresetsChecked };
-  });
-  ipcMain.handle('ask:save-presets', (_event, patch: Partial<AskPresetsKept>): AskPresetsKept => {
-    const kept = writeAppSettings({
-      ...(patch.presets === undefined ? {} : { askPresets: patch.presets }),
-      ...(patch.checked === undefined ? {} : { askPresetsChecked: patch.checked }),
-    });
-    return { presets: kept.askPresets, checked: kept.askPresetsChecked };
-  });
+  ipcMain.handle('ask:presets', (): AskPresetsKept => readAskPresets());
+  ipcMain.handle('ask:save-presets', (_event, patch: Partial<AskPresetsKept>): AskPresetsKept =>
+    saveAskPresets(patch));
 
   ipcMain.handle('library:dir', () => readAppSettings().libraryDir);
   ipcMain.handle('library:set', (_event, dir: string) => {
@@ -3457,61 +1417,6 @@ export function registerIpc(): void {
   ipcMain.handle('recents:forget', (_event, filePath: string) => forgetRecent(filePath));
   ipcMain.handle('recents:clear', () => clearRecents());
 
-  /**
-   * The position of the project a job is about to write into, at the press.
-   *
-   * ── Why the press and not the spawn ─────────────────────────────────────────
-   *
-   * A job's product is recorded as having been made FROM a step, and that step is
-   * what decides whether a re-run replaces an earlier one (staling everything
-   * downstream) or branches beside it. Moving the pointer, meanwhile, is free and
-   * unconfirmed — people click through their own history while they wait, which is
-   * exactly what the history is for. So a job that read its parent when it landed
-   * would be retargeted by a glance: queue a translation from the reading, click
-   * back to compare two saves, and three hours later the app files a translation
-   * of a save nobody asked it to translate.
-   *
-   * Resolved HERE, in the handler, so the read of the catalogue and the enqueue
-   * happen in one turn and `queue.enqueue` stays synchronous — the shelf row has
-   * to appear the instant Add is pressed (see that function).
-   *
-   * FROM THE JOB'S OWN OUTPUT PATH, which is main's composition rather than the
-   * renderer's word: `workspace:plan*` built it, into a project directory this app
-   * chose. A request naming somewhere else answers null and lands on the same
-   * fallback a project with no history does.
-   */
-  const parentStepFor = async (target: string): Promise<string | null> => {
-    const dir = projectDirOf(target);
-    return dir === null ? null : positionStepId(dir);
-  };
-
-  /**
-   * WHAT THIS RUN IS RECORDED AS BEING MADE FROM — the position, unless the request
-   * already says otherwise.
-   *
-   * ── The one case where the pointer is the wrong answer ─────────────────────
-   *
-   * `Job.parentStep` is the position at the press, and the argument for that is
-   * unchanged and long: a pointer that moves while a row waits must not change what
-   * the run is filed under. A DEFERRED request breaks the premise rather than the
-   * rule — the person pressed on a card that is not the position and cannot be, because
-   * main refuses `ledger:go` to a step that does not exist (`LedgerService.
-   * standOnPromise`). Reading the pointer there would file an export of a promised
-   * cleanup against the row the cleanup was made FROM: the tree would draw it one
-   * card too high, and `ProjectFinal.stepId` would claim the finished book came from
-   * a position it does not carry the words of.
-   *
-   * SO THE DEFERRAL WINS WHERE THERE IS ONE, and it is still the position at the
-   * press: `deferred.from` was minted by the plan the moment the button went down,
-   * and it names exactly the card the person was standing on.
-   */
-  const madeFrom = async (
-    request: JobRequest | TextPassRequest,
-    target: string,
-  ): Promise<string | null> => {
-    const deferred = request.kind === 'read' ? undefined : request.deferred;
-    return deferred?.from ?? await parentStepFor(target);
-  };
 
   /*
    * ── WHAT THE SHELF DRAWS, WHICH IS NOT ALWAYS FOUNDRY'S OWN LIST ──────────
@@ -3525,15 +1430,7 @@ export function registerIpc(): void {
    * facts — `hostOffers`' rule, one family along.
    */
   ipcMain.handle('queue:list', () => queue.shelfJobs());
-  ipcMain.handle('queue:enqueue', async (_event, request: JobRequest) => queue.enqueue(
-    request,
-    // The BANK for a reading, the rendering's output otherwise — the same
-    // `outputPath` the queue dedupes on, and the only path in a request that is
-    // certainly inside the project the job is about. `madeFrom` rather than
-    // `parentStepFor`: a deferred export names its own row, which is not the
-    // pointer and cannot be.
-    await madeFrom(request, request.kind === 'read' ? request.readingsPath : request.outputPath),
-  ));
+  ipcMain.handle('queue:enqueue', (_event, request: JobRequest) => enqueueJob(request));
   /*
    * ── ONE DOOR FOR THREE TEXT PASSES, AND THE CHANNEL KEEPS ITS NAME ─────────
    *
@@ -3551,18 +1448,7 @@ export function registerIpc(): void {
    * behaviour is unchanged. `queue:enqueue-translate` is now the family's door,
    * spelled after its eldest member, and the doc says so.
    */
-  ipcMain.handle('queue:enqueue-translate', async (_event, request: TextPassRequest) => {
-    // The input again, because a request can arrive with any `inputPath` at all
-    // — `workspace:plan-translation` checked the one it was given, not the one
-    // that ends up here.
-    if (admitted(request.inputPath) === null) {
-      throw new Error(`${request.inputPath} was never opened in this app.`);
-    }
-    // The RECORDS file, which is what every text pass writes: the position is
-    // resolved from the project that file belongs to, exactly as it used to be
-    // resolved from the project the output EPUB belonged to.
-    return queue.enqueueTextPass(request, await madeFrom(request, request.recordsPath));
-  });
+  ipcMain.handle('queue:enqueue-translate', (_event, request: TextPassRequest) => enqueueTextPassFor(request));
   /*
    * ── A CLEANUP WITH ITS TRIAGE IN FRONT OF IT: ONE PRESS, TWO ROWS ──────────
    *
@@ -3584,12 +1470,8 @@ export function registerIpc(): void {
    * named beside those records. NOT REFUSED HOSTED, on the cleanup's own terms:
    * this act exists only on BookForge's behalf, and the pair routes to its queue.
    */
-  ipcMain.handle('queue:enqueue-clean-triaged', async (_event, request: CleanRequest) => {
-    if (admitted(request.inputPath) === null) {
-      throw new Error(`${request.inputPath} was never opened in this app.`);
-    }
-    return queue.enqueueTriagedCleanup(request, await madeFrom(request, request.recordsPath));
-  });
+  ipcMain.handle('queue:enqueue-clean-triaged', (_event, request: CleanRequest) =>
+    enqueueTriagedCleanupFor(request));
   /*
    * AN ANALYSIS IS QUEUED THE SAME WAY, and since 2026-10-30 a hosted window
    * queues it too — in the HOST'S queue, which learned the pair (`enqueueAnalysis`,
@@ -3601,24 +1483,7 @@ export function registerIpc(): void {
    * no row anybody in either window can see, cancel or start. A host that keeps a
    * queue is the case that works; one that does not is said by name.
    */
-  ipcMain.handle('queue:enqueue-analysis', async (_event, request: AnalyzeRequest) => {
-    if (hosted() && foundryHost()?.hostQueue === undefined) {
-      throw new Error(
-        'Analysis is not available in this window — the app Foundry is running inside keeps no queue '
-        + 'for it to wait in. Open the book in Foundry itself to analyse it.',
-      );
-    }
-    // The input again, because a request can arrive with any `inputPath` at all
-    // — `workspace:plan-analysis` checked the one it was given, not the one that
-    // ends up here.
-    if (admitted(request.inputPath) === null) {
-      throw new Error(`${request.inputPath} was never opened in this app.`);
-    }
-    // The REPORT, which is what an analysis writes: the position is resolved from
-    // the project that file belongs to, exactly as a translation's is from its
-    // records.
-    return queue.enqueueAnalysis(request, await parentStepFor(request.outputPath));
-  });
+  ipcMain.handle('queue:enqueue-analysis', (_event, request: AnalyzeRequest) => enqueueAnalysisFor(request));
   /*
    * AN EXPORT RUNS AT THE PRESS AND THE ANSWER IS THE SETTLED ROW — the whole of
    * the difference from `queue:enqueue` one door up. The dialog that asked is
@@ -3630,10 +1495,7 @@ export function registerIpc(): void {
    * queue — an export is seconds of CPU arithmetic somebody is watching for, and
    * the argument lives at `runNow` (electron/job-queue.ts).
    */
-  ipcMain.handle('queue:run', async (_event, request: JobRequest) => queue.runNow(
-    request,
-    await madeFrom(request, request.kind === 'read' ? request.readingsPath : request.outputPath),
-  ));
+  ipcMain.handle('queue:run', (_event, request: JobRequest) => runJobNow(request));
   ipcMain.handle('queue:start', () => queue.start());
   /*
    * ONE ROW, BY NAME — what a dialog's own Start presses. `queue:start` is the
@@ -3681,15 +1543,7 @@ export function registerIpc(): void {
    *
    * Found by BookForge's audit, 2026-09-14, unguarded on both sides.
    */
-  ipcMain.handle('settings:write', (_event, patch: BackendSettingsPatch) => {
-    if (hosted()) {
-      throw new Error(
-        'The engine\'s settings belong to the application Foundry is running inside, which '
-        + 'runs the same engine. Change them there.',
-      );
-    }
-    return writeSettings(patch);
-  });
+  ipcMain.handle('settings:write', (_event, patch: BackendSettingsPatch) => writeSettingsOutsideHost(patch));
 
   ipcMain.handle('shell:reveal', (_event, target: string) => {
     shell.showItemInFolder(path.resolve(target));
@@ -3763,11 +1617,8 @@ export function registerIpc(): void {
    * pressing Check again — see the cache argument in system-probe.ts.
    */
   ipcMain.handle('setup:state', () => setupState());
-  ipcMain.handle('setup:finish', (_event, skipped: string[], prepare?: boolean) => {
-    const choices = Array.isArray(skipped) ? skipped : [];
-    if (prepare === true && !choices.includes('routes')) return finishPreparedSetup(choices, prepareFoundryForUse);
-    return finishSetup(choices);
-  });
+  ipcMain.handle('setup:finish', (_event, skipped: string[], prepare?: boolean) =>
+    finishSetupFor(skipped, prepare));
 
   ipcMain.handle('system:probe', (_event, force?: boolean) => probeSystem(force === true));
 
@@ -3809,33 +1660,7 @@ export function registerIpc(): void {
    * no business knowing what a registry is.
    */
   ipcMain.handle('crucible:settings', () => crucibleSettingsView());
-  ipcMain.handle('crucible:save', async (_event, servers: CrucibleServerEdit[]) => {
-    /*
-     * READ BEFORE THE WRITE, because the only thing that can say which servers
-     * this save CONNECTED us to is the pair of lists (see
-     * `serversConnectedBySave`). Names and flags only — no token is read here
-     * and none is compared.
-     */
-    const before = crucibleServers().map((entry) => ({ name: entry.name, enabled: entry.enabled }));
-    writeCrucibleServers(servers);
-    await afterRegistryChanged();
-    /*
-     * A SERVER THAT WAS JUST SWITCHED ON, OR JUST NAMED, IS A SERVER THIS APP
-     * HAS JUST CONNECTED TO (PHASE14 §4a). Not awaited: a save must not sit on
-     * a catalog read, let alone on a half-hour wait for somebody else's card,
-     * and the row draws the run's own state as it arrives.
-     */
-    for (const name of serversConnectedBySave(before, crucibleServers())) {
-      void coordinateWithServer(name, 'it was added or switched back on');
-    }
-    /*
-     * THE WHOLE VIEW, not just the list, because saving a server CHANGES THE
-     * SLOTS — enabling a loopback entry takes the local slot away — and a card
-     * that redrew its list from this answer and its slot preview from a second
-     * read would draw one repaint of the two disagreeing.
-     */
-    return crucibleSettingsView();
-  });
+  ipcMain.handle('crucible:save', (_event, servers: CrucibleServerEdit[]) => saveCrucibleServers(servers));
   ipcMain.handle('crucible:test', (_event, name: string) => probeCrucible(name));
   /**
    * TEST AN ADDRESS AND A TOKEN THAT ARE NOT SAVED YET — the setup wizard's
@@ -3863,39 +1688,9 @@ export function registerIpc(): void {
    * loopback server changes the SLOTS, and a caller that redrew a list without
    * the slots would be showing a picker that is about to be wrong.
    */
-  ipcMain.handle('crucible:add', async (_event, name: string, url: string, token: string) => {
-    addCrucibleServer(name, url, token);
-    await afterRegistryChanged();
-    /*
-     * A SERVER THAT HAS JUST BEEN ADDED IS A SERVER THIS APP HAS JUST CONNECTED
-     * TO (PHASE14 §4a), so it is coordinated with immediately. The NAME the
-     * registry stored is used rather than the one that was typed, because
-     * `addCrucibleServer` normalises whitespace and a coordination run keyed on
-     * an un-normalised name would be a second row under a name no card draws.
-     */
-    const stored = crucibleServers().find(
-      (entry) => entry.name.toLowerCase() === tidySlotName(name).toLowerCase(),
-    );
-    if (stored !== undefined) void coordinateWithServer(stored.name, 'it was added');
-    return crucibleSettingsView();
-  });
-  ipcMain.handle('crucible:add-local', async (_event, name: string) => {
-    const answer = await addLocalCrucible(name);
-    if (answer.outcome === 'added') {
-      await afterRegistryChanged();
-      /*
-       * THE SAME MOMENT, one door along — and the name is the ANSWER's, not the
-       * argument's: `addLocalCrucible` falls back to the server's own name when
-       * the box was left empty, so the argument may be the empty string while a
-       * row called "crucible" now exists.
-       */
-      const added = crucibleServers().find((entry) => entry.url === answer.url);
-      if (added !== undefined) {
-        void coordinateWithServer(added.name, 'the Crucible on this machine was registered');
-      }
-    }
-    return answer;
-  });
+  ipcMain.handle('crucible:add', (_event, name: string, url: string, token: string) =>
+    addCrucibleServerDoor(name, url, token));
+  ipcMain.handle('crucible:add-local', (_event, name: string) => addLocalCrucibleDoor(name));
   /*
    * ── PHASE15 §5.1's THREE WAYS IN, IN ITS ORDER ────────────────────────────
    *
@@ -3922,20 +1717,9 @@ export function registerIpc(): void {
    * anything, and previewing must not dial anybody at all — it runs on every
    * keystroke of a paste.
    */
-  ipcMain.handle('crucible:parse-connect-code', (_event, line: string): ConnectCodePreview => {
-    const read = readConnectCode(line);
-    return read.read
-      ? { outcome: 'read', name: read.pairing.name, url: read.pairing.url }
-      : { outcome: 'refused', message: read.message };
-  });
-  ipcMain.handle('crucible:test-connect-code', async (_event, line: string): Promise<CrucibleProbe> => {
-    const read = readConnectCode(line);
-    // A REFUSAL IS A RESULT HERE, not a rejection, because the door it is drawn
-    // in already draws `CrucibleProbe.outcome === 'failed'` — one sentence, one
-    // place to look, whether the line was unreadable or the server was.
-    if (!read.read) return { outcome: 'failed', message: read.message };
-    return probeCrucibleAt(read.pairing.url, read.pairing.token);
-  });
+  ipcMain.handle('crucible:parse-connect-code', (_event, line: string): ConnectCodePreview => parseConnectCode(line));
+  ipcMain.handle('crucible:test-connect-code', (_event, line: string): Promise<CrucibleProbe> =>
+    testConnectCode(line));
   /*
    * Add, through {@link registerPairing} — which is the SAME writer the pairing
    * file's road uses, because a pairing file is this line on disk and Owen's
@@ -3955,14 +1739,7 @@ export function registerIpc(): void {
    * pasting a code was the one road into the registry that did not, which is a
    * card this app would then have found missing at the first job instead of now.
    */
-  ipcMain.handle('crucible:add-connect-code', async (_event, line: string, name: string) => {
-    const read = readConnectCode(line);
-    if (!read.read) throw new Error(read.message);
-    const stored = registerPairing(read.pairing, name);
-    await afterRegistryChanged();
-    void coordinateWithServer(stored, 'it was added from a connect code');
-    return crucibleSettingsView();
-  });
+  ipcMain.handle('crucible:add-connect-code', (_event, line: string, name: string) => addConnectCode(line, name));
 
   /*
    * ── THE ENGINE'S OWN SETTINGS — four doors onto somebody else's store ─────
@@ -4019,20 +1796,11 @@ export function registerIpc(): void {
    * nothing routes to yet: no capability row changes, and running the pass would
    * spend a probe per server to learn that.
    */
-  ipcMain.handle('crucible:engine-settings-put', async (
+  ipcMain.handle('crucible:engine-settings-put', (
     _event,
     serverName: string,
     patch: SettingsPatch,
-  ): Promise<SettingsDocument> => {
-    const document = await writeEngineSettings(namedServerOr(serverName), patch);
-    if (patch.routes !== undefined) {
-      const settings = readAppSettings();
-      writeAppSettings({ setupSkipped: settings.setupSkipped.filter(step => step !== 'routes') });
-      await afterRegistryChanged();
-      void coordinateWithServer(serverName, 'its model routes were selected');
-    }
-    return document;
-  });
+  ): Promise<SettingsDocument> => putEngineSettings(serverName, patch));
   /**
    * WHAT MODEL IDS THIS CREDENTIAL CAN USE — and it is the only list there is.
    *
@@ -4123,37 +1891,6 @@ export function registerIpc(): void {
   const installDoor = crucibleInstallDoor();
   installDoor.watch((event) => broadcast('crucible:install-event', event));
   /**
-   * THE RUN, AND WHAT MUST HAPPEN AFTER IT, in one place.
-   *
-   * Two doors reach it — the Install button and §2.5's Try again — and they
-   * must not differ in their tail: an install that registered the engine but
-   * never coordinated leaves a connected server with none of the environments
-   * this app asked for, and which of the two buttons was pressed has nothing
-   * to do with that.
-   *
-   * ── COORDINATE WAITS FOR A TERMINAL OUTCOME (PHASE19 §2.8) ────────────────
-   *
-   * Coordinate-on-connect is what installs job environments and pulls weights,
-   * and under PHASE20 those are gigabytes. Run against the NATIVE engine on a
-   * machine that is mid-move they land on Windows and make migrate-weights
-   * expensive for nothing, so the app waits and then coordinates once, against
-   * whichever engine is left standing. `failed` is deliberately not terminal:
-   * the tray retries it once (§2.2), and coordinating over a move that is
-   * about to start again is the same mistake one attempt later.
-   *
-   * The gate is asked HERE and not inside the run, because it is a statement
-   * about what this app does NEXT, and the run's own business is finished.
-   */
-  const runInstallAndCoordinate = async (run: () => Promise<void> = runInstallNarrated) => {
-    await run();
-    await afterRegistryChanged();
-    const outcome = (await installDoor.status()).outcome;
-    if (outcome !== null && !TERMINAL_OUTCOME_STATES.includes(outcome.state)) return;
-    for (const entry of crucibleServers().filter((entry) => entry.enabled)) {
-      void coordinateWithServer(entry.name, 'Crucible was installed');
-    }
-  };
-  /**
    * THE DRIVEN INSTALL — and it refuses, today, by name.
    *
    * The button is disabled in the renderer with the same sentence this throws,
@@ -4164,7 +1901,7 @@ export function registerIpc(): void {
    * keeps by name; `@crucible/bootstrap` has been vendored since 1.0.0 and the
    * run itself is real.
    */
-  ipcMain.handle('crucible:install', () => runInstallAndCoordinate());
+  ipcMain.handle('crucible:install', () => runInstallAndCoordinate(installDoor));
   /*
    * ── THE INSTALL DOOR'S THREE READS, PHASE19 §2.6 ──────────────────────────
    *
@@ -4197,7 +1934,7 @@ export function registerIpc(): void {
     if (answered.running) installDoor.attach();
     return answered;
   });
-  ipcMain.handle('crucible:install-retry', () => runInstallAndCoordinate(installDoor.retry));
+  ipcMain.handle('crucible:install-retry', () => runInstallAndCoordinate(installDoor, installDoor.retry));
   /**
    * RESTART NOW — §2.3, and it is the only thing in Foundry that reboots a
    * machine.
@@ -4213,13 +1950,7 @@ export function registerIpc(): void {
    * process it spawned; a child still parented to a dying main is a race with
    * nothing to win.
    */
-  ipcMain.handle('crucible:restart-windows', () => {
-    if (process.platform !== 'win32') {
-      throw new Error('Only Windows asks for a restart to finish setting up its engine.');
-    }
-    const child = spawn('shutdown.exe', ['/r', '/t', '5'], { detached: true, stdio: 'ignore' });
-    child.unref();
-  });
+  ipcMain.handle('crucible:restart-windows', () => restartWindows());
   /*
    * ── UNINSTALL: THREE DOORS, AND THE FIRST ONE DECIDES THE OTHER TWO ───────
    *
@@ -4268,23 +1999,10 @@ export function registerIpc(): void {
    * again coordinates afresh and overwrites it. Clearing it would mean a new
    * export from that module for an entry nobody can see.
    */
-  ipcMain.handle('crucible:uninstall', async (
+  ipcMain.handle('crucible:uninstall', (
     _event,
     flags: CrucibleUninstallFlags,
-  ): Promise<CrucibleUninstallRun> => {
-    const availability = await crucibleUninstallAvailability();
-    const plan = await crucibleUninstallPerform(flags);
-    if (availability.server === null || !uninstallStoppedTheEngine(plan)) {
-      return { plan, unregistered: null };
-    }
-    removeCrucibleServer(availability.server);
-    await afterRegistryChanged();
-    console.log(
-      `[crucible] "${availability.server}" was removed from the registry: its engine was `
-      + 'uninstalled from this computer and the token went with config.toml.',
-    );
-    return { plan, unregistered: availability.server };
-  });
+  ): Promise<CrucibleUninstallRun> => uninstallCrucible(flags));
   ipcMain.handle('crucible:set-wsl-distro', (_event, distro: string) =>
     writeAppSettings({ wslDistro: distro }).wslDistro);
   /**
@@ -4341,69 +2059,14 @@ export function registerIpc(): void {
    * is a different promise from "run this once" and one they should make
    * knowingly.
    */
-  ipcMain.handle('crucible:offer-start', async (): Promise<Asked<'start' | 'later'>> => {
-    const state = await crucibleRunState();
-    if (state.kind === 'problem') {
-      const words = crucibleFaultWords(state.fault);
-      return {
-        kind: 'ask', question: {
-          title: words.title, message: state.why, detail: words.detail,
-          choices: [{ key: 'later', label: 'Close' }], preferred: 'later',
-          dismissed: 'later', checkbox: null,
-        },
-      };
-    }
-    if (state.kind === 'unhealthy') {
-      console.log(
-        `[crucible] the local engine answered its ping and did not finish the rest: ${state.why}. `
-        + 'Nothing is offered — there is nothing to start, and nothing here repairs a slow '
-        + 'answer. The Servers card has it from now on.',
-      );
-      return { kind: 'answered', answer: 'later' };
-    }
-    if (state.kind !== 'stopped' && state.kind !== 'unreachable') {
-      return { kind: 'answered', answer: 'later' };
-    }
-    return {
-      kind: 'ask',
-      question: {
-        title: 'Start Crucible?',
-        /*
-         * TWO SENTENCES FOR TWO STATES, because they are different facts and a
-         * person who reads "is stopped" about a machine whose tray icon they can
-         * see has been told something they know to be false. `unreachable` is the
-         * one where Crucible believes it is up and nothing is answering.
-         */
-        message: state.kind === 'stopped'
-          ? 'Crucible is installed on this computer and is stopped.'
-          : 'Crucible is installed on this computer and is not answering.',
-        detail: [
-          'Crucible is the GPU engine. Translation, simplification, cleanup, analysis and page '
-          + 'reading all run on it, and none of them can run while it is stopped. Opening a book, '
-          + 'compiling one and exporting one are unaffected.',
-          'Crucible starts its managed service. It stays running after Foundry closes.',
-        ],
-        choices: [
-          { key: 'start', label: 'Start Crucible' },
-          { key: 'later', label: 'Not now' },
-        ],
-        preferred: 'start',
-        dismissed: 'later',
-        checkbox: null,
-      },
-    };
-  });
+  ipcMain.handle('crucible:offer-start', (): Promise<Asked<'start' | 'later'>> => offerCrucibleStart());
   /**
    * THE PRESS. Answered with a SENTENCE and never with a throw: every way this
    * can end — started, launched-but-still-coming-up, nothing here to start — is
    * a fact somebody should read, and a rejected invoke would arrive at the
    * renderer as an unhandled error with the interesting half missing.
    */
-  ipcMain.handle('crucible:start', async () => {
-    const result = await startCrucible();
-    if (result.started) await connectLocalEngine();
-    return result;
-  });
+  ipcMain.handle('crucible:start', () => startCrucibleAndConnect());
   /**
    * WHAT THIS ENGINE HOLDS AND COULD HOLD — `GET /v1/catalog`, mapped.
    *
@@ -4441,28 +2104,7 @@ export function registerIpc(): void {
   ipcMain.handle(
     'crucible:confirm-remove-model',
     (_event, ask: { server: string; id: string; name: string | null; bytes: number | null }):
-    Asked<'remove' | 'keep'> => ({
-      kind: 'ask',
-      question: {
-        title: 'Remove these weights?',
-        message: `"${ask.name ?? ask.id}" will be deleted from ${ask.server}`
-          + `${ask.bytes === null ? '' : `, freeing ${(ask.bytes / 1024 ** 3).toFixed(1)} GB`}.`,
-        detail: [
-          'The files are removed from that machine. Nothing on this computer changes, and no '
-          + 'book that was already made with this model is affected — a finished step keeps its '
-          + 'text and its record of what produced it.',
-          'Fetching it again later is one press and the same download. What you are spending to '
-          + 'get it back is time and bandwidth, not work.',
-        ],
-        choices: [
-          { key: 'keep', label: 'Keep it' },
-          { key: 'remove', label: 'Remove' },
-        ],
-        preferred: 'keep',
-        dismissed: 'keep',
-        checkbox: null,
-      },
-    }),
+    Asked<'remove' | 'keep'> => confirmRemoveModel(ask),
   );
   /**
    * AND THE REMOVAL ITSELF. The server's four refusals arrive as they are —
@@ -4521,26 +2163,7 @@ export function registerIpc(): void {
    * along.
    */
   ipcMain.handle('cloud:settings', () => cloudSettingsView());
-  ipcMain.handle('cloud:save', async (_event, providers: CloudProviderEdit[]) => {
-    writeCloudProviders(providers);
-    /*
-     * `gatesChanged` AND NOT `afterRegistryChanged`. Connecting a provider moves
-     * the TILES — an enabled one lights translate, simplify, analysis and clean
-     * on a machine that could not run them (act-gates.ts) — and moves nothing
-     * else. The three steps `afterRegistryChanged` takes are all about a
-     * Crucible: forgetting capability answers nobody asked a provider for,
-     * re-probing servers that have not changed, and §5b's page-reader deletion,
-     * which a cloud provider can never trigger because it does not serve
-     * `pages` at all.
-     */
-    gatesChanged();
-    /*
-     * THE WHOLE VIEW for `crucible:save`'s reason: enabling a provider CHANGES
-     * THE SLOTS, and a card that redrew its list from this answer and its slot
-     * preview from a second read would draw one repaint of the two disagreeing.
-     */
-    return cloudSettingsView();
-  });
+  ipcMain.handle('cloud:save', (_event, providers: CloudProviderEdit[]) => saveCloudProviders(providers));
   /**
    * TEST — the model listing at the provider, and whether the chosen id is in it.
    *
@@ -4692,67 +2315,5 @@ export function registerIpc(): void {
     });
   });
 
-  /*
-   * ── AND THE FIRST SWEEP, ONCE AT STARTUP ──────────────────────────────────
-   *
-   * crucible `docs/PHASE14-ENVPACKS.md` §4a and Owen, 2026-09-14: *"lets make
-   * it as simple as possible."* Every ENABLED server, in the REGISTRY'S OWN
-   * ORDER, with no button and no question — the enable switch in Settings is the
-   * one opt-out, because it is the control that already means "not that one".
-   * It used to put the loopback entries at the front; Owen's ruling that *"a
-   * local crucible server shouldnt be treated any differently than a remote
-   * crucible server"* retired that, and `coordinateEveryServer` argues why the
-   * operator's drag rank is the only order this app is entitled to.
-   *
-   * IT RUNS HOSTED TOO. The registry is the host's over there and read-only,
-   * and each app still posts its OWN module: the union of the two modules on
-   * one server is the contract. What is suppressed hosted is the DRAWING (the
-   * Servers card is BookForge's), not the asking.
-   *
-   * REGISTERED AFTER THE LISTENER ABOVE, deliberately: the sweep's first
-   * `checking` is published synchronously inside `coordinateServer`, so a
-   * listener added afterwards would miss the first frame of the run it was
-   * added for.
-   *
-   * DELIBERATELY NOT AWAITED, on the same reasoning as the §5b pass below: a
-   * run can end in a half-hour wait on somebody else's card, and nothing on
-   * screen is waiting for it. A failure is a STATE, drawn in the row; the
-   * console line here is for the case where the sweep itself could not start.
-   */
-  void coordinateEveryServer()
-    .then((states) => {
-      /*
-       * ONE LINE PER SERVER, once the sweep has settled. The states are already
-       * pushed to every window as they move; this is for the console a person
-       * reads when a window is not what they are looking at — a launch that
-       * found an engine and asked it for nothing should say so, and one that
-       * could not reach it should say which. No token, no address: the name
-       * and the phase are the whole of the news.
-       */
-      for (const state of states) {
-        const detail = state.phase === 'unreachable' || state.phase === 'refused'
-          ? `: ${state.message}`
-          : '';
-        console.log(`[crucible] "${state.server}" at start-up: ${state.phase}${detail}`);
-      }
-    })
-    .catch((err: unknown) => {
-      console.error(
-        '[crucible] the start-up coordination sweep did not finish: '
-        + `${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
-
-  // Same at startup: the facts are refreshed, and there is no longer a local
-  // reader for a local engine to have superseded.
-  void refreshCrucibleFacts()
-    .then(() => {
-      gatesChanged();
-    })
-    .catch((err: unknown) => {
-      console.error(
-        '[slots] the weights-ownership pass could not finish: '
-        + `${err instanceof Error ? err.message : String(err)}. Nothing was removed.`,
-      );
-    });
+  sweepAtStartup();
 }

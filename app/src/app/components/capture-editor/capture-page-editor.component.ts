@@ -22,13 +22,13 @@ import {
   distanceToEdge,
   toPixels,
   withCorner,
-} from './geometry';
+} from '@browser/geometry';
 import {
   cutOf, joinedQuad, outputSizeFor, seatSplit, slideSplit, turnsOf, WHOLE_FRAME,
 } from '@shared/capture';
 import type { CaptureQuad, CaptureSplit } from '@shared/types';
 
-import { Rectifier } from './rectify';
+import { Rectifier } from '@browser/rectify';
 
 /**
  * ONE PHOTOGRAPH, WITH ITS CORNERS IN THE USER'S HANDS.

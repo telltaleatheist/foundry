@@ -1,5 +1,5 @@
-import type { ReplayedRow } from '@shared/ops';
-import type { AnalysisFindingRow } from '@shared/types';
+import type { ReplayedRow } from './ops';
+import type { AnalysisFindingRow } from './types';
 
 /**
  * THE ANALYSIS'S ARITHMETIC — a stored report, laid over the book on the paper.

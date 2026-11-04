@@ -2,7 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 
 import type { CaptureMintPage, LedgerStep } from '@shared/types';
 
-import { Rectifier } from '../components/capture-editor/rectify';
+import { Rectifier } from '@browser/rectify';
 import { CaptureService } from './capture.service';
 import { api } from './foundry';
 import { NoticeService } from './notice.service';

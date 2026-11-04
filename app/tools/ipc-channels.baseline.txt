@@ -335,7 +335,7 @@ listen	project:open	electron/preload.ts
 listen	projects:changed	electron/preload.ts
 listen	queue:changed	electron/preload.ts
 listen	window:closing	electron/preload.ts
-push	acts:gates-changed	electron/ipc.ts
+push	acts:gates-changed	electron/doors-crucible.ts
 push	analysis:suggest-progress	electron/ipc.ts
 push	app:navigate	electron/main.ts
 push	ask:progress	electron/ipc.ts

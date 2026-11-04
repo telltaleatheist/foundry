@@ -20,7 +20,10 @@
     // substitution stays relative: a bare "shared/*" needs a baseUrl, and a
     // baseUrl makes every typo resolvable against the project root.
     "paths": {
-      "@shared/*": ["./shared/*"]
+      "@shared/*": ["./shared/*"],
+      // Browser-only library code (a canvas, WebGL): the renderer compiles it and
+      // the main process never does (FOUNDRY-CORE-PLAN step 2, 2026-11-04).
+      "@browser/*": ["./browser/*"]
     }
   },
   "angularCompilerOptions": {

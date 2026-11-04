@@ -13,9 +13,9 @@ import {
 import { outputSizeFor, turnsOf } from '@shared/capture';
 import type { CaptureQuad } from '@shared/types';
 
-import type { FractionQuad } from '../capture-editor/geometry';
-import { toPixels } from '../capture-editor/geometry';
-import type { Rectifier } from '../capture-editor/rectify';
+import type { FractionQuad } from '@browser/geometry';
+import { toPixels } from '@browser/geometry';
+import type { Rectifier } from '@browser/rectify';
 
 /**
  * HOW BIG THE CARD'S OWN COPY OF THE REGISTERED PAGE IS, in device pixels.
