@@ -410,6 +410,17 @@ export type TriageQuestion =
  * Yes/No, because the door's \`yesno\` renders its text as a statement to be
  * judged true or false, and this is a question.
  */
+/**
+ * A position as a decide-door question name: `%`, `/`, `\` and NUL escaped as
+ * `%25`, `%2F`, `%5C` and `%00` (Crucible refuses the last three in a name; `%`
+ * is escaped so two positions can never share one), and a leading dot as `%2E`.
+ */
+export function wireName(parts: string): string {
+  return parts
+    .replace(/%/g, '%25').replace(/\//g, '%2F').replace(/\\/g, '%5C').replace(/\0/g, '%00')
+    .replace(/^\./, '%2E');
+}
+
 export function triageQuestion(parts: string, unit: CleanUnit = 'block', text?: string): TriageQuestion {
   if (unit === 'sentence') {
     if (text === undefined) throw new Error(`triageQuestion: a sentence question needs its sentence (${parts}).`);
@@ -480,16 +491,27 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
   await pool(groups.length, concurrency, async (index) => {
     const group = groups[index]!;
     const asked = units.slice(group.askFrom, group.askTo);
+    /*
+     * A QUESTION'S NAME ON THE WIRE IS ITS PLACE IN THE GROUP, NOT ITS POSITION
+     * (2026-11-04). The door names each answer after its question, and Crucible
+     * refuses a name with '/' in it (jobs/base.py validate_member_name) — which
+     * every half of a split block carries (`b19-4/1`, app/shared/ops.ts), so a
+     * book with one split could not be triaged at all. The name is only the key
+     * its answer comes back under, so it is the position with the refused
+     * characters percent-escaped ({@link wireName}) — still readable on the
+     * server's log, and still one name per position.
+     */
+    const names = asked.map((one) => wireName(one.parts));
     const body = JSON.stringify({
       model: opts.model,
       state: groupState(units, group, unit, removal),
-      questions: Object.fromEntries(asked.map((one) => [one.parts, triageQuestion(one.parts, unit, one.text)])),
+      questions: Object.fromEntries(asked.map((one, n) => [names[n]!, triageQuestion(one.parts, unit, one.text)])),
     });
     const reply = await askDecide(transport, url, body, {
       who: 'clean-triage', fail: (message) => new CleanTextError(message), sleep, log: opts.log,
     }) as DecideReply;
-    for (const unit of asked) {
-      const answer = reply.answers?.[unit.parts];
+    for (const [n, unit] of asked.entries()) {
+      const answer = reply.answers?.[names[n]!];
       const p = answer === undefined ? undefined : yesProbability(answer);
       if (answer === undefined || p === undefined || typeof answer.label_mass !== 'number') {
         throw new CleanTextError(`clean-triage: the door answered a group without a yes/no for ${unit.parts}.`);

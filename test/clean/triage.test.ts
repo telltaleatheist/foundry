@@ -18,7 +18,7 @@ import * as path from 'node:path';
 
 import { receiptPath, runCleanText, triageKey, cleanKey } from '../../src/clean/run.js';
 import {
-  decideUrl, needsCleaning, readTriageFile, runCleanTriage, TRIAGE_FLAG_P, TRIAGE_GUIDE,
+  decideUrl, needsCleaning, wireName, readTriageFile, runCleanTriage, TRIAGE_FLAG_P, TRIAGE_GUIDE,
   TRIAGE_MIN_LABEL_MASS, type TriageFile,
 } from '../../src/clean/triage.js';
 import type { NumberNormalizerRunner } from '../../src/clean/tts-number-normalizer.js';
@@ -33,7 +33,7 @@ const TEXTS = [
 ];
 const NEEDS = new Set(['b1-2', 'b1-4']);
 
-function bookFile(dir: string, texts: readonly string[] = TEXTS): string {
+function bookFile(dir: string, texts: readonly string[] = TEXTS, ids?: readonly string[]): string {
   const header = {
     book: 3,
     engine: 'foundry-test',
@@ -45,7 +45,7 @@ function bookFile(dir: string, texts: readonly string[] = TEXTS): string {
     loose: { markers: [], notes: [] },
   };
   const rows = texts.map((text, at) => ({
-    id: `b1-${at + 1}`,
+    id: ids?.[at] ?? `b1-${at + 1}`,
     category: 'Text',
     text,
     page: 1,
@@ -82,6 +82,11 @@ function fakeDoor(
       if (refusal !== null) return refusal;
       const request = JSON.parse(body) as DecideRequest;
       requests.push(request);
+      // Crucible's own rule for a question name (jobs/base.py validate_member_name).
+      const refused = Object.keys(request.questions).find((name) => ['/', '\\', '\u0000'].some((c) => name.includes(c)) || name.startsWith('.'));
+      if (refused !== undefined) {
+        return { status: 400, headers: {}, body: JSON.stringify({ error: { code: 'invalid_request', message: `invalid name '${refused}'` } }) };
+      }
       // A Yes/No CHOICE answers as the door does: a probability per option.
       const answers = Object.fromEntries(Object.entries(request.questions).map(([name, q]) => [
         name, q.type === 'choice'
@@ -306,6 +311,18 @@ function lettersCleaner(): NumberNormalizerRunner & { targets: string[] } {
     async release(): Promise<void> { /* nothing was loaded. */ },
   };
 }
+
+test('a split block\'s halves are triaged: the slash in its id is escaped on the wire and read back', async () => {
+  // b19-4/1 is how a split names its first half (app/shared/ops.ts); Crucible refuses '/' in a name.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'triage-'));
+  bookFile(dir, PARAGRAPHS, ['b19-4/1', 'b19-4/2']);
+  const door = fakeDoor((name) => (name === wireName('b19-4/1#s1') ? 0.97 : 0.02));
+  const { file } = await triage(dir, door, 'sentence');
+  expect(Object.keys(door.requests[0]!.questions)[0]).toBe('b19-4%2F1#s0');
+  expect(file.blocks['b19-4/1#s1']!.needsCleaning).toBe(true);
+  expect(file.blocks['b19-4/2#s0']!.needsCleaning).toBe(false);
+  expect(wireName('a%2Fb')).not.toBe(wireName('a/b'));
+});
 
 describe('--unit sentence', () => {
   test('triage asks one yes/no per SENTENCE, keyed <block>#s<i>, and the file says which unit', async () => {
