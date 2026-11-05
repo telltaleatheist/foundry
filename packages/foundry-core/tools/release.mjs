@@ -77,6 +77,11 @@ function run(cmd, args, options = {}) {
   }).trim();
 }
 
+/** A command whose output goes straight to the terminal: nothing is captured, so nothing is returned. */
+function runShown(cmd, args) {
+  execFileSync(cmd, args, { cwd: PKG, stdio: ['ignore', 'inherit', 'inherit'] });
+}
+
 function succeeds(cmd, args) {
   return spawnSync(cmd, args, { cwd: PKG, stdio: 'ignore' }).status === 0;
 }
@@ -200,7 +205,7 @@ Peers the consumer pins itself (one copy, shared with the app): ${Object.entries
     notes += `\n\nCut from branch \`${opts.branch}\` at \`${head.slice(0, 7)}\`, before it was merged to \`${RELEASE_BRANCH}\`.`;
   }
 
-  run('gh', [
+  runShown('gh', [
     'release', 'create', tag,
     '--repo', REPO_SLUG,
     '--target', head,
@@ -208,7 +213,7 @@ Peers the consumer pins itself (one copy, shared with the app): ${Object.entries
     '--prerelease', '--latest=false',
     '--notes', notes,
     tgz, sha,
-  ], { stdio: ['ignore', 'inherit', 'inherit'] });
+  ]);
 
   process.stdout.write(`release: ${tag} created (prerelease, not latest)\n`);
   process.stdout.write(`release: adopt it with: node tools/adopt-foundry-core.mjs ${version}\n`);
