@@ -4,12 +4,21 @@
  * Pure. Probes measured; this ranks. The tier ORDER is the product decision
  * and it is fixed per platform, fastest first:
  *
- *     win32/linux   endpoint → wsl-vllm → mlx(n/a) → native
- *     darwin        endpoint → mlx → wsl-vllm(n/a) → native
+ *     win32         endpoint → wsl-vllm → vllm-local(n/a)
+ *     linux         endpoint → vllm-local → wsl-vllm
+ *     darwin        endpoint → vllm-local(n/a) → wsl-vllm(n/a)
  *
  * An endpoint that answers beats everything everywhere: it is the measured-3s
  * -a-page path, and it is also the tier foundry understands least about and
  * therefore cannot misjudge — the server answered or it did not.
+ *
+ * THERE IS NO LOCAL READER AND NO RASTERISER LINE (2026-11-04). The `mlx` tier
+ * (pages read on this machine by `vlm_page.py`), the planned `native` tier (a
+ * transformers path in the same script) and the `rasteriser` line (PyMuPDF,
+ * which every run needed) went with the Python: Owen, "Foundry always ships
+ * with Crucible", so every model call goes to Crucible, and the pages are
+ * rasterised in-process on MuPDF (`vlm/raster.ts`) with nothing to find or be
+ * missing. Removing fields is a version bump, so the report is version 2.
  *
  * `chosen` NAMES; IT NEVER DEGRADES. In auto mode it is the first available
  * tier. In an explicit mode it is that tier if available and null if not —
@@ -24,9 +33,9 @@
 import type { BackendMode } from './settings.js';
 import type { EndpointProbe, PythonProbe, WslVllmProbe } from './probe.js';
 
-export const DOCTOR_REPORT_VERSION = 1;
+export const DOCTOR_REPORT_VERSION = 2;
 
-export type TierId = 'endpoint' | 'wsl-vllm' | 'vllm-local' | 'mlx' | 'native';
+export type TierId = 'endpoint' | 'wsl-vllm' | 'vllm-local';
 
 export interface TierReport {
   id: TierId;
@@ -37,8 +46,6 @@ export interface TierReport {
 export interface DoctorReport {
   version: typeof DOCTOR_REPORT_VERSION;
   platform: NodeJS.Platform;
-  /** PyMuPDF — needed by every run on every tier; reported beside the tiers. */
-  rasteriser: { available: boolean; python: string | null; detail: string };
   /**
    * WSL itself, separate from the wsl-vllm tier: "WSL exists but no
    * environment does" is the state where a setup screen OFFERS to build one,
@@ -57,23 +64,7 @@ export interface PlanInputs {
   endpoint: EndpointProbe;
   wslVllm: WslVllmProbe;
   vllmLocal: PythonProbe;
-  mlx: PythonProbe;
-  rasteriser: PythonProbe;
 }
-
-/**
- * The planned transformers path in vlm_page.py — a roadmap slot, not vapour.
- * When it lands it is the OVERNIGHT tier: dots.ocr without vLLM's paged
- * attention runs the vision tower eagerly, which is quadratic over ~3,450
- * patches per page (BookForge measured it against 4.8 s/page through vLLM).
- * The detail says so now so nobody reads the future tier as a fast one.
- */
-const NATIVE_TIER: TierReport = {
-  id: 'native',
-  available: false,
-  detail: 'not built yet — a transformers path in vlm_page.py is planned as the runs-anywhere tier;'
-    + ' expect it to be 10-100x slower than vLLM when it lands, and to say so',
-};
 
 export function buildReport(inputs: PlanInputs): DoctorReport {
   const endpoint: TierReport = {
@@ -91,24 +82,16 @@ export function buildReport(inputs: PlanInputs): DoctorReport {
     available: inputs.platform === 'linux' && inputs.vllmLocal.available,
     detail: inputs.vllmLocal.detail,
   };
-  const mlx: TierReport = {
-    id: 'mlx',
-    available: inputs.platform === 'darwin' && inputs.mlx.available,
-    detail: inputs.platform === 'darwin' ? inputs.mlx.detail : 'MLX is Apple silicon only',
-  };
 
   /*
    * Fastest-first per platform. Linux ranks vllm-local right after the
    * endpoint because that IS the vLLM machine class (including foundry run
-   * inside a WSL distro); Windows reaches vLLM through WSL instead; macOS
-   * reads locally through MLX.
+   * inside a WSL distro); Windows reaches vLLM through WSL instead.
    */
   const tiers: TierReport[] =
-    inputs.platform === 'darwin'
-      ? [endpoint, mlx, vllmLocal, wslVllm, NATIVE_TIER]
-      : inputs.platform === 'linux'
-        ? [endpoint, vllmLocal, wslVllm, mlx, NATIVE_TIER]
-        : [endpoint, wslVllm, vllmLocal, mlx, NATIVE_TIER];
+    inputs.platform === 'linux'
+      ? [endpoint, vllmLocal, wslVllm]
+      : [endpoint, wslVllm, vllmLocal];
 
   let chosen: TierId | null;
   if (inputs.mode === 'auto') {
@@ -117,18 +100,12 @@ export function buildReport(inputs: PlanInputs): DoctorReport {
     // An explicit mode is an instruction, not a preference: the named tier or
     // nothing. The next tier down is what the operator explicitly did NOT ask
     // for, at 10–100× the runtime.
-    const wanted: TierId = inputs.mode === 'endpoint' ? 'endpoint' : 'mlx';
-    chosen = tiers.find((t) => t.id === wanted && t.available)?.id ?? null;
+    chosen = tiers.find((t) => t.id === 'endpoint' && t.available)?.id ?? null;
   }
 
   return {
     version: DOCTOR_REPORT_VERSION,
     platform: inputs.platform,
-    rasteriser: {
-      available: inputs.rasteriser.available,
-      python: inputs.rasteriser.python,
-      detail: inputs.rasteriser.detail,
-    },
     wsl: {
       available: inputs.wslVllm.distros.length > 0,
       distros: inputs.wslVllm.distros,
@@ -144,7 +121,6 @@ export function formatReport(report: DoctorReport): string {
   const lines = [
     `foundry doctor — platform ${report.platform}`,
     '',
-    `  ${mark(report.rasteriser.available)}  rasteriser  ${indented(report.rasteriser.detail)}`,
     ...report.tiers.map((t) => `  ${mark(t.available)}  ${t.id.padEnd(10)}  ${indented(t.detail)}`),
     '',
     report.chosen === null

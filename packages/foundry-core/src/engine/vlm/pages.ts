@@ -20,7 +20,7 @@
  *
  * THE REFUSALS ARE SPLIT, along the line of who knows the fact. This module
  * knows the SYNTAX: a page that is not a number, a page 0, a range that runs
- * backwards. Only `vlm_page.py` knows how many pages the document has, so
+ * backwards. Only the rasteriser (`raster.ts`) knows how many pages the document has, so
  * "page 500 of a 300-page document" and "every page of the book" are refused
  * THERE — before a model is loaded and before a page is rendered. Neither
  * refusal exists twice, and neither is a guess.
@@ -35,7 +35,7 @@ import { UsageError } from '../args.js';
  * `--skip-pages 1-999999999` is a typo, and the honest answer to a typo is a
  * message rather than a program that appears to have hung. This is two orders
  * of magnitude past the longest book anybody has put through this mode; the
- * real bound — the document's own page count — is applied by `vlm_page.py`.
+ * real bound — the document's own page count — is applied by `raster.ts`.
  */
 const MAX_RANGE = 100_000;
 

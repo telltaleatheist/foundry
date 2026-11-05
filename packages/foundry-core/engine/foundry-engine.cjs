@@ -5743,20 +5743,20 @@ function crc32(data) {
   for (let i = 0; i < data.length; i++) c = CRC_TABLE[(c ^ data[i]) & 255] ^ c >>> 8;
   return (c ^ 4294967295) >>> 0;
 }
-function zipText(path29, text) {
-  return { path: path29, data: new TextEncoder().encode(text) };
+function zipText(path30, text) {
+  return { path: path30, data: new TextEncoder().encode(text) };
 }
-function checkPath(path29) {
-  if (path29.length === 0) throw new ZipError("an entry has an empty path");
-  if (path29.includes("\\")) {
-    throw new ZipError(`entry "${path29}" contains a backslash \u2014 ZIP paths are forward-slashed`);
+function checkPath(path30) {
+  if (path30.length === 0) throw new ZipError("an entry has an empty path");
+  if (path30.includes("\\")) {
+    throw new ZipError(`entry "${path30}" contains a backslash \u2014 ZIP paths are forward-slashed`);
   }
-  if (path29.startsWith("/")) throw new ZipError(`entry "${path29}" is absolute \u2014 ZIP paths are relative`);
-  if (path29.split("/").some((seg) => seg === "." || seg === ".." || seg === "")) {
-    throw new ZipError(`entry "${path29}" has an empty or relative path segment`);
+  if (path30.startsWith("/")) throw new ZipError(`entry "${path30}" is absolute \u2014 ZIP paths are relative`);
+  if (path30.split("/").some((seg) => seg === "." || seg === ".." || seg === "")) {
+    throw new ZipError(`entry "${path30}" has an empty or relative path segment`);
   }
-  const name = new TextEncoder().encode(path29);
-  if (name.length > MAX_U16) throw new ZipError(`entry "${path29}" has a name longer than ${MAX_U16} bytes`);
+  const name = new TextEncoder().encode(path30);
+  if (name.length > MAX_U16) throw new ZipError(`entry "${path30}" has a name longer than ${MAX_U16} bytes`);
   return name;
 }
 function writeZip(entries) {
@@ -6445,38 +6445,38 @@ function readZip(bytes) {
     const extraLen = u16(p + 30);
     const commentLen = u16(p + 32);
     const localOffset = u32(p + 42);
-    const path29 = decoder.decode(bytes.subarray(p + 46, p + 46 + nameLen));
+    const path30 = decoder.decode(bytes.subarray(p + 46, p + 46 + nameLen));
     p += 46 + nameLen + extraLen + commentLen;
     if (csize === 4294967295 || usize === 4294967295 || localOffset === 4294967295) {
-      throw new UnzipError(`entry "${path29}" is zip64, which this reader does not implement`);
+      throw new UnzipError(`entry "${path30}" is zip64, which this reader does not implement`);
     }
     if (localOffset + 30 > bytes.length || u32(localOffset) !== LOCAL_SIG2) {
-      throw new UnzipError(`entry "${path29}": bad local header signature`);
+      throw new UnzipError(`entry "${path30}": bad local header signature`);
     }
     const lFlags = u16(localOffset + 6);
     const lMethod = u16(localOffset + 8);
     const lNameLen = u16(localOffset + 26);
     const lExtraLen = u16(localOffset + 28);
     const lPath = decoder.decode(bytes.subarray(localOffset + 30, localOffset + 30 + lNameLen));
-    if (lPath !== path29) {
-      throw new UnzipError(`the central directory says "${path29}", its local header says "${lPath}"`);
+    if (lPath !== path30) {
+      throw new UnzipError(`the central directory says "${path30}", its local header says "${lPath}"`);
     }
     if (lMethod !== method) {
-      throw new UnzipError(`entry "${path29}": method ${lMethod} locally, ${method} centrally`);
+      throw new UnzipError(`entry "${path30}": method ${lMethod} locally, ${method} centrally`);
     }
     const streamed = (lFlags & 8) !== 0;
     if (!streamed) {
       const lCrc = u32(localOffset + 14);
       const lCsize = u32(localOffset + 18);
       const lUsize = u32(localOffset + 22);
-      if (lCrc !== crc) throw new UnzipError(`entry "${path29}": the two headers disagree about its checksum`);
+      if (lCrc !== crc) throw new UnzipError(`entry "${path30}": the two headers disagree about its checksum`);
       if (lCsize !== csize || lUsize !== usize) {
-        throw new UnzipError(`entry "${path29}": the two headers disagree about its size`);
+        throw new UnzipError(`entry "${path30}": the two headers disagree about its size`);
       }
     }
     const start = localOffset + 30 + lNameLen + lExtraLen;
     if (start + csize > bytes.length) {
-      throw new UnzipError(`entry "${path29}" runs past the end of the file \u2014 the archive is truncated`);
+      throw new UnzipError(`entry "${path30}" runs past the end of the file \u2014 the archive is truncated`);
     }
     const raw = bytes.slice(start, start + csize);
     let data;
@@ -6486,24 +6486,24 @@ function readZip(bytes) {
       try {
         data = new Uint8Array((0, import_node_zlib.inflateRawSync)(raw));
       } catch (error) {
-        throw new UnzipError(`entry "${path29}" is deflated and would not inflate: ${error.message}`);
+        throw new UnzipError(`entry "${path30}" is deflated and would not inflate: ${error.message}`);
       }
     } else {
       throw new UnzipError(
-        `entry "${path29}" uses compression method ${method}; this reader implements stored (0) and deflate (8)`
+        `entry "${path30}" uses compression method ${method}; this reader implements stored (0) and deflate (8)`
       );
     }
     if (data.length !== usize) {
-      throw new UnzipError(`entry "${path29}" is ${data.length} bytes, its header says ${usize}`);
+      throw new UnzipError(`entry "${path30}" is ${data.length} bytes, its header says ${usize}`);
     }
     const actual = crc322(data);
     if (actual !== crc) {
       throw new UnzipError(
-        `entry "${path29}" fails its checksum (${actual.toString(16)} against ${crc.toString(16)}) \u2014 the file is damaged`
+        `entry "${path30}" fails its checksum (${actual.toString(16)} against ${crc.toString(16)}) \u2014 the file is damaged`
       );
     }
     out.push({
-      path: path29,
+      path: path30,
       data,
       raw,
       method,
@@ -6564,9 +6564,9 @@ function resolveHref(baseDir, href) {
   }
   return out.join("/");
 }
-function directoryOf(path29) {
-  const slash = path29.lastIndexOf("/");
-  return slash < 0 ? "" : path29.slice(0, slash);
+function directoryOf(path30) {
+  const slash = path30.lastIndexOf("/");
+  return slash < 0 ? "" : path30.slice(0, slash);
 }
 function attr(el, name) {
   return el.attrs.get(name);
@@ -6620,13 +6620,13 @@ function containerFromMembers(members) {
     if (item === void 0) {
       throw new BookError(`the spine references manifest id "${idref}", which the manifest does not declare`);
     }
-    const path29 = resolveHref(opfDir, item.href);
-    const member = byPath.get(path29);
+    const path30 = resolveHref(opfDir, item.href);
+    const member = byPath.get(path30);
     if (member === void 0) {
-      throw new BookError(`the manifest declares "${path29}", and there is no such entry in the archive`);
+      throw new BookError(`the manifest declares "${path30}", and there is no such entry in the archive`);
     }
     const source = member.text();
-    documents.push({ path: path29, source, stamped: source.includes("data-bf-cat") });
+    documents.push({ path: path30, source, stamped: source.includes("data-bf-cat") });
   }
   if (documents.length === 0) {
     throw new BookError("this EPUB has an empty spine \u2014 there is no book in it");
@@ -9660,7 +9660,7 @@ var require_crc32 = __commonJS({
       return table;
     }
     var crcTable = makeTable();
-    function crc323(crc, buf, len, pos) {
+    function crc324(crc, buf, len, pos) {
       var t = crcTable, end = pos + len;
       crc ^= -1;
       for (var i = pos; i < end; i++) {
@@ -9668,7 +9668,7 @@ var require_crc32 = __commonJS({
       }
       return crc ^ -1;
     }
-    module2.exports = crc323;
+    module2.exports = crc324;
   }
 });
 
@@ -9708,7 +9708,7 @@ var require_deflate = __commonJS({
     var utils = require_common();
     var trees = require_trees();
     var adler32 = require_adler32();
-    var crc323 = require_crc32();
+    var crc324 = require_crc32();
     var msg = require_messages();
     var Z_NO_FLUSH = 0;
     var Z_PARTIAL_FLUSH = 1;
@@ -9811,7 +9811,7 @@ var require_deflate = __commonJS({
       if (strm.state.wrap === 1) {
         strm.adler = adler32(strm.adler, buf, len, start);
       } else if (strm.state.wrap === 2) {
-        strm.adler = crc323(strm.adler, buf, len, start);
+        strm.adler = crc324(strm.adler, buf, len, start);
       }
       strm.next_in += len;
       strm.total_in += len;
@@ -10453,7 +10453,7 @@ var require_deflate = __commonJS({
               put_byte(s, s.gzhead.extra.length >> 8 & 255);
             }
             if (s.gzhead.hcrc) {
-              strm.adler = crc323(strm.adler, s.pending_buf, s.pending, 0);
+              strm.adler = crc324(strm.adler, s.pending_buf, s.pending, 0);
             }
             s.gzindex = 0;
             s.status = EXTRA_STATE;
@@ -10490,7 +10490,7 @@ var require_deflate = __commonJS({
           while (s.gzindex < (s.gzhead.extra.length & 65535)) {
             if (s.pending === s.pending_buf_size) {
               if (s.gzhead.hcrc && s.pending > beg) {
-                strm.adler = crc323(strm.adler, s.pending_buf, s.pending - beg, beg);
+                strm.adler = crc324(strm.adler, s.pending_buf, s.pending - beg, beg);
               }
               flush_pending(strm);
               beg = s.pending;
@@ -10502,7 +10502,7 @@ var require_deflate = __commonJS({
             s.gzindex++;
           }
           if (s.gzhead.hcrc && s.pending > beg) {
-            strm.adler = crc323(strm.adler, s.pending_buf, s.pending - beg, beg);
+            strm.adler = crc324(strm.adler, s.pending_buf, s.pending - beg, beg);
           }
           if (s.gzindex === s.gzhead.extra.length) {
             s.gzindex = 0;
@@ -10518,7 +10518,7 @@ var require_deflate = __commonJS({
           do {
             if (s.pending === s.pending_buf_size) {
               if (s.gzhead.hcrc && s.pending > beg) {
-                strm.adler = crc323(strm.adler, s.pending_buf, s.pending - beg, beg);
+                strm.adler = crc324(strm.adler, s.pending_buf, s.pending - beg, beg);
               }
               flush_pending(strm);
               beg = s.pending;
@@ -10535,7 +10535,7 @@ var require_deflate = __commonJS({
             put_byte(s, val);
           } while (val !== 0);
           if (s.gzhead.hcrc && s.pending > beg) {
-            strm.adler = crc323(strm.adler, s.pending_buf, s.pending - beg, beg);
+            strm.adler = crc324(strm.adler, s.pending_buf, s.pending - beg, beg);
           }
           if (val === 0) {
             s.gzindex = 0;
@@ -10551,7 +10551,7 @@ var require_deflate = __commonJS({
           do {
             if (s.pending === s.pending_buf_size) {
               if (s.gzhead.hcrc && s.pending > beg) {
-                strm.adler = crc323(strm.adler, s.pending_buf, s.pending - beg, beg);
+                strm.adler = crc324(strm.adler, s.pending_buf, s.pending - beg, beg);
               }
               flush_pending(strm);
               beg = s.pending;
@@ -10568,7 +10568,7 @@ var require_deflate = __commonJS({
             put_byte(s, val);
           } while (val !== 0);
           if (s.gzhead.hcrc && s.pending > beg) {
-            strm.adler = crc323(strm.adler, s.pending_buf, s.pending - beg, beg);
+            strm.adler = crc324(strm.adler, s.pending_buf, s.pending - beg, beg);
           }
           if (val === 0) {
             s.status = HCRC_STATE;
@@ -11632,7 +11632,7 @@ var require_inflate = __commonJS({
     init_engine_import_meta_url();
     var utils = require_common();
     var adler32 = require_adler32();
-    var crc323 = require_crc32();
+    var crc324 = require_crc32();
     var inflate_fast = require_inffast();
     var inflate_table = require_inftrees();
     var CODES = 0;
@@ -11936,7 +11936,7 @@ var require_inflate = __commonJS({
                 state.check = 0;
                 hbuf[0] = hold & 255;
                 hbuf[1] = hold >>> 8 & 255;
-                state.check = crc323(state.check, hbuf, 2, 0);
+                state.check = crc324(state.check, hbuf, 2, 0);
                 hold = 0;
                 bits = 0;
                 state.mode = FLAGS;
@@ -11999,7 +11999,7 @@ var require_inflate = __commonJS({
               if (state.flags & 512) {
                 hbuf[0] = hold & 255;
                 hbuf[1] = hold >>> 8 & 255;
-                state.check = crc323(state.check, hbuf, 2, 0);
+                state.check = crc324(state.check, hbuf, 2, 0);
               }
               hold = 0;
               bits = 0;
@@ -12022,7 +12022,7 @@ var require_inflate = __commonJS({
                 hbuf[1] = hold >>> 8 & 255;
                 hbuf[2] = hold >>> 16 & 255;
                 hbuf[3] = hold >>> 24 & 255;
-                state.check = crc323(state.check, hbuf, 4, 0);
+                state.check = crc324(state.check, hbuf, 4, 0);
               }
               hold = 0;
               bits = 0;
@@ -12044,7 +12044,7 @@ var require_inflate = __commonJS({
               if (state.flags & 512) {
                 hbuf[0] = hold & 255;
                 hbuf[1] = hold >>> 8 & 255;
-                state.check = crc323(state.check, hbuf, 2, 0);
+                state.check = crc324(state.check, hbuf, 2, 0);
               }
               hold = 0;
               bits = 0;
@@ -12067,7 +12067,7 @@ var require_inflate = __commonJS({
                 if (state.flags & 512) {
                   hbuf[0] = hold & 255;
                   hbuf[1] = hold >>> 8 & 255;
-                  state.check = crc323(state.check, hbuf, 2, 0);
+                  state.check = crc324(state.check, hbuf, 2, 0);
                 }
                 hold = 0;
                 bits = 0;
@@ -12100,7 +12100,7 @@ var require_inflate = __commonJS({
                     );
                   }
                   if (state.flags & 512) {
-                    state.check = crc323(state.check, input, copy, next);
+                    state.check = crc324(state.check, input, copy, next);
                   }
                   have -= copy;
                   next += copy;
@@ -12126,7 +12126,7 @@ var require_inflate = __commonJS({
                   }
                 } while (len && copy < have);
                 if (state.flags & 512) {
-                  state.check = crc323(state.check, input, copy, next);
+                  state.check = crc324(state.check, input, copy, next);
                 }
                 have -= copy;
                 next += copy;
@@ -12152,7 +12152,7 @@ var require_inflate = __commonJS({
                   }
                 } while (len && copy < have);
                 if (state.flags & 512) {
-                  state.check = crc323(state.check, input, copy, next);
+                  state.check = crc324(state.check, input, copy, next);
                 }
                 have -= copy;
                 next += copy;
@@ -12727,7 +12727,7 @@ var require_inflate = __commonJS({
                 state.total += _out;
                 if (_out) {
                   strm.adler = state.check = /*UPDATE(state.check, put - _out, _out);*/
-                  state.flags ? crc323(state.check, output, _out, put - _out) : adler32(state.check, output, _out, put - _out);
+                  state.flags ? crc324(state.check, output, _out, put - _out) : adler32(state.check, output, _out, put - _out);
                 }
                 _out = left;
                 if ((state.flags ? hold : zswap32(hold)) !== state.check) {
@@ -12793,7 +12793,7 @@ var require_inflate = __commonJS({
       state.total += _out;
       if (state.wrap && _out) {
         strm.adler = state.check = /*UPDATE(state.check, strm.next_out - _out, _out);*/
-        state.flags ? crc323(state.check, output, _out, strm.next_out - _out) : adler32(state.check, output, _out, strm.next_out - _out);
+        state.flags ? crc324(state.check, output, _out, strm.next_out - _out) : adler32(state.check, output, _out, strm.next_out - _out);
       }
       strm.data_type = state.bits + (state.last ? 64 : 0) + (state.mode === TYPE ? 128 : 0) + (state.mode === LEN_ || state.mode === COPY_ ? 256 : 0);
       if ((_in === 0 && _out === 0 || flush === Z_FINISH) && ret === Z_OK) {
@@ -24749,14 +24749,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path29) {
+    var parse = function(path30) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path29; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path30; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -25070,8 +25070,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path29) {
-      return apply(parse(path29));
+    exports2.svgPathToOperators = function(path30) {
+      return apply(parse(path30));
     };
   }
 });
@@ -25255,7 +25255,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path29, options) {
+    exports2.drawSvgPath = function(path30, options) {
       var _a, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -25269,7 +25269,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path29), [
+      ], svgPath_1.svgPathToOperators(path30), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -29593,12 +29593,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path29, options) {
+        PDFPage2.prototype.drawSvgPath = function(path30, options) {
           var _a, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path29, "path", ["string"]);
+          utils_1.assertIs(path30, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -29627,7 +29627,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path29, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path30, {
             x: (_a = options.x) !== null && _a !== void 0 ? _a : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -30200,7 +30200,6 @@ function loadSettings() {
   if (b["endpointModel"] !== void 0) backend.endpointModel = requireString2(b["endpointModel"], "backend.endpointModel");
   if (b["wslDistro"] !== void 0) backend.wslDistro = requireString2(b["wslDistro"], "backend.wslDistro");
   if (b["vllmPython"] !== void 0) backend.vllmPython = requireString2(b["vllmPython"], "backend.vllmPython");
-  if (b["python"] !== void 0) backend.python = requireString2(b["python"], "backend.python");
   if (b["endpointHeaders"] !== void 0) {
     const raw2 = b["endpointHeaders"];
     if (typeof raw2 !== "object" || raw2 === null || Array.isArray(raw2)) {
@@ -30224,7 +30223,7 @@ var init_settings = __esm({
     os2 = __toESM(require("node:os"), 1);
     path7 = __toESM(require("node:path"), 1);
     init_bom();
-    BACKEND_MODES = ["auto", "endpoint", "mlx"];
+    BACKEND_MODES = ["auto", "endpoint"];
     SettingsError = class extends Error {
     };
   }
@@ -30290,11 +30289,6 @@ function resolveEndpointHeaders(env = process.env) {
     settingsHeaders = fromFile === void 0 ? void 0 : validateEndpointHeaders({ ...fromFile }, `"backend.endpointHeaders" in ${settingsPath()}`);
   }
   return settingsHeaders;
-}
-function withoutEndpointHeaders(env = process.env) {
-  const copy = { ...env };
-  delete copy[ENDPOINT_HEADERS_ENV];
-  return copy;
 }
 var ENDPOINT_HEADERS_ENV, EndpointHeadersError, RESERVED, settingsHeaders;
 var init_endpoint_headers = __esm({
@@ -30552,7 +30546,7 @@ async function readOnePage(url, page, opts) {
   }
 }
 async function tryOnePage(url, page, opts) {
-  const image = fs12.readFileSync(page.imagePath).toString("base64");
+  const image = fs13.readFileSync(page.imagePath).toString("base64");
   const started = Date.now();
   let response;
   try {
@@ -30607,12 +30601,12 @@ async function tryOnePage(url, page, opts) {
     response: payload
   };
 }
-var fs12, VlmEndpointError, PARKED_EXIT_CODE, VlmParkedError, WEATHER_WAITS_MS, WEATHER_STATUSES, DEFAULT_VLM_CONCURRENCY, PER_PAGE_DEADLINE_MS;
+var fs13, VlmEndpointError, PARKED_EXIT_CODE, VlmParkedError, WEATHER_WAITS_MS, WEATHER_STATUSES, DEFAULT_VLM_CONCURRENCY, PER_PAGE_DEADLINE_MS;
 var init_endpoint = __esm({
   "packages/foundry-core/src/engine/vlm/endpoint.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs12 = __toESM(require("node:fs"), 1);
+    fs13 = __toESM(require("node:fs"), 1);
     init_http_refusal();
     VlmEndpointError = class extends Error {
       constructor(message) {
@@ -31167,7 +31161,7 @@ var init_version = __esm({
     init_engine_import_meta_url();
     init_package();
     VERSION = package_default.version;
-    GIT_COMMIT = "src 13150cd7758d".length > 0 ? "src 13150cd7758d" : null;
+    GIT_COMMIT = "src 7070147f2016".length > 0 ? "src 7070147f2016" : null;
   }
 });
 
@@ -32396,13 +32390,13 @@ function emptyOverlay() {
   return { overlay: 1, amendments: [] };
 }
 function loadOverlay(filePath) {
-  const resolved = path11.resolve(filePath);
-  if (!fs15.existsSync(resolved)) {
+  const resolved = path12.resolve(filePath);
+  if (!fs16.existsSync(resolved)) {
     throw new VlmOverlayError(
       `no such overlay: ${resolved}. An overlay names the blocks a person struck, reclassified or corrected, and the chapters they laid out; a run told to apply one and handed nothing would render the book as if none of those decisions had been made.`
     );
   }
-  return parseOverlay(fs15.readFileSync(resolved, "utf8"), resolved);
+  return parseOverlay(fs16.readFileSync(resolved, "utf8"), resolved);
 }
 function parseOverlay(text, name) {
   let parsed;
@@ -32694,13 +32688,13 @@ function overlayTally(blocks, overlay) {
   }
   return { struck, reclassified, corrected, joined };
 }
-var fs15, path11, VlmOverlayError, AMENDMENT_FIELDS, TARGET_FIELDS, OVERLAY_FIELDS, CHAPTER_FIELDS, CATEGORY_LIST, INDEXES;
+var fs16, path12, VlmOverlayError, AMENDMENT_FIELDS, TARGET_FIELDS, OVERLAY_FIELDS, CHAPTER_FIELDS, CATEGORY_LIST, INDEXES;
 var init_overlay = __esm({
   "packages/foundry-core/src/engine/vlm/overlay.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs15 = __toESM(require("node:fs"), 1);
-    path11 = __toESM(require("node:path"), 1);
+    fs16 = __toESM(require("node:fs"), 1);
+    path12 = __toESM(require("node:path"), 1);
     init_bom();
     init_dots();
     VlmOverlayError = class extends Error {
@@ -32740,7 +32734,7 @@ function bodyTypeSize(blocks, sizeOf = typeSize) {
   const text = blocks.filter((b) => b.category === "Text");
   const column = text.filter((b) => widthFraction(b) > BODY_WIDTH_FRACTION && isParagraph(b));
   const samples = (column.length > 0 ? column : text).map(sizeOf).filter((px) => px !== void 0 && px > 0);
-  return samples.length === 0 ? null : median(samples);
+  return samples.length === 0 ? null : median2(samples);
 }
 function isParagraph(block) {
   return block.text.includes("\n") || block.text.length > PRINTED_LINE_CHARS;
@@ -32752,12 +32746,12 @@ function deriveTypography(blocks, measured) {
   for (const category of CALIBRATED) {
     const samples = blocks.filter((b) => b.category === category).map((b) => measured.get(b)).filter((px) => px !== void 0 && px > 0);
     if (samples.length < CALIBRATION_SAMPLES) continue;
-    const medianPx = median(samples);
+    const medianPx = median2(samples);
     categories[category] = { medianPx, ratio: clamp(medianPx / bodyPx), samples: samples.length };
   }
   return { bodyPx, categories };
 }
-function median(values) {
+function median2(values) {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.floor(sorted.length / 2)];
 }
@@ -33110,8 +33104,8 @@ function resolveJoin(previous, next, lexicon) {
     rest: next.slice(head.length)
   };
 }
-function joinedText(join11) {
-  return join11.opening + join11.separator + (join11.fused ?? "") + join11.rest;
+function joinedText(join12) {
+  return join12.opening + join12.separator + (join12.fused ?? "") + join12.rest;
 }
 function closeEmphasisBeforeBreak(text) {
   return text.replace(BREAK_BEHIND_EMPHASIS, "$3$1$2");
@@ -33657,18 +33651,18 @@ function flowBlocks(blocks, starts, column, lexicon, joins) {
       const last = open.parts[open.parts.length - 1];
       open.text = closeEmphasisBeforeBreak(open.text);
       last.text = closeEmphasisBeforeBreak(last.text);
-      const join11 = resolveJoin(open.text, block.text, lexicon);
-      last.text = last.text.slice(0, last.text.length - (open.text.length - join11.opening.length));
+      const join12 = resolveJoin(open.text, block.text, lexicon);
+      last.text = last.text.slice(0, last.text.length - (open.text.length - join12.opening.length));
       open.parts.push({
         block,
         page: block.page,
         order: block.order,
         part: block.part,
-        join: join11.fused === null ? "space" : "fused",
-        fused: join11.fused,
-        text: join11.rest
+        join: join12.fused === null ? "space" : "fused",
+        fused: join12.fused,
+        text: join12.rest
       });
-      open.text = joinedText(join11);
+      open.text = joinedText(join12);
       flowIndexOf[index] = out.length - 1;
     } else {
       flowIndexOf[index] = out.length;
@@ -34574,7 +34568,7 @@ function optionSetVersion(plan) {
   for (const entry of plan) {
     fields.push(entry.category, entry.tuned ? "tuned" : "untuned", entry.option, entry.proposition);
   }
-  return (0, import_node_crypto3.createHash)("sha256").update(fields.join(NUL7), "utf8").digest("hex").slice(0, 16);
+  return (0, import_node_crypto2.createHash)("sha256").update(fields.join(NUL7), "utf8").digest("hex").slice(0, 16);
 }
 function untunedNames(plan) {
   return plan.filter((entry) => !entry.tuned).map((entry) => entry.category);
@@ -34599,12 +34593,12 @@ function planNames(plan) {
   for (const entry of plan) names[entry.category] = entry.label;
   return names;
 }
-var import_node_crypto3, AnalysisPlanError, OPTION_TEXTS, PROPOSITIONS, UNTUNED_BOOK_CATEGORIES, MISINFORMATION_EXCLUSION, EXCLUDED_CATEGORY, NONE_KEY, MAX_CATEGORIES, CUSTOM_OPTION_MAX_CHARS, CATEGORY_NAMES, CATEGORY_HUES;
+var import_node_crypto2, AnalysisPlanError, OPTION_TEXTS, PROPOSITIONS, UNTUNED_BOOK_CATEGORIES, MISINFORMATION_EXCLUSION, EXCLUDED_CATEGORY, NONE_KEY, MAX_CATEGORIES, CUSTOM_OPTION_MAX_CHARS, CATEGORY_NAMES, CATEGORY_HUES;
 var init_plan = __esm({
   "packages/foundry-core/src/engine/analyze/plan.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    import_node_crypto3 = require("node:crypto");
+    import_node_crypto2 = require("node:crypto");
     AnalysisPlanError = class extends Error {
       constructor(message) {
         super(message);
@@ -35374,8 +35368,8 @@ var init_rank = __esm({
 
 // packages/foundry-core/src/engine/analyze/prose.ts
 function readProse(bookPath, act, log2) {
-  if (!fs17.existsSync(bookPath)) throw new AnalyzeError(`no such book file: ${bookPath}`);
-  const book = parseBookFile(stripBom(fs17.readFileSync(bookPath, "utf8")));
+  if (!fs18.existsSync(bookPath)) throw new AnalyzeError(`no such book file: ${bookPath}`);
+  const book = parseBookFile(stripBom(fs18.readFileSync(bookPath, "utf8")));
   const sentences = [];
   let rows = 0;
   for (const row of book.rows) {
@@ -35396,12 +35390,12 @@ function readProse(bookPath, act, log2) {
   }
   return { sentences, bankSha: book.source.bankSha, generation: book.source.generation };
 }
-var fs17, AnalyzeError, PROSE;
+var fs18, AnalyzeError, PROSE;
 var init_prose = __esm({
   "packages/foundry-core/src/engine/analyze/prose.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs17 = __toESM(require("node:fs"), 1);
+    fs18 = __toESM(require("node:fs"), 1);
     init_bom();
     init_book_file();
     init_rank();
@@ -35704,13 +35698,13 @@ function readAnswer(answer, labels, question) {
   return { probs: logs.map((lp) => Math.exp(lp - z)), labelMass: mass, missing: absent, gated: false };
 }
 function rankFileFor(reportPath) {
-  return `${path14.resolve(reportPath)}.rank.json`;
+  return `${path15.resolve(reportPath)}.rank.json`;
 }
 function readRankFile(rankPath) {
-  const where = path14.resolve(rankPath);
+  const where = path15.resolve(rankPath);
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs19.readFileSync(where, "utf8")));
+    parsed = JSON.parse(stripBom(fs20.readFileSync(where, "utf8")));
   } catch (err) {
     throw new AnalyzeError(`--ranks ${where} cannot be read as JSON (${err.message}).`);
   }
@@ -35732,10 +35726,10 @@ function readRankFile(rankPath) {
 function readPlan(categoriesPath, log2) {
   let requested = null;
   if (categoriesPath) {
-    if (!fs19.existsSync(categoriesPath)) {
+    if (!fs20.existsSync(categoriesPath)) {
       throw new AnalyzeError(`no such categories file: ${categoriesPath}`);
     }
-    requested = parseCategoriesJson(stripBom(fs19.readFileSync(categoriesPath, "utf8")), categoriesPath);
+    requested = parseCategoriesJson(stripBom(fs20.readFileSync(categoriesPath, "utf8")), categoriesPath);
   }
   const plan = buildPlan(requested, log2);
   const untuned = untunedNames(plan);
@@ -35845,10 +35839,10 @@ async function runAnalyzeRank(opts) {
     labelMass: massSum.map((m, i) => round6(m / Math.max(1, seen[i]))),
     gated
   };
-  const out = path14.resolve(opts.outPath);
-  ensureDir(path14.dirname(out));
+  const out = path15.resolve(opts.outPath);
+  ensureDir(path15.dirname(out));
   const partial = `${out}.partial`;
-  fs19.writeFileSync(partial, `${JSON.stringify(file)}
+  fs20.writeFileSync(partial, `${JSON.stringify(file)}
 `, "utf8");
   replaceFileSync(partial, out);
   const seconds = ((Date.now() - started) / 1e3).toFixed(1);
@@ -35857,13 +35851,13 @@ async function runAnalyzeRank(opts) {
   );
   return { units: units.length, groups: asked, gated, file };
 }
-var fs19, path14, UNIT_MIN_WORDS, UNIT_MAX_WORDS, UNIT_PIECE_WORDS, CHUNK_RESERVE_TOKENS, BRIEFCASE_SINGLE_CHUNK_TOKENS, GROUP_SIZE, GROUP_STRIDE, BATCH_SIZE, GROUP_UNIT_CHARS, NONE_OPTION_TEXT, LABEL_MASS_GATE, LOG_FLOOR, TOP_K_MARGIN, RANK_FORMAT;
+var fs20, path15, UNIT_MIN_WORDS, UNIT_MAX_WORDS, UNIT_PIECE_WORDS, CHUNK_RESERVE_TOKENS, BRIEFCASE_SINGLE_CHUNK_TOKENS, GROUP_SIZE, GROUP_STRIDE, BATCH_SIZE, GROUP_UNIT_CHARS, NONE_OPTION_TEXT, LABEL_MASS_GATE, LOG_FLOOR, TOP_K_MARGIN, RANK_FORMAT;
 var init_snap = __esm({
   "packages/foundry-core/src/engine/analyze/snap.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs19 = __toESM(require("node:fs"), 1);
-    path14 = __toESM(require("node:path"), 1);
+    fs20 = __toESM(require("node:fs"), 1);
+    path15 = __toESM(require("node:path"), 1);
     init_bom();
     init_fsdirs();
     init_fs_replace();
@@ -57335,7 +57329,7 @@ var require_fontkit_umd = __commonJS({
         return table;
       }
       var crcTable = makeTable();
-      function crc323(crc, buf, len2, pos) {
+      function crc324(crc, buf, len2, pos) {
         var t2 = crcTable, end = pos + len2;
         crc ^= -1;
         for (var i2 = pos; i2 < end; i2++) {
@@ -57343,7 +57337,7 @@ var require_fontkit_umd = __commonJS({
         }
         return crc ^ -1;
       }
-      var crc32_1 = crc323;
+      var crc32_1 = crc324;
       var messages = {
         2: "need dictionary",
         /* Z_NEED_DICT       2  */
@@ -65883,7 +65877,7 @@ var require_fontkit_umd = __commonJS({
           return cmds.join("");
         };
         _proto.mapPoints = function mapPoints(fn) {
-          var path29 = new Path2();
+          var path30 = new Path2();
           for (var _iterator2 = _createForOfIteratorHelperLoose$l(this.commands), _step2; !(_step2 = _iterator2()).done; ) {
             var c = _step2.value;
             var args = [];
@@ -65891,9 +65885,9 @@ var require_fontkit_umd = __commonJS({
               var _fn = fn(c.args[i2], c.args[i2 + 1]), x = _fn[0], y = _fn[1];
               args.push(x, y);
             }
-            path29[c.command].apply(path29, args);
+            path30[c.command].apply(path30, args);
           }
-          return path29;
+          return path30;
         };
         _proto.transform = function transform2(m0, m1, m2, m3, m4, m5) {
           return this.mapPoints(function(x, y) {
@@ -66503,7 +66497,7 @@ var require_fontkit_umd = __commonJS({
         };
         _proto2._getPath = function _getPath() {
           var contours = this._getContours();
-          var path29 = new Path();
+          var path30 = new Path();
           for (var i2 = 0; i2 < contours.length; i2++) {
             var contour = contours[i2];
             var firstPt = contour[0];
@@ -66520,32 +66514,32 @@ var require_fontkit_umd = __commonJS({
               }
               var curvePt = firstPt;
             }
-            path29.moveTo(firstPt.x, firstPt.y);
+            path30.moveTo(firstPt.x, firstPt.y);
             for (var j = start; j < contour.length; j++) {
               var pt = contour[j];
               var prevPt = j === 0 ? firstPt : contour[j - 1];
               if (prevPt.onCurve && pt.onCurve) {
-                path29.lineTo(pt.x, pt.y);
+                path30.lineTo(pt.x, pt.y);
               } else if (prevPt.onCurve && !pt.onCurve) {
                 var curvePt = pt;
               } else if (!prevPt.onCurve && !pt.onCurve) {
                 var midX = (prevPt.x + pt.x) / 2;
                 var midY = (prevPt.y + pt.y) / 2;
-                path29.quadraticCurveTo(prevPt.x, prevPt.y, midX, midY);
+                path30.quadraticCurveTo(prevPt.x, prevPt.y, midX, midY);
                 var curvePt = pt;
               } else if (!prevPt.onCurve && pt.onCurve) {
-                path29.quadraticCurveTo(curvePt.x, curvePt.y, pt.x, pt.y);
+                path30.quadraticCurveTo(curvePt.x, curvePt.y, pt.x, pt.y);
                 var curvePt = null;
               } else {
                 throw new Error("Unknown TTF path state");
               }
             }
             if (curvePt) {
-              path29.quadraticCurveTo(curvePt.x, curvePt.y, firstPt.x, firstPt.y);
+              path30.quadraticCurveTo(curvePt.x, curvePt.y, firstPt.x, firstPt.y);
             }
-            path29.closePath();
+            path30.closePath();
           }
-          return path29;
+          return path30;
         };
         return TTFGlyph2;
       })(Glyph);
@@ -66582,7 +66576,7 @@ var require_fontkit_umd = __commonJS({
           var str = cff.topDict.CharStrings[this.id];
           var end = str.offset + str.length;
           stream.pos = str.offset;
-          var path29 = new Path();
+          var path30 = new Path();
           var stack = [];
           var trans = [];
           var width = null;
@@ -66615,9 +66609,9 @@ var require_fontkit_umd = __commonJS({
           }
           function moveTo(x2, y2) {
             if (open) {
-              path29.closePath();
+              path30.closePath();
             }
-            path29.moveTo(x2, y2);
+            path30.moveTo(x2, y2);
             open = true;
           }
           var parse = function parse2() {
@@ -66645,7 +66639,7 @@ var require_fontkit_umd = __commonJS({
                     while (stack.length >= 2) {
                       x += stack.shift();
                       y += stack.shift();
-                      path29.lineTo(x, y);
+                      path30.lineTo(x, y);
                     }
                     break;
                   case 6:
@@ -66658,7 +66652,7 @@ var require_fontkit_umd = __commonJS({
                       } else {
                         y += stack.shift();
                       }
-                      path29.lineTo(x, y);
+                      path30.lineTo(x, y);
                       phase = !phase;
                     }
                     break;
@@ -66670,7 +66664,7 @@ var require_fontkit_umd = __commonJS({
                       var c2y = c1y + stack.shift();
                       x = c2x + stack.shift();
                       y = c2y + stack.shift();
-                      path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                      path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                     }
                     break;
                   case 10:
@@ -66700,7 +66694,7 @@ var require_fontkit_umd = __commonJS({
                       checkWidth();
                     }
                     if (open) {
-                      path29.closePath();
+                      path30.closePath();
                       open = false;
                     }
                     break;
@@ -66764,17 +66758,17 @@ var require_fontkit_umd = __commonJS({
                       var c2y = c1y + stack.shift();
                       x = c2x + stack.shift();
                       y = c2y + stack.shift();
-                      path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                      path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                     }
                     x += stack.shift();
                     y += stack.shift();
-                    path29.lineTo(x, y);
+                    path30.lineTo(x, y);
                     break;
                   case 25:
                     while (stack.length >= 8) {
                       x += stack.shift();
                       y += stack.shift();
-                      path29.lineTo(x, y);
+                      path30.lineTo(x, y);
                     }
                     var c1x = x + stack.shift();
                     var c1y = y + stack.shift();
@@ -66782,7 +66776,7 @@ var require_fontkit_umd = __commonJS({
                     var c2y = c1y + stack.shift();
                     x = c2x + stack.shift();
                     y = c2y + stack.shift();
-                    path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                    path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                     break;
                   case 26:
                     if (stack.length % 2) {
@@ -66795,7 +66789,7 @@ var require_fontkit_umd = __commonJS({
                       c2y = c1y + stack.shift();
                       x = c2x;
                       y = c2y + stack.shift();
-                      path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                      path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                     }
                     break;
                   case 27:
@@ -66809,7 +66803,7 @@ var require_fontkit_umd = __commonJS({
                       c2y = c1y + stack.shift();
                       x = c2x + stack.shift();
                       y = c2y;
-                      path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                      path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                     }
                     break;
                   case 28:
@@ -66849,7 +66843,7 @@ var require_fontkit_umd = __commonJS({
                         x = c2x + stack.shift();
                         y = c2y + (stack.length === 1 ? stack.shift() : 0);
                       }
-                      path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                      path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                       phase = !phase;
                     }
                     break;
@@ -66985,8 +66979,8 @@ var require_fontkit_umd = __commonJS({
                         var c6y = c5y;
                         x = c6x;
                         y = c6y;
-                        path29.bezierCurveTo(c1x, c1y, c2x, c2y, c3x, c3y);
-                        path29.bezierCurveTo(c4x, c4y, c5x, c5y, c6x, c6y);
+                        path30.bezierCurveTo(c1x, c1y, c2x, c2y, c3x, c3y);
+                        path30.bezierCurveTo(c4x, c4y, c5x, c5y, c6x, c6y);
                         break;
                       case 35:
                         var pts = [];
@@ -66995,8 +66989,8 @@ var require_fontkit_umd = __commonJS({
                           y += stack.shift();
                           pts.push(x, y);
                         }
-                        path29.bezierCurveTo.apply(path29, pts.slice(0, 6));
-                        path29.bezierCurveTo.apply(path29, pts.slice(6));
+                        path30.bezierCurveTo.apply(path30, pts.slice(0, 6));
+                        path30.bezierCurveTo.apply(path30, pts.slice(6));
                         stack.shift();
                         break;
                       case 36:
@@ -67014,8 +67008,8 @@ var require_fontkit_umd = __commonJS({
                         c6y = c5y;
                         x = c6x;
                         y = c6y;
-                        path29.bezierCurveTo(c1x, c1y, c2x, c2y, c3x, c3y);
-                        path29.bezierCurveTo(c4x, c4y, c5x, c5y, c6x, c6y);
+                        path30.bezierCurveTo(c1x, c1y, c2x, c2y, c3x, c3y);
+                        path30.bezierCurveTo(c4x, c4y, c5x, c5y, c6x, c6y);
                         break;
                       case 37:
                         var startx = x;
@@ -67034,8 +67028,8 @@ var require_fontkit_umd = __commonJS({
                           y += stack.shift();
                         }
                         pts.push(x, y);
-                        path29.bezierCurveTo.apply(path29, pts.slice(0, 6));
-                        path29.bezierCurveTo.apply(path29, pts.slice(6));
+                        path30.bezierCurveTo.apply(path30, pts.slice(0, 6));
+                        path30.bezierCurveTo.apply(path30, pts.slice(6));
                         break;
                       default:
                         throw new Error("Unknown op: 12 " + op);
@@ -67059,9 +67053,9 @@ var require_fontkit_umd = __commonJS({
           };
           parse();
           if (open) {
-            path29.closePath();
+            path30.closePath();
           }
-          return path29;
+          return path30;
         };
         return CFFGlyph2;
       })(Glyph);
@@ -67775,7 +67769,7 @@ var require_fontkit_umd = __commonJS({
         function TTFGlyphEncoder2() {
         }
         var _proto = TTFGlyphEncoder2.prototype;
-        _proto.encodeSimple = function encodeSimple(path29, instructions) {
+        _proto.encodeSimple = function encodeSimple(path30, instructions) {
           if (instructions === void 0) {
             instructions = [];
           }
@@ -67786,14 +67780,14 @@ var require_fontkit_umd = __commonJS({
           var same = 0;
           var lastX = 0, lastY = 0, lastFlag = 0;
           var pointCount = 0;
-          for (var i2 = 0; i2 < path29.commands.length; i2++) {
-            var c = path29.commands[i2];
+          for (var i2 = 0; i2 < path30.commands.length; i2++) {
+            var c = path30.commands[i2];
             for (var j = 0; j < c.args.length; j += 2) {
               var x = c.args[j];
               var y = c.args[j + 1];
               var flag2 = 0;
               if (c.command === "quadraticCurveTo" && j === 2) {
-                var next = path29.commands[i2 + 1];
+                var next = path30.commands[i2 + 1];
                 if (next && next.command === "quadraticCurveTo") {
                   var midX = (lastX + next.args[0]) / 2;
                   var midY = (lastY + next.args[1]) / 2;
@@ -67826,10 +67820,10 @@ var require_fontkit_umd = __commonJS({
               endPtsOfContours.push(pointCount - 1);
             }
           }
-          if (path29.commands.length > 1 && path29.commands[path29.commands.length - 1].command !== "closePath") {
+          if (path30.commands.length > 1 && path30.commands[path30.commands.length - 1].command !== "closePath") {
             endPtsOfContours.push(pointCount - 1);
           }
-          var bbox = path29.bbox;
+          var bbox = path30.bbox;
           var glyf2 = {
             numberOfContours: endPtsOfContours.length,
             xMin: bbox.minX,
@@ -68031,7 +68025,7 @@ var require_fontkit_umd = __commonJS({
             var gid = _step2.value;
             this.charstrings.push(this.cff.getCharString(gid));
             var glyph2 = this.font.getGlyph(gid);
-            var path29 = glyph2.path;
+            var path30 = glyph2.path;
             for (var subr in glyph2._usedGsubrs) {
               gsubrs[subr] = true;
             }
@@ -68072,7 +68066,7 @@ var require_fontkit_umd = __commonJS({
             used_fds[fd] = true;
             topDict.FDSelect.fds.push(topDict.FDArray.length - 1);
             var glyph2 = this.font.getGlyph(gid);
-            var path29 = glyph2.path;
+            var path30 = glyph2.path;
             for (var subr in glyph2._usedSubrs) {
               used_subrs[used_subrs.length - 1][subr] = true;
             }
@@ -68092,7 +68086,7 @@ var require_fontkit_umd = __commonJS({
           for (var _iterator3 = _createForOfIteratorHelperLoose$p(this.glyphs), _step3; !(_step3 = _iterator3()).done; ) {
             var gid = _step3.value;
             var glyph2 = this.font.getGlyph(gid);
-            var path29 = glyph2.path;
+            var path30 = glyph2.path;
             for (var subr in glyph2._usedSubrs) {
               used_subrs[subr] = true;
             }
@@ -72507,31 +72501,31 @@ function bankKey(question) {
     (question.instructions ?? "").trim(),
     question.text
   ];
-  return (0, import_node_crypto5.createHash)("sha256").update(fields.join(NUL4), "utf8").digest("hex");
+  return (0, import_node_crypto4.createHash)("sha256").update(fields.join(NUL4), "utf8").digest("hex");
 }
 function pendingBankPath(bankPath) {
-  return `${path20.resolve(bankPath)}.pending`;
+  return `${path21.resolve(bankPath)}.pending`;
 }
 function swapPendingBankIntoPlace(bankPath, pending) {
   if (pending === null) return;
-  const resolved = path20.resolve(bankPath);
-  const pendingResolved = path20.resolve(pending);
-  if (!fs26.existsSync(pendingResolved)) {
+  const resolved = path21.resolve(bankPath);
+  const pendingResolved = path21.resolve(pending);
+  if (!fs27.existsSync(pendingResolved)) {
     throw new TranslateBankError(
       `${pendingResolved} was this run's bank and it is not there, so there is nothing to put in place of ${resolved}. The bank that is there has been left exactly as it was found.`
     );
   }
-  ensureDir(path20.dirname(resolved));
+  ensureDir(path21.dirname(resolved));
   replaceFileSync(pendingResolved, resolved);
 }
 function openTranslationBank(request) {
-  const bankPath = path20.resolve(request.bankPath);
+  const bankPath = path21.resolve(request.bankPath);
   const existing = TranslationBank.open(bankPath);
   const banked = existing.size;
   if (request.freshRequested && banked > 0) {
     const pending = pendingBankPath(bankPath);
-    ensureDir(path20.dirname(pending));
-    fs26.closeSync(fs26.openSync(pending, "a"));
+    ensureDir(path21.dirname(pending));
+    fs27.closeSync(fs27.openSync(pending, "a"));
     const carried = TranslationBank.open(pending);
     return {
       action: carried.size === 0 ? "ask-fresh" : "resume",
@@ -72555,14 +72549,14 @@ function openTranslationBank(request) {
     sentence: `${request.act}: ${banked} answer(s) are banked in ${bankPath} \u2014 a block whose exact question is in there is not asked again, and every new answer is added to it.`
   };
 }
-var import_node_crypto5, fs26, path20, TranslateBankError, KEY_FORMATS, NUL4, TranslationBank;
+var import_node_crypto4, fs27, path21, TranslateBankError, KEY_FORMATS, NUL4, TranslationBank;
 var init_bank = __esm({
   "packages/foundry-core/src/engine/translate/bank.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    import_node_crypto5 = require("node:crypto");
-    fs26 = __toESM(require("node:fs"), 1);
-    path20 = __toESM(require("node:path"), 1);
+    import_node_crypto4 = require("node:crypto");
+    fs27 = __toESM(require("node:fs"), 1);
+    path21 = __toESM(require("node:path"), 1);
     init_bom();
     init_fsdirs();
     init_fs_replace();
@@ -72594,9 +72588,9 @@ var init_bank = __esm({
        * a book they are not from.
        */
       static open(filePath) {
-        const bank = new _TranslationBank(path20.resolve(filePath));
-        if (!fs26.existsSync(bank.filePath)) return bank;
-        const lines = stripBom(fs26.readFileSync(bank.filePath, "utf8")).split("\n");
+        const bank = new _TranslationBank(path21.resolve(filePath));
+        if (!fs27.existsSync(bank.filePath)) return bank;
+        const lines = stripBom(fs27.readFileSync(bank.filePath, "utf8")).split("\n");
         for (const [index, line] of lines.entries()) {
           if (line.trim().length === 0) continue;
           const last = lines.slice(index + 1).every((rest) => rest.trim().length === 0);
@@ -72645,14 +72639,14 @@ var init_bank = __esm({
        */
       append(entry) {
         this.byKey.set(entry.key, entry);
-        ensureDir(path20.dirname(this.filePath));
-        const handle = fs26.openSync(this.filePath, "a");
+        ensureDir(path21.dirname(this.filePath));
+        const handle = fs27.openSync(this.filePath, "a");
         try {
-          fs26.writeSync(handle, `${JSON.stringify(entry)}
+          fs27.writeSync(handle, `${JSON.stringify(entry)}
 `);
-          fs26.fsyncSync(handle);
+          fs27.fsyncSync(handle);
         } finally {
-          fs26.closeSync(handle);
+          fs27.closeSync(handle);
         }
       }
     };
@@ -73019,16 +73013,16 @@ var init_base = __esm({
           }
         }
       }
-      addToPath(path29, added, removed, oldPosInc, options) {
-        const last = path29.lastComponent;
+      addToPath(path30, added, removed, oldPosInc, options) {
+        const last = path30.lastComponent;
         if (last && !options.oneChangePerToken && last.added === added && last.removed === removed) {
           return {
-            oldPos: path29.oldPos + oldPosInc,
+            oldPos: path30.oldPos + oldPosInc,
             lastComponent: { count: last.count + 1, added, removed, previousComponent: last.previousComponent }
           };
         } else {
           return {
-            oldPos: path29.oldPos + oldPosInc,
+            oldPos: path30.oldPos + oldPosInc,
             lastComponent: { count: 1, added, removed, previousComponent: last }
           };
         }
@@ -73322,10 +73316,10 @@ __export(fixed_readings_exports, {
   wholeTokenOffsets: () => wholeTokenOffsets
 });
 function readFixedReadingsFile(file) {
-  const where = path21.resolve(file);
+  const where = path22.resolve(file);
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs28.readFileSync(where, "utf8")));
+    parsed = JSON.parse(stripBom(fs29.readFileSync(where, "utf8")));
   } catch (err) {
     throw new CleanTextError(`--fixed-readings ${where} cannot be read as JSON (${err.message}).`);
   }
@@ -73535,13 +73529,13 @@ function protectedWithin(spans, start, end) {
   if (spans === void 0) return [];
   return spans.filter((s) => s.at >= start && s.end <= end).map((s) => ({ at: s.at - start, end: s.end - start }));
 }
-var fs28, path21, FIXED_READINGS_FORMAT, MARKUP, WORD;
+var fs29, path22, FIXED_READINGS_FORMAT, MARKUP, WORD;
 var init_fixed_readings = __esm({
   "packages/foundry-core/src/engine/clean/fixed-readings.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs28 = __toESM(require("node:fs"), 1);
-    path21 = __toESM(require("node:path"), 1);
+    fs29 = __toESM(require("node:fs"), 1);
+    path22 = __toESM(require("node:path"), 1);
     init_bom();
     init_punctuate();
     FIXED_READINGS_FORMAT = "fixed-readings/v1";
@@ -73836,7 +73830,7 @@ function cleanBlocks(book, where) {
   const plan = bookRowPlan(book, where);
   const blocks = [];
   const tables = [];
-  const fileName = path22.basename(where);
+  const fileName = path23.basename(where);
   const targetOf = (key, block) => ({
     key,
     kind: "row",
@@ -73918,12 +73912,12 @@ function triageUnits(blocks, punctuated, unit) {
   }
   return out;
 }
-var path22, CELL_JOIN, DEFAULT_CLEAN_UNIT, CLEAN_UNITS;
+var path23, CELL_JOIN, DEFAULT_CLEAN_UNIT, CLEAN_UNITS;
 var init_blocks2 = __esm({
   "packages/foundry-core/src/engine/clean/blocks.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    path22 = __toESM(require("node:path"), 1);
+    path23 = __toESM(require("node:path"), 1);
     init_bookrows();
     init_punctuate();
     init_segments();
@@ -74043,19 +74037,19 @@ function collectPrintedForms(bookText, where) {
   }));
 }
 function runCleanForms(opts) {
-  const where = path23.resolve(opts.bookPath);
+  const where = path24.resolve(opts.bookPath);
   let text;
   try {
-    text = stripBom(fs29.readFileSync(where, "utf8"));
+    text = stripBom(fs30.readFileSync(where, "utf8"));
   } catch (err) {
     throw new CleanTextError(`--book ${where} cannot be read (${err.message}).`);
   }
   const forms = collectPrintedForms(text, where);
   const file = { format: PRINTED_FORMS_FORMAT, source: where, forms };
-  const out = path23.resolve(opts.outPath);
-  ensureDir(path23.dirname(out));
+  const out = path24.resolve(opts.outPath);
+  ensureDir(path24.dirname(out));
   const partial = `${out}.partial`;
-  fs29.writeFileSync(partial, `${JSON.stringify(file, null, 2)}
+  fs30.writeFileSync(partial, `${JSON.stringify(file, null, 2)}
 `, "utf8");
   replaceFileSync(partial, out);
   const byKind = /* @__PURE__ */ new Map();
@@ -74065,13 +74059,13 @@ function runCleanForms(opts) {
   );
   return file;
 }
-var fs29, path23, PRINTED_FORMS_FORMAT, SAMPLES, WORDS_TOO, TITLES_TOO, DETERMINERS;
+var fs30, path24, PRINTED_FORMS_FORMAT, SAMPLES, WORDS_TOO, TITLES_TOO, DETERMINERS;
 var init_forms = __esm({
   "packages/foundry-core/src/engine/clean/forms.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs29 = __toESM(require("node:fs"), 1);
-    path23 = __toESM(require("node:path"), 1);
+    fs30 = __toESM(require("node:fs"), 1);
+    path24 = __toESM(require("node:path"), 1);
     init_fsdirs();
     init_fs_replace();
     init_bom();
@@ -74322,10 +74316,10 @@ async function runCleanTriage(opts) {
   const transport = opts.transport ?? fetchTransport(decideDeadline(deadlineForConcurrency(concurrency)));
   const sleep = opts.sleep ?? ((ms) => new Promise((resolve23) => setTimeout(resolve23, ms)));
   const url = decideUrl(opts.endpoint);
-  const where = path24.resolve(opts.bookPath);
+  const where = path25.resolve(opts.bookPath);
   let bookText;
   try {
-    bookText = stripBom(fs30.readFileSync(where, "utf8"));
+    bookText = stripBom(fs31.readFileSync(where, "utf8"));
   } catch (err) {
     throw new CleanTextError(`--book ${where} cannot be read (${err.message}).`);
   }
@@ -74404,10 +74398,10 @@ async function runCleanTriage(opts) {
     // In the book's order, so the file reads alongside it.
     blocks: Object.fromEntries(units.map((unit2) => [unit2.parts, verdicts[unit2.parts]]))
   };
-  const out = path24.resolve(opts.outPath);
-  ensureDir(path24.dirname(out));
+  const out = path25.resolve(opts.outPath);
+  ensureDir(path25.dirname(out));
   const partial = `${out}.partial`;
-  fs30.writeFileSync(partial, `${JSON.stringify(file, null, 2)}
+  fs31.writeFileSync(partial, `${JSON.stringify(file, null, 2)}
 `, "utf8");
   replaceFileSync(partial, out);
   const flagged = Object.values(file.blocks).filter((v) => v.needsCleaning).length;
@@ -74418,10 +74412,10 @@ async function runCleanTriage(opts) {
   return { positions: units.length, flagged, clean: units.length - flagged, file };
 }
 function readTriageFile(triagePath) {
-  const where = path24.resolve(triagePath);
+  const where = path25.resolve(triagePath);
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs30.readFileSync(where, "utf8")));
+    parsed = JSON.parse(stripBom(fs31.readFileSync(where, "utf8")));
   } catch (err) {
     throw new CleanTextError(`--triage ${where} cannot be read as JSON (${err.message}).`);
   }
@@ -74439,13 +74433,13 @@ function readTriageFile(triagePath) {
   }
   return file;
 }
-var fs30, path24, TRIAGE_FORMAT, TRIAGE_FLAG_P, TRIAGE_MIN_LABEL_MASS, GROUP_MAX_UNITS, GROUP_MAX_SENTENCES, GROUP_MAX_CHARS, CONTEXT_UNITS, CONTEXT_CHARS, DEFAULT_TRIAGE_CONCURRENCY, TRIAGE_GUIDE, SENTENCE_EXAMPLES, TRIAGE_CRITERIA, SENTENCE_OPTIONS;
+var fs31, path25, TRIAGE_FORMAT, TRIAGE_FLAG_P, TRIAGE_MIN_LABEL_MASS, GROUP_MAX_UNITS, GROUP_MAX_SENTENCES, GROUP_MAX_CHARS, CONTEXT_UNITS, CONTEXT_CHARS, DEFAULT_TRIAGE_CONCURRENCY, TRIAGE_GUIDE, SENTENCE_EXAMPLES, TRIAGE_CRITERIA, SENTENCE_OPTIONS;
 var init_triage = __esm({
   "packages/foundry-core/src/engine/clean/triage.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs30 = __toESM(require("node:fs"), 1);
-    path24 = __toESM(require("node:path"), 1);
+    fs31 = __toESM(require("node:fs"), 1);
+    path25 = __toESM(require("node:path"), 1);
     init_fsdirs();
     init_fs_replace();
     init_bom();
@@ -74528,10 +74522,10 @@ __export(apply_readings_exports, {
   runApplyReadings: () => runApplyReadings
 });
 function appliedReadingsPathFor(recordsPath) {
-  return `${path25.resolve(recordsPath).replace(/\.jsonl$/i, "")}.applied.json`;
+  return `${path26.resolve(recordsPath).replace(/\.jsonl$/i, "")}.applied.json`;
 }
 function readingsOnlyKey(request) {
-  return (0, import_node_crypto6.createHash)("sha256").update([KEY_FORMAT, request.text, fixedKeyField(request.text, request.fixed, request.at)].join("\0"), "utf8").digest("hex");
+  return (0, import_node_crypto5.createHash)("sha256").update([KEY_FORMAT, request.text, fixedKeyField(request.text, request.fixed, request.at)].join("\0"), "utf8").digest("hex");
 }
 async function runApplyReadings(opts) {
   const at = (/* @__PURE__ */ new Date()).toISOString();
@@ -74540,10 +74534,10 @@ async function runApplyReadings(opts) {
       "clean-text --readings-only was handed no readings, so it would write a copy of the book and call it a step. Name a --fixed-readings file that holds at least one reading."
     );
   }
-  const where = path25.resolve(opts.bookPath);
+  const where = path26.resolve(opts.bookPath);
   let bookText;
   try {
-    bookText = stripBom(fs31.readFileSync(where, "utf8"));
+    bookText = stripBom(fs32.readFileSync(where, "utf8"));
   } catch (err) {
     throw new CleanTextError(`--book ${where} cannot be read (${err.message}).`);
   }
@@ -74552,7 +74546,7 @@ async function runApplyReadings(opts) {
   if (blocks.length === 0) {
     throw new CleanTextError(`--book ${where} has no block with words in it, so there is nothing to write readings into.`);
   }
-  const recordsPath = path25.resolve(opts.recordsPath);
+  const recordsPath = path26.resolve(opts.recordsPath);
   const records = TranslationRecords.open(recordsPath);
   const known = new Set(blocks.map((b) => b.parts));
   if (records.positions > 0 && ![...records.positionMap().keys()].some((parts) => known.has(parts))) {
@@ -74618,8 +74612,8 @@ async function runApplyReadings(opts) {
   }
   const appliedPath = appliedReadingsPathFor(recordsPath);
   const file = { format: APPLIED_READINGS_FORMAT, from: opts.from ?? null, applied };
-  ensureDir(path25.dirname(appliedPath));
-  fs31.writeFileSync(appliedPath, `${JSON.stringify(file, null, 2)}
+  ensureDir(path26.dirname(appliedPath));
+  fs32.writeFileSync(appliedPath, `${JSON.stringify(file, null, 2)}
 `, "utf8");
   const sourceTexts = bookPositionTexts(book);
   const digests = /* @__PURE__ */ new Map();
@@ -74631,22 +74625,22 @@ async function runApplyReadings(opts) {
     digests.set(parts, blockDigest(text));
   }
   const stamp = narrationTextStamp({ model: READINGS_ONLY_MODEL, at, punctuationRefused: 0, blocks: digests });
-  ensureDir(path25.dirname(path25.resolve(opts.stampPath)));
-  fs31.writeFileSync(path25.resolve(opts.stampPath), `${JSON.stringify(stamp, null, 2)}
+  ensureDir(path26.dirname(path26.resolve(opts.stampPath)));
+  fs32.writeFileSync(path26.resolve(opts.stampPath), `${JSON.stringify(stamp, null, 2)}
 `, "utf8");
   opts.log(
     `clean-text: readings only \u2014 ${fixed.length} reading(s) handed in, ${applied.length} landed across ${changed} of ${blocks.length} block(s), ${missed} not found; ${written} row(s) written. Where each one landed: ${appliedPath}`
   );
   return { blocks: blocks.length, changed, written, applied: applied.length, missed, appliedPath, stamp };
 }
-var fs31, path25, import_node_crypto6, APPLIED_READINGS_FORMAT, READINGS_ONLY_MODEL, KEY_FORMAT;
+var fs32, path26, import_node_crypto5, APPLIED_READINGS_FORMAT, READINGS_ONLY_MODEL, KEY_FORMAT;
 var init_apply_readings = __esm({
   "packages/foundry-core/src/engine/clean/apply-readings.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs31 = __toESM(require("node:fs"), 1);
-    path25 = __toESM(require("node:path"), 1);
-    import_node_crypto6 = require("node:crypto");
+    fs32 = __toESM(require("node:fs"), 1);
+    path26 = __toESM(require("node:path"), 1);
+    import_node_crypto5 = require("node:crypto");
     init_fsdirs();
     init_bom();
     init_bookrows();
@@ -74902,13 +74896,13 @@ function cleanEpubKey(request) {
   ];
   const removal = request.removal === void 0 ? "" : removalKeyField(request.removal);
   if (removal.length > 0) fields.push(removal);
-  return (0, import_node_crypto7.createHash)("sha256").update(fields.join(NUL5), "utf8").digest("hex");
+  return (0, import_node_crypto6.createHash)("sha256").update(fields.join(NUL5), "utf8").digest("hex");
 }
 function cleanEpubBankPath(outPath) {
-  return `${path26.resolve(outPath)}.clean-bank.jsonl`;
+  return `${path27.resolve(outPath)}.clean-bank.jsonl`;
 }
 function cleanEpubStampPath(outPath) {
-  return `${path26.resolve(outPath)}.stamp.json`;
+  return `${path27.resolve(outPath)}.stamp.json`;
 }
 function textNodesOf(source, site) {
   const fragment = source.slice(site.innerStart, site.innerEnd);
@@ -74996,8 +74990,8 @@ async function cleanTextEpub(opts) {
   });
   const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   const model = opts.model ?? opts.runner?.model ?? (await openModelServer({ kind, transport, endpoint, log: opts.log })).model;
-  const epubPath = path26.resolve(opts.epubPath);
-  const outPath = path26.resolve(opts.outPath);
+  const epubPath = path27.resolve(opts.epubPath);
+  const outPath = path27.resolve(opts.outPath);
   if (epubPath === outPath) {
     throw new CleanTextError(
       `--out ${outPath} is --epub itself. This command writes a NEW book and never edits one in place: the input is what a second run would have to read, and a pass that consumed it would make its own result impossible to check. Name a different --out.`
@@ -75005,7 +74999,7 @@ async function cleanTextEpub(opts) {
   }
   let bytes;
   try {
-    bytes = new Uint8Array(fs32.readFileSync(epubPath));
+    bytes = new Uint8Array(fs33.readFileSync(epubPath));
   } catch (err) {
     throw new CleanTextError(`--epub ${epubPath} cannot be read (${err.message}).`);
   }
@@ -75260,13 +75254,13 @@ async function cleanTextEpub(opts) {
       uncompressedSize: member.uncompressedSize
     };
   });
-  ensureDir(path26.dirname(outPath));
-  await fs32.promises.writeFile(outPath, writeZip(entries));
+  ensureDir(path27.dirname(outPath));
+  await fs33.promises.writeFile(outPath, writeZip(entries));
   const stampPath = cleanEpubStampPath(outPath);
-  fs32.writeFileSync(stampPath, `${JSON.stringify(stamp, null, 2)}
+  fs33.writeFileSync(stampPath, `${JSON.stringify(stamp, null, 2)}
 `, "utf8");
   const receiptPath2 = `${outPath}.receipt.json`;
-  fs32.writeFileSync(receiptPath2, `${JSON.stringify({
+  fs33.writeFileSync(receiptPath2, `${JSON.stringify({
     normalizerVersion: NORMALIZER_VERSION,
     punctuationSpec: PUNCTUATION_SPEC_VERSION,
     model,
@@ -75325,14 +75319,14 @@ function sayRefusal(log2, key, record2) {
     `clean-text: REFUSED ${record2.status} in ${key} \u2014 "${record2.find}" \u2192 "${record2.replace}"${record2.detail === void 0 ? "" : ` (${record2.detail})`}`
   );
 }
-var fs32, path26, import_node_crypto7, NUL5, NOTHING_TO_ASK;
+var fs33, path27, import_node_crypto6, NUL5, NOTHING_TO_ASK;
 var init_epub2 = __esm({
   "packages/foundry-core/src/engine/clean/epub.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs32 = __toESM(require("node:fs"), 1);
-    path26 = __toESM(require("node:path"), 1);
-    import_node_crypto7 = require("node:crypto");
+    fs33 = __toESM(require("node:fs"), 1);
+    path27 = __toESM(require("node:path"), 1);
+    import_node_crypto6 = require("node:crypto");
     init_fsdirs();
     init_zip();
     init_meta();
@@ -75386,7 +75380,7 @@ function cleanKey(request) {
   if (removal.length > 0) fields.push(removal);
   const fixed = request.fixed === void 0 ? "" : fixedKeyField(request.text, request.fixed, request.at);
   if (fixed.length > 0) fields.push(fixed);
-  return (0, import_node_crypto8.createHash)("sha256").update(fields.join(NUL6), "utf8").digest("hex");
+  return (0, import_node_crypto7.createHash)("sha256").update(fields.join(NUL6), "utf8").digest("hex");
 }
 function triageKey(request) {
   const fields = [
@@ -75400,16 +75394,16 @@ function triageKey(request) {
   if (removal.length > 0) fields.push(removal);
   const fixed = request.fixed === void 0 ? "" : fixedKeyField(request.text, request.fixed, request.at);
   if (fixed.length > 0) fields.push(fixed);
-  return (0, import_node_crypto8.createHash)("sha256").update(fields.join(NUL6), "utf8").digest("hex");
+  return (0, import_node_crypto7.createHash)("sha256").update(fields.join(NUL6), "utf8").digest("hex");
 }
 function receiptPath(recordsPath) {
-  return `${path27.resolve(recordsPath)}.receipt.json`;
+  return `${path28.resolve(recordsPath)}.receipt.json`;
 }
 function openBook(bookPath) {
-  const where = path27.resolve(bookPath);
+  const where = path28.resolve(bookPath);
   let text;
   try {
-    text = stripBom(fs33.readFileSync(where, "utf8"));
+    text = stripBom(fs34.readFileSync(where, "utf8"));
   } catch (err) {
     throw new CleanTextError(
       `--book ${where} cannot be read (${err.message}). It is the book file the app materialises for a step (docs/BOOK-FILE.md) \u2014 one JSON object per line, the header first.`
@@ -75450,12 +75444,12 @@ async function runCleanText(opts) {
   const triage = opts.triagePath === void 0 ? null : readTriageFile(opts.triagePath);
   if (triage !== null && !sameRemoval(triage.removal ?? NO_REMOVAL, removal)) {
     throw new CleanTextError(
-      `--triage ${path27.resolve(opts.triagePath)} was asked about a different removal (${JSON.stringify(removalRecord(triage.removal ?? NO_REMOVAL))}) from this run's (${JSON.stringify(removalRecord(removal))}). Run clean-triage with the same --remove-references and --remove-also as clean-text.`
+      `--triage ${path28.resolve(opts.triagePath)} was asked about a different removal (${JSON.stringify(removalRecord(triage.removal ?? NO_REMOVAL))}) from this run's (${JSON.stringify(removalRecord(removal))}). Run clean-triage with the same --remove-references and --remove-also as clean-text.`
     );
   }
   if (triage !== null && (triage.unit ?? "block") !== unit) {
     throw new CleanTextError(
-      `--triage ${path27.resolve(opts.triagePath)} judged ${triage.unit ?? "block"}s, and this run asks about ${unit}s. Its verdicts name positions this run does not have. Run clean-triage with --unit ${unit}, or clean-text with --unit ${triage.unit ?? "block"}.`
+      `--triage ${path28.resolve(opts.triagePath)} judged ${triage.unit ?? "block"}s, and this run asks about ${unit}s. Its verdicts name positions this run does not have. Run clean-triage with --unit ${unit}, or clean-text with --unit ${triage.unit ?? "block"}.`
     );
   }
   const { text: bookText, where } = openBook(opts.bookPath);
@@ -75468,13 +75462,13 @@ async function runCleanText(opts) {
   for (const one of plan.kept) {
     opts.log(`clean-text: LEFT AS PRINTED \u2014 ${one}`);
   }
-  const fileName = path27.basename(where);
+  const fileName = path28.basename(where);
   if (blocks.length === 0) {
     throw new CleanTextError(
       `--book ${where} has no block with words in it, so there is nothing to clean. A book file whose every row is shelved, skipped or blank is not a book this pass can act on.`
     );
   }
-  const recordsPath = path27.resolve(opts.recordsPath);
+  const recordsPath = path28.resolve(opts.recordsPath);
   const records = TranslationRecords.open(recordsPath);
   refuseForeignRecords(records, new Set(blocks.map((b) => b.parts)), recordsPath, where);
   opts.log(records.size === 0 ? `clean-text: nothing is recorded in ${recordsPath}, so every block is asked of the model and recorded there as it lands.` : `clean-text: ${records.size} record(s) covering ${records.positions} position(s) are in ${recordsPath} \u2014 a block whose exact question is in there is not asked again, and every new answer is added to it.`);
@@ -75543,7 +75537,7 @@ async function runCleanText(opts) {
   const keptClean = /* @__PURE__ */ new Set();
   if (triage !== null) {
     const summary = {
-      file: path27.resolve(opts.triagePath),
+      file: path28.resolve(opts.triagePath),
       model: triage.model.id,
       clean: [],
       flagged: 0,
@@ -75776,8 +75770,8 @@ async function runCleanText(opts) {
     ...fixed.length > 0 ? { fixedReadings: fixedRecord } : {}
   };
   const receiptOut = receiptPath(recordsPath);
-  ensureDir(path27.dirname(receiptOut));
-  fs33.writeFileSync(receiptOut, `${JSON.stringify(receipt, null, 2)}
+  ensureDir(path28.dirname(receiptOut));
+  fs34.writeFileSync(receiptOut, `${JSON.stringify(receipt, null, 2)}
 `, "utf8");
   const sourceTexts = bookPositionTexts(book);
   const digests = /* @__PURE__ */ new Map();
@@ -75796,15 +75790,15 @@ async function runCleanText(opts) {
     punctuationRefused: punctuated.record.refused.length,
     blocks: digests
   });
-  ensureDir(path27.dirname(path27.resolve(opts.stampPath)));
-  fs33.writeFileSync(path27.resolve(opts.stampPath), `${JSON.stringify(stamp, null, 2)}
+  ensureDir(path28.dirname(path28.resolve(opts.stampPath)));
+  fs34.writeFileSync(path28.resolve(opts.stampPath), `${JSON.stringify(stamp, null, 2)}
 `, "utf8");
   if (humanKept > 0) {
     opts.log(
       `clean-text: ${humanKept} position(s) whose newest row a person wrote were left exactly as they left them \u2014 their source text has not changed since.`
     );
   }
-  opts.log(`clean-text: the receipt is ${receiptOut}; the stamp is ${path27.resolve(opts.stampPath)}`);
+  opts.log(`clean-text: the receipt is ${receiptOut}; the stamp is ${path28.resolve(opts.stampPath)}`);
   opts.log(
     `clean-text: the stamp names ${digests.size} block position(s) and their text digest is ${stamp.textDigest} \u2014 vlm-compile --narration-stamp recomputes both over the book it is handed and refuses by name if it is not this one.`
   );
@@ -75831,14 +75825,14 @@ function sayRefusal2(log2, key, record2) {
     `clean-text: REFUSED ${record2.status} in ${key} \u2014 "${record2.find}" \u2192 "${record2.replace}"${record2.detail === void 0 ? "" : ` (${record2.detail})`}`
   );
 }
-var fs33, path27, import_node_crypto8, KEY_FORMAT2, SENTENCE_KEY_FORMAT, NUL6, DEFAULT_CLEAN_GATE, TRIAGE_KEY_FORMAT, NOTHING_TO_ASK2;
+var fs34, path28, import_node_crypto7, KEY_FORMAT2, SENTENCE_KEY_FORMAT, NUL6, DEFAULT_CLEAN_GATE, TRIAGE_KEY_FORMAT, NOTHING_TO_ASK2;
 var init_run = __esm({
   "packages/foundry-core/src/engine/clean/run.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs33 = __toESM(require("node:fs"), 1);
-    path27 = __toESM(require("node:path"), 1);
-    import_node_crypto8 = require("node:crypto");
+    fs34 = __toESM(require("node:fs"), 1);
+    path28 = __toESM(require("node:path"), 1);
+    import_node_crypto7 = require("node:crypto");
     init_fsdirs();
     init_bom();
     init_bookrows();
@@ -76552,14 +76546,14 @@ var require_util = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path29 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path30 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path29 && path29[0] !== "/") {
-          path29 = `/${path29}`;
+        if (path30 && path30[0] !== "/") {
+          path30 = `/${path30}`;
         }
-        return new URL(`${origin}${path29}`);
+        return new URL(`${origin}${path30}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -77011,39 +77005,39 @@ var require_diagnostics = __commonJS({
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
         const {
-          request: { method, path: path29, origin }
+          request: { method, path: path30, origin }
         } = evt;
-        debuglog("sending request to %s %s/%s", method, origin, path29);
+        debuglog("sending request to %s %s/%s", method, origin, path30);
       });
       diagnosticsChannel.channel("undici:request:headers").subscribe((evt) => {
         const {
-          request: { method, path: path29, origin },
+          request: { method, path: path30, origin },
           response: { statusCode }
         } = evt;
         debuglog(
           "received response to %s %s/%s - HTTP %d",
           method,
           origin,
-          path29,
+          path30,
           statusCode
         );
       });
       diagnosticsChannel.channel("undici:request:trailers").subscribe((evt) => {
         const {
-          request: { method, path: path29, origin }
+          request: { method, path: path30, origin }
         } = evt;
-        debuglog("trailers received from %s %s/%s", method, origin, path29);
+        debuglog("trailers received from %s %s/%s", method, origin, path30);
       });
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
-          request: { method, path: path29, origin },
+          request: { method, path: path30, origin },
           error
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
-          path29,
+          path30,
           error.message
         );
       });
@@ -77092,9 +77086,9 @@ var require_diagnostics = __commonJS({
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
           const {
-            request: { method, path: path29, origin }
+            request: { method, path: path30, origin }
           } = evt;
-          debuglog("sending request to %s %s/%s", method, origin, path29);
+          debuglog("sending request to %s %s/%s", method, origin, path30);
         });
       }
       diagnosticsChannel.channel("undici:websocket:open").subscribe((evt) => {
@@ -77158,7 +77152,7 @@ var require_request = __commonJS({
     var kHandler = /* @__PURE__ */ Symbol("handler");
     var Request = class {
       constructor(origin, {
-        path: path29,
+        path: path30,
         method,
         body,
         headers,
@@ -77173,11 +77167,11 @@ var require_request = __commonJS({
         expectContinue,
         servername
       }, handler) {
-        if (typeof path29 !== "string") {
+        if (typeof path30 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path29[0] !== "/" && !(path29.startsWith("http://") || path29.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path30[0] !== "/" && !(path30.startsWith("http://") || path30.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path29)) {
+        } else if (invalidPathRegex.test(path30)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -77240,7 +77234,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? buildURL(path29, query) : path29;
+        this.path = query ? buildURL(path30, query) : path30;
         this.origin = origin;
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
         this.blocking = blocking == null ? false : blocking;
@@ -79482,7 +79476,7 @@ var require_util2 = __commonJS({
     "use strict";
     init_engine_import_meta_url();
     var { Transform } = require("node:stream");
-    var zlib = require("node:zlib");
+    var zlib2 = require("node:zlib");
     var { redirectStatusSet, referrerPolicySet: referrerPolicyTokens, badPortsSet } = require_constants4();
     var { getGlobalOrigin } = require_global();
     var { collectASequenceOfCodePoints, collectAnHTTPQuotedString, removeChars, parseMIMEType } = require_data_url();
@@ -80182,7 +80176,7 @@ var require_util2 = __commonJS({
             callback();
             return;
           }
-          this._inflateStream = (chunk[0] & 15) === 8 ? zlib.createInflate(this.#zlibOptions) : zlib.createInflateRaw(this.#zlibOptions);
+          this._inflateStream = (chunk[0] & 15) === 8 ? zlib2.createInflate(this.#zlibOptions) : zlib2.createInflateRaw(this.#zlibOptions);
           this._inflateStream.on("data", this.push.bind(this));
           this._inflateStream.on("end", () => this.push(null));
           this._inflateStream.on("error", (err) => this.destroy(err));
@@ -81774,7 +81768,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request) {
-      const { method, path: path29, host, upgrade, blocking, reset } = request;
+      const { method, path: path30, host, upgrade, blocking, reset } = request;
       let { body, headers, contentLength } = request;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -81840,7 +81834,7 @@ var require_client_h1 = __commonJS({
       if (blocking) {
         socket[kBlocking] = true;
       }
-      let header = `${method} ${path29} HTTP/1.1\r
+      let header = `${method} ${path30} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -82367,7 +82361,7 @@ var require_client_h2 = __commonJS({
     }
     function writeH2(client, request) {
       const session = client[kHTTP2Session];
-      const { method, path: path29, host, upgrade, expectContinue, signal, headers: reqHeaders } = request;
+      const { method, path: path30, host, upgrade, expectContinue, signal, headers: reqHeaders } = request;
       let { body } = request;
       if (upgrade) {
         util.errorRequest(client, request, new Error("Upgrade not supported for H2"));
@@ -82434,7 +82428,7 @@ var require_client_h2 = __commonJS({
         });
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path29;
+      headers[HTTP2_HEADER_PATH] = path30;
       headers[HTTP2_HEADER_SCHEME] = "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -82788,9 +82782,9 @@ var require_redirect_handler = __commonJS({
           return this.handler.onHeaders(statusCode, headers, resume, statusText);
         }
         const { origin, pathname, search } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path29 = search ? `${pathname}${search}` : pathname;
+        const path30 = search ? `${pathname}${search}` : pathname;
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path29;
+        this.opts.path = path30;
         this.opts.origin = origin;
         this.opts.maxRedirections = 0;
         this.opts.query = null;
@@ -85891,20 +85885,20 @@ var require_mock_utils = __commonJS({
       }
       return true;
     }
-    function safeUrl(path29) {
-      if (typeof path29 !== "string") {
-        return path29;
+    function safeUrl(path30) {
+      if (typeof path30 !== "string") {
+        return path30;
       }
-      const pathSegments = path29.split("?");
+      const pathSegments = path30.split("?");
       if (pathSegments.length !== 2) {
-        return path29;
+        return path30;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path29, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path29);
+    function matchKey(mockDispatch2, { path: path30, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path30);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -85926,7 +85920,7 @@ var require_mock_utils = __commonJS({
     function getMockDispatch(mockDispatches, key) {
       const basePath = key.query ? buildURL(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path29 }) => matchValue(safeUrl(path29), resolvedPath));
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path30 }) => matchValue(safeUrl(path30), resolvedPath));
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
       }
@@ -85964,9 +85958,9 @@ var require_mock_utils = __commonJS({
       }
     }
     function buildKey(opts) {
-      const { path: path29, method, body, headers, query } = opts;
+      const { path: path30, method, body, headers, query } = opts;
       return {
-        path: path29,
+        path: path30,
         method,
         body,
         headers,
@@ -86434,10 +86428,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path29, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path30, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path29,
+            Path: path30,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -88691,7 +88685,7 @@ var require_fetch = __commonJS({
     } = require_response();
     var { HeadersList } = require_headers();
     var { Request, cloneRequest } = require_request2();
-    var zlib = require("node:zlib");
+    var zlib2 = require("node:zlib");
     var {
       bytesMatch,
       makePolicyContainer,
@@ -89651,23 +89645,23 @@ var require_fetch = __commonJS({
                 for (let i = codings.length - 1; i >= 0; --i) {
                   const coding = codings[i];
                   if (coding === "x-gzip" || coding === "gzip") {
-                    decoders.push(zlib.createGunzip({
+                    decoders.push(zlib2.createGunzip({
                       // Be less strict when decoding compressed responses, since sometimes
                       // servers send slightly invalid responses that are still accepted
                       // by common browsers.
                       // Always using Z_SYNC_FLUSH is what cURL does.
-                      flush: zlib.constants.Z_SYNC_FLUSH,
-                      finishFlush: zlib.constants.Z_SYNC_FLUSH
+                      flush: zlib2.constants.Z_SYNC_FLUSH,
+                      finishFlush: zlib2.constants.Z_SYNC_FLUSH
                     }));
                   } else if (coding === "deflate") {
                     decoders.push(createInflate({
-                      flush: zlib.constants.Z_SYNC_FLUSH,
-                      finishFlush: zlib.constants.Z_SYNC_FLUSH
+                      flush: zlib2.constants.Z_SYNC_FLUSH,
+                      finishFlush: zlib2.constants.Z_SYNC_FLUSH
                     }));
                   } else if (coding === "br") {
-                    decoders.push(zlib.createBrotliDecompress({
-                      flush: zlib.constants.BROTLI_OPERATION_FLUSH,
-                      finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH
+                    decoders.push(zlib2.createBrotliDecompress({
+                      flush: zlib2.constants.BROTLI_OPERATION_FLUSH,
+                      finishFlush: zlib2.constants.BROTLI_OPERATION_FLUSH
                     }));
                   } else {
                     decoders.length = 0;
@@ -91336,9 +91330,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path29) {
-      for (let i = 0; i < path29.length; ++i) {
-        const code = path29.charCodeAt(i);
+    function validateCookiePath(path30) {
+      for (let i = 0; i < path30.length; ++i) {
+        const code = path30.charCodeAt(i);
         if (code < 32 || // exclude CTLs (0-31)
         code === 127 || // DEL
         code === 59) {
@@ -93948,11 +93942,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path29 = opts.path;
+          let path30 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path29 = `/${path29}`;
+            path30 = `/${path30}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path29);
+          url = new URL(util.parseOrigin(url).origin + path30);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -94142,16 +94136,11 @@ function formatOptions(specs) {
 
 // packages/foundry-core/src/engine/commands.ts
 init_engine_import_meta_url();
-var path28 = __toESM(require("node:path"), 1);
+var path29 = __toESM(require("node:path"), 1);
 
 // packages/foundry-core/src/engine/backend/plan.ts
 init_engine_import_meta_url();
-var DOCTOR_REPORT_VERSION = 1;
-var NATIVE_TIER = {
-  id: "native",
-  available: false,
-  detail: "not built yet \u2014 a transformers path in vlm_page.py is planned as the runs-anywhere tier; expect it to be 10-100x slower than vLLM when it lands, and to say so"
-};
+var DOCTOR_REPORT_VERSION = 2;
 function buildReport(inputs) {
   const endpoint = {
     id: "endpoint",
@@ -94168,27 +94157,16 @@ function buildReport(inputs) {
     available: inputs.platform === "linux" && inputs.vllmLocal.available,
     detail: inputs.vllmLocal.detail
   };
-  const mlx = {
-    id: "mlx",
-    available: inputs.platform === "darwin" && inputs.mlx.available,
-    detail: inputs.platform === "darwin" ? inputs.mlx.detail : "MLX is Apple silicon only"
-  };
-  const tiers = inputs.platform === "darwin" ? [endpoint, mlx, vllmLocal, wslVllm, NATIVE_TIER] : inputs.platform === "linux" ? [endpoint, vllmLocal, wslVllm, mlx, NATIVE_TIER] : [endpoint, wslVllm, vllmLocal, mlx, NATIVE_TIER];
+  const tiers = inputs.platform === "linux" ? [endpoint, vllmLocal, wslVllm] : [endpoint, wslVllm, vllmLocal];
   let chosen;
   if (inputs.mode === "auto") {
     chosen = tiers.find((t) => t.available)?.id ?? null;
   } else {
-    const wanted = inputs.mode === "endpoint" ? "endpoint" : "mlx";
-    chosen = tiers.find((t) => t.id === wanted && t.available)?.id ?? null;
+    chosen = tiers.find((t) => t.id === "endpoint" && t.available)?.id ?? null;
   }
   return {
     version: DOCTOR_REPORT_VERSION,
     platform: inputs.platform,
-    rasteriser: {
-      available: inputs.rasteriser.available,
-      python: inputs.rasteriser.python,
-      detail: inputs.rasteriser.detail
-    },
     wsl: {
       available: inputs.wslVllm.distros.length > 0,
       distros: inputs.wslVllm.distros
@@ -94202,7 +94180,6 @@ function formatReport(report) {
   const lines = [
     `foundry doctor \u2014 platform ${report.platform}`,
     "",
-    `  ${mark(report.rasteriser.available)}  rasteriser  ${indented(report.rasteriser.detail)}`,
     ...report.tiers.map((t) => `  ${mark(t.available)}  ${t.id.padEnd(10)}  ${indented(t.detail)}`),
     "",
     report.chosen === null ? "No reading backend is usable. The tier details above say what is missing." : `A run now would read through: ${report.chosen}`
@@ -94988,883 +94965,855 @@ ${misses.map((m) => `  ${m}`).join("\n")}
 Name one in settings (backend.vllmPython) if it lives elsewhere.`
   );
 }
-function defaultLocalPythonCandidates() {
-  const home = os.homedir();
-  const roots = [
-    // The Homebrew cask root is a macOS location; on Windows path.join turns
-    // it into a plausible-looking backslash path that can never exist.
-    ...process.platform === "darwin" ? ["/opt/homebrew/Caskroom/miniconda/base"] : [],
-    path6.join(home, "miniconda3"),
-    path6.join(home, "miniforge3"),
-    path6.join(home, "anaconda3")
-  ];
-  const conda = roots.flatMap((root) => process.platform === "win32" ? [path6.join(root, "envs", "vlmtest", "python.exe")] : [path6.join(root, "envs", "vlmtest", "bin", "python")]);
-  const bookforgeRuntime = process.platform === "win32" ? path6.join(process.env["APPDATA"] ?? path6.join(home, "AppData", "Roaming"), "bookforge", "runtime", "tools-env", "python.exe") : process.platform === "darwin" ? path6.join(home, "Library", "Application Support", "bookforge", "runtime", "tools-env", "bin", "python") : path6.join(home, ".config", "bookforge", "runtime", "tools-env", "bin", "python");
-  return [...conda, bookforgeRuntime];
-}
-async function probeLocalPython(module2, settings, run = spawnRunner) {
-  const explicit = settings.backend?.python ?? process.env["FOUNDRY_VLM_PYTHON"];
-  const candidates = explicit ? [explicit] : defaultLocalPythonCandidates();
-  const misses = [];
-  for (const candidate of candidates) {
-    if (!fs9.existsSync(candidate)) {
-      misses.push(`${candidate} (does not exist)`);
-      continue;
-    }
-    const probe = await run(candidate, ["-c", findSpecProgram(module2)], 15e3);
-    if (probe.exitCode === 0) {
-      return { available: true, detail: `${candidate} can import ${module2}`, python: candidate };
-    }
-    misses.push(`${candidate} (${probe.failure ?? `no module ${module2}`})`);
-  }
-  return {
-    available: false,
-    python: null,
-    detail: `no interpreter with ${module2} found. Tried:
-${misses.map((m) => `  ${m}`).join("\n")}
-Pass one with --python, FOUNDRY_VLM_PYTHON, or settings (backend.python).`
-  };
-}
 
 // packages/foundry-core/src/engine/commands.ts
 init_settings();
 
 // packages/foundry-core/src/engine/vlm/blocks-dump.ts
 init_engine_import_meta_url();
-var fs16 = __toESM(require("node:fs"), 1);
-var path12 = __toESM(require("node:path"), 1);
+var fs17 = __toESM(require("node:fs"), 1);
+var path13 = __toESM(require("node:path"), 1);
 
 // packages/foundry-core/src/engine/vlm/bridge.ts
 init_engine_import_meta_url();
-var import_node_child_process2 = require("node:child_process");
-var import_node_crypto2 = require("node:crypto");
+var fs12 = __toESM(require("node:fs"), 1);
+var path9 = __toESM(require("node:path"), 1);
+
+// packages/foundry-core/src/engine/vlm/raster.ts
+init_engine_import_meta_url();
+var import_node_module = require("node:module");
 var fs11 = __toESM(require("node:fs"), 1);
-var os3 = __toESM(require("node:os"), 1);
 var path8 = __toESM(require("node:path"), 1);
 var import_node_url = require("node:url");
-
-// packages/foundry-core/src/engine/vlm/vlm_page.py
-var vlm_page_default = `#!/usr/bin/env python3
-"""vlm_page \u2014 the Python half of \`foundry vlm-convert\`.
-
-Foundry is TypeScript compiled to one standalone binary (ARCHITECTURE \xA71), and
-a vision model on Apple silicon is MLX, which is Python. So this mode is the one
-place foundry shells out to an interpreter, and the seam is drawn to be as thin
-as a seam can be: ONE process for a whole book, a JSON config in on stdin, one
-JSON object per page out on stdout.
-
-ONE PROCESS, NOT ONE PER PAGE. Loading a 3B 8-bit model costs about ten seconds
-and every page after the first costs nothing extra; a per-page spawn would pay
-that ten seconds seventeen times on a seventeen-page book and fifty minutes of
-it on a real one. The cost of holding the model is that this script owns the
-whole run, which is why it reports progress per page rather than at the end.
-
-RASTERISATION HAPPENS HERE, in PyMuPDF, and that is a decision rather than a
-convenience. Foundry's pdf.js is loaded with a DELIBERATELY BROKEN DOMMatrix
-(\`src/pdf/runtime.ts\`): the library is embedded for text extraction only, its
-canvas layer cannot survive \`bun build --compile\`, and every drawing method on
-the shim throws so that a rendering path fails loudly instead of drawing with an
-identity transform. There is no rasteriser on the TypeScript side to reuse. The
-page image is already crossing this seam, so it is rendered on the side that can
-do it \u2014 and so is the other pixel job this mode has, for the same reason: the
-crop that turns a Picture block into a picture. The grayscale raster below is a
-third that has outlived its reader; see \`grayscale\` in \`src/vlm/bridge.ts\`.
-
-200 DPI is not a setting. It is what the measurement was taken at \u2014 the pages
-the models were scored on were 1300\xD72112 for a 468\xD7760 pt page, exactly 200 dpi
-\u2014 and it is the same resolution the rest of foundry pins for the same reason
-(ARCHITECTURE \xA75): a model's input distribution moves with resolution, and the
-damage shows up as a bad model rather than a bad render.
-
-THE PIXEL BUDGET IS THE MODEL'S COORDINATE SYSTEM. A model that answers with
-boxes answers in the frame its processor resized the page to, so \`maxPixels\` is
-not a performance knob that can be set here and forgotten: whatever is set here
-is what the TypeScript side must scale the boxes with. It is therefore passed IN
-rather than chosen here, and a processor that will not accept it is a failure
-rather than a silent ignore.
-
-NO SILENT FALLBACKS (ARCHITECTURE \xA78). A missing import, a page that renders to
-nothing, a processor that cannot be told its budget, and a crop that lands
-outside its page are each fatal, named, and exit nonzero. Half a book that looks
-like a whole one is the failure this file refuses to produce.
-
-A PAGE IN \`excludePages\` IS NOT PART OF THE BOOK. It is not rasterised, not
-read and not emitted \u2014 \`--skip-pages\`, the deletions somebody made in a picker,
-arriving as a list rather than as a re-written PDF so that the file's sha256
-(and with it the readings cache) survives the curation. Every page that does
-survive keeps its own page number; nothing is renumbered around the gap.
-
-Four modes, one script:
-
-    read       render every page and read it with the model  (the MLX path)
-    render     render every page and read none of them       (the endpoint path)
-    crop       cut named boxes out of named pages            (Picture blocks)
-    textlayer  report every text span the PDF itself carries (facsimile sizing)
-
-Protocol \u2014 one JSON object per line on stdout, flushed:
-
-    {"event":"document","pages":17,"title":\u2026,"author":\u2026,"widthPt":\u2026,"heightPt":\u2026}
-    {"event":"loaded","repo":\u2026,"seconds":9.8,"maxPixels":2000000}
-    {"event":"page","number":1,"width":1300,"height":2112,"renderSeconds":0.09,
-     "seconds":14.9,"chars":2183,"tokens":612,"finishReason":"stop",
-     "skipped":false,"text":"\u2026"}
-    {"event":"crop","name":"p0005-0.png","path":"\u2026/crops/p0005-0.png"}
-    {"event":"done","renderSeconds":1.6,"inferenceSeconds":251.4,"peakRssBytes":\u2026}
-
-stderr is progress and whatever MLX has to say; stdout is only ever the
-protocol, which is why nothing here prints.
-"""
-import json
-import os
-# Unix only. Windows has no \`resource\`, and this mode reaches Windows through
-# --vlm-endpoint: the model runs on a server (vLLM), while the PAGES are still
-# rendered here, by this script, in PyMuPDF. Imported conditionally rather than
-# guarded at the call site so the absence is stated once, next to the reason.
-try:
-    import resource
-except ModuleNotFoundError:  # pragma: no cover - platform-dependent
-    resource = None
-import sys
-import time
-
-# The protocol channel is the REAL stdout, held privately \u2014 and file
-# descriptor 1 is then pointed at stderr. This is not decoration: MuPDF's C
-# library writes its warnings to fd 1 DIRECTLY, below Python, and one such
-# line ("MuPDF error: ...") in the middle of the event stream fails the whole
-# run at the bridge's JSON parser (QAnon book, 2026-08-11: 276/276 pages
-# rendered, then the summary line arrived corrupted). After this swap, nothing
-# in this process \u2014 not fitz, not a native library, not a stray print \u2014 can
-# reach the protocol except emit().
-_protocol = os.fdopen(os.dup(sys.stdout.fileno()), 'w', encoding='utf-8')
-os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-
-# The config arrives as UTF-8 and is decoded as UTF-8, whatever this machine's
-# locale says. On Windows a piped stdin defaults to the ANSI code page with
-# surrogateescape, which reads a non-ASCII byte sequence as mojibake instead of
-# refusing it \u2014 the analysis worker was bitten first (nli_worker.py carries the
-# incident in full, 2026-08-25) and this seam has the identical shape: it only
-# never fired here because this config is ASCII on the machines that ran it.
-sys.stdin.reconfigure(encoding='utf-8', errors='strict')
-
-
-def fail(message):
-    """Die the way foundry dies: one line naming the thing, nonzero exit."""
-    sys.stderr.write('vlm_page: %s\\n' % message)
-    sys.exit(1)
-
-
-def emit(obj):
-    _protocol.write(json.dumps(obj, ensure_ascii=False) + '\\n')
-    _protocol.flush()
-
-
-def peak_rss_bytes():
-    """macOS reports ru_maxrss in BYTES; Linux reports it in kilobytes.
-
-    None where the platform cannot answer. That is a REAL absence and is
-    reported as one \u2014 a zero would be indistinguishable from a process that
-    somehow used no memory, and this number only ever appears in a log line
-    about how much the run cost.
-    """
-    if resource is None:
-        return None
-    raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return raw if sys.platform == 'darwin' else raw * 1024
-
-
-def import_fitz():
-    # Imported inside a function so the failure names the missing package and
-    # the interpreter it was missing from \u2014 an ImportError traceback out of a
-    # subprocess is the least useful thing this seam could hand back.
-    try:
-        import fitz
-    except ImportError as err:
-        fail('PyMuPDF is not installed in %s (%s). Install it with \`pip install pymupdf\`.'
-             % (sys.executable, err))
-    return fitz
-
-
-def write_pgm(path, pixmap):
-    """The grayscale raster, as the one image format foundry reads with no codec.
-
-    Written by hand rather than through the library's own PGM writer: the
-    reader on the other side (\`src/scan/pgm.ts\`) accepts binary P5 with a
-    single whitespace after the header and an 8-bit maxval, and this is the
-    nine bytes that guarantees it.
-
-    NOTHING ON THE OTHER SIDE OPENS ONE ANY MORE. It fed the ink test that used
-    to decide a page-turn join, and that test is gone \u2014 see \`grayscale\` in
-    \`src/vlm/bridge.ts\` for why this survives one more pass anyway.
-    """
-    samples = pixmap.samples
-    if len(samples) != pixmap.width * pixmap.height:
-        fail('a grayscale pixmap of %dx%d carried %d bytes, so its rows are padded and this '
-             'writer would mis-shape them' % (pixmap.width, pixmap.height, len(samples)))
-    with open(path, 'wb') as out:
-        out.write(b'P5\\n%d %d\\n255\\n' % (pixmap.width, pixmap.height))
-        out.write(samples)
-
-
-def cap_pixels(processor, max_pixels):
-    """Tell the image processor its budget, or fail naming what it is.
-
-    Every spelling transformers has used is set, because all of them are live in
-    the wild: a bare \`max_pixels\` attribute on the older image processors, a
-    plain \`size\` dict on the next, and a \`SizeDict\` dataclass with
-    \`longest_edge\` on the current fast ones \u2014 which is what
-    \`mlx-community/dots.ocr-4bit\` loads today. At least one has to exist. A
-    processor with none of them is a processor whose coordinate frame this
-    program cannot predict, and predicting it is the whole point: the number set
-    here is the number the TypeScript side scales the model's boxes with.
-    """
-    image_processor = getattr(processor, 'image_processor', None)
-    if image_processor is None:
-        fail('the processor has no image_processor, so its pixel budget cannot be set \u2014 and '
-             'the boxes it answers with could not be scaled back to the render')
-    touched = []
-    if getattr(image_processor, 'max_pixels', None) is not None:
-        image_processor.max_pixels = max_pixels
-        touched.append('max_pixels')
-    size = getattr(image_processor, 'size', None)
-    if isinstance(size, dict):
-        for key in ('max_pixels', 'longest_edge'):
-            if key in size:
-                size[key] = max_pixels
-                touched.append('size[%s]' % key)
-    elif size is not None:
-        for key in ('max_pixels', 'longest_edge'):
-            if getattr(size, key, None) is not None:
-                setattr(size, key, max_pixels)
-                touched.append('size.%s' % key)
-    if not touched:
-        fail('%s carries no pixel budget under any name this program knows (max_pixels, '
-             'size[max_pixels], size[longest_edge]), so %d cannot be applied to it and the '
-             'frame its boxes are in cannot be predicted'
-             % (type(image_processor).__name__, max_pixels))
-    sys.stderr.write('  pixel budget %d applied to %s\\n' % (max_pixels, ', '.join(touched)))
-
-
-def write_png(pixmap, path):
-    """A pixmap onto the disk, without betting the run on a Windows delete.
-
-    MuPDF's own writer removes an existing file before it writes, and on
-    Windows that remove is refused the moment ANYTHING holds the old file
-    open without delete-sharing \u2014 the app showing the figure it cropped last
-    time, an antivirus pass over it, a sync client. One stale PNG then
-    killed an entire read landing (2026-08-16, a re-read over an existing
-    project). So the bytes are taken from the pixmap and written beside the
-    target, and the finished file is moved over the old one with os.replace,
-    which Windows allows in strictly more states than a bare delete. The
-    locks that remain are transient by nature, so the move is retried
-    briefly \u2014 and then the failure is the real one, named, with the file it
-    is about.
-    """
-    data = pixmap.tobytes('png')
-    last = None
-    for attempt in range(5):
-        if attempt > 0:
-            time.sleep(0.2)
-        # Truncate-and-write first: a reader that shares writing \u2014 which is how
-        # browsers and viewers open files \u2014 permits this even while it blocks
-        # every rename onto the name, because Windows keeps a deleted-or-
-        # replaced name occupied until the last handle closes.
-        try:
-            with open(path, 'wb') as out:
-                out.write(data)
-            return
-        except OSError as err:
-            last = err
-        # A holder that does not share writing may still share deletion; going
-        # through a sibling temp file also covers the case where the write
-        # above failed midway and the target must be re-made whole.
-        tmp = path + '.part'
-        try:
-            with open(tmp, 'wb') as out:
-                out.write(data)
-            os.replace(tmp, path)
-            return
-        except OSError as err:
-            last = err
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-    fail('%s could not be written (%s). Something on this machine is holding the old file '
-         'open \u2014 a window showing it, a sync client, an antivirus scan. Close it and run '
-         'again; the readings are banked, so nothing is read twice.' % (path, last))
-
-
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-# Where a page comes from
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-
-"""A READ TAKES PAGES. A PDF IS ONE WAY TO HAVE SOME, NOT THE ONLY WAY.
-
-Owen's ruling, 2026-08-20: "this doesnt need to be a pdf... the ultimate goal
-here is to generate a bank with the vlm". The capture flow used to mint a PDF
-whose every page was one photograph embedded whole, at the photograph's own
-size, carrying no text and no geometry -- and then this file opened that
-container and rasterised it again, which decoded and re-encoded the same JPEG
-at a different scale. The container was taken apart by the very next step.
-
-So there are two sources and they answer the same four questions. Everything
-downstream of \`render\` -- the PNG writer, the grayscale twin, the pixel budget,
-the prompt, the page event -- cannot tell which one it is holding, which is the
-point: this is a SECOND WAY IN, not a second pipeline.
-"""
-
-
-class PdfPages(object):
-    """Pages rasterised out of a PDF, at a dpi."""
-
-    def __init__(self, fitz, path):
-        self.fitz = fitz
-        self.name = path
-        self.doc = fitz.open(path)
-
-    @property
-    def count(self):
-        return self.doc.page_count
-
-    def credits(self):
-        meta = self.doc.metadata or {}
-        return (meta.get('title') or '').strip(), (meta.get('author') or '').strip()
-
-    def frame(self):
-        first = self.doc[0].rect
-        return first.width, first.height
-
-    def render(self, index, dpi):
-        return self.doc[index].get_pixmap(dpi=dpi)
-
-    def render_size(self, index, dpi):
-        """This page's TRUE render size in pixels, WITHOUT drawing it.
-
-        The RENDER size the snap is judged on: the page box in points times
-        dpi/72, which is exactly the pixel grid \`get_pixmap(dpi=dpi)\` produces.
-        Cheap \u2014 it reads the page rectangle and multiplies, nothing is
-        rasterised \u2014 so the pre-pass over a whole book costs no GPU and no paint.
-        """
-        rect = self.doc[index].rect
-        return rect.width * dpi / 72.0, rect.height * dpi / 72.0
-
-    def render_to(self, index, width, height):
-        """Draw the page onto an EXACT width x height pixel grid.
-
-        \`get_pixmap(dpi=dpi)\` scales the page by dpi/72 on both axes; a Matrix
-        that scales the page box onto (width, height) draws the SAME page at the
-        pixel grid we name instead. This is the whole of the snap: dpi and
-        maxPixels are untouched \u2014 only the page box a snapped page is drawn to
-        moves, by at most the 4% band, and a Qwen-family processor resizes its
-        input to a multiple of PATCH anyway. The pixmap PyMuPDF returns is the
-        size then EMITTED for the page, so the box-to-render mapping downstream
-        (\`renderScale\`, dots.ts) stays exact whether a page was snapped or not.
-        """
-        rect = self.doc[index].rect
-        matrix = self.fitz.Matrix(width / rect.width, height / rect.height)
-        return self.doc[index].get_pixmap(matrix=matrix)
-
-
-class ImagePages(object):
-    """Pages that are ALREADY pictures -- the photographs a capture project made.
-
-    \`dpi\` is accepted and ignored, and that is the whole difference between the
-    two sources. A dpi is a question about how finely to draw something that has
-    no pixels of its own; a photograph arrives with its pixels already chosen,
-    and re-rendering it at a dpi would be inventing a second opinion about a
-    measurement somebody already took. THE PIXEL BUDGET STILL APPLIES -- it is
-    enforced on the processor (\`cap_pixels\`), the same for both sources, so a
-    12-megapixel photograph is admitted to the model at exactly the size a
-    rasterised page would have been.
-
-    Colour is normalised because a page must reach the model as something it can
-    read: an alpha channel is dropped (a scan has no transparency to honour, and
-    the model has no way to interpret one) and anything that is not already grey
-    or RGB -- a CMYK TIFF out of a scanner -- is converted rather than refused.
-    """
-
-    def __init__(self, fitz, paths):
-        self.fitz = fitz
-        self.paths = list(paths)
-        self.name = '%d page image(s)' % len(self.paths)
-        missing = [p for p in self.paths if not os.path.exists(p)]
-        if missing:
-            fail('no such page image: %s' % missing[0])
-
-    @property
-    def count(self):
-        return len(self.paths)
-
-    def credits(self):
-        # A photograph carries no title and no author, and this file has never
-        # invented either -- the TypeScript side falls back to the filename,
-        # which is a FACT about the file rather than a guess about the book.
-        return '', ''
-
-    def frame(self):
-        pixmap = self.render(0, 0)
-        # Reported as points because that is the field's name and the shape of
-        # the page is what it is for. A photograph's pixels ARE its frame; there
-        # is no second unit here to convert to, and nothing downstream reads
-        # these two numbers today.
-        return float(pixmap.width), float(pixmap.height)
-
-    def render(self, index, dpi):
-        pixmap = self.fitz.Pixmap(self.paths[index])
-        if pixmap.alpha:
-            pixmap = self.fitz.Pixmap(pixmap, 0)
-        if pixmap.colorspace is None or pixmap.colorspace.n not in (1, 3):
-            pixmap = self.fitz.Pixmap(self.fitz.csRGB, pixmap)
-        return pixmap
-
-
-def run_crop(config):
-    """Cut boxes out of pages -- from the one source this run was given.
-
-    A CROP TAKES PAGES TOO, and it learned that a face later than the read did.
-    The read has taken either a document or a folder of photographs since Owen's
-    ruling above; this mode took a PDF and only a PDF, so a captured book -- whose
-    archive IS its pages -- reflowed with nothing to cut and every Picture block
-    in it refused at export ("this book never had its figures cut"). The bank was
-    perfect and the pixels were sitting right there in the archive, one directory
-    away, in the very files the model had been shown.
-
-    \u2500\u2500 THE BOX MEANS THE SAME THING IN BOTH FACES \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-
-    A banked box is in THE PAGE RENDER'S PIXEL FRAME: the model answers in the
-    resized frame the processor gave it and the TypeScript side scales that back
-    up to the render (\`renderScale\`, src/vlm/dots.ts). What "the render" IS is the
-    only thing that differs, and it differs exactly as it does for the read:
-
-      pdf     nothing was a picture until this program made one, so the frame is
-              the raster at the pinned dpi. The box goes back to POINTS
-              (x * 72/dpi), is clipped against the page, and that patch is drawn
-              AGAIN at the same dpi -- full fidelity, because a PDF has no
-              resolution of its own to lose by being asked twice.
-
-      pages   the page IS a photograph, and \`ImagePages.render\` hands back its
-              pixels untouched -- so the render's frame is the image file's own
-              pixel grid and the box is ALREADY in it. No dpi, no rasteriser, no
-              second opinion about a measurement somebody else took: the
-              rectangle is rounded outward to whole pixels, intersected with the
-              image, and those pixels are copied out at 1:1.
-
-    Both come out as a PNG of the same region at about the same size, which is
-    what lets everything downstream -- the crops directory, the row's \`image\`, the
-    compile -- stay one route with no idea which face made it.
-
-    PAGE N IS THE PAGE THE READ CALLED N, and that is a property of the list this
-    was handed rather than of anything decided here. \`pagesInDirectory\`
-    (src/vlm/bridge.ts) is the ONE ordering rule in the program and both the read
-    and the reflow go through it, so \`pages[N - 1]\` is the same file for both. A
-    second spelling of that order is how page 12's figure gets cut from page 13.
-    """
-    fitz = import_fitz()
-    pdf_path = config.get('pdf')
-    page_files = config.get('pages')
-    if (pdf_path is None) == (page_files is None):
-        fail('a crop is cut out of exactly one source: "pdf" or "pages"')
-    dpi = config['dpi']
-    crops_dir = config['cropsDir']
-    os.makedirs(crops_dir, exist_ok=True)
-
-    source = PdfPages(fitz, pdf_path) if pdf_path is not None else ImagePages(fitz, page_files)
-    scale = 72.0 / dpi
-    # ONE PAGE HELD AT A TIME on the pages face, because the crops arrive in row
-    # order and row order is page order: two figures on one leaf decode that
-    # photograph once. Holding all of them would be a whole book of full-size
-    # images in memory to save a decode nobody is waiting on.
-    held_index = -1
-    held = None
-    for crop in config['crops']:
-        number = crop['page']
-        if number < 1 or number > source.count:
-            fail('a crop names page %d of a source with %d page(s)' % (number, source.count))
-        x1, y1, x2, y2 = crop['box']
-        if pdf_path is not None:
-            page = source.doc[number - 1]
-            rect = fitz.Rect(x1 * scale, y1 * scale, x2 * scale, y2 * scale) & page.rect
-            if rect.is_empty:
-                fail('the crop for %s on page %d lies outside the page' % (crop['name'], number))
-            pixmap = page.get_pixmap(dpi=dpi, clip=rect)
-        else:
-            if number - 1 != held_index:
-                held = source.render(number - 1, dpi)
-                held_index = number - 1
-            box = fitz.Rect(x1, y1, x2, y2).irect & held.irect
-            if box.is_empty:
-                fail('the crop for %s on page %d lies outside the page' % (crop['name'], number))
-            # A scaled copy at the SAME scale, limited to the box: PyMuPDF's
-            # \`Pixmap(src, width, height, clip)\`. The width and height handed in
-            # are the source's own, so nothing is resampled -- this is a copy of
-            # those pixels and not a rendering of them.
-            pixmap = fitz.Pixmap(held, held.width, held.height, box)
-        if pixmap.width == 0 or pixmap.height == 0:
-            fail('the crop for %s on page %d rendered to a %dx%d image'
-                 % (crop['name'], number, pixmap.width, pixmap.height))
-        path = os.path.join(crops_dir, crop['name'])
-        write_png(pixmap, path)
-        emit({'event': 'crop', 'name': crop['name'], 'path': path})
-
-
-def run_textlayer(config):
-    """Every text span the PDF already carries: where it sits, how big it is.
-
-    A born-digital PDF \u2014 and a scan a publisher ran real OCR over, which is
-    what JSTOR ships \u2014 states the size of every piece of type on every page,
-    in points, in its own text layer. That statement is a MEASUREMENT of the
-    printed page by whoever set or OCR'd it, and the facsimile route uses it
-    to size its type instead of solving sizes back out of the model's boxes
-    (\`pdf-text.ts\`). A pure scan has no layer, emits nothing here, and the
-    facsimile falls back on its own measurements; nothing about this mode is
-    required for a book to come out.
-
-    One event per page that has spans, spans as compact arrays: centre-x,
-    centre-y (points, top-left origin, the displayed page's frame \u2014 the same
-    frame the renders are made in), font size in points, and how many
-    characters the span carries. The characters ride along so the reader can
-    take a median WEIGHTED by them: a two-character superscript must not
-    outvote the paragraph it annotates.
-    """
-    fitz = import_fitz()
-    doc = fitz.open(config['pdf'])
-    for index in range(doc.page_count):
-        page = doc[index]
-        spans = []
-        for block in page.get_text('dict')['blocks']:
-            if block.get('type') != 0:
-                continue
-            for line in block.get('lines', []):
-                for span in line.get('spans', []):
-                    text = span.get('text', '').strip()
-                    size = span.get('size', 0)
-                    if not text or size <= 0:
-                        continue
-                    rect = fitz.Rect(span['bbox'])
-                    if page.rotation:
-                        # get_text answers in the unrotated page's frame; the
-                        # renders \u2014 and so the model's boxes \u2014 are of the page
-                        # as DISPLAYED. One matrix moves the span into the
-                        # frame everything else already shares.
-                        rect = rect * page.rotation_matrix
-                    spans.append([
-                        round((rect.x0 + rect.x1) / 2, 2),
-                        round((rect.y0 + rect.y1) / 2, 2),
-                        round(size, 2),
-                        len(text),
-                    ])
-        if spans:
-            emit({'event': 'layer', 'page': index + 1, 'spans': spans})
-    emit({'event': 'done'})
-
-
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-# ONE GRID FOR A BOOK OF NEARLY-IDENTICAL PAGES
-#
-# A batching VLM server groups pages of the SAME processor grid together, and a
-# processor grid is the page's pixel size rounded to a multiple of PATCH (28) \u2014
-# \`smartResize\`, in dots.ts. A scanned book has +/-1-2% page-size jitter, so two
-# leaves that are the same page of the same book resize to ADJACENT grids (122 vs
-# 124 patch-rows) and land in different batches. The batches go shallow and the
-# run runs about twice as slow, for a difference no reader could see.
-#
-# THE FIX IS TO RASTER THE NEAR-IDENTICAL PAGES TO ONE SIZE. The book's dominant
-# render size \u2014 its "mode" \u2014 is computed once, over every page's true render
-# size, and any page within the snap band of it on BOTH axes is drawn AT the mode
-# instead of at its own size. A page further out than the band \u2014 a genuinely
-# different leaf, a fold-out, the +8% outlier below \u2014 is drawn TRUE and keeps its
-# own grid. dpi and maxPixels never move; only the page box a snapped page is
-# drawn to. The size EMITTED for a page is always the pixmap's own size, so the
-# coordinate invariant (\`renderScale\`, dots.ts) holds whichever path a page took.
-#
-# The mode is computed on the RENDER size \u2014 page box in points x dpi/72, POST-dpi
-# and PRE-smartResize \u2014 which is what \`PdfPages.render_size\` returns.
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-
-# 4%, per axis, INDEPENDENT (anisotropic): a page snaps only when it is within 4%
-# of the mode on width AND on height, and a page close on one axis but far on the
-# other is drawn true. Derivation: measured jitter on a real scanned book was
-# +/-1.5% on both axes (widths 1683-1749, heights 1058-1098) with one true
-# outlier at +8% (a 1163-tall page among ~1078). 4% is twice the jitter \u2014
-# comfortably inside it, so the cluster collapses to one grid \u2014 and a quarter of
-# the outlier \u2014 comfortably outside it, so the outlier keeps its own grid.
-SNAP_BAND = 0.04
-
-
-def _median(values):
-    ordered = sorted(values)
-    n = len(ordered)
-    mid = n // 2
-    if n % 2 == 1:
-        return ordered[mid]
-    return (ordered[mid - 1] + ordered[mid]) / 2.0
-
-
-def within_band(value, mode):
-    """Is \`value\` within SNAP_BAND of \`mode\` \u2014 the band measured against the mode."""
-    return abs(value - mode) <= SNAP_BAND * mode
-
-
-def snaps_to(size, mode):
-    """Does a page of \`size\` (w, h) collapse onto the canonical \`mode\` (w, h)?
-
-    Both axes, independently: within the band on width AND on height. A page
-    close on one axis and far on the other keeps its own grid.
-    """
-    return within_band(size[0], mode[0]) and within_band(size[1], mode[1])
-
-
-def dominant_render_size(sizes):
-    """The book's dominant render size (the snap "mode"), or None for no pages.
-
-    Most pages of a book are ~one size, and this is a representative of that
-    dominant cluster: the median of the pages that sit within the band of the
-    book's overall median, per axis. Two medians rather than one number because
-    the band is anisotropic \u2014 a book can jitter more on one axis than the other.
-
-    The overall median centres the cluster and is itself immune to a handful of
-    outliers; taking the median AGAIN over only the in-band pages drops the +8%
-    fold-out out of the number entirely, so the mode is the clean centre of the
-    pages that actually agree with one another rather than an average dragged
-    toward a page nothing else looks like.
-    """
-    if not sizes:
-        return None
-    med_w = _median([w for w, _h in sizes])
-    med_h = _median([h for _w, h in sizes])
-    cluster = [(w, h) for (w, h) in sizes if within_band(w, med_w) and within_band(h, med_h)]
-    if not cluster:
-        return None
-    return (int(round(_median([w for w, _h in cluster]))),
-            int(round(_median([h for _w, h in cluster]))))
-
-
-def main():
-    config = json.loads(sys.stdin.read())
-    mode = config.get('mode', 'read')
-    if mode == 'crop':
-        return run_crop(config)
-    if mode == 'textlayer':
-        return run_textlayer(config)
-    if mode not in ('read', 'render'):
-        fail('mode "%s" is not one of read, render, crop, textlayer' % mode)
-
-    # Exactly one source, and the refusal is here because it is the first place
-    # that could possibly be wrong about it.
-    pdf_path = config.get('pdf')
-    page_files = config.get('pages')
-    if (pdf_path is None) == (page_files is None):
-        fail('a read is given exactly one source: "pdf" or "pages"')
-    repo = config['repo']
-    prompt = config['prompt']
-    dpi = config['dpi']
-    max_tokens = config['maxTokens']
-    max_pixels = config.get('maxPixels')
-    renders_dir = config.get('rendersDir')
-    grayscale = config.get('grayscale', False)
-    # Two different lists, and the difference is a cache against a curation.
-    # \`skipPages\` are pages whose answer is already banked: still rendered,
-    # still reported, just not read. \`excludePages\` are pages that are not part
-    # of the book \u2014 \`--skip-pages\` \u2014 and they are not rendered, not read and not
-    # reported at all. See src/vlm/pages.ts.
-    skip_pages = set(config.get('skipPages') or [])
-    exclude_pages = set(config.get('excludePages') or [])
-
-    fitz = import_fitz()
-    if mode == 'read':
-        try:
-            from mlx_vlm import generate, load
-            from mlx_vlm.prompt_utils import apply_chat_template
-            from mlx_vlm.utils import load_config
-        except ImportError as err:
-            fail('mlx-vlm is not installed in %s (%s). Install it with \`pip install mlx-vlm\`.'
-                 % (sys.executable, err))
-
-    source = PdfPages(fitz, pdf_path) if pdf_path is not None else ImagePages(fitz, page_files)
-    if source.count == 0:
-        fail('%s has no pages' % source.name)
-
-    # How many pages the document has is known HERE and nowhere earlier, so the
-    # two refusals that need that number are made here \u2014 before a page is
-    # rasterised and before a model is loaded. The syntax of the list was
-    # already refused on the TypeScript side (src/vlm/pages.ts); neither
-    # refusal exists twice.
-    beyond = sorted(p for p in exclude_pages if p > source.count)
-    if beyond:
-        fail('--skip-pages names %s of a %d-page document'
-             % (', '.join('page %d' % p for p in beyond), source.count))
-    if len(exclude_pages) >= source.count:
-        fail('--skip-pages names every page of the %d-page document, so there would be no book '
-             'left to write' % source.count)
-
-    # The book's canonical render size \u2014 see "ONE GRID FOR A BOOK OF NEARLY-
-    # IDENTICAL PAGES" above. Only for a PDF: a page image arrives at pixels
-    # somebody already chose (ImagePages), and resampling it to shave a 4% jitter
-    # is exactly the second opinion that class exists to refuse. A RESUMED run is
-    # HANDED the mode its first run chose (\`renderMode\` in the config, recorded on
-    # the TypeScript side beside the readings bank, keyed by the PDF's sha) so it
-    # snaps to the SAME grid \u2014 recomputing the mode off a different page subset
-    # could land the resume on an adjacent grid halfway through the book.
-    #
-    # SNAPPING IS OPT-IN, and \`blocks-dump\` is why. That tool re-measures a page
-    # off the PDF to recover the render frame a box was measured in for a bank so
-    # old it recorded no geometry \u2014 and a bank that old predates snapping, so its
-    # boxes were measured against the page's TRUE render. Snapping there would
-    # reproduce a frame the model was never shown and put every one of those boxes
-    # up to 4% off. So a caller that wants the collapse asks for it (\`snap\`), and
-    # a caller that wants the true frame back \u2014 blocks-dump \u2014 simply does not.
-    render_mode = None
-    if isinstance(source, PdfPages):
-        given = config.get('renderMode')
-        if given is not None:
-            # Handed the mode an earlier run of this book chose \u2014 snap to exactly it.
-            render_mode = (int(given[0]), int(given[1]))
-        elif config.get('snap', False):
-            render_sizes = [
-                source.render_size(index, dpi)
-                for index in range(source.count)
-                if (index + 1) not in exclude_pages
-            ]
-            render_mode = dominant_render_size(render_sizes)
-
-    title, author = source.credits()
-    width_pt, height_pt = source.frame()
-    emit({
-        'event': 'document',
-        'pages': source.count,
-        # Straight from the PDF, empty when the PDF does not say. Nothing here
-        # invents a title or an author; the TypeScript side falls back to the
-        # filename, which is a FACT about the file rather than a guess about the
-        # book.
-        'title': title,
-        'author': author,
-        'widthPt': width_pt,
-        'heightPt': height_pt,
-        # The canonical render size near-identical pages are snapped onto, as a
-        # list [width, height] in render pixels \u2014 or null where nothing is snapped
-        # (a page-image source, or a PDF with no pages left after exclusions). The
-        # TypeScript side records it beside the bank so a resume is handed it back.
-        'renderMode': list(render_mode) if render_mode is not None else None,
-    })
-
-    # Is there a page left that this run will actually pay a model for? An
-    # excluded page is not in the book and a banked one is already answered, so
-    # a run with neither loads nothing at all.
-    reads_something = any(
-        number not in exclude_pages and number not in skip_pages
-        for number in range(1, source.count + 1)
-    )
-
-    model = processor = cfg = None
-    if mode == 'read' and reads_something:
-        load_start = time.time()
-        model, processor = load(repo)
-        cfg = load_config(repo)
-        if max_pixels:
-            cap_pixels(processor, max_pixels)
-        emit({'event': 'loaded', 'repo': repo, 'seconds': time.time() - load_start,
-              'maxPixels': max_pixels})
-
-    if renders_dir:
-        os.makedirs(renders_dir, exist_ok=True)
-
-    scratch = renders_dir or os.path.join(
-        os.environ.get('TMPDIR', '/tmp'), 'foundry-vlm-%d' % os.getpid())
-    os.makedirs(scratch, exist_ok=True)
-
-    render_total = 0.0
-    inference_total = 0.0
-    for index in range(source.count):
-        number = index + 1
-        if number in exclude_pages:
-            # Not rasterised, not read, not emitted. A page somebody deleted has
-            # to cost nothing, which is why this is a \`continue\` and not a flag
-            # on the page event: the bridge counts the pages it was told to
-            # expect (see bridge.ts), so a silent omission is still caught.
-            sys.stderr.write('  page %d/%d: skipped\\n' % (number, source.count))
-            continue
-
-        render_start = time.time()
-        # Snap this page onto the book's canonical grid when it is within the band
-        # on both axes; draw it true otherwise. \`render_mode\` is None for a page-
-        # image source and for a PDF with no pages, so those keep the exact render
-        # path they always had. The width/height EMITTED below is the pixmap's own
-        # size either way, so a snapped page and a true page map their boxes back
-        # to the render frame by the same rule (dots.ts) \u2014 the coordinate invariant.
-        if render_mode is not None and snaps_to(source.render_size(index, dpi), render_mode):
-            pixmap = source.render_to(index, render_mode[0], render_mode[1])
-        else:
-            pixmap = source.render(index, dpi)
-        image_path = os.path.join(scratch, 'page-%04d.png' % number)
-        # Through the same writer as the crops: a kept renders directory is
-        # overwritten on every re-read, which is the exact exposure.
-        write_png(pixmap, image_path)
-        if grayscale:
-            write_pgm(os.path.join(scratch, 'page-%04d.pgm' % number),
-                      fitz.Pixmap(fitz.csGRAY, pixmap))
-        render_seconds = time.time() - render_start
-        render_total += render_seconds
-        if pixmap.width == 0 or pixmap.height == 0:
-            fail('page %d rendered to a %dx%d image' % (number, pixmap.width, pixmap.height))
-
-        skipped = mode == 'render' or number in skip_pages
-        text = ''
-        result = None
-        infer_seconds = 0.0
-        if not skipped:
-            infer_start = time.time()
-            # The prompt goes through the model's OWN chat template, which is
-            # what \`apply_chat_template\` is for: the image placeholder, the role
-            # turns and any thinking-block convention are the checkpoint's, and
-            # building the string by hand here would feed a shape it was never
-            # trained on.
-            formatted = apply_chat_template(processor, cfg, prompt, num_images=1)
-            result = generate(model, processor, formatted, [image_path],
-                              max_tokens=max_tokens, temperature=0.0, verbose=False)
-            # mlx-vlm has returned both a bare string and a result object across
-            # versions; \`.text\` when it is there, the string when it is not.
-            text = (getattr(result, 'text', None) or str(result)).strip()
-            infer_seconds = time.time() - infer_start
-            inference_total += infer_seconds
-
-        if not renders_dir:
-            os.unlink(image_path)
-
-        emit({
-            'event': 'page',
-            'number': number,
-            'width': pixmap.width,
-            'height': pixmap.height,
-            'renderSeconds': render_seconds,
-            'seconds': infer_seconds,
-            'chars': len(text),
-            'tokens': getattr(result, 'generation_tokens', 0) if result is not None else 0,
-            'finishReason': getattr(result, 'finish_reason', None) if result is not None else None,
-            'skipped': skipped,
-            'text': text,
-        })
-        if skipped:
-            sys.stderr.write('  page %d/%d: rendered\\n' % (number, source.count))
-        else:
-            sys.stderr.write('  page %d/%d: %d chars in %.1fs\\n'
-                             % (number, source.count, len(text), infer_seconds))
-
-    emit({
-        'event': 'done',
-        'renderSeconds': render_total,
-        'inferenceSeconds': inference_total,
-        'peakRssBytes': peak_rss_bytes(),
-    })
-
-
-if __name__ == '__main__':
-    main()
-`;
+var zlib = __toESM(require("node:zlib"), 1);
+init_fsdirs();
+var RasterError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "RasterError";
+  }
+};
+var loading = null;
+function loadMupdf() {
+  loading ??= (async () => {
+    let entry;
+    try {
+      entry = (0, import_node_module.createRequire)(__foundryEngineUrl).resolve("mupdf");
+    } catch (err) {
+      throw new RasterError(
+        `the \`mupdf\` package is not installed beside the engine, so no page can be rasterised (${err instanceof Error ? err.message : String(err)}). It is a dependency of @owen/foundry-core; reinstall the package.`
+      );
+    }
+    const mupdf = await import((0, import_node_url.pathToFileURL)(entry).href);
+    mupdf.setLog({
+      warning: (message) => process.stderr.write(`MuPDF warning: ${message}
+`),
+      error: (message) => process.stderr.write(`MuPDF error: ${message}
+`)
+    });
+    return mupdf;
+  })();
+  return loading;
+}
+function sleepSync2(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function writeImageFile(data, file) {
+  let last = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (attempt > 0) sleepSync2(200);
+    try {
+      fs11.writeFileSync(file, data);
+      return;
+    } catch (err) {
+      last = err;
+    }
+    const tmp = `${file}.part`;
+    try {
+      fs11.writeFileSync(tmp, data);
+      fs11.renameSync(tmp, file);
+      return;
+    } catch (err) {
+      last = err;
+      try {
+        fs11.unlinkSync(tmp);
+      } catch {
+      }
+    }
+  }
+  throw new RasterError(
+    `${file} could not be written (${last instanceof Error ? last.message : String(last)}). Something on this machine is holding the old file open \u2014 a window showing it, a sync client, an antivirus scan. Close it and run again; the readings are banked, so nothing is read twice.`
+  );
+}
+function writePgm(file, mupdf, pixmap) {
+  const gray = pixmap.convertToColorSpace(mupdf.ColorSpace.DeviceGray, false);
+  try {
+    const width = gray.getWidth();
+    const height = gray.getHeight();
+    const stride = gray.getStride();
+    const samples = gray.getPixels();
+    if (stride !== width) {
+      throw new RasterError(
+        `a grayscale pixmap of ${width}x${height} carried ${stride * height} bytes, so its rows are padded and this writer would mis-shape them`
+      );
+    }
+    const header = Buffer.from(`P5
+${width} ${height}
+255
+`, "latin1");
+    fs11.writeFileSync(file, Buffer.concat([header, Buffer.from(samples.buffer, samples.byteOffset, width * height)]));
+  } finally {
+    gray.destroy();
+  }
+}
+function pngBytes(mupdf, pixmap, icc = null) {
+  const colorspace = pixmap.getColorSpace();
+  if (colorspace === null || !colorspace.getName().startsWith("ICCBased")) return pixmap.asPNG();
+  const device = colorspace.isGray() ? mupdf.ColorSpace.DeviceGray : mupdf.ColorSpace.DeviceRGB;
+  const relabelled = new mupdf.Pixmap(device, pixmap.getBounds(), pixmap.getAlpha() !== 0);
+  try {
+    relabelled.getPixels().set(pixmap.getPixels());
+    relabelled.setResolution(pixmap.getXResolution(), pixmap.getYResolution());
+    const png = relabelled.asPNG();
+    return icc === null ? png : withIccp(png, colorspace.getName(), icc);
+  } finally {
+    relabelled.destroy();
+  }
+}
+var PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+function pngChunk(type, data) {
+  const head = Buffer.alloc(8);
+  head.writeUInt32BE(data.length, 0);
+  head.write(type, 4, "latin1");
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(zlib.crc32(Buffer.concat([head.subarray(4), data])) >>> 0, 0);
+  return Buffer.concat([head, data, crc]);
+}
+function withIccp(png, name, profile) {
+  const bytes = Buffer.from(png);
+  const keyword = Buffer.from(name.slice(0, 79), "latin1");
+  const chunk = pngChunk("iCCP", Buffer.concat([keyword, Buffer.from([0, 0]), zlib.deflateSync(profile)]));
+  let at = PNG_SIGNATURE.length;
+  while (at < bytes.length) {
+    const length = bytes.readUInt32BE(at);
+    if (bytes.toString("latin1", at + 4, at + 8) === "IDAT") break;
+    at += 12 + length;
+  }
+  return Buffer.concat([bytes.subarray(0, at), chunk, bytes.subarray(at)]);
+}
+function iccProfileOf(file) {
+  if (file.subarray(0, 8).equals(PNG_SIGNATURE)) {
+    let at = 8;
+    while (at + 8 <= file.length) {
+      const length = file.readUInt32BE(at);
+      const type = file.toString("latin1", at + 4, at + 8);
+      if (type === "iCCP") {
+        const data = file.subarray(at + 8, at + 8 + length);
+        const end = data.indexOf(0);
+        return zlib.inflateSync(data.subarray(end + 2));
+      }
+      if (type === "IDAT") return null;
+      at += 12 + length;
+    }
+    return null;
+  }
+  if (file[0] === 255 && file[1] === 216) {
+    const parts = [];
+    let at = 2;
+    while (at + 4 <= file.length && file[at] === 255) {
+      const marker = file[at + 1];
+      if (marker === 218 || marker === 217) break;
+      const length = file.readUInt16BE(at + 2);
+      const body = file.subarray(at + 4, at + 2 + length);
+      if (marker === 226 && body.toString("latin1", 0, 12) === "ICC_PROFILE\0") parts[body[12] - 1] = body.subarray(14);
+      at += 2 + length;
+    }
+    return parts.length > 0 && parts.every(Boolean) ? Buffer.concat(parts) : null;
+  }
+  return null;
+}
+function pyRoundInt(x) {
+  const floor = Math.floor(x);
+  const diff = x - floor;
+  if (diff > 0.5) return floor + 1;
+  if (diff < 0.5) return floor;
+  return floor % 2 === 0 ? floor : floor + 1;
+}
+function pyRound2(x) {
+  const eighths = x * 8;
+  if (Number.isInteger(eighths) && !Number.isInteger(x * 4)) {
+    const hundredths = x * 100;
+    const down = Math.floor(hundredths);
+    return (down % 2 === 0 ? down : down + 1) / 100;
+  }
+  return Number(x.toFixed(2));
+}
+var PY_SPACE_CLASS = "[\\t\\n\\v\\f\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]";
+var PY_SPACE = new RegExp(`^${PY_SPACE_CLASS}+|${PY_SPACE_CLASS}+$`, "g");
+function pyStrip(text) {
+  return text.replace(PY_SPACE, "");
+}
+var PdfPages = class {
+  constructor(mupdf, file) {
+    this.mupdf = mupdf;
+    this.name = file;
+    this.doc = mupdf.Document.openDocument(fs11.readFileSync(file), file);
+  }
+  mupdf;
+  doc;
+  name;
+  pages = /* @__PURE__ */ new Map();
+  get count() {
+    return this.doc.countPages();
+  }
+  page(index) {
+    let page = this.pages.get(index);
+    if (page === void 0) {
+      page = this.doc.loadPage(index);
+      this.pages.set(index, page);
+    }
+    return page;
+  }
+  credits() {
+    return {
+      title: pyStrip(this.doc.getMetaData("info:Title") ?? ""),
+      author: pyStrip(this.doc.getMetaData("info:Author") ?? "")
+    };
+  }
+  frame() {
+    const [x0, y0, x1, y1] = this.page(0).getBounds();
+    return { width: x1 - x0, height: y1 - y0 };
+  }
+  /** `page.get_pixmap(dpi=dpi)`: scaled by dpi/72 both ways, RGB, no alpha, annotations drawn, resolution stamped. */
+  render(index, dpi) {
+    const zoom = dpi / 72;
+    const pixmap = this.page(index).toPixmap([zoom, 0, 0, zoom, 0, 0], this.mupdf.ColorSpace.DeviceRGB, false, true);
+    pixmap.setResolution(dpi, dpi);
+    return pixmap;
+  }
+  /**
+   * This page's TRUE render size in pixels, without drawing it: the page box in
+   * points times dpi/72, which is the grid `render` produces. Reads a rectangle
+   * and multiplies; nothing is rasterised.
+   */
+  renderSize(index, dpi) {
+    const [x0, y0, x1, y1] = this.page(index).getBounds();
+    return [(x1 - x0) * dpi / 72, (y1 - y0) * dpi / 72];
+  }
+  /**
+   * Draw the page onto an EXACT width x height grid — the snap. Only the page
+   * box a snapped page is drawn to moves (by at most the band); the size then
+   * reported is the pixmap's own, so the box-to-render mapping (`renderScale`,
+   * dots.ts) stays exact either way.
+   */
+  renderTo(index, width, height) {
+    const [x0, y0, x1, y1] = this.page(index).getBounds();
+    return this.page(index).toPixmap(
+      [width / (x1 - x0), 0, 0, height / (y1 - y0), 0, 0],
+      this.mupdf.ColorSpace.DeviceRGB,
+      false,
+      true
+    );
+  }
+  /** A PDF page is drawn in DeviceRGB: no profile travels with it. */
+  icc(_index) {
+    return null;
+  }
+  close() {
+    for (const page of this.pages.values()) page.destroy();
+    this.pages.clear();
+    this.doc.destroy();
+  }
+};
+var ImagePages = class {
+  constructor(mupdf, paths) {
+    this.mupdf = mupdf;
+    this.paths = [...paths];
+    this.name = `${this.paths.length} page image(s)`;
+    const missing = this.paths.find((p) => !fs11.existsSync(p));
+    if (missing !== void 0) throw new RasterError(`no such page image: ${missing}`);
+  }
+  mupdf;
+  name;
+  paths;
+  get count() {
+    return this.paths.length;
+  }
+  /** A photograph carries no title and no author, and none is invented. */
+  credits() {
+    return { title: "", author: "" };
+  }
+  /** Reported as points because that is the field's name; a photograph's pixels ARE its frame. */
+  frame() {
+    const pixmap = this.render(0, 0);
+    try {
+      return { width: pixmap.getWidth(), height: pixmap.getHeight() };
+    } finally {
+      pixmap.destroy();
+    }
+  }
+  render(index, _dpi) {
+    const image = new this.mupdf.Image(fs11.readFileSync(this.paths[index]));
+    let pixmap = image.toPixmap();
+    image.destroy();
+    if (pixmap.getAlpha()) {
+      const opaque = dropAlpha(this.mupdf, pixmap);
+      pixmap.destroy();
+      pixmap = opaque;
+    }
+    const colorspace = pixmap.getColorSpace();
+    const n = colorspace === null ? 0 : colorspace.getNumberOfComponents();
+    if (n !== 1 && n !== 3) {
+      const rgb2 = pixmap.convertToColorSpace(this.mupdf.ColorSpace.DeviceRGB, false);
+      pixmap.destroy();
+      pixmap = rgb2;
+    }
+    return pixmap;
+  }
+  icc(index) {
+    return iccProfileOf(fs11.readFileSync(this.paths[index]));
+  }
+  close() {
+  }
+};
+function dropAlpha(mupdf, pixmap) {
+  const colorspace = pixmap.getColorSpace();
+  if (colorspace === null) throw new RasterError("cannot drop alpha for 'NULL' colorspace");
+  const width = pixmap.getWidth();
+  const height = pixmap.getHeight();
+  const x = pixmap.getX();
+  const y = pixmap.getY();
+  const out = new mupdf.Pixmap(colorspace, [x, y, x + width, y + height], false);
+  out.setResolution(pixmap.getXResolution(), pixmap.getYResolution());
+  const colorants = colorspace.getNumberOfComponents();
+  const inN = pixmap.getNumberOfComponents();
+  const from = pixmap.getPixels();
+  const to = out.getPixels();
+  const inStride = pixmap.getStride();
+  const outStride = out.getStride();
+  for (let row = 0; row < height; row += 1) {
+    for (let col = 0; col < width; col += 1) {
+      const s = row * inStride + col * inN;
+      const d = row * outStride + col * colorants;
+      for (let k = 0; k < colorants; k += 1) to[d + k] = from[s + k];
+    }
+  }
+  return out;
+}
+function openSource(mupdf, source) {
+  return source.kind === "pdf" ? new PdfPages(mupdf, source.path) : new ImagePages(mupdf, source.paths);
+}
+var SNAP_BAND = 0.04;
+function median(values) {
+  const ordered = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(ordered.length / 2);
+  return ordered.length % 2 === 1 ? ordered[mid] : (ordered[mid - 1] + ordered[mid]) / 2;
+}
+function withinBand(value, mode) {
+  return Math.abs(value - mode) <= SNAP_BAND * mode;
+}
+function snapsTo(size, mode) {
+  return withinBand(size[0], mode[0]) && withinBand(size[1], mode[1]);
+}
+function dominantRenderSize(sizes) {
+  if (sizes.length === 0) return null;
+  const medW = median(sizes.map(([w]) => w));
+  const medH = median(sizes.map(([, h]) => h));
+  const cluster = sizes.filter(([w, h]) => withinBand(w, medW) && withinBand(h, medH));
+  if (cluster.length === 0) return null;
+  return [pyRoundInt(median(cluster.map(([w]) => w))), pyRoundInt(median(cluster.map(([, h]) => h)))];
+}
+async function renderPages(opts) {
+  const mupdf = await loadMupdf();
+  const source = openSource(mupdf, opts.source);
+  try {
+    if (source.count === 0) throw new RasterError(`${source.name} has no pages`);
+    const exclude = new Set(opts.excludePages ?? []);
+    const beyond = [...exclude].filter((p) => p > source.count).sort((a, b) => a - b);
+    if (beyond.length > 0) {
+      throw new RasterError(
+        `--skip-pages names ${beyond.map((p) => `page ${p}`).join(", ")} of a ${source.count}-page document`
+      );
+    }
+    if (exclude.size >= source.count) {
+      throw new RasterError(
+        `--skip-pages names every page of the ${source.count}-page document, so there would be no book left to write`
+      );
+    }
+    let mode = null;
+    if (source instanceof PdfPages) {
+      if (opts.renderMode !== void 0) {
+        mode = [Math.trunc(opts.renderMode[0]), Math.trunc(opts.renderMode[1])];
+      } else if (opts.snap === true) {
+        const sizes = [];
+        for (let index = 0; index < source.count; index += 1) {
+          if (!exclude.has(index + 1)) sizes.push(source.renderSize(index, opts.dpi));
+        }
+        mode = dominantRenderSize(sizes);
+      }
+    }
+    const { title, author } = source.credits();
+    const frame = source.frame();
+    opts.onDocument?.({
+      pages: source.count,
+      title,
+      author,
+      widthPt: frame.width,
+      heightPt: frame.height,
+      renderMode: mode
+    });
+    if (opts.rendersDir) ensureDir(opts.rendersDir);
+    const scratch = opts.rendersDir ?? path8.join(process.env["TMPDIR"] ?? "/tmp", `foundry-vlm-${process.pid}`);
+    ensureDir(scratch);
+    let total = 0;
+    for (let index = 0; index < source.count; index += 1) {
+      const number = index + 1;
+      if (exclude.has(number)) {
+        process.stderr.write(`  page ${number}/${source.count}: skipped
+`);
+        continue;
+      }
+      const started = performance.now();
+      const pixmap = mode !== null && source instanceof PdfPages && snapsTo(source.renderSize(index, opts.dpi), mode) ? source.renderTo(index, mode[0], mode[1]) : source.render(index, opts.dpi);
+      const width = pixmap.getWidth();
+      const height = pixmap.getHeight();
+      const image = path8.join(scratch, `page-${String(number).padStart(4, "0")}.png`);
+      try {
+        writeImageFile(pngBytes(mupdf, pixmap, source.icc(index)), image);
+        if (opts.grayscale === true) {
+          writePgm(path8.join(scratch, `page-${String(number).padStart(4, "0")}.pgm`), mupdf, pixmap);
+        }
+      } finally {
+        pixmap.destroy();
+      }
+      const seconds = (performance.now() - started) / 1e3;
+      total += seconds;
+      if (width === 0 || height === 0) throw new RasterError(`page ${number} rendered to a ${width}x${height} image`);
+      opts.onPage?.({ number, width, height, renderSeconds: seconds }, image);
+      if (!opts.rendersDir) fs11.unlinkSync(image);
+      process.stderr.write(`  page ${number}/${source.count}: rendered
+`);
+    }
+    return { renderSeconds: total };
+  } finally {
+    source.close();
+  }
+}
+var FZ_EPSILON = Math.fround(1e-3);
+var f32 = Math.fround;
+function roundRect(r) {
+  return [
+    Math.floor(f32(f32(r[0]) + FZ_EPSILON)),
+    Math.floor(f32(f32(r[1]) + FZ_EPSILON)),
+    Math.ceil(f32(f32(r[2]) - FZ_EPSILON)),
+    Math.ceil(f32(f32(r[3]) - FZ_EPSILON))
+  ];
+}
+function intersect(a, b) {
+  return [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
+}
+function isEmpty(r) {
+  return r[0] >= r[2] || r[1] >= r[3];
+}
+async function cropPages(opts) {
+  const mupdf = await loadMupdf();
+  ensureDir(opts.cropsDir);
+  const source = openSource(mupdf, opts.source);
+  const scale = 72 / opts.dpi;
+  let heldIndex = -1;
+  let held2 = null;
+  try {
+    for (const crop of opts.crops) {
+      const number = crop.page;
+      if (number < 1 || number > source.count) {
+        throw new RasterError(`a crop names page ${number} of a source with ${source.count} page(s)`);
+      }
+      const [x1, y1, x2, y2] = crop.box;
+      let pixmap;
+      if (source instanceof PdfPages) {
+        const page = source.page(number - 1);
+        const bounds = page.getBounds();
+        const rect = intersect([x1 * scale, y1 * scale, x2 * scale, y2 * scale], bounds);
+        if (isEmpty(rect)) throw new RasterError(`the crop for ${crop.name} on page ${number} lies outside the page`);
+        pixmap = renderClip(mupdf, page, opts.dpi, rect, bounds);
+      } else {
+        if (number - 1 !== heldIndex) {
+          held2?.destroy();
+          held2 = source.render(number - 1, opts.dpi);
+          heldIndex = number - 1;
+        }
+        const image = held2;
+        const box = intersect(roundRect([x1, y1, x2, y2]), [0, 0, image.getWidth(), image.getHeight()]);
+        if (isEmpty(box)) throw new RasterError(`the crop for ${crop.name} on page ${number} lies outside the page`);
+        pixmap = copyOut(mupdf, image, box);
+      }
+      try {
+        if (pixmap.getWidth() === 0 || pixmap.getHeight() === 0) {
+          throw new RasterError(
+            `the crop for ${crop.name} on page ${number} rendered to a ${pixmap.getWidth()}x${pixmap.getHeight()} image`
+          );
+        }
+        const file = path8.join(opts.cropsDir, crop.name);
+        writeImageFile(pngBytes(mupdf, pixmap, source.icc(number - 1)), file);
+        opts.onCrop?.(crop.name, file);
+      } finally {
+        pixmap.destroy();
+      }
+    }
+  } finally {
+    held2?.destroy();
+    source.close();
+  }
+}
+function renderClip(mupdf, page, dpi, clip2, bounds) {
+  const zoom = f32(dpi / 72);
+  const area = intersect(bounds, clip2.map(f32));
+  const irect = roundRect([f32(area[0] * zoom), f32(area[1] * zoom), f32(area[2] * zoom), f32(area[3] * zoom)]);
+  const list = page.toDisplayList(true);
+  const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, irect, false);
+  pixmap.clear(255);
+  const device = new mupdf.DrawDevice([zoom, 0, 0, zoom, 0, 0], pixmap);
+  try {
+    list.run(device, mupdf.Matrix.identity);
+    device.close();
+  } finally {
+    device.destroy();
+    list.destroy();
+  }
+  pixmap.setResolution(dpi, dpi);
+  return pixmap;
+}
+function copyOut(mupdf, image, box) {
+  const out = new mupdf.Pixmap(image.getColorSpace(), box, false);
+  const n = image.getNumberOfComponents();
+  const from = image.getPixels();
+  const to = out.getPixels();
+  const inStride = image.getStride();
+  const outStride = out.getStride();
+  const rowBytes = (box[2] - box[0]) * n;
+  for (let y = box[1]; y < box[3]; y += 1) {
+    const start = y * inStride + box[0] * n;
+    to.set(from.subarray(start, start + rowBytes), (y - box[1]) * outStride);
+  }
+  return out;
+}
+var DICT_OPTIONS = "preserve-ligatures,preserve-whitespace,preserve-images,clip,use-cid-for-unknown-unicode";
+var FLT_EPSILON = 11920928955078125e-23;
+async function readTextLayer(pdfPath) {
+  const mupdf = await loadMupdf();
+  const source = new PdfPages(mupdf, pdfPath);
+  const layer = /* @__PURE__ */ new Map();
+  try {
+    for (let index = 0; index < source.count; index += 1) {
+      const spans = pageSpans(source, index);
+      if (spans.length > 0) layer.set(index + 1, spans);
+    }
+  } finally {
+    source.close();
+  }
+  return layer;
+}
+function pageSpans(source, index) {
+  const page = source.page(index);
+  const pageObj = page.getObject();
+  const rotation = normRotation(pageObj.getInheritable("Rotate").asNumber());
+  const rotate = rotation === 0 ? null : rotationMatrix(pageObj, rotation);
+  if (rotation !== 0) pageObj.put("Rotate", 0);
+  let spans;
+  try {
+    const stext = page.toStructuredText(DICT_OPTIONS);
+    try {
+      spans = dictSpans(stext, page.getBounds(), pageGlyphs(source.mupdf, page, stext));
+    } finally {
+      stext.destroy();
+    }
+  } finally {
+    if (rotation !== 0) pageObj.put("Rotate", rotation);
+  }
+  const out = [];
+  for (const span of spans) {
+    const text = pyStrip(span.text);
+    if (text.length === 0 || span.size <= 0) continue;
+    let rect = span.bbox;
+    if (rotate !== null) rect = transformRect(rect, rotate);
+    out.push([pyRound2((rect[0] + rect[2]) / 2), pyRound2((rect[1] + rect[3]) / 2), pyRound2(span.size), [...text].length]);
+  }
+  return out;
+}
+function normRotation(value) {
+  let rotation = Math.trunc(value);
+  rotation %= 360;
+  if (rotation < 0) rotation += 360;
+  return rotation % 90 === 0 ? rotation : 0;
+}
+function rotationMatrix(pageObj, rotation) {
+  const media = pdfRect(pageObj.getInheritable("MediaBox"));
+  let mediabox = media === null || isEmpty(media) ? [0, 0, 612, 792] : media;
+  if (mediabox[2] - mediabox[0] < 1 || mediabox[3] - mediabox[1] < 1) mediabox = [0, 0, 1, 1];
+  const crop = pdfRect(pageObj.getInheritable("CropBox"));
+  const cropbox = crop === null || isEmpty(crop) ? mediabox : crop;
+  const w = Math.abs(cropbox[2] - cropbox[0]);
+  const h = Math.abs(mediabox[3] - cropbox[1] - (mediabox[3] - cropbox[3]));
+  if (rotation === 90) return [0, 1, -1, 0, h, 0];
+  if (rotation === 180) return [-1, 0, 0, -1, w, h];
+  return [0, -1, 1, 0, 0, w];
+}
+function pdfRect(obj) {
+  if (!obj.isArray() || obj.length !== 4) return null;
+  const [a, b, c, d] = [0, 1, 2, 3].map((i) => f32(obj.get(i).asNumber()));
+  return [Math.min(a, c), Math.min(b, d), Math.max(a, c), Math.max(b, d)];
+}
+function transformRect(rIn, mIn) {
+  const r = rIn.map(f32);
+  const [a, b, c, d, e, f] = mIn.map(f32);
+  const point = (x, y) => [
+    f32(f32(f32(x * a) + f32(y * c)) + e),
+    f32(f32(f32(x * b) + f32(y * d)) + f)
+  ];
+  const axisAligned = Math.abs(b) < FLT_EPSILON && Math.abs(c) < FLT_EPSILON;
+  const swapped = Math.abs(a) < FLT_EPSILON && Math.abs(d) < FLT_EPSILON;
+  if (axisAligned || swapped) {
+    if ((axisAligned ? a : b) < 0) [r[0], r[2]] = [r[2], r[0]];
+    if ((axisAligned ? d : c) < 0) [r[1], r[3]] = [r[3], r[1]];
+    const s = point(r[0], r[1]);
+    const t = point(r[2], r[3]);
+    return [s[0], s[1], t[0], t[1]];
+  }
+  const corners = [point(r[0], r[1]), point(r[0], r[3]), point(r[2], r[3]), point(r[2], r[1])];
+  return [
+    Math.min(...corners.map((p) => p[0])),
+    Math.min(...corners.map((p) => p[1])),
+    Math.max(...corners.map((p) => p[0])),
+    Math.max(...corners.map((p) => p[1]))
+  ];
+}
+function dictSpans(stext, mediabox, glyphs) {
+  const spans = [];
+  let lines = [];
+  stext.walk({
+    beginLine: (_bbox, wmode, dir) => {
+      lines.push({ wmode, dir: [dir[0], dir[1]], chars: [] });
+    },
+    onChar: (c, origin, font, size, quad, color, bidi) => {
+      lines[lines.length - 1].chars.push({ c, origin, font, size, quad, color, bidi, glyph: glyphs.at(origin, font.getName()) });
+    }
+  });
+  for (const line of lines) {
+    const firstOriginY = line.chars.length > 0 ? line.chars[0].origin[1] : 0;
+    let current = null;
+    for (const [i, ch] of line.chars.entries()) {
+      const synthetic = ch.glyph === null && ch.c === " ";
+      const owner = synthetic ? line.chars.slice(i + 1).find((next) => next.glyph !== null)?.glyph ?? null : ch.glyph;
+      let flags = owner === null ? FZ_STEXT_FILLED : owner.flags;
+      if (synthetic) {
+        const spacing = f32(((ch.quad[6] - ch.quad[4]) * line.dir[0] + (ch.quad[7] - ch.quad[5]) * line.dir[1]) / ch.size);
+        if (spacing > f32(SPACE_DIST * 2)) flags |= FZ_STEXT_SYNTHETIC_LARGE;
+      }
+      if (ch.font.isBold()) flags |= FZ_STEXT_BOLD;
+      const metric = owner?.metric ?? glyphs.metric(ch.font.getName()) ?? quadMetric(ch.origin, ch.size, ch.quad, line.dir);
+      const r = charBbox(line.wmode, line.dir, ch.origin, ch.size, ch.quad, ch.font, ch.c, metric);
+      if (!overlaps(mediabox, r)) continue;
+      const superscript = line.wmode === 0 && line.dir[0] === 1 && line.dir[1] === 0 && ch.origin[1] < firstOriginY - ch.size * 0.1;
+      const name = ch.font.getName();
+      const plus = name.indexOf("+");
+      const fontName = plus === 6 ? name.slice(plus + 1) : name;
+      const key = [
+        f32(ch.size),
+        superscript ? 1 : 0,
+        ch.font.isItalic() ? 1 : 0,
+        ch.font.isSerif() ? 1 : 0,
+        ch.font.isMono() ? 1 : 0,
+        ch.font.isBold() ? 1 : 0,
+        flags,
+        Array.isArray(ch.color) ? ch.color.join(",") : String(ch.color),
+        fontName
+      ].join("|");
+      if (current === null || current.key !== key) {
+        if (current !== null) spans.push({ size: current.size, text: current.text, chars: current.chars, bbox: current.bbox });
+        current = { key, size: ch.size, text: "", chars: 0, bbox: r };
+      }
+      current.bbox = union(current.bbox, r);
+      current.text += ch.c;
+      current.chars += 1;
+    }
+    if (current !== null && !isEmpty(current.bbox)) {
+      spans.push({ size: current.size, text: current.text, chars: current.chars, bbox: current.bbox });
+    }
+  }
+  lines = [];
+  return spans;
+}
+function overlaps(a, b) {
+  return !(a[0] >= b[2] || a[1] >= b[3] || a[2] <= b[0] || a[3] <= b[1]);
+}
+function isValid(r) {
+  return r[0] <= r[2] && r[1] <= r[3];
+}
+function union(a, b) {
+  if (!isValid(b)) return a;
+  if (!isValid(a)) return b;
+  return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
+}
+var FZ_STEXT_BOLD = 8;
+var FZ_STEXT_FILLED = 16;
+var FZ_STEXT_STROKED = 32;
+var FZ_STEXT_CLIPPED = 64;
+var FZ_STEXT_UNICODE_IS_CID = 128;
+var FZ_STEXT_SYNTHETIC_LARGE = 512;
+var SPACE_DIST = f32(0.15);
+function quadMetric(origin, size, quad, dir) {
+  const up = (x, y) => ((x - origin[0]) * dir[1] - (y - origin[1]) * dir[0]) / (size === 0 ? 1 : size);
+  return { asc: up(quad[0], quad[1]), dsc: up(quad[4], quad[5]) };
+}
+function pageGlyphs(mupdf, page, stext) {
+  const buckets = /* @__PURE__ */ new Map();
+  const bucket = (x, y) => `${Math.round(x)},${Math.round(y)}`;
+  const collect = (text, ctm, flags) => {
+    text.walk({
+      showGlyph: (font, trm, _glyph, unicode) => {
+        const m = mupdf.Matrix.concat(trm, ctm);
+        const glyph = {
+          x: m[4],
+          y: m[5],
+          font: font.getName(),
+          c: m[2],
+          d: m[3],
+          metric: null,
+          flags: flags | (unicode === 65533 ? FZ_STEXT_UNICODE_IS_CID : 0)
+        };
+        const key = bucket(glyph.x, glyph.y);
+        let list = buckets.get(key);
+        if (list === void 0) buckets.set(key, list = []);
+        list.push(glyph);
+      }
+    });
+  };
+  const device = new mupdf.Device({
+    fillText: (text, ctm) => collect(text, ctm, FZ_STEXT_FILLED),
+    strokeText: (text, _stroke, ctm) => collect(text, ctm, FZ_STEXT_STROKED),
+    clipText: (text, ctm) => collect(text, ctm, FZ_STEXT_FILLED | FZ_STEXT_CLIPPED),
+    clipStrokeText: (text, _stroke, ctm) => collect(text, ctm, FZ_STEXT_STROKED | FZ_STEXT_CLIPPED),
+    ignoreText: (text, ctm) => collect(text, ctm, 0)
+  });
+  try {
+    page.run(device, mupdf.Matrix.identity);
+    device.close();
+  } finally {
+    device.destroy();
+  }
+  const at = (origin, font) => {
+    const [x, y] = origin;
+    let found = null;
+    for (const dx of [-1, 0, 1]) {
+      for (const dy of [-1, 0, 1]) {
+        for (const g of buckets.get(`${Math.round(x) + dx},${Math.round(y) + dy}`) ?? []) {
+          if (g.font === font && Math.abs(g.x - x) < 1e-3 && Math.abs(g.y - y) < 1e-3) {
+            found = found === null ? g : { ...g, flags: g.flags | found.flags };
+          }
+        }
+      }
+    }
+    return found;
+  };
+  const metrics = /* @__PURE__ */ new Map();
+  stext.walk({
+    onChar: (_c, origin, font, _size, quad) => {
+      const glyph = at(origin, font.getName());
+      if (glyph === null) return;
+      const length2 = glyph.c * glyph.c + glyph.d * glyph.d;
+      if (length2 === 0) return;
+      const along = (x, y) => ((x - origin[0]) * glyph.c + (y - origin[1]) * glyph.d) / length2;
+      const metric = { asc: f32(along(quad[0], quad[1])), dsc: f32(along(quad[4], quad[5])) };
+      if (!metrics.has(glyph.font)) metrics.set(glyph.font, metric);
+    }
+  });
+  return {
+    at: (origin, font) => {
+      const glyph = at(origin, font);
+      return glyph === null ? null : { ...glyph, metric: metrics.get(font) ?? null };
+    },
+    metric: (font) => metrics.get(font) ?? null
+  };
+}
+function charBbox(wmode, dir, origin, size, quad, font, c, metric) {
+  const q = wmode === 0 ? charQuad(dir, origin, size, quad, font, c, metric) : quad;
+  const r = [
+    Math.min(q[0], q[2], q[4], q[6]),
+    Math.min(q[1], q[3], q[5], q[7]),
+    Math.max(q[0], q[2], q[4], q[6]),
+    Math.max(q[1], q[3], q[5], q[7])
+  ];
+  if (wmode === 0) return r;
+  if (r[3] < r[1] + size) r[1] = r[3] - size;
+  return r;
+}
+function charQuad(dir, origin, fsizeIn, quad, font, ch, metric) {
+  const fsize = f32(fsizeIn);
+  let asc = f32(metric.asc);
+  let dsc = f32(metric.dsc);
+  let ascDsc = f32(f32(asc - dsc) + FLT_EPSILON);
+  if (ascDsc >= 1) return quad;
+  if (asc < 1e-3) {
+    dsc = f32(-0.1);
+    asc = f32(0.9);
+    ascDsc = 1;
+  }
+  if (ascDsc < 1) {
+    dsc = f32(dsc / ascDsc);
+    asc = f32(asc / ascDsc);
+  }
+  ascDsc = f32(asc - dsc);
+  asc = f32(f32(asc * fsize) / ascDsc);
+  dsc = f32(f32(dsc * fsize) / ascDsc);
+  const c = f32(dir[0]);
+  const s = f32(dir[1]);
+  const trm1 = [c, -s, s, c, 0, 0];
+  const trm2 = [c, s, -s, c, 0, 0];
+  if (c === -1) {
+    trm1[3] = 1;
+    trm2[3] = 1;
+  }
+  const apply = (q2, m) => {
+    const out = [];
+    for (let i = 0; i < 8; i += 2) {
+      out.push(
+        f32(f32(f32(q2[i] * m[0]) + f32(q2[i + 1] * m[2])) + m[4]),
+        f32(f32(f32(q2[i] * m[1]) + f32(q2[i + 1] * m[3])) + m[5])
+      );
+    }
+    return out;
+  };
+  const ox = f32(origin[0]);
+  const oy = f32(origin[1]);
+  let q = apply(quad.map(f32), [1, 0, 0, 1, -ox, -oy]);
+  q = apply(q, trm1);
+  if (c === 1 && q[1] > 0) {
+    q[1] = asc;
+    q[3] = asc;
+    q[5] = dsc;
+    q[7] = dsc;
+  } else {
+    q[1] = -asc;
+    q[3] = -asc;
+    q[5] = -dsc;
+    q[7] = -dsc;
+  }
+  if (q[4] < 0) {
+    q[4] = 0;
+    q[0] = 0;
+  }
+  if (f32(q[6] - q[4]) < FLT_EPSILON) {
+    const glyph = font.encodeCharacter(ch);
+    if (glyph) {
+      q[6] = f32(q[4] + f32(f32(font.advanceGlyph(glyph, 0)) * fsize));
+      q[2] = q[6];
+    }
+  }
+  q = apply(q, trm2);
+  return apply(q, [1, 0, 0, 1, ox, oy]);
+}
 
 // packages/foundry-core/src/engine/vlm/bridge.ts
-init_endpoint_headers();
-init_fsdirs();
-init_fs_replace();
 var VlmBridgeError = class extends Error {
   constructor(message) {
     super(message);
@@ -95873,7 +95822,7 @@ var VlmBridgeError = class extends Error {
 };
 var MLX_MAX_PIXELS = 2e6;
 function pagesInDirectory(dir) {
-  const named = fs11.readdirSync(dir).filter((name) => PAGE_IMAGE.test(name)).map((name) => ({ name, at: /\d+/.exec(name) }));
+  const named = fs12.readdirSync(dir).filter((name) => PAGE_IMAGE.test(name)).map((name) => ({ name, at: /\d+/.exec(name) }));
   named.sort((a, b) => {
     if (a.at !== null && b.at !== null && a.at[0] !== b.at[0]) {
       return Number(a.at[0]) - Number(b.at[0]);
@@ -95881,186 +95830,84 @@ function pagesInDirectory(dir) {
     if (a.at === null !== (b.at === null)) return a.at === null ? 1 : -1;
     return a.name.localeCompare(b.name);
   });
-  return named.map((one) => path8.join(dir, one.name));
+  return named.map((one) => path9.join(dir, one.name));
 }
 var PAGE_IMAGE = /\.(jpe?g|png|tiff?|bmp|webp)$/i;
 function sourceName(source) {
   return source.kind === "pdf" ? source.path : `${source.paths.length} page image(s)`;
 }
-function scriptPath() {
-  const override = process.env["FOUNDRY_VLM_SCRIPT"];
-  if (override) {
-    if (!fs11.existsSync(override)) {
-      throw new VlmBridgeError(`FOUNDRY_VLM_SCRIPT points at ${override}, which does not exist`);
-    }
-    return override;
-  }
-  const here = path8.dirname((0, import_node_url.fileURLToPath)(__foundryEngineUrl));
-  const beside = path8.join(here, "vlm_page.py");
-  if (fs11.existsSync(beside)) return beside;
-  const digest = (0, import_node_crypto2.createHash)("sha256").update(vlm_page_default).digest("hex").slice(0, 16);
-  const dir = path8.join(os3.tmpdir(), "foundry-vlm");
-  const materialised = path8.join(dir, `vlm_page-${digest}.py`);
-  if (!fs11.existsSync(materialised)) {
-    ensureDir(dir);
-    const partial = `${materialised}.${process.pid}.part`;
-    fs11.writeFileSync(partial, vlm_page_default, "utf8");
-    replaceFileSync(partial, materialised);
-  }
-  return materialised;
-}
-function resolvePython(explicit) {
-  const named = explicit ?? process.env["FOUNDRY_VLM_PYTHON"];
-  if (named) {
-    if (!fs11.existsSync(named)) {
-      throw new VlmBridgeError(`--python ${named} does not exist`);
-    }
-    return named;
-  }
-  const candidates = defaultLocalPythonCandidates();
-  for (const candidate of candidates) {
-    if (fs11.existsSync(candidate)) return candidate;
-  }
-  throw new VlmBridgeError(
-    "no Python for this mode was found. Rendering needs PyMuPDF (and local reading needs mlx-vlm); pass an interpreter with --python or FOUNDRY_VLM_PYTHON. Tried:\n" + candidates.map((c) => `  ${c}`).join("\n")
-  );
-}
 async function readPagesWithVlm(opts) {
   const source = opts.source;
   if (source.kind === "pdf") {
-    if (!fs11.existsSync(source.path)) {
+    if (!fs12.existsSync(source.path)) {
       throw new VlmBridgeError(`no such PDF: ${source.path}`);
     }
   } else {
     if (source.paths.length === 0) {
       throw new VlmBridgeError("a read of page images was given no pages");
     }
-    const gone = source.paths.find((one) => !fs11.existsSync(one));
+    const gone = source.paths.find((one) => !fs12.existsSync(one));
     if (gone !== void 0) {
       throw new VlmBridgeError(`no such page image: ${gone}`);
     }
   }
-  const python = resolvePython(opts.python);
-  const script = scriptPath();
-  const config = JSON.stringify({
-    mode: opts.renderOnly ? "render" : "read",
-    ...source.kind === "pdf" ? { pdf: path8.resolve(source.path) } : { pages: source.paths.map((one) => path8.resolve(one)) },
-    repo: opts.model.repo,
-    // Verbatim, and it travels as a JSON string on stdin rather than as an
-    // argv word: no shell, no quoting, no truncation in a process listing.
-    prompt: opts.model.prompt,
-    dpi: opts.dpi,
-    maxTokens: opts.model.maxTokens,
-    grayscale: opts.grayscale === true,
-    skipPages: opts.skipPages ?? [],
-    excludePages: opts.excludePages ?? [],
-    ...opts.maxPixels !== void 0 ? { maxPixels: opts.maxPixels } : {},
-    ...opts.renderMode !== void 0 ? { renderMode: opts.renderMode } : {},
-    ...opts.snap === true ? { snap: true } : {},
-    ...opts.rendersDir ? { rendersDir: path8.resolve(opts.rendersDir) } : {}
-  });
-  const proc = (0, import_node_child_process2.spawn)(python, [script], {
-    stdio: ["pipe", "pipe", "pipe"],
-    // The child gets the environment MINUS the endpoint's headers. It renders
-    // pages and runs MLX locally and makes no HTTP request at all (`vlm_page.py`
-    // imports no HTTP client), so a credential here could only ever leak, never
-    // be used. This option is not redundant: without it a spawn inherits the
-    // parent's whole environment. See `backend/endpoint-headers.ts`.
-    env: withoutEndpointHeaders()
-  });
   let document = null;
-  let loadSeconds = 0;
-  let totals = null;
   const pages = [];
-  const stderrTail = [];
-  const finished = new Promise((resolve23, reject) => {
-    let stdout = "";
-    let stderr = "";
-    let failure = null;
-    proc.stdout.setEncoding("utf8");
-    proc.stdout.on("data", (chunk) => {
-      stdout += chunk;
-      let nl = stdout.indexOf("\n");
-      while (nl !== -1) {
-        const line = stdout.slice(0, nl);
-        stdout = stdout.slice(nl + 1);
-        nl = stdout.indexOf("\n");
-        if (line.trim().length === 0) continue;
-        try {
-          const event = JSON.parse(line);
-          switch (event["event"]) {
-            case "document":
-              document = event;
-              opts.onDocument?.(document);
-              break;
-            case "loaded":
-              loadSeconds = event["seconds"];
-              opts.onLoaded?.(loadSeconds);
-              break;
-            case "page": {
-              const page = event;
-              pages.push(page);
-              opts.onPage?.(page, document?.pages ?? 0);
-              break;
-            }
-            case "done":
-              totals = {
-                renderSeconds: event["renderSeconds"],
-                inferenceSeconds: event["inferenceSeconds"],
-                peakRssBytes: event["peakRssBytes"] ?? null
-              };
-              break;
-            default:
-              throw new VlmBridgeError(`the helper sent an event this bridge does not know: ${line}`);
-          }
-        } catch (err) {
-          failure ??= err instanceof Error ? err : new Error(String(err));
-        }
-      }
-    });
-    proc.stderr.setEncoding("utf8");
-    proc.stderr.on("data", (chunk) => {
-      stderr += chunk;
-      let nl = stderr.indexOf("\n");
-      while (nl !== -1) {
-        const line = stderr.slice(0, nl);
-        stderr = stderr.slice(nl + 1);
-        nl = stderr.indexOf("\n");
-        stderrTail.push(line);
-        if (stderrTail.length > 40) stderrTail.shift();
-        process.stderr.write(`${line}
-`);
-      }
-    });
-    proc.on("error", (err) => reject(
-      new VlmBridgeError(`could not start ${python}: ${err.message}`)
-    ));
-    proc.on("close", (code) => {
-      if (failure) return reject(failure);
-      if (code !== 0) {
-        return reject(new VlmBridgeError(
-          `${path8.basename(script)} exited ${code}. Its last output:
-` + stderrTail.map((l) => `  ${l}`).join("\n")
-        ));
-      }
-      resolve23();
-    });
-  });
-  proc.stdin.write(config);
-  proc.stdin.end();
-  await finished;
-  if (!document) throw new VlmBridgeError("the helper exited without describing the document");
-  if (!totals) throw new VlmBridgeError("the helper exited without a done event \u2014 the run is incomplete");
-  const doc = document;
-  const sums = totals;
+  const banked = new Set(opts.skipPages ?? []);
   const excluded = new Set(opts.excludePages ?? []);
+  let renderSeconds;
+  try {
+    ({ renderSeconds } = await renderPages({
+      source: source.kind === "pdf" ? { kind: "pdf", path: path9.resolve(source.path) } : { kind: "pages", paths: source.paths.map((one) => path9.resolve(one)) },
+      dpi: opts.dpi,
+      ...opts.rendersDir ? { rendersDir: path9.resolve(opts.rendersDir) } : {},
+      grayscale: opts.grayscale === true,
+      excludePages: [...excluded],
+      ...opts.renderMode !== void 0 ? { renderMode: opts.renderMode } : {},
+      snap: opts.snap === true,
+      onDocument: (info) => {
+        if (opts.renderOnly !== true) {
+          for (let page = 1; page <= info.pages; page += 1) {
+            if (!excluded.has(page) && !banked.has(page)) {
+              throw new VlmBridgeError(
+                `page ${page} has no answer and nothing on this machine can read it: the local MLX reader is retired, and every page is read by a Crucible. Pass --vlm-endpoint <url> (a Crucible's OpenAI door), or set backend.mode to "endpoint" with backend.endpointUrl.`
+              );
+            }
+          }
+        }
+        document = info;
+        opts.onDocument?.(info);
+      },
+      onPage: (rendered) => {
+        const page = {
+          number: rendered.number,
+          width: rendered.width,
+          height: rendered.height,
+          renderSeconds: rendered.renderSeconds,
+          seconds: 0,
+          chars: 0,
+          tokens: 0,
+          finishReason: null,
+          text: "",
+          skipped: true
+        };
+        pages.push(page);
+        opts.onPage?.(page, document?.pages ?? 0);
+      }
+    }));
+  } catch (err) {
+    if (err instanceof RasterError) throw new VlmBridgeError(err.message);
+    throw err;
+  }
+  if (!document) throw new VlmBridgeError("the rasteriser finished without describing the document");
+  const doc = document;
   const expected = [];
   for (let page = 1; page <= doc.pages; page += 1) {
     if (!excluded.has(page)) expected.push(page);
   }
   if (pages.length !== expected.length) {
     throw new VlmBridgeError(
-      excluded.size === 0 ? `the PDF has ${doc.pages} pages and the helper reported ${pages.length} of them` : `the PDF has ${doc.pages} pages with ${excluded.size} skipped, so ${expected.length} were expected and the helper reported ${pages.length}`
+      excluded.size === 0 ? `the PDF has ${doc.pages} pages and the rasteriser reported ${pages.length} of them` : `the PDF has ${doc.pages} pages with ${excluded.size} skipped, so ${expected.length} were expected and the rasteriser reported ${pages.length}`
     );
   }
   const record2 = opts.unreadablePages === "record";
@@ -96086,84 +95933,32 @@ async function readPagesWithVlm(opts) {
     if (!record2) throw new VlmBridgeError(`page ${page.number}: ${reason}`);
     unreadable.push({ number: page.number, reason });
   }
+  const maxRss = process.resourceUsage().maxRSS;
   return {
     document: doc,
     pages: usable,
     unreadable,
-    loadSeconds,
-    renderSeconds: sums.renderSeconds,
-    inferenceSeconds: sums.inferenceSeconds,
-    peakRssBytes: sums.peakRssBytes
+    loadSeconds: 0,
+    renderSeconds,
+    inferenceSeconds: 0,
+    peakRssBytes: Number.isFinite(maxRss) && maxRss > 0 ? maxRss * 1024 : null
   };
 }
 async function cropPageRenders(opts) {
   if (opts.requests.length === 0) return [];
-  const python = resolvePython(opts.python);
-  const script = scriptPath();
-  const cropsDir = path8.resolve(opts.cropsDir);
-  const config = JSON.stringify({
-    mode: "crop",
-    // Exactly one of them, spelled the way the read spells it — the helper
-    // refuses both and neither in one line rather than picking a winner.
-    ...opts.source.kind === "pdf" ? { pdf: path8.resolve(opts.source.path) } : { pages: opts.source.paths.map((page) => path8.resolve(page)) },
-    dpi: opts.dpi,
-    cropsDir,
-    crops: opts.requests.map((r) => ({
-      page: r.page,
-      name: r.name,
-      box: [r.box.x1, r.box.y1, r.box.x2, r.box.y2]
-    }))
-  });
-  const proc = (0, import_node_child_process2.spawn)(python, [script], {
-    stdio: ["pipe", "pipe", "pipe"],
-    // The child gets the environment MINUS the endpoint's headers. It renders
-    // pages and runs MLX locally and makes no HTTP request at all (`vlm_page.py`
-    // imports no HTTP client), so a credential here could only ever leak, never
-    // be used. This option is not redundant: without it a spawn inherits the
-    // parent's whole environment. See `backend/endpoint-headers.ts`.
-    env: withoutEndpointHeaders()
-  });
   const written = [];
-  const stderrTail = [];
-  const finished = new Promise((resolve23, reject) => {
-    let stdout = "";
-    proc.stdout.setEncoding("utf8");
-    proc.stdout.on("data", (chunk) => {
-      stdout += chunk;
-      let nl = stdout.indexOf("\n");
-      while (nl !== -1) {
-        const line = stdout.slice(0, nl);
-        stdout = stdout.slice(nl + 1);
-        nl = stdout.indexOf("\n");
-        if (line.trim().length === 0) continue;
-        const event = JSON.parse(line);
-        if (event["event"] === "crop") {
-          written.push({ name: event["name"], path: event["path"] });
-        }
-      }
+  try {
+    await cropPages({
+      source: opts.source.kind === "pdf" ? { kind: "pdf", path: path9.resolve(opts.source.path) } : { kind: "pages", paths: opts.source.paths.map((page) => path9.resolve(page)) },
+      dpi: opts.dpi,
+      cropsDir: path9.resolve(opts.cropsDir),
+      crops: opts.requests.map((r) => ({ page: r.page, name: r.name, box: [r.box.x1, r.box.y1, r.box.x2, r.box.y2] })),
+      onCrop: (name, file) => written.push({ name, path: file })
     });
-    proc.stderr.setEncoding("utf8");
-    proc.stderr.on("data", (chunk) => {
-      for (const line of chunk.split("\n")) {
-        if (line.length === 0) continue;
-        stderrTail.push(line);
-        if (stderrTail.length > 40) stderrTail.shift();
-      }
-    });
-    proc.on("error", (err) => reject(new VlmBridgeError(`could not start ${python}: ${err.message}`)));
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        return reject(new VlmBridgeError(
-          `${path8.basename(script)} exited ${code} while cropping. Its last output:
-` + stderrTail.map((l) => `  ${l}`).join("\n")
-        ));
-      }
-      resolve23();
-    });
-  });
-  proc.stdin.write(config);
-  proc.stdin.end();
-  await finished;
+  } catch (err) {
+    if (err instanceof RasterError) throw new VlmBridgeError(`cropping failed: ${err.message}`);
+    throw err;
+  }
   if (written.length !== opts.requests.length) {
     throw new VlmBridgeError(
       `${opts.requests.length} pictures were asked for and ${written.length} were written`
@@ -96172,72 +95967,27 @@ async function cropPageRenders(opts) {
   return written.map((entry) => ({
     name: entry.name,
     mediaType: "image/png",
-    data: new Uint8Array(fs11.readFileSync(entry.path))
+    data: new Uint8Array(fs12.readFileSync(entry.path))
   }));
 }
 async function readPdfTextLayer(opts) {
-  const python = resolvePython(opts.python);
-  const script = scriptPath();
-  const config = JSON.stringify({ mode: "textlayer", pdf: path8.resolve(opts.pdfPath) });
-  const proc = (0, import_node_child_process2.spawn)(python, [script], {
-    stdio: ["pipe", "pipe", "pipe"],
-    // The child gets the environment MINUS the endpoint's headers. It renders
-    // pages and runs MLX locally and makes no HTTP request at all (`vlm_page.py`
-    // imports no HTTP client), so a credential here could only ever leak, never
-    // be used. This option is not redundant: without it a spawn inherits the
-    // parent's whole environment. See `backend/endpoint-headers.ts`.
-    env: withoutEndpointHeaders()
-  });
-  const layer = /* @__PURE__ */ new Map();
-  const stderrTail = [];
-  const finished = new Promise((resolve23, reject) => {
-    let stdout = "";
-    proc.stdout.setEncoding("utf8");
-    proc.stdout.on("data", (chunk) => {
-      stdout += chunk;
-      let nl = stdout.indexOf("\n");
-      while (nl !== -1) {
-        const line = stdout.slice(0, nl);
-        stdout = stdout.slice(nl + 1);
-        nl = stdout.indexOf("\n");
-        if (line.trim().length === 0) continue;
-        const event = JSON.parse(line);
-        if (event["event"] === "layer") {
-          const spans = event["spans"].map(([x, y, size, chars]) => ({ x, y, size, chars }));
-          layer.set(event["page"], spans);
-        }
-      }
-    });
-    proc.stderr.setEncoding("utf8");
-    proc.stderr.on("data", (chunk) => {
-      for (const line of chunk.split("\n")) {
-        if (line.length === 0) continue;
-        stderrTail.push(line);
-        if (stderrTail.length > 40) stderrTail.shift();
-      }
-    });
-    proc.on("error", (err) => reject(new VlmBridgeError(`could not start ${python}: ${err.message}`)));
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        return reject(new VlmBridgeError(
-          `${path8.basename(script)} exited ${code} while reading the PDF's text layer. Its last output:
-` + stderrTail.map((l) => `  ${l}`).join("\n")
-        ));
-      }
-      resolve23();
-    });
-  });
-  proc.stdin.write(config);
-  proc.stdin.end();
-  await finished;
-  return layer;
+  let layer;
+  try {
+    layer = await readTextLayer(path9.resolve(opts.pdfPath));
+  } catch (err) {
+    if (err instanceof RasterError) throw new VlmBridgeError(`reading the PDF's text layer failed: ${err.message}`);
+    throw err;
+  }
+  const out = /* @__PURE__ */ new Map();
+  for (const [page, spans] of layer) out.set(page, spans.map(([x, y, size, chars]) => ({ x, y, size, chars })));
+  return out;
 }
 
 // packages/foundry-core/src/engine/vlm/read.ts
 init_engine_import_meta_url();
-var fs14 = __toESM(require("node:fs"), 1);
-var os4 = __toESM(require("node:os"), 1);
-var path10 = __toESM(require("node:path"), 1);
+var fs15 = __toESM(require("node:fs"), 1);
+var os3 = __toESM(require("node:os"), 1);
+var path11 = __toESM(require("node:path"), 1);
 
 // packages/foundry-core/src/engine/vlm/band.ts
 init_engine_import_meta_url();
@@ -96286,8 +96036,8 @@ init_models();
 
 // packages/foundry-core/src/engine/vlm/readings.ts
 init_engine_import_meta_url();
-var fs13 = __toESM(require("node:fs"), 1);
-var path9 = __toESM(require("node:path"), 1);
+var fs14 = __toESM(require("node:fs"), 1);
+var path10 = __toESM(require("node:path"), 1);
 init_bom();
 init_fsdirs();
 init_fs_replace();
@@ -96319,9 +96069,9 @@ var VlmReadings = class _VlmReadings {
    * silently supply somebody else's pages.
    */
   static open(filePath) {
-    const readings = new _VlmReadings(path9.resolve(filePath));
-    if (!fs13.existsSync(readings.filePath)) return readings;
-    const lines = stripBom(fs13.readFileSync(readings.filePath, "utf8")).split("\n");
+    const readings = new _VlmReadings(path10.resolve(filePath));
+    if (!fs14.existsSync(readings.filePath)) return readings;
+    const lines = stripBom(fs14.readFileSync(readings.filePath, "utf8")).split("\n");
     for (const [index, line] of lines.entries()) {
       if (line.trim().length === 0) continue;
       const last = lines.slice(index + 1).every((rest) => rest.trim().length === 0);
@@ -96385,27 +96135,27 @@ var VlmReadings = class _VlmReadings {
   /** Append and fsync. The whole point is that a kill costs one page. */
   append(reading) {
     this.byPage.set(reading.page, reading);
-    ensureDir(path9.dirname(this.filePath));
-    const handle = fs13.openSync(this.filePath, "a");
+    ensureDir(path10.dirname(this.filePath));
+    const handle = fs14.openSync(this.filePath, "a");
     try {
-      fs13.writeSync(handle, `${JSON.stringify(reading)}
+      fs14.writeSync(handle, `${JSON.stringify(reading)}
 `);
-      fs13.fsyncSync(handle);
+      fs14.fsyncSync(handle);
     } finally {
-      fs13.closeSync(handle);
+      fs14.closeSync(handle);
     }
   }
 };
 function completionMarkerPath(readingsPath) {
-  const resolved = path9.resolve(readingsPath);
+  const resolved = path10.resolve(readingsPath);
   return `${resolved.replace(/\.jsonl$/i, "")}.completed.json`;
 }
 function readCompletionMarker(readingsPath) {
   const markerPath = completionMarkerPath(readingsPath);
-  if (!fs13.existsSync(markerPath)) return null;
+  if (!fs14.existsSync(markerPath)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs13.readFileSync(markerPath, "utf8")));
+    parsed = JSON.parse(stripBom(fs14.readFileSync(markerPath, "utf8")));
   } catch (err) {
     throw new VlmReadingsError(
       `${markerPath} is not JSON (${err instanceof Error ? err.message : String(err)}). It is where a finished conversion records itself, so this run cannot tell whether the readings beside it are a finished book or an interrupted one.`
@@ -96429,23 +96179,23 @@ function readCompletionMarker(readingsPath) {
 function writeCompletionMarker(readingsPath, completion) {
   const record2 = { ...completion, foundryVersion: VERSION };
   const markerPath = completionMarkerPath(readingsPath);
-  ensureDir(path9.dirname(markerPath));
+  ensureDir(path10.dirname(markerPath));
   const tmp = `${markerPath}.tmp`;
-  fs13.writeFileSync(tmp, `${JSON.stringify(record2, null, 2)}
+  fs14.writeFileSync(tmp, `${JSON.stringify(record2, null, 2)}
 `, "utf8");
   replaceFileSync(tmp, markerPath);
   return record2;
 }
 function renderModePath(readingsPath) {
-  const resolved = path9.resolve(readingsPath);
+  const resolved = path10.resolve(readingsPath);
   return `${resolved.replace(/\.jsonl$/i, "")}.render-mode.json`;
 }
 function readRenderMode(readingsPath) {
   const modePath = renderModePath(readingsPath);
-  if (!fs13.existsSync(modePath)) return null;
+  if (!fs14.existsSync(modePath)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs13.readFileSync(modePath, "utf8")));
+    parsed = JSON.parse(stripBom(fs14.readFileSync(modePath, "utf8")));
   } catch {
     return null;
   }
@@ -96455,14 +96205,14 @@ function readRenderMode(readingsPath) {
 }
 function writeRenderMode(readingsPath, mode) {
   const modePath = renderModePath(readingsPath);
-  ensureDir(path9.dirname(modePath));
+  ensureDir(path10.dirname(modePath));
   const tmp = `${modePath}.tmp`;
-  fs13.writeFileSync(tmp, `${JSON.stringify(mode, null, 2)}
+  fs14.writeFileSync(tmp, `${JSON.stringify(mode, null, 2)}
 `, "utf8");
   replaceFileSync(tmp, modePath);
 }
 function pendingPath(readingsPath) {
-  return `${path9.resolve(readingsPath)}.pending`;
+  return `${path10.resolve(readingsPath)}.pending`;
 }
 function pendingRequestPath(readingsPath) {
   return `${pendingPath(readingsPath)}.request`;
@@ -96480,10 +96230,10 @@ function sameAsk(request, ask) {
 }
 function readPendingRequest(readingsPath) {
   const requestPath = pendingRequestPath(readingsPath);
-  if (!fs13.existsSync(requestPath)) return null;
+  if (!fs14.existsSync(requestPath)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs13.readFileSync(requestPath, "utf8")));
+    parsed = JSON.parse(stripBom(fs14.readFileSync(requestPath, "utf8")));
   } catch (err) {
     throw new VlmReadingsError(
       `${requestPath} is not JSON (${err instanceof Error ? err.message : String(err)}). It is where a half-finished reading records what it was asked for, so this run cannot tell whether the pending bank beside it answers the same question. Delete that one file to resume the pending anyway, or pass --fresh-readings to throw the pending away and start the replacement over.`
@@ -96505,30 +96255,30 @@ function readPendingRequest(readingsPath) {
 function writePendingRequest(readingsPath, ask) {
   const record2 = { ...normaliseAsk(ask), foundryVersion: VERSION };
   const requestPath = pendingRequestPath(readingsPath);
-  ensureDir(path9.dirname(requestPath));
+  ensureDir(path10.dirname(requestPath));
   const tmp = `${requestPath}.tmp`;
-  fs13.writeFileSync(tmp, `${JSON.stringify(record2, null, 2)}
+  fs14.writeFileSync(tmp, `${JSON.stringify(record2, null, 2)}
 `, "utf8");
   replaceFileSync(tmp, requestPath);
   return record2;
 }
 function discardPending(readingsPath) {
-  fs13.rmSync(pendingPath(readingsPath), { force: true });
-  fs13.rmSync(pendingRequestPath(readingsPath), { force: true });
+  fs14.rmSync(pendingPath(readingsPath), { force: true });
+  fs14.rmSync(pendingRequestPath(readingsPath), { force: true });
 }
 function swapPendingIntoPlace(readingsPath, pending, completion) {
-  const resolved = path9.resolve(readingsPath);
+  const resolved = path10.resolve(readingsPath);
   if (pending === null) return writeCompletionMarker(resolved, completion);
-  const pendingResolved = path9.resolve(pending);
-  if (!fs13.existsSync(pendingResolved)) {
+  const pendingResolved = path10.resolve(pending);
+  if (!fs14.existsSync(pendingResolved)) {
     throw new VlmReadingsError(
       `${pendingResolved} was this run's reading and it is not there, so there is nothing to put in place of ${resolved}. The bank that is there has been left exactly as it was found: replacing a book somebody paid for with a file that does not exist is the one thing the pending bank exists to make impossible.`
     );
   }
-  fs13.rmSync(completionMarkerPath(resolved), { force: true });
-  ensureDir(path9.dirname(resolved));
+  fs14.rmSync(completionMarkerPath(resolved), { force: true });
+  ensureDir(path10.dirname(resolved));
   replaceFileSync(pendingResolved, resolved);
-  fs13.rmSync(`${pendingResolved}.request`, { force: true });
+  fs14.rmSync(`${pendingResolved}.request`, { force: true });
   return writeCompletionMarker(resolved, completion);
 }
 function describeAsk(skipPages, language) {
@@ -96540,7 +96290,7 @@ function openReadingsBank(request) {
       "--fresh-readings and --reuse-readings say opposite things about the same bank. Pass one."
     );
   }
-  const readingsPath = path9.resolve(request.readingsPath);
+  const readingsPath = path10.resolve(request.readingsPath);
   const ask = request.ask ?? {};
   const asked = normaliseAsk(ask);
   const pending = pendingPath(readingsPath);
@@ -96566,8 +96316,8 @@ function openReadingsBank(request) {
     };
   }
   let discarded = null;
-  if (!fs13.existsSync(pending)) {
-    fs13.rmSync(pendingRequestPath(readingsPath), { force: true });
+  if (!fs14.existsSync(pending)) {
+    fs14.rmSync(pendingRequestPath(readingsPath), { force: true });
   } else if (request.freshRequested) {
     const abandoned = VlmReadings.open(pending).size;
     discardPending(readingsPath);
@@ -96589,8 +96339,8 @@ function openReadingsBank(request) {
   }
   const preface = discarded === null ? "" : `${discarded}; `;
   if (banked > 0 && (completed !== null || request.freshRequested)) {
-    ensureDir(path9.dirname(pending));
-    fs13.closeSync(fs13.openSync(pending, "a"));
+    ensureDir(path10.dirname(pending));
+    fs14.closeSync(fs14.openSync(pending, "a"));
     writePendingRequest(readingsPath, ask);
     return {
       action: "read-fresh",
@@ -96637,7 +96387,7 @@ async function confirmServedModel(label, endpoint, wanted, headers, log2) {
   );
 }
 function renderPath(dir, page) {
-  return path10.join(dir, `page-${String(page).padStart(4, "0")}.png`);
+  return path11.join(dir, `page-${String(page).padStart(4, "0")}.png`);
 }
 function replaysCompletedBank(opts) {
   if (opts.reuseReadings !== true || opts.readingsPath === void 0) return false;
@@ -96691,7 +96441,6 @@ async function readPagesIntoBank(opts) {
     source: opts.source,
     model,
     dpi: contract !== null ? contract.dpi : VLM_DPI,
-    ...opts.python ? { python: opts.python } : {},
     ...geometric || viaEndpoint || opts.keepRenders ? { rendersDir } : {},
     ...maxPixels !== void 0 ? { maxPixels } : {},
     // Snap near-identical pages onto one grid so a batching server sees one deep
@@ -96931,14 +96680,14 @@ function sourceFor(opts) {
     );
   }
   if (opts.pdfPath !== void 0) {
-    const pdfPath = path10.resolve(opts.pdfPath);
-    if (!fs14.existsSync(pdfPath)) {
+    const pdfPath = path11.resolve(opts.pdfPath);
+    if (!fs15.existsSync(pdfPath)) {
       throw new Error(`no such PDF: ${pdfPath}. A reading is of a book, and this one is not there.`);
     }
     return { kind: "pdf", path: pdfPath };
   }
-  const dir = path10.resolve(opts.pagesDir);
-  if (!fs14.existsSync(dir)) {
+  const dir = path11.resolve(opts.pagesDir);
+  if (!fs15.existsSync(dir)) {
     throw new Error(`no such directory: ${dir}. A reading is of a book, and its pages are not there.`);
   }
   const paths = pagesInDirectory(dir);
@@ -96951,7 +96700,7 @@ async function vlmRead(opts) {
   const started = Date.now();
   const model = requireVlmModel(opts.modelId);
   const source = sourceFor(opts);
-  const readingsPath = path10.resolve(opts.readingsPath);
+  const readingsPath = path11.resolve(opts.readingsPath);
   const viaEndpoint = opts.endpoint !== void 0;
   const localBudget = viaEndpoint ? void 0 : pixelBudget(model);
   const skipPages = [...new Set(opts.skipPages ?? [])].sort((a, b) => a - b);
@@ -96962,7 +96711,7 @@ async function vlmRead(opts) {
     `vlm-read: the product of this run is the reading in ${readingsPath}. No book is written here \u2014 the formats are rendered out of the bank afterwards, with vlm-convert --reuse-readings.`
   );
   const keepRenders = opts.rendersDir !== void 0;
-  const rendersDir = opts.rendersDir !== void 0 ? path10.resolve(opts.rendersDir) : fs14.mkdtempSync(path10.join(os4.tmpdir(), "foundry-vlm-"));
+  const rendersDir = opts.rendersDir !== void 0 ? path11.resolve(opts.rendersDir) : fs15.mkdtempSync(path11.join(os3.tmpdir(), "foundry-vlm-"));
   try {
     const phase = await readPagesIntoBank({
       label: "vlm-read",
@@ -96973,7 +96722,6 @@ async function vlmRead(opts) {
       maxPixels: localBudget,
       skipPages,
       readingsPath,
-      ...opts.python !== void 0 ? { python: opts.python } : {},
       ...opts.endpoint !== void 0 ? { endpoint: opts.endpoint } : {},
       ...opts.endpointModel !== void 0 ? { endpointModel: opts.endpointModel } : {},
       ...opts.concurrency !== void 0 ? { concurrency: opts.concurrency } : {},
@@ -97028,7 +96776,7 @@ async function vlmRead(opts) {
       peakRssBytes: phase.run.peakRssBytes
     };
   } finally {
-    if (!keepRenders) fs14.rmSync(rendersDir, { recursive: true, force: true });
+    if (!keepRenders) fs15.rmSync(rendersDir, { recursive: true, force: true });
   }
 }
 
@@ -97043,8 +96791,8 @@ var VlmBlocksError = class extends Error {
   }
 };
 async function dumpBlocks(opts) {
-  const readingsPath = path12.resolve(opts.readingsPath);
-  if (!fs16.existsSync(readingsPath)) {
+  const readingsPath = path13.resolve(opts.readingsPath);
+  if (!fs17.existsSync(readingsPath)) {
     throw new VlmBlocksError(
       `no such readings file: ${readingsPath}. This command reads a bank of page answers; it never reads a page from a model, so an absent bank is nothing it can make up for.`
     );
@@ -97133,8 +96881,8 @@ async function renderSizes(missing, opts, readingsPath, fallbackBudget) {
       `${readingsPath} records no render size for page(s) ${missing.slice(0, 12).join(", ")}${missing.length > 12 ? ` (and ${missing.length - 12} more)` : ""}, which means it was written before a bank recorded the geometry of the pages it banked. The boxes in those answers cannot be placed without knowing how big the page they were measured on was, so pass --pdf and they are measured again.`
     );
   }
-  const pdfPath = path12.resolve(opts.pdfPath);
-  if (!fs16.existsSync(pdfPath)) throw new VlmBlocksError(`no such PDF: ${pdfPath}`);
+  const pdfPath = path13.resolve(opts.pdfPath);
+  if (!fs17.existsSync(pdfPath)) throw new VlmBlocksError(`no such PDF: ${pdfPath}`);
   const model = requireVlmModel(opts.modelId);
   const run = await readPagesWithVlm({
     // A dump measures a DOCUMENT's pages, so this route rasterises and always
@@ -97143,7 +96891,6 @@ async function renderSizes(missing, opts, readingsPath, fallbackBudget) {
     model,
     dpi: VLM_DPI,
     renderOnly: true,
-    ...opts.python !== void 0 ? { python: opts.python } : {},
     ...fallbackBudget !== void 0 ? { maxPixels: fallbackBudget } : {}
   });
   return new Map(run.pages.map((page) => [page.number, { width: page.width, height: page.height }]));
@@ -97158,9 +96905,9 @@ init_prose();
 
 // packages/foundry-core/src/engine/analyze/report.ts
 init_engine_import_meta_url();
-var import_node_crypto4 = require("node:crypto");
-var fs18 = __toESM(require("node:fs"), 1);
-var path13 = __toESM(require("node:path"), 1);
+var import_node_crypto3 = require("node:crypto");
+var fs19 = __toESM(require("node:fs"), 1);
+var path14 = __toESM(require("node:path"), 1);
 init_bom();
 init_fsdirs();
 init_fs_replace();
@@ -97174,7 +96921,7 @@ var AnalysisReportError = class extends Error {
 var ANALYSIS_FILE_VERSION = 2;
 var NUL2 = String.fromCharCode(0);
 function verdictKey(passage, category, verifyModel, prompt) {
-  return (0, import_node_crypto4.createHash)("sha256").update(["foundry-analysis-verdict-2", verifyModel, category, passage, prompt].join(NUL2), "utf8").digest("hex");
+  return (0, import_node_crypto3.createHash)("sha256").update(["foundry-analysis-verdict-2", verifyModel, category, passage, prompt].join(NUL2), "utf8").digest("hex");
 }
 var AnalysisReport = class _AnalysisReport {
   constructor(outPath, appendPath) {
@@ -97203,8 +96950,8 @@ var AnalysisReport = class _AnalysisReport {
    * on disk belong to whatever ran last and are replaced wholesale at the swap.
    */
   read(filePath) {
-    if (!fs18.existsSync(filePath)) return;
-    const lines = stripBom(fs18.readFileSync(filePath, "utf8")).split("\n");
+    if (!fs19.existsSync(filePath)) return;
+    const lines = stripBom(fs19.readFileSync(filePath, "utf8")).split("\n");
     let header = null;
     for (const [index, line] of lines.entries()) {
       if (line.trim().length === 0) continue;
@@ -97265,14 +97012,14 @@ var AnalysisReport = class _AnalysisReport {
    * to close, so nothing can interleave a line into the middle of another.
    */
   append(row) {
-    ensureDir(path13.dirname(this.appendPath));
-    const handle = fs18.openSync(this.appendPath, "a");
+    ensureDir(path14.dirname(this.appendPath));
+    const handle = fs19.openSync(this.appendPath, "a");
     try {
-      fs18.writeSync(handle, `${JSON.stringify(row)}
+      fs19.writeSync(handle, `${JSON.stringify(row)}
 `);
-      fs18.fsyncSync(handle);
+      fs19.fsyncSync(handle);
     } finally {
-      fs18.closeSync(handle);
+      fs19.closeSync(handle);
     }
     this.rows += 1;
   }
@@ -97295,19 +97042,19 @@ var AnalysisReport = class _AnalysisReport {
     for (const [key, answer] of this.verdicts) {
       lines.push(JSON.stringify({ kind: "verdict", key, verdict: answer.verdict, reason: answer.reason }));
     }
-    ensureDir(path13.dirname(this.outPath));
+    ensureDir(path14.dirname(this.outPath));
     const part = `${this.outPath}.${process.pid}.part`;
-    const handle = fs18.openSync(part, "w");
+    const handle = fs19.openSync(part, "w");
     try {
-      fs18.writeSync(handle, `${lines.join("\n")}
+      fs19.writeSync(handle, `${lines.join("\n")}
 `);
-      fs18.fsyncSync(handle);
+      fs19.fsyncSync(handle);
     } finally {
-      fs18.closeSync(handle);
+      fs19.closeSync(handle);
     }
     replaceFileSync(part, this.outPath);
-    if (this.appendPath !== this.outPath && fs18.existsSync(this.appendPath)) {
-      fs18.unlinkSync(this.appendPath);
+    if (this.appendPath !== this.outPath && fs19.existsSync(this.appendPath)) {
+      fs19.unlinkSync(this.appendPath);
     }
   }
   /** Open a report for a run, reading whatever it may reuse. */
@@ -97318,15 +97065,15 @@ var AnalysisReport = class _AnalysisReport {
   }
 };
 function pendingReportPath(outPath) {
-  return `${path13.resolve(outPath)}.pending`;
+  return `${path14.resolve(outPath)}.pending`;
 }
 function openAnalysisReport(request) {
-  const outPath = path13.resolve(request.outPath);
+  const outPath = path14.resolve(request.outPath);
   const pending = pendingReportPath(outPath);
   if (request.freshRequested) {
-    ensureDir(path13.dirname(pending));
+    ensureDir(path14.dirname(pending));
     const report2 = AnalysisReport.openFor(outPath, pending, [pending]);
-    fs18.closeSync(fs18.openSync(pending, "a"));
+    fs19.closeSync(fs19.openSync(pending, "a"));
     return {
       report: report2,
       pendingPath: pending,
@@ -97378,22 +97125,22 @@ function viterbi(logProbs, switchCost) {
     dp = next;
     back.push(from);
   }
-  const path29 = new Array(n);
+  const path30 = new Array(n);
   let j = argmax(dp);
-  path29[n - 1] = j;
+  path30[n - 1] = j;
   for (let i = n - 2; i >= 0; i -= 1) {
     j = back[i][j];
-    path29[i] = j;
+    path30[i] = j;
   }
-  return path29;
+  return path30;
 }
-function runsOf(path29, state) {
+function runsOf(path30, state) {
   const out = [];
   let i = 0;
-  while (i < path29.length) {
-    if (path29[i] === state) {
+  while (i < path30.length) {
+    if (path30[i] === state) {
       let k = i;
-      while (k < path29.length && path29[k] === state) k += 1;
+      while (k < path30.length && path30[k] === state) k += 1;
       out.push([i, k]);
       i = k;
     } else {
@@ -97459,9 +97206,9 @@ function onOffPath(hot, params) {
   const rows = hot.map((h) => [Math.log(Math.max(1 - h, LOG_FLOOR2)), Math.log(Math.max(h, LOG_FLOOR2)) - params.tau]);
   return viterbi(rows, params.switchCost);
 }
-function mergedRuns(path29, units, params) {
+function mergedRuns(path30, units, params) {
   const out = [];
-  for (const [a, bEx] of runsOf(path29, 1)) {
+  for (const [a, bEx] of runsOf(path30, 1)) {
     const b = bEx - 1;
     const prev = out[out.length - 1];
     if (prev) {
@@ -97523,8 +97270,8 @@ function makeSpan(id, from, to, categories, units, hot) {
 function buildSpans(map, params = DEFAULT_SPAN_PARAMS) {
   if (map.units.length === 0 || map.categories.length === 0) return [];
   const hot = hotness(map, params);
-  const path29 = onOffPath(hot, params);
-  const ranges = mergedRuns(path29, map.units, params);
+  const path30 = onOffPath(hot, params);
+  const ranges = mergedRuns(path30, map.units, params);
   const spans = ranges.map(([a, b], id) => makeSpan(id, a, b, keepCategories(scoreRange(map, a, b, params), params.categoryFloor), map.units, hot));
   return spans.sort(compareSpans);
 }
@@ -97943,8 +97690,8 @@ function findingRows(finding, sentences, hit) {
 // packages/foundry-core/src/engine/vlm/book-run.ts
 init_engine_import_meta_url();
 var crypto = __toESM(require("node:crypto"), 1);
-var fs20 = __toESM(require("node:fs"), 1);
-var path15 = __toESM(require("node:path"), 1);
+var fs21 = __toESM(require("node:fs"), 1);
+var path16 = __toESM(require("node:path"), 1);
 init_fsdirs();
 init_fs_replace();
 init_book_file();
@@ -97960,7 +97707,7 @@ function bankSha(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 16);
 }
 function imagesDir(readingsPath) {
-  const resolved = path15.resolve(readingsPath);
+  const resolved = path16.resolve(readingsPath);
   return `${resolved.replace(/\.jsonl$/i, "")}.images`;
 }
 function figureSource(opts) {
@@ -97970,13 +97717,13 @@ function figureSource(opts) {
     );
   }
   if (opts.pdfPath !== void 0) {
-    const pdfPath = path15.resolve(opts.pdfPath);
-    if (!fs20.existsSync(pdfPath)) throw new BookRunError(`no such PDF: ${pdfPath}`);
+    const pdfPath = path16.resolve(opts.pdfPath);
+    if (!fs21.existsSync(pdfPath)) throw new BookRunError(`no such PDF: ${pdfPath}`);
     return { kind: "pdf", path: pdfPath };
   }
   if (opts.pagesDir === void 0) return null;
-  const dir = path15.resolve(opts.pagesDir);
-  if (!fs20.existsSync(dir)) {
+  const dir = path16.resolve(opts.pagesDir);
+  if (!fs21.existsSync(dir)) {
     throw new BookRunError(
       `no such directory: ${dir}. The figures are cut out of the pages this book was read from, and they are not there.`
     );
@@ -97991,14 +97738,14 @@ function figureSource(opts) {
 }
 async function buildBookFile(opts) {
   const cutFrom = figureSource(opts);
-  const readingsPath = path15.resolve(opts.readingsPath);
-  if (!fs20.existsSync(readingsPath)) {
+  const readingsPath = path16.resolve(opts.readingsPath);
+  if (!fs21.existsSync(readingsPath)) {
     throw new BookRunError(
       `no such readings file: ${readingsPath}. This command reflows a bank of page answers into a book; it reads no page from a model, so an absent bank is nothing it can make up for.`
     );
   }
   const readings = VlmReadings.open(readingsPath);
-  const sha = bankSha(fs20.readFileSync(readingsPath));
+  const sha = bankSha(fs21.readFileSync(readingsPath));
   const pages = readings.pages();
   if (pages.length === 0) {
     throw new BookRunError(
@@ -98055,15 +97802,15 @@ async function buildBookFile(opts) {
     );
   }
   const images = await cutFigures(rows, readingsPath, cutFrom, opts);
-  const resolved = path15.resolve(opts.outPath);
-  ensureDir(path15.dirname(resolved));
+  const resolved = path16.resolve(opts.outPath);
+  ensureDir(path16.dirname(resolved));
   const pending = `${resolved}.tmp`;
   const figures = {
     blocks: rows.filter((row) => row.category === "Picture" && row.shelf === void 0).length,
     cut: images.length,
     from: cutFrom === null ? null : cutFrom.kind
   };
-  fs20.writeFileSync(pending, formatBookFile({ ...book, figures }), "utf8");
+  fs21.writeFileSync(pending, formatBookFile({ ...book, figures }), "utf8");
   replaceFileSync(pending, resolved);
   opts.log(
     `vlm-book: ${rows.length - shelved.length} block(s) from ${parsed.length} page(s) \u2014 ${joinedPages.length} paragraph(s) joined across a page turn, ${flow.reflowed.length} reflowed out of print lines, ${flow.mergedHeadings.length} heading(s) merged out of two boxes, ${flow.promotedHeadings.length} heading(s) the contents page lists, promoted to chapter openings, ${flow.adoptedNotes.length} list item(s) adopted as footnotes, ${flow.suppressedHeads.length} running head(s) dropped` + (unreadable.length === 0 ? "" : `, ${unreadable.length} page(s) UNREADABLE`)
@@ -98101,7 +97848,7 @@ async function clearStaleCrops(cropsDir, log2) {
   const backoff = [50, 150, 400, 900];
   for (let attempt = 0; ; attempt += 1) {
     try {
-      fs20.rmSync(cropsDir, { recursive: true, force: true });
+      fs21.rmSync(cropsDir, { recursive: true, force: true });
       return;
     } catch (err) {
       const code = err.code;
@@ -98146,8 +97893,7 @@ async function cutFigures(rows, readingsPath, source, opts) {
     source,
     dpi: VLM_DPI,
     cropsDir,
-    requests: crops.map((crop) => ({ page: crop.page, box: crop.box, name: crop.name })),
-    ...opts.python !== void 0 ? { python: opts.python } : {}
+    requests: crops.map((crop) => ({ page: crop.page, box: crop.box, name: crop.name }))
   }));
   const cropped = await images.crop(requests);
   if (cropped.length !== requests.length) {
@@ -98164,8 +97910,8 @@ async function cutFigures(rows, readingsPath, source, opts) {
 
 // packages/foundry-core/src/engine/vlm/compile.ts
 init_engine_import_meta_url();
-var fs21 = __toESM(require("node:fs"), 1);
-var path16 = __toESM(require("node:path"), 1);
+var fs22 = __toESM(require("node:fs"), 1);
+var path17 = __toESM(require("node:path"), 1);
 init_digest();
 init_stamp();
 init_fsdirs();
@@ -98234,7 +97980,7 @@ function formatOf(outPath) {
 function titleFor(opts) {
   const said = opts.title?.trim() ?? "";
   if (said.length > 0) return said;
-  return path16.basename(opts.outPath).replace(/\.[^.]+$/, "").trim();
+  return path17.basename(opts.outPath).replace(/\.[^.]+$/, "").trim();
 }
 function asBlock(row) {
   return {
@@ -98522,25 +98268,25 @@ function figuresIn(imagesDir2, rows) {
         `"${row.id}" names its figure as a path rather than as a name, and a book file names figures by the file they were cut to inside this book's own directory.`
       );
     }
-    const file = path16.join(imagesDir2, row.image);
-    if (!fs21.existsSync(file)) continue;
+    const file = path17.join(imagesDir2, row.image);
+    if (!fs22.existsSync(file)) continue;
     found.set(row.image, file);
   }
   return found;
 }
 function compileBook(opts) {
-  const bookPath = path16.resolve(opts.bookPath);
-  const outPath = path16.resolve(opts.outPath);
+  const bookPath = path17.resolve(opts.bookPath);
+  const outPath = path17.resolve(opts.outPath);
   const format = formatOf(outPath);
   if (bookPath === outPath) {
     throw new CompileError("this run would write the book over the file it is compiling from.");
   }
-  if (!fs21.existsSync(bookPath)) {
+  if (!fs22.existsSync(bookPath)) {
     throw new CompileError(`no such book file: ${bookPath}`);
   }
   let book;
   try {
-    book = parseBookFile(fs21.readFileSync(bookPath, "utf8"));
+    book = parseBookFile(fs22.readFileSync(bookPath, "utf8"));
   } catch (err) {
     if (!(err instanceof BookFileError)) throw err;
     throw new CompileError(`this is not a book this program can compile: ${err.message}`);
@@ -98551,7 +98297,7 @@ function compileBook(opts) {
       "nothing in this book is text a book is made of \u2014 every row is out of the flow. There is no book to write."
     );
   }
-  const images = opts.imagesDir === void 0 || format === "txt" ? /* @__PURE__ */ new Map() : figuresIn(path16.resolve(opts.imagesDir), flow);
+  const images = opts.imagesDir === void 0 || format === "txt" ? /* @__PURE__ */ new Map() : figuresIn(path17.resolve(opts.imagesDir), flow);
   const column = bodyColumn(flow.map(asBlock), flow[0].pageWidth);
   const spans = spansOf(flow, book);
   const documents = [];
@@ -98652,11 +98398,11 @@ function compileBook(opts) {
     id: `img${index}`,
     href: `images/${name}`,
     mediaType: figureMediaType(name),
-    data: new Uint8Array(fs21.readFileSync(file))
+    data: new Uint8Array(fs22.readFileSync(file))
   }));
   const packaged = format === "txt" ? packageVlmText(metadata, documents) : packageVlmEpub(metadata, documents, resources, dotsStylesheet(book.typography), navTree(chapters));
-  ensureDir(path16.dirname(outPath));
-  fs21.writeFileSync(outPath, packaged.bytes);
+  ensureDir(path17.dirname(outPath));
+  fs22.writeFileSync(outPath, packaged.bytes);
   opts.log(
     `vlm-compile: ${flow.length - notes} block(s) and ${notes} note(s) in ${documents.length} document(s), ${pictures} figure(s), ${linked} reference number(s) linked` + (strippedMarkers === 0 ? "" : `, ${strippedMarkers} number(s) no note answers for REMOVED from the prose`) + (unresolved === 0 ? "" : `, ${unresolved} recorded reference(s) the prose does not print as a superscript`)
   );
@@ -98677,9 +98423,9 @@ function compileBook(opts) {
 // packages/foundry-core/src/engine/vlm/convert.ts
 init_engine_import_meta_url();
 var crypto2 = __toESM(require("node:crypto"), 1);
-var fs23 = __toESM(require("node:fs"), 1);
-var os5 = __toESM(require("node:os"), 1);
-var path17 = __toESM(require("node:path"), 1);
+var fs24 = __toESM(require("node:fs"), 1);
+var os4 = __toESM(require("node:os"), 1);
+var path18 = __toESM(require("node:path"), 1);
 init_stamp();
 init_fsdirs();
 init_records();
@@ -98692,7 +98438,7 @@ init_overlay();
 
 // packages/foundry-core/src/engine/vlm/pdf-text.ts
 init_engine_import_meta_url();
-var fs22 = __toESM(require("node:fs"), 1);
+var fs23 = __toESM(require("node:fs"), 1);
 var import_fontkit = __toESM(require_fontkit_umd(), 1);
 var import_pdf_lib2 = __toESM(require_cjs(), 1);
 init_xml();
@@ -98983,7 +98729,7 @@ async function embedFaces(doc, pages) {
   const covered = /* @__PURE__ */ new Set();
   for (const face of ["roman", "italic", "bold", "boldItalic"]) {
     if (!wanted.has(face)) continue;
-    const font = await doc.embedFont(fs22.readFileSync(FACE_FILES[face]), { subset: true });
+    const font = await doc.embedFont(fs23.readFileSync(FACE_FILES[face]), { subset: true });
     fonts.set(face, font);
     for (const code of font.getCharacterSet()) covered.add(code);
   }
@@ -99601,8 +99347,8 @@ init_text_out();
 async function vlmConvert(opts) {
   const started = Date.now();
   const model = requireVlmModel(opts.modelId);
-  const pdfPath = path17.resolve(opts.pdfPath);
-  const outPath = path17.resolve(opts.outPath);
+  const pdfPath = path18.resolve(opts.pdfPath);
+  const outPath = path18.resolve(opts.outPath);
   const geometric = model.dialect === "dots-json";
   const viaEndpoint = opts.endpoint !== void 0;
   const format = opts.format ?? "epub";
@@ -99632,7 +99378,7 @@ async function vlmConvert(opts) {
   if (opts.overlayPath !== void 0) {
     const spine = overlay.chapters === void 0 ? "no chapter list, so the chapters are worked out as usual" : `${overlay.chapters.length} chapter(s) laid out, and the book divides there and nowhere else`;
     opts.log(
-      `vlm-convert: overlay ${path17.resolve(opts.overlayPath)} \u2014 ${overlay.amendments.length} amendment(s), applied to the blocks as each page is parsed; ${spine}. The readings bank is not touched: what the model said and what a person decided about it are two files.`
+      `vlm-convert: overlay ${path18.resolve(opts.overlayPath)} \u2014 ${overlay.amendments.length} amendment(s), applied to the blocks as each page is parsed; ${spine}. The readings bank is not touched: what the model said and what a person decided about it are two files.`
     );
   }
   if (opts.recordsPath !== void 0 && !geometric) {
@@ -99656,20 +99402,20 @@ async function vlmConvert(opts) {
     }
     return JSON.stringify(narrationStampMeta(parsed));
   })();
-  if (opts.recordsPath !== void 0 && !fs23.existsSync(opts.recordsPath)) {
+  if (opts.recordsPath !== void 0 && !fs24.existsSync(opts.recordsPath)) {
     throw new Error(
-      `--records ${path17.resolve(opts.recordsPath)} does not exist. A missing records file is not an empty one: every block would keep its source text and this run would write the untranslated book with "${opts.language}" stamped on it, which is a file nobody can tell from the translation they asked for.`
+      `--records ${path18.resolve(opts.recordsPath)} does not exist. A missing records file is not an empty one: every block would keep its source text and this run would write the untranslated book with "${opts.language}" stamped on it, which is a file nobody can tell from the translation they asked for.`
     );
   }
   const records = opts.recordsPath === void 0 ? null : TranslationRecords.open(opts.recordsPath).positionMap();
   if (records !== null && records.size === 0) {
     throw new Error(
-      `--records ${path17.resolve(opts.recordsPath)} answers for no position at all. The same refusal as a missing file and for the same reason \u2014 a run that substituted nothing would write the untranslated book and call it a translation.`
+      `--records ${path18.resolve(opts.recordsPath)} answers for no position at all. The same refusal as a missing file and for the same reason \u2014 a run that substituted nothing would write the untranslated book and call it a translation.`
     );
   }
   if (records !== null) {
     opts.log(
-      `vlm-convert: records ${path17.resolve(opts.recordsPath)} \u2014 ${records.size} position(s) whose words are substituted for the book's own as the documents are written. The reflow, the chapters and the curation all run on the SOURCE text first, and dc:language comes from --language (${opts.language}), because a file of sentences does not declare a language.`
+      `vlm-convert: records ${path18.resolve(opts.recordsPath)} \u2014 ${records.size} position(s) whose words are substituted for the book's own as the documents are written. The reflow, the chapters and the curation all run on the SOURCE text first, and dc:language comes from --language (${opts.language}), because a file of sentences does not declare a language.`
     );
   }
   const localBudget = viaEndpoint ? void 0 : pixelBudget(model);
@@ -99678,7 +99424,7 @@ async function vlmConvert(opts) {
     viaEndpoint ? `vlm-convert: ${model.id} via ${opts.endpoint}, which publishes the page contract` : `vlm-convert: ${model.id} (${model.repo}), pages rendered at ${VLM_DPI} dpi${localBudget === void 0 ? "" : `, ${localBudget.toLocaleString("en-US")} pixel budget for any page this run reads`}`
   );
   const keepRenders = opts.rendersDir !== void 0;
-  const rendersDir = opts.rendersDir !== void 0 ? path17.resolve(opts.rendersDir) : fs23.mkdtempSync(path17.join(os5.tmpdir(), "foundry-vlm-"));
+  const rendersDir = opts.rendersDir !== void 0 ? path18.resolve(opts.rendersDir) : fs24.mkdtempSync(path18.join(os4.tmpdir(), "foundry-vlm-"));
   try {
     const phase = await readPagesIntoBank({
       label: "vlm-convert",
@@ -99688,7 +99434,6 @@ async function vlmConvert(opts) {
       keepRenders,
       maxPixels: localBudget,
       skipPages,
-      ...opts.python !== void 0 ? { python: opts.python } : {},
       ...opts.endpoint !== void 0 ? { endpoint: opts.endpoint } : {},
       ...opts.endpointModel !== void 0 ? { endpointModel: opts.endpointModel } : {},
       ...opts.concurrency !== void 0 ? { concurrency: opts.concurrency } : {},
@@ -99778,9 +99523,9 @@ async function vlmConvert(opts) {
     }
     if (geometric) checkPixelBudget(geometryPages, run.pages, budgetFor, opts.log);
     const parseSeconds = (Date.now() - parseStarted) / 1e3;
-    const stem = path17.basename(pdfPath).replace(/\.[^.]+$/, "").trim();
+    const stem = path18.basename(pdfPath).replace(/\.[^.]+$/, "").trim();
     const title = run.document.title.length > 0 ? run.document.title : stem;
-    const identifier = `urn:sha256:${crypto2.createHash("sha256").update(fs23.readFileSync(pdfPath)).digest("hex")}`;
+    const identifier = `urn:sha256:${crypto2.createHash("sha256").update(fs24.readFileSync(pdfPath)).digest("hex")}`;
     const narrationStamp = narrationStampMetaJson;
     const metadata = {
       title,
@@ -99814,18 +99559,18 @@ async function vlmConvert(opts) {
         `vlm-convert: ${blocks} blocks over ${geometryPages.length} pages in ${parseSeconds.toFixed(2)}s, ${furniture} header/footer block(s) KEPT \u2014 this route reprints the page, and the folio was printed on the page`
       );
       const built = await buildTextPdf({
-        pdfBytes: fs23.readFileSync(pdfPath),
+        pdfBytes: fs24.readFileSync(pdfPath),
         dpi: VLM_DPI,
-        crop: (requests) => cropRenders(requests, pdfPath, rendersDir, opts.python),
+        crop: (requests) => cropRenders(requests, pdfPath, rendersDir),
         /*
          * The source's own text layer, read before anything is typeset. A
          * born-digital PDF and a publisher-OCR'd scan both state the size of
          * every span of type they carry, and `pdf-text.ts` sets its type at
          * those sizes wherever they exist — the one statement about the
          * book's type that is a record rather than an inference. A pure scan
-         * answers with an empty map and costs one short subprocess.
+         * answers with an empty map and costs one pass over the PDF.
          */
-        layer: await readPdfTextLayer({ pdfPath, python: opts.python }),
+        layer: await readPdfTextLayer({ pdfPath }),
         pages: geometryPages.map((page) => {
           const render2 = sizes.get(page.page);
           return {
@@ -99906,7 +99651,7 @@ async function vlmConvert(opts) {
         // And the same again for a transform's words: a run with no records
         // hands the assembler exactly the object it has always been handed.
         ...records !== null ? { records } : {},
-        images: openPageImages((requests) => cropRenders(requests, pdfPath, rendersDir, opts.python))
+        images: openPageImages((requests) => cropRenders(requests, pdfPath, rendersDir))
       });
       bytes = built.bytes;
       sidecars = built.sidecars;
@@ -99976,15 +99721,15 @@ async function vlmConvert(opts) {
       zipSeconds = built.zipSeconds;
     }
     const writeStarted = Date.now();
-    ensureDir(path17.dirname(outPath));
-    fs23.writeFileSync(outPath, bytes);
+    ensureDir(path18.dirname(outPath));
+    fs24.writeFileSync(outPath, bytes);
     for (const sidecar of sidecars) {
-      const beside = path17.join(path17.dirname(outPath), ...sidecar.path.split("/"));
-      ensureDir(path17.dirname(beside));
-      fs23.writeFileSync(beside, sidecar.data);
+      const beside = path18.join(path18.dirname(outPath), ...sidecar.path.split("/"));
+      ensureDir(path18.dirname(beside));
+      fs24.writeFileSync(beside, sidecar.data);
     }
     if (opts.chaptersPath !== void 0) {
-      writeProposals(path17.resolve(opts.chaptersPath), proposals, chapters, skipped, skipPages);
+      writeProposals(path18.resolve(opts.chaptersPath), proposals, chapters, skipped, skipPages);
       opts.log(`vlm-convert: ${proposals.length} chapter proposal(s) written to ${opts.chaptersPath}`);
     }
     if (opts.readingsPath !== void 0) {
@@ -99997,7 +99742,7 @@ async function vlmConvert(opts) {
       });
       if (phase.pendingPath !== null) {
         opts.log(
-          `vlm-convert: the reading in ${phase.pendingPath} is complete and this book was made from it, so it has taken the place of ${path17.resolve(opts.readingsPath)} \u2014 one rename, after the book landed. The reading that was there was not touched by anything before this line.`
+          `vlm-convert: the reading in ${phase.pendingPath} is complete and this book was made from it, so it has taken the place of ${path18.resolve(opts.readingsPath)} \u2014 one rename, after the book landed. The reading that was there was not touched by anything before this line.`
         );
       }
       opts.log(
@@ -100046,13 +99791,13 @@ async function vlmConvert(opts) {
       peakRssBytes: run.peakRssBytes
     };
   } finally {
-    if (!keepRenders) fs23.rmSync(rendersDir, { recursive: true, force: true });
+    if (!keepRenders) fs24.rmSync(rendersDir, { recursive: true, force: true });
   }
 }
 function sameFile(a, b) {
   const real = (filePath) => {
     try {
-      return fs23.realpathSync.native(filePath);
+      return fs24.realpathSync.native(filePath);
     } catch {
       return filePath;
     }
@@ -100069,15 +99814,14 @@ function countCategories(pages) {
   }
   return counts;
 }
-async function cropRenders(requests, pdfPath, rendersDir, python) {
+async function cropRenders(requests, pdfPath, rendersDir) {
   const cropped = await cropPageRenders({
     // The bank route always has a document — `vlm-convert` is the command that
     // takes one — so this face is named here rather than plumbed through.
     source: { kind: "pdf", path: pdfPath },
     dpi: VLM_DPI,
-    cropsDir: path17.join(rendersDir, "crops"),
-    requests: requests.map((r) => ({ page: r.page, box: r.box, name: r.name })),
-    ...python ? { python } : {}
+    cropsDir: path18.join(rendersDir, "crops"),
+    requests: requests.map((r) => ({ page: r.page, box: r.box, name: r.name }))
   });
   return cropped;
 }
@@ -100091,22 +99835,22 @@ function checkPixelBudget(pages, rendered, budgetFor, log2) {
   }
   if (ratios.length === 0) return;
   ratios.sort((a, b) => a - b);
-  const median2 = ratios[Math.floor(ratios.length / 2)];
+  const median3 = ratios[Math.floor(ratios.length / 2)];
   const first = rendered[0];
   const budget = budgetFor(first.number);
   const frame = smartResize(first.height, first.width, budget);
   log2(
-    `vlm-convert: page 1's boxes measured in a ${frame.width}x${frame.height} frame, scaled by ${renderScale({ width: first.width, height: first.height }, budget).toFixed(4)} into its ${first.width}x${first.height} render; boxes fill ${(median2 * 100).toFixed(0)}% of the frame on a median page`
+    `vlm-convert: page 1's boxes measured in a ${frame.width}x${frame.height} frame, scaled by ${renderScale({ width: first.width, height: first.height }, budget).toFixed(4)} into its ${first.width}x${first.height} render; boxes fill ${(median3 * 100).toFixed(0)}% of the frame on a median page`
   );
-  if (median2 > 1.02) {
+  if (median3 > 1.02) {
     throw new Error(
-      `the model's boxes overflow the frame a ${budget}-pixel budget puts the pages in, by ${((median2 - 1) * 100).toFixed(0)}% on a median page. The budget this run scaled with is not the one the processor used, so every box in the book is wrong by that ratio.`
+      `the model's boxes overflow the frame a ${budget}-pixel budget puts the pages in, by ${((median3 - 1) * 100).toFixed(0)}% on a median page. The budget this run scaled with is not the one the processor used, so every box in the book is wrong by that ratio.`
     );
   }
 }
 function writeProposals(filePath, proposals, sections, unreadable, skippedPages) {
-  ensureDir(path17.dirname(filePath));
-  fs23.writeFileSync(
+  ensureDir(path18.dirname(filePath));
+  fs24.writeFileSync(
     filePath,
     `${JSON.stringify({ proposals, sections, unreadable, skippedPages }, null, 1)}
 `
@@ -100116,8 +99860,8 @@ function writeProposals(filePath, proposals, sections, unreadable, skippedPages)
 // packages/foundry-core/src/engine/vlm/epub-explode.ts
 init_engine_import_meta_url();
 var crypto3 = __toESM(require("node:crypto"), 1);
-var fs24 = __toESM(require("node:fs"), 1);
-var path18 = __toESM(require("node:path"), 1);
+var fs25 = __toESM(require("node:fs"), 1);
+var path19 = __toESM(require("node:path"), 1);
 init_fsdirs();
 init_fs_replace();
 init_xml();
@@ -100590,7 +100334,7 @@ function epubSha(bytes) {
   return crypto3.createHash("sha256").update(bytes).digest("hex").slice(0, 16);
 }
 function epubImagesDir(outPath) {
-  const resolved = path18.resolve(outPath);
+  const resolved = path19.resolve(outPath);
   const stem = resolved.toLowerCase().endsWith(".book.jsonl") ? resolved.slice(0, -".book.jsonl".length) : resolved.replace(/\.jsonl$/i, "");
   return `${stem}.images`;
 }
@@ -100792,27 +100536,27 @@ function ncxIn(opfSource, opfDir) {
   return null;
 }
 async function explodeEpub(opts) {
-  const epubPath = path18.resolve(opts.epubPath);
-  if (!fs24.existsSync(epubPath)) {
+  const epubPath = path19.resolve(opts.epubPath);
+  if (!fs25.existsSync(epubPath)) {
     throw new EpubExplodeError(
       `no such EPUB: ${epubPath}. This route explodes a publisher's own container into the book file; it reads no page from a model, so an absent archive is nothing it can make up for.`
     );
   }
-  const bytes = fs24.readFileSync(epubPath);
+  const bytes = fs25.readFileSync(epubPath);
   const made = bookFromEpub(bytes, {
     ...opts.language !== void 0 ? { language: opts.language } : {},
     log: opts.log
   });
   const images = copyFigures(made.figures, made.members, opts);
-  const resolved = path18.resolve(opts.outPath);
-  ensureDir(path18.dirname(resolved));
+  const resolved = path19.resolve(opts.outPath);
+  ensureDir(path19.dirname(resolved));
   const pending = `${resolved}.tmp`;
   const figures = {
     blocks: made.book.rows.filter((row) => row.category === "Picture" && row.shelf === void 0).length,
     cut: images.length,
     from: "epub"
   };
-  fs24.writeFileSync(pending, formatBookFile({ ...made.book, figures }), "utf8");
+  fs25.writeFileSync(pending, formatBookFile({ ...made.book, figures }), "utf8");
   replaceFileSync(pending, resolved);
   const flow = made.book.rows.length;
   const notes = made.book.rows.filter((row) => row.category === "Footnote").length;
@@ -100830,7 +100574,7 @@ async function explodeEpub(opts) {
 }
 function copyFigures(figures, members, opts) {
   const dir = epubImagesDir(opts.outPath);
-  fs24.rmSync(dir, { recursive: true, force: true });
+  fs25.rmSync(dir, { recursive: true, force: true });
   if (figures.length === 0) return [];
   ensureDir(dir);
   const written = [];
@@ -100845,7 +100589,7 @@ function copyFigures(figures, members, opts) {
     const dot = figure.href.lastIndexOf(".");
     const name = `${figure.row.id.replace("-", "")}${dot < 0 ? "" : figure.href.slice(dot).toLowerCase()}`;
     figureMediaType(name);
-    fs24.writeFileSync(path18.join(dir, name), member.data);
+    fs25.writeFileSync(path19.join(dir, name), member.data);
     figure.row.image = name;
     written.push(name);
   }
@@ -100856,8 +100600,8 @@ function copyFigures(figures, members, opts) {
 // packages/foundry-core/src/engine/vlm/vtt-book.ts
 init_engine_import_meta_url();
 var crypto4 = __toESM(require("node:crypto"), 1);
-var fs25 = __toESM(require("node:fs"), 1);
-var path19 = __toESM(require("node:path"), 1);
+var fs26 = __toESM(require("node:fs"), 1);
+var path20 = __toESM(require("node:path"), 1);
 init_bom();
 init_fsdirs();
 init_fs_replace();
@@ -101003,28 +100747,28 @@ function bookFromCues(cues, language) {
   };
 }
 function mintVttBook(opts) {
-  const vttPath = path19.resolve(opts.vttPath);
-  if (!fs25.existsSync(vttPath)) {
+  const vttPath = path20.resolve(opts.vttPath);
+  if (!fs26.existsSync(vttPath)) {
     throw new VttBookError(
       `no such transcript: ${vttPath}. This route mints a book out of an audiobook's own cues; there is no model here and no second source to fall back on, so an absent file is nothing it can make up for.`
     );
   }
-  const parsed = parseVtt(fs25.readFileSync(vttPath, "utf8"), vttPath);
+  const parsed = parseVtt(fs26.readFileSync(vttPath, "utf8"), vttPath);
   if (parsed.cues.length === 0) {
     throw new VttBookError(
       `${vttPath} holds no cues${parsed.notes > 0 ? ` (${parsed.notes} NOTE comment(s), which are not cues)` : ""}. A book file made from it would have no text in it at all, and there is nothing for an analysis to read.`
     );
   }
   const book = bookFromCues(parsed.cues, opts.language);
-  const resolved = path19.resolve(opts.outPath);
-  ensureDir(path19.dirname(resolved));
+  const resolved = path20.resolve(opts.outPath);
+  ensureDir(path20.dirname(resolved));
   const pending = `${resolved}.tmp`;
-  fs25.writeFileSync(pending, formatBookFile(book), "utf8");
+  fs26.writeFileSync(pending, formatBookFile(book), "utf8");
   try {
-    parseBookFile(stripBom(fs25.readFileSync(pending, "utf8")));
+    parseBookFile(stripBom(fs26.readFileSync(pending, "utf8")));
   } catch (err) {
     try {
-      fs25.unlinkSync(pending);
+      fs26.unlinkSync(pending);
     } catch {
     }
     throw new VttBookError(
@@ -101098,7 +100842,7 @@ init_text_out();
 
 // packages/foundry-core/src/engine/translate/run.ts
 init_engine_import_meta_url();
-var fs27 = __toESM(require("node:fs"), 1);
+var fs28 = __toESM(require("node:fs"), 1);
 init_xml();
 init_zip();
 init_bank();
@@ -101848,8 +101592,8 @@ async function runTranslation(opts) {
   const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   const to = readLanguage(opts.to, "--to");
   const from = opts.from === void 0 ? null : readLanguage(opts.from, "--from");
-  const book = opts.epubPath === void 0 ? null : readFoundryBook(new Uint8Array(fs27.readFileSync(opts.epubPath)));
-  const bookFile2 = opts.bookPath === void 0 ? null : readBookFile(fs27.readFileSync(opts.bookPath, "utf8"), opts.bookPath);
+  const book = opts.epubPath === void 0 ? null : readFoundryBook(new Uint8Array(fs28.readFileSync(opts.epubPath)));
+  const bookFile2 = opts.bookPath === void 0 ? null : readBookFile(fs28.readFileSync(opts.bookPath, "utf8"), opts.bookPath);
   const server = await openModelServer({
     kind,
     transport,
@@ -101869,7 +101613,7 @@ async function runTranslation(opts) {
     freshRequested: opts.freshBank === true
   });
   if (records !== null) opts.log(records.sentence);
-  if (opts.sourceRecordsPath !== void 0 && !fs27.existsSync(opts.sourceRecordsPath)) {
+  if (opts.sourceRecordsPath !== void 0 && !fs28.existsSync(opts.sourceRecordsPath)) {
     throw new TranslateError(
       `${opts.sourceRecordsPath} was named as the parent of this chain and there is no file there. A missing parent is not an empty one: every block would fall back to the book's own words and this run would translate the source text as though "${opts.from ?? "the detected source"}" were what it says.`
     );
@@ -102508,7 +102252,7 @@ async function runTranslation(opts) {
       uncompressedSize: member.uncompressedSize
     };
   });
-  await fs27.promises.writeFile(opts.outPath, writeZip(entries));
+  await fs28.promises.writeFile(opts.outPath, writeZip(entries));
   if (opts.bankPath !== void 0 && bank !== null && bank.pendingPath !== null) {
     swapPendingBankIntoPlace(opts.bankPath, bank.pendingPath);
     opts.log(
@@ -102643,12 +102387,6 @@ var VLM_MODEL = {
   placeholder: "<id>",
   describe: `Which document VLM reads the pages. Default ${DEFAULT_VLM_MODEL_ID}.`
 };
-var VLM_PYTHON = {
-  name: "python",
-  type: "string",
-  placeholder: "<path>",
-  describe: "The interpreter with mlx-vlm and PyMuPDF in it. Also FOUNDRY_VLM_PYTHON."
-};
 var VLM_RENDERS = {
   name: "renders",
   type: "string",
@@ -102665,7 +102403,7 @@ var VLM_ENDPOINT = {
   name: "vlm-endpoint",
   type: "string",
   placeholder: "<url>",
-  describe: "A Crucible reads the pages instead of MLX, e.g. http://host:7100/openai/v1. It publishes the prompt, the dpi and the pixel budget; a server that does not is refused."
+  describe: "The Crucible that reads the pages, e.g. http://host:7100/openai/v1. It publishes the prompt, the dpi and the pixel budget; a server that does not is refused."
 };
 var VLM_ENDPOINT_MODEL = {
   name: "vlm-endpoint-model",
@@ -102799,12 +102537,6 @@ var BOOK_LANGUAGE = {
   type: "string",
   placeholder: "<bcp47>",
   describe: "The book's language, as a BCP-47 tag. Declared, not detected. Defaults to en."
-};
-var BOOK_PYTHON = {
-  name: "python",
-  type: "string",
-  placeholder: "<path>",
-  describe: "The interpreter with PyMuPDF in it, for the figure crops. Also FOUNDRY_VLM_PYTHON."
 };
 var VTT_IN = {
   name: "vtt",
@@ -103402,15 +103134,14 @@ async function runVlmConvert(args) {
   const endpointFromSettings = settings.backend?.mode === "endpoint" ? settings.backend.endpointUrl : void 0;
   const endpoint = fromFlagOrSettings(args, "vlm-endpoint", endpointFromSettings, "backend.endpointUrl");
   const endpointModel = endpoint === void 0 ? optionalString(args, "vlm-endpoint-model") : fromFlagOrSettings(args, "vlm-endpoint-model", settings.backend?.endpointModel, "backend.endpointModel");
-  const python = fromFlagOrSettings(args, "python", settings.backend?.python, "backend.python");
   const readingsPath = optionalString(args, "readings");
   const replaying = replaysCompletedBank({
     ...readingsPath !== void 0 ? { readingsPath } : {},
     reuseReadings
   });
-  if (!replaying && endpoint === void 0 && process.platform !== "darwin") {
+  if (!replaying && endpoint === void 0) {
     throw new Error(
-      `no reading backend for this run: the local MLX path is Apple silicon only, and no endpoint was named. Pass --vlm-endpoint <url> (a Crucible's OpenAI door), or set backend.mode to "endpoint" with backend.endpointUrl in ${settingsPath()}. \`foundry doctor\` reports what this machine has.`
+      `no reading backend for this run: every page is read by a Crucible (the local MLX reader is retired), and no endpoint was named. Pass --vlm-endpoint <url> (a Crucible's OpenAI door), or set backend.mode to "endpoint" with backend.endpointUrl in ${settingsPath()}. \`foundry doctor\` reports what this machine has.`
     );
   }
   const report = await vlmConvert({
@@ -103418,7 +103149,6 @@ async function runVlmConvert(args) {
     outPath,
     format,
     modelId: optionalString(args, "vlm-model") ?? DEFAULT_VLM_MODEL_ID,
-    ...python !== void 0 ? { python } : {},
     ...optionalString(args, "renders") ? { rendersDir: optionalString(args, "renders") } : {},
     ...endpoint !== void 0 ? { endpoint } : {},
     ...endpointModel !== void 0 ? { endpointModel } : {},
@@ -103498,10 +103228,9 @@ async function runVlmRead(args) {
   const endpointFromSettings = settings.backend?.mode === "endpoint" ? settings.backend.endpointUrl : void 0;
   const endpoint = fromFlagOrSettings(args, "vlm-endpoint", endpointFromSettings, "backend.endpointUrl");
   const endpointModel = endpoint === void 0 ? optionalString(args, "vlm-endpoint-model") : fromFlagOrSettings(args, "vlm-endpoint-model", settings.backend?.endpointModel, "backend.endpointModel");
-  const python = fromFlagOrSettings(args, "python", settings.backend?.python, "backend.python");
-  if (endpoint === void 0 && process.platform !== "darwin") {
+  if (endpoint === void 0) {
     throw new Error(
-      `no reading backend for this run: the local MLX path is Apple silicon only, and no endpoint was named. Pass --vlm-endpoint <url> (a Crucible's OpenAI door), or set backend.mode to "endpoint" with backend.endpointUrl in ${settingsPath()}. \`foundry doctor\` reports what this machine has.`
+      `no reading backend for this run: every page is read by a Crucible (the local MLX reader is retired), and no endpoint was named. Pass --vlm-endpoint <url> (a Crucible's OpenAI door), or set backend.mode to "endpoint" with backend.endpointUrl in ${settingsPath()}. \`foundry doctor\` reports what this machine has.`
     );
   }
   const report = await vlmRead({
@@ -103509,7 +103238,6 @@ async function runVlmRead(args) {
     ...pagesDir !== void 0 ? { pagesDir } : {},
     readingsPath,
     modelId: optionalString(args, "vlm-model") ?? DEFAULT_VLM_MODEL_ID,
-    ...python !== void 0 ? { python } : {},
     ...endpoint !== void 0 ? { endpoint } : {},
     ...endpointModel !== void 0 ? { endpointModel } : {},
     ...concurrency !== void 0 ? { concurrency: Number(concurrency) } : {},
@@ -103540,12 +103268,10 @@ async function runVlmRead(args) {
 async function runVlmBlocks(args) {
   const settings = loadSettings();
   const endpointFromSettings = settings.backend?.mode === "endpoint" ? settings.backend.endpointUrl : void 0;
-  const python = fromFlagOrSettings(args, "python", settings.backend?.python, "backend.python");
   const dump = await dumpBlocks({
     readingsPath: requireString(args, "readings", "the bank of page answers to read the blocks out of"),
     ...optionalString(args, "pdf") ? { pdfPath: optionalString(args, "pdf") } : {},
     modelId: optionalString(args, "vlm-model") ?? DEFAULT_VLM_MODEL_ID,
-    ...python !== void 0 ? { python } : {},
     /*
      * The one thing this flag decides is which pixel budget an OLD bank's boxes
      * were measured in, and it decides it exactly as vlm-convert does — nothing
@@ -103561,7 +103287,6 @@ async function runVlmBlocks(args) {
 async function runVlmBook(args) {
   const pdfPath = optionalString(args, "pdf");
   const pagesDir = optionalString(args, "pages");
-  const python = optionalString(args, "python");
   const epubPath = optionalString(args, "epub");
   const readingsPath = optionalString(args, "readings");
   if (epubPath !== void 0 && readingsPath !== void 0) {
@@ -103601,7 +103326,6 @@ async function runVlmBook(args) {
     // hands the engine the options object it has always been handed.
     ...pdfPath !== void 0 ? { pdfPath } : {},
     ...pagesDir !== void 0 ? { pagesDir } : {},
-    ...python !== void 0 ? { python } : {},
     log
   });
 }
@@ -103690,7 +103414,7 @@ async function runAnalyzeRankCommand(args) {
     model: requireString(args, "model", "the resident decide model"),
     log
   });
-  process.stdout.write(`${path28.resolve(outPath)}
+  process.stdout.write(`${path29.resolve(outPath)}
 `);
 }
 function defaultTranslationOut(epubPath, to) {
@@ -103726,12 +103450,12 @@ async function runTranslate(args) {
   }
   const outPath = recordsPath !== void 0 || epubPath === void 0 ? void 0 : named ?? defaultTranslationOut(epubPath, to);
   const input = epubPath ?? bookPath;
-  if (outPath !== void 0 && path28.resolve(outPath) === path28.resolve(input)) {
+  if (outPath !== void 0 && path29.resolve(outPath) === path29.resolve(input)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the one and writes the other; a book overwritten by its own translation is the single input this command cannot get back.`
     );
   }
-  if (recordsPath !== void 0 && path28.resolve(recordsPath) === path28.resolve(input)) {
+  if (recordsPath !== void 0 && path29.resolve(recordsPath) === path29.resolve(input)) {
     throw new UsageError(
       `--records ${recordsPath} is the input itself. The records file is written to; the book is not.`
     );
@@ -103824,7 +103548,7 @@ async function runTranslate(args) {
 async function runEpubFinal(args) {
   const epubPath = requireString(args, "epub", "the working book to finish");
   const outPath = requireString(args, "out", "where the final EPUB is written");
-  if (path28.resolve(outPath) === path28.resolve(epubPath)) {
+  if (path29.resolve(outPath) === path29.resolve(epubPath)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the working book and writes the edition; the working copy is where every cut lives, and a run that overwrites it cannot be run a second time.`
     );
@@ -103876,7 +103600,7 @@ async function runEpubFinal(args) {
 async function runEpubStamp(args) {
   const epubPath = requireString(args, "epub", "the book to stamp");
   const outPath = optionalString(args, "out");
-  if (outPath !== void 0 && path28.resolve(outPath) === path28.resolve(epubPath)) {
+  if (outPath !== void 0 && path29.resolve(outPath) === path29.resolve(epubPath)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the one and writes the other; a directory working copy is stamped in place and takes no --out at all.`
     );
@@ -103912,7 +103636,7 @@ function metaLine(name, value) {
 async function runEpubMeta(args) {
   const epubPath = requireString(args, "epub", "the book whose metadata is being read or written");
   const outPath = optionalString(args, "out");
-  if (outPath !== void 0 && path28.resolve(outPath) === path28.resolve(epubPath)) {
+  if (outPath !== void 0 && path29.resolve(outPath) === path29.resolve(epubPath)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the one and writes the other; a directory working copy is edited in place and takes no --out at all.`
     );
@@ -103999,7 +103723,7 @@ async function runEpubMeta(args) {
 async function runPdfMeta(args) {
   const pdfPath = requireString(args, "pdf", "the PDF whose metadata is being read or written");
   const outPath = optionalString(args, "out");
-  if (outPath !== void 0 && path28.resolve(outPath) === path28.resolve(pdfPath)) {
+  if (outPath !== void 0 && path29.resolve(outPath) === path29.resolve(pdfPath)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the one and writes the other, and this command rewrites the whole file rather than patching it, so there would be nothing left to read.`
     );
@@ -104056,21 +103780,17 @@ async function runPdfMeta(args) {
 async function runDoctor(args) {
   const settings = loadSettings();
   const endpointUrl = optionalString(args, "endpoint") ?? settings.backend?.endpointUrl ?? DEFAULT_ENDPOINT_URL;
-  const [endpoint, wslVllm, vllmLocal, mlx, rasteriser] = await Promise.all([
+  const [endpoint, wslVllm, vllmLocal] = await Promise.all([
     probeEndpoint(endpointUrl),
     probeWslVllm(settings),
-    probeVllmLocal(settings),
-    probeLocalPython("mlx_vlm", settings),
-    probeLocalPython("fitz", settings)
+    probeVllmLocal(settings)
   ]);
   const report = buildReport({
     platform: process.platform,
     mode: settings.backend?.mode ?? "auto",
     endpoint,
     wslVllm,
-    vllmLocal,
-    mlx,
-    rasteriser
+    vllmLocal
   });
   if (flag(args, "json")) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}
@@ -104084,7 +103804,7 @@ var COMMANDS = [
   {
     name: "vlm-convert",
     summary: "A vision model reads the pages: PDF in, EPUB, plain text or a real-text PDF out.",
-    usage: "--pdf <file.pdf> --out <book.epub> [--format <epub|txt|pdf>] [--vlm-model <id>] [--python <path>] [--overlay <file.json>] [--records <file.jsonl>]",
+    usage: "--pdf <file.pdf> --out <book.epub> [--format <epub|txt|pdf>] [--vlm-model <id>] [--overlay <file.json>] [--records <file.jsonl>]",
     detail: [
       "A document vision model reads each page picture and hands back marked-up",
       "text, and foundry assembles those answers into an EPUB. No Tesseract, no",
@@ -104114,26 +103834,16 @@ var COMMANDS = [
       'lets a picker select "every footnote" or "everything on page 3" in a format',
       "that has no page concept of its own.",
       "",
-      "THIS COMMAND NEEDS PYTHON. The models are MLX, which is Python, so the",
-      "pages are read by `src/vlm/vlm_page.py` in one subprocess for the whole",
-      "book \u2014 one model load, not one per page. The interpreter needs mlx-vlm and",
-      "PyMuPDF in it; pass it with --python or FOUNDRY_VLM_PYTHON, or leave it and",
-      "a `vlmtest` conda environment is looked for. Weights are pulled by mlx-vlm",
-      "into the HuggingFace cache on first use. Python is needed even with",
-      "--vlm-endpoint: the pages still have to be rasterised, and PyMuPDF is what",
-      "does it.",
+      "THE PAGES ARE READ BY A CRUCIBLE. They are rasterised here, in-process, on",
+      "MuPDF (the `mupdf` package), and sent to the server --vlm-endpoint names,",
+      "twelve at a time. There is no local reader: the MLX path is retired.",
       "",
-      "--vlm-endpoint sends the pages to a Crucible instead, twelve at a time. A",
-      "chat endpoint is right here (ARCHITECTURE \xA74): a document VLM's published",
-      "interface IS the chat template, and the MLX path reaches the same one",
-      "through apply_chat_template. WHAT A PAGE REQUEST IS, THAT SERVER SAYS \u2014",
+      "A chat endpoint is right here (ARCHITECTURE \xA74): a document VLM's published",
+      "interface IS the chat template. WHAT A PAGE REQUEST IS, THAT SERVER SAYS \u2014",
       "the prompt, the dpi, the pixel budget, the token ceiling and the dialect",
       "all come off its GET /v1/info, because they are facts about the weights",
       "and a second copy here would read the book worse the day it drifted. A",
       "server that publishes no such contract is refused before the first page.",
-      "On MLX nothing is asked of anybody: this machine holds the weights, so the",
-      "pixel budget is capped at 2,000,000 \u2014 halving the per-page cost \u2014 and that",
-      "is the same number the boxes are scaled with.",
       "",
       "--readings banks every answer as it lands and re-reads only what is",
       "missing, so a killed run costs one page and a change to the parser or the",
@@ -104251,7 +103961,7 @@ var COMMANDS = [
       "and is unchanged by it: that route forks before notes exist and writes no",
       "data-bf attributes, so its cast and its edition are the same file.",
       "",
-      "Pages are rendered by PyMuPDF at 200 dpi. That is the resolution the models",
+      "Pages are rendered by MuPDF at 200 dpi. That is the resolution the models",
       "were measured at and it is not a setting (ARCHITECTURE \xA75).",
       "",
       "What comes out is an ordinary EPUB3: one XHTML document per chapter, a nav",
@@ -104373,7 +104083,6 @@ var COMMANDS = [
       OUT_PATH,
       VLM_FORMAT,
       VLM_MODEL,
-      VLM_PYTHON,
       VLM_RENDERS,
       VLM_LANGUAGE,
       VLM_ENDPOINT,
@@ -104511,7 +104220,7 @@ var COMMANDS = [
       "package's own dc:language rather than defaulting over it, and neither",
       "--pdf nor --pages has anything to cut."
     ].join("\n"),
-    options: [BOOK_READINGS, BOOK_EPUB, BOOK_OUT, BOOK_PDF, BOOK_PAGES, BOOK_LANGUAGE, BOOK_PYTHON],
+    options: [BOOK_READINGS, BOOK_EPUB, BOOK_OUT, BOOK_PDF, BOOK_PAGES, BOOK_LANGUAGE],
     run: runVlmBook
   },
   {
@@ -104668,7 +104377,7 @@ var COMMANDS = [
   {
     name: "vlm-read",
     summary: "Read a PDF into a readings bank with a document VLM. No book is written.",
-    usage: "--pdf <file.pdf> --readings <file.jsonl> [--vlm-model <id>] [--vlm-endpoint <url>] [--skip-pages <3,17,19-24>] [--language <bcp47>] [--python <path>]",
+    usage: "--pdf <file.pdf> --readings <file.jsonl> [--vlm-model <id>] [--vlm-endpoint <url>] [--skip-pages <3,17,19-24>] [--language <bcp47>]",
     detail: [
       "THE READING IS THE PRODUCT. This command renders every page at 200 dpi,",
       "asks the model for it, and appends the answer to --readings as it lands.",
@@ -104727,7 +104436,6 @@ var COMMANDS = [
       PAGES_IN,
       VR_READINGS,
       VLM_MODEL,
-      VLM_PYTHON,
       VLM_RENDERS,
       VR_LANGUAGE,
       VLM_ENDPOINT,
@@ -104743,7 +104451,7 @@ var COMMANDS = [
   {
     name: "vlm-blocks",
     summary: "Print the blocks of a banked reading as JSON: page, order, part, category, box, text.",
-    usage: "--readings <file.jsonl> [--pdf <file.pdf>] [--vlm-model <id>] [--python <path>]",
+    usage: "--readings <file.jsonl> [--pdf <file.pdf>] [--vlm-model <id>]",
     detail: [
       "The blocks a conversion would build its book out of, as data on stdout,",
       "for something with a screen to draw. It reads a --readings bank and parses",
@@ -104773,7 +104481,7 @@ var COMMANDS = [
       "A BOX ONLY MEANS SOMETHING IN A FRAME, and the frame is the render size and",
       "the pixel budget together. A bank written by this version records both",
       "beside every answer, and then this command needs nothing else \u2014 no PDF, no",
-      "rasteriser, no Python. A bank written before it does not, so --pdf is asked",
+      "rasteriser. A bank written before it does not, so --pdf is asked",
       "for and the pages are rasterised again at 200 dpi to measure them; the",
       "renders are thrown away as they are made. Each page in the output says",
       "which of the two it got its geometry from.",
@@ -104798,7 +104506,7 @@ var COMMANDS = [
       "The output is versioned JSON. Machine-consumed: fields are added, never",
       "renamed, without a version bump."
     ].join("\n"),
-    options: [VB_READINGS, VB_PDF_IN, VLM_MODEL, VLM_PYTHON, VLM_ENDPOINT],
+    options: [VB_READINGS, VB_PDF_IN, VLM_MODEL, VLM_ENDPOINT],
     run: runVlmBlocks
   },
   {
@@ -105886,7 +105594,7 @@ var COMMANDS = [
     usage: "[--json] [--endpoint <url>]",
     detail: [
       "Answers one question: where would vlm-convert read pages RIGHT NOW, and",
-      "why not anywhere faster? Four probes, concurrent, each reported with a",
+      "why not anywhere faster? Three probes, concurrent, each reported with a",
       "detail a person can act on:",
       "",
       "  endpoint    GET <url>/models on the OpenAI-compatible server. The first",
@@ -105895,20 +105603,18 @@ var COMMANDS = [
       "              settings URL, else http://localhost:8000/v1 (vLLM's default).",
       "  wsl-vllm    (Windows) a WSL distro whose named interpreter can import",
       "              vllm \u2014 a server COULD be started there. Nothing is started.",
-      "  mlx         (Apple silicon) a local interpreter can import mlx_vlm.",
-      "  rasteriser  a local interpreter can import fitz (PyMuPDF). EVERY run",
-      "              needs this one, endpoint or not: the pages render locally.",
+      "  vllm-local  (Linux) a named interpreter can import vllm.",
       "",
       "The chosen tier follows the settings mode (auto: first available;",
-      "endpoint/mlx: that tier or nothing). It NAMES and never degrades: an",
+      "endpoint: that tier or nothing). It NAMES and never degrades: an",
       "explicit mode whose tier is down chooses null and the detail says what to",
       "fix \u2014 the next tier down is 10-100x slower and is not a thing to slide",
       "into silently.",
       "",
       `Settings are read from ${settingsPath()}`,
       "(FOUNDRY_CONFIG_DIR overrides the directory). Recognised keys, all under",
-      '"backend": mode (auto|endpoint|mlx), endpointUrl, endpointModel,',
-      "wslDistro, vllmPython, python, endpointHeaders. Flags beat settings",
+      '"backend": mode (auto|endpoint), endpointUrl, endpointModel,',
+      "wslDistro, vllmPython, endpointHeaders. Flags beat settings",
       "everywhere; a value a setting supplied is logged on the runs that use it.",
       "",
       "endpointHeaders is the exception to that last sentence and the only key",
@@ -105997,9 +105703,8 @@ function topLevelHelp() {
     "  vlm-convert --pdf \u2026 --out book.epub",
     "",
     "  A document vision model reads each page image and writes marked-up text,",
-    "  and foundry assembles the answers into an EPUB. It needs a Python with",
-    "  PyMuPDF (and mlx-vlm for the local MLX path); --vlm-endpoint sends the",
-    "  pages to a Crucible instead, which publishes what a page request is.",
+    "  and foundry assembles the answers into an EPUB. --vlm-endpoint names the",
+    "  Crucible that reads the pages, and it publishes what a page request is.",
     "",
     "Global options:",
     formatOptionsBlock(),

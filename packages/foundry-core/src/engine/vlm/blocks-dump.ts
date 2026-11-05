@@ -124,8 +124,6 @@ export interface BlocksDumpOptions {
   /** Only needed where the bank recorded no geometry. Never written to. */
   pdfPath?: string;
   modelId: string;
-  /** Interpreter for the render pass, when there has to be one. */
-  python?: string;
   /**
    * The pages were read through a server rather than through MLX.
    *
@@ -286,8 +284,8 @@ function record(block: DotsBlock): BlockRecord {
  * renders with.
  *
  * Not computed from the page's size in points, which would be the obvious cheap
- * answer and would be wrong by a pixel or two: the render is PyMuPDF's, its
- * rounding is PyMuPDF's, and a frame that differs from the one the model was
+ * answer and would be wrong by a pixel or two: the render is MuPDF's, its
+ * rounding is MuPDF's, and a frame that differs from the one the model was
  * shown puts every box slightly off. The renders themselves are thrown away as
  * they are made — no directory is passed, so the helper deletes each image after
  * measuring it, which is the behaviour the endpoint route already relies on.
@@ -317,7 +315,6 @@ async function renderSizes(
     model,
     dpi: VLM_DPI,
     renderOnly: true,
-    ...(opts.python !== undefined ? { python: opts.python } : {}),
     ...(fallbackBudget !== undefined ? { maxPixels: fallbackBudget } : {}),
   });
   return new Map(run.pages.map((page) => [page.number, { width: page.width, height: page.height }]));

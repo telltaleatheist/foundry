@@ -55,7 +55,7 @@
  *
  * ── It does not stop generation, and cannot ────────────────────────────────
  *
- * Neither path streams: `vlm_page.py` calls mlx-vlm's `generate` and waits, and
+ * Neither path streamed: the retired MLX path called mlx-vlm's `generate` and waited, and
  * `endpoint.ts` posts and waits. So this judges a FINISHED answer and cannot
  * abort one mid-flight. It saves no inference time — it prevents nonsense from
  * entering a book. If a streaming path ever arrives, this function is already

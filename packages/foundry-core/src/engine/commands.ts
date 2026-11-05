@@ -37,7 +37,7 @@ import { epubFinal } from './epub/final.js';
 import { epubMeta, EPUB_META_FIELDS, type EpubMetaField } from './epub/meta.js';
 import { epubStamp } from './epub/stamp.js';
 import { pdfMeta, PDF_META_FIELDS, type PdfMetaField } from './pdf/meta.js';
-import { probeEndpoint, probeLocalPython, probeVllmLocal, probeWslVllm } from './backend/probe.js';
+import { probeEndpoint, probeVllmLocal, probeWslVllm } from './backend/probe.js';
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { dumpBlocks } from './vlm/blocks-dump.js';
 import { analyzeBook } from './analyze/run.js';
@@ -219,13 +219,6 @@ const VLM_MODEL: OptionSpec = {
   describe: `Which document VLM reads the pages. Default ${DEFAULT_VLM_MODEL_ID}.`,
 };
 
-const VLM_PYTHON: OptionSpec = {
-  name: 'python',
-  type: 'string',
-  placeholder: '<path>',
-  describe: 'The interpreter with mlx-vlm and PyMuPDF in it. Also FOUNDRY_VLM_PYTHON.',
-};
-
 const VLM_RENDERS: OptionSpec = {
   name: 'renders',
   type: 'string',
@@ -244,7 +237,7 @@ const VLM_ENDPOINT: OptionSpec = {
   name: 'vlm-endpoint',
   type: 'string',
   placeholder: '<url>',
-  describe: 'A Crucible reads the pages instead of MLX, e.g. http://host:7100/openai/v1. It '
+  describe: 'The Crucible that reads the pages, e.g. http://host:7100/openai/v1. It '
     + 'publishes the prompt, the dpi and the pixel budget; a server that does not is refused.',
 };
 
@@ -507,13 +500,6 @@ const BOOK_LANGUAGE: OptionSpec = {
   type: 'string',
   placeholder: '<bcp47>',
   describe: 'The book\'s language, as a BCP-47 tag. Declared, not detected. Defaults to en.',
-};
-
-const BOOK_PYTHON: OptionSpec = {
-  name: 'python',
-  type: 'string',
-  placeholder: '<path>',
-  describe: 'The interpreter with PyMuPDF in it, for the figure crops. Also FOUNDRY_VLM_PYTHON.',
 };
 
 // ── vtt-book ─────────────────────────────────────────────────────────────────
@@ -1549,13 +1535,12 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
   const endpointModel = endpoint === undefined
     ? optionalString(args, 'vlm-endpoint-model')
     : fromFlagOrSettings(args, 'vlm-endpoint-model', settings.backend?.endpointModel, 'backend.endpointModel');
-  const python = fromFlagOrSettings(args, 'python', settings.backend?.python, 'backend.python');
 
   /*
-   * Refused before a page renders: off macOS the only reading path is an
-   * endpoint, and letting a run that must read proceed without one ends in "no
-   * Python with MLX was found" — a true sentence that points a Windows user at
-   * entirely the wrong problem.
+   * Refused before a page renders: the only reading path is an endpoint — the
+   * local MLX reader is retired (2026-11-04) — and letting a run that must read
+   * proceed without one would end in a refusal about a page instead of the true
+   * sentence about the machine.
    *
    * ASKED ONLY OF A RUN THAT WILL ACTUALLY READ, and that condition is the whole
    * of this comment. `--reuse-readings` over a bank a run completed is a
@@ -1597,10 +1582,10 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     ...(readingsPath !== undefined ? { readingsPath } : {}),
     reuseReadings,
   });
-  if (!replaying && endpoint === undefined && process.platform !== 'darwin') {
+  if (!replaying && endpoint === undefined) {
     throw new Error(
-      'no reading backend for this run: the local MLX path is Apple silicon only, and no endpoint '
-      + 'was named. Pass --vlm-endpoint <url> (a Crucible\'s OpenAI door), or set backend.mode to '
+      'no reading backend for this run: every page is read by a Crucible (the local MLX reader is '
+      + 'retired), and no endpoint was named. Pass --vlm-endpoint <url> (a Crucible\'s OpenAI door), or set backend.mode to '
       + `"endpoint" with backend.endpointUrl in ${settingsPath()}. `
       + '`foundry doctor` reports what this machine has.',
     );
@@ -1611,7 +1596,6 @@ async function runVlmConvert(args: ParsedArgs): Promise<void> {
     outPath,
     format,
     modelId: optionalString(args, 'vlm-model') ?? DEFAULT_VLM_MODEL_ID,
-    ...(python !== undefined ? { python } : {}),
     ...(optionalString(args, 'renders') ? { rendersDir: optionalString(args, 'renders')! } : {}),
     ...(endpoint !== undefined ? { endpoint } : {}),
     ...(endpointModel !== undefined ? { endpointModel } : {}),
@@ -1755,16 +1739,14 @@ async function runVlmRead(args: ParsedArgs): Promise<void> {
   const endpointModel = endpoint === undefined
     ? optionalString(args, 'vlm-endpoint-model')
     : fromFlagOrSettings(args, 'vlm-endpoint-model', settings.backend?.endpointModel, 'backend.endpointModel');
-  const python = fromFlagOrSettings(args, 'python', settings.backend?.python, 'backend.python');
 
-  // The same refusal vlm-convert makes, for the same reason: off macOS the only
-  // reading path is an endpoint, and a run allowed to proceed without one ends
-  // in "no Python with MLX was found", which points a Windows user at entirely
-  // the wrong problem.
-  if (endpoint === undefined && process.platform !== 'darwin') {
+  // The same refusal vlm-convert makes, for the same reason: the only reading
+  // path is an endpoint, and a run allowed to proceed without one would be
+  // refused later with a sentence about a page instead of about the machine.
+  if (endpoint === undefined) {
     throw new Error(
-      'no reading backend for this run: the local MLX path is Apple silicon only, and no endpoint '
-      + 'was named. Pass --vlm-endpoint <url> (a Crucible\'s OpenAI door), or set backend.mode to '
+      'no reading backend for this run: every page is read by a Crucible (the local MLX reader is '
+      + 'retired), and no endpoint was named. Pass --vlm-endpoint <url> (a Crucible\'s OpenAI door), or set backend.mode to '
       + `"endpoint" with backend.endpointUrl in ${settingsPath()}. `
       + '`foundry doctor` reports what this machine has.',
     );
@@ -1775,7 +1757,6 @@ async function runVlmRead(args: ParsedArgs): Promise<void> {
     ...(pagesDir !== undefined ? { pagesDir } : {}),
     readingsPath,
     modelId: optionalString(args, 'vlm-model') ?? DEFAULT_VLM_MODEL_ID,
-    ...(python !== undefined ? { python } : {}),
     ...(endpoint !== undefined ? { endpoint } : {}),
     ...(endpointModel !== undefined ? { endpointModel } : {}),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
@@ -1827,13 +1808,11 @@ async function runVlmBlocks(args: ParsedArgs): Promise<void> {
   const settings: FoundrySettings = loadSettings();
   const endpointFromSettings =
     settings.backend?.mode === 'endpoint' ? settings.backend.endpointUrl : undefined;
-  const python = fromFlagOrSettings(args, 'python', settings.backend?.python, 'backend.python');
 
   const dump = await dumpBlocks({
     readingsPath: requireString(args, 'readings', 'the bank of page answers to read the blocks out of'),
     ...(optionalString(args, 'pdf') ? { pdfPath: optionalString(args, 'pdf')! } : {}),
     modelId: optionalString(args, 'vlm-model') ?? DEFAULT_VLM_MODEL_ID,
-    ...(python !== undefined ? { python } : {}),
     /*
      * The one thing this flag decides is which pixel budget an OLD bank's boxes
      * were measured in, and it decides it exactly as vlm-convert does — nothing
@@ -1859,7 +1838,6 @@ async function runVlmBook(args: ParsedArgs): Promise<void> {
    * refusal for the read's two flags.
    */
   const pagesDir = optionalString(args, 'pages');
-  const python = optionalString(args, 'python');
   /*
    * ── WHICH SOURCE, and exactly one of them ──────────────────────────────────
    *
@@ -1910,7 +1888,6 @@ async function runVlmBook(args: ParsedArgs): Promise<void> {
     // hands the engine the options object it has always been handed.
     ...(pdfPath !== undefined ? { pdfPath } : {}),
     ...(pagesDir !== undefined ? { pagesDir } : {}),
-    ...(python !== undefined ? { python } : {}),
     log,
   });
 }
@@ -2783,12 +2760,10 @@ async function runDoctor(args: ParsedArgs): Promise<void> {
    * the WSL probe alone can take ten seconds when a distro has to boot, and
    * nothing about the endpoint answer depends on it.
    */
-  const [endpoint, wslVllm, vllmLocal, mlx, rasteriser] = await Promise.all([
+  const [endpoint, wslVllm, vllmLocal] = await Promise.all([
     probeEndpoint(endpointUrl),
     probeWslVllm(settings),
     probeVllmLocal(settings),
-    probeLocalPython('mlx_vlm', settings),
-    probeLocalPython('fitz', settings),
   ]);
 
   const report = buildReport({
@@ -2797,8 +2772,6 @@ async function runDoctor(args: ParsedArgs): Promise<void> {
     endpoint,
     wslVllm,
     vllmLocal,
-    mlx,
-    rasteriser,
   });
 
   // The report is the RESULT, so it goes to stdout — both shapes of it. The
@@ -2820,7 +2793,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'vlm-convert',
     summary: 'A vision model reads the pages: PDF in, EPUB, plain text or a real-text PDF out.',
     usage: '--pdf <file.pdf> --out <book.epub> [--format <epub|txt|pdf>] [--vlm-model <id>]'
-      + ' [--python <path>] [--overlay <file.json>] [--records <file.jsonl>]',
+      + ' [--overlay <file.json>] [--records <file.jsonl>]',
     detail: [
       'A document vision model reads each page picture and hands back marked-up',
       'text, and foundry assembles those answers into an EPUB. No Tesseract, no',
@@ -2851,26 +2824,16 @@ export const COMMANDS: readonly Command[] = [
       'lets a picker select "every footnote" or "everything on page 3" in a format',
       'that has no page concept of its own.',
       '',
-      'THIS COMMAND NEEDS PYTHON. The models are MLX, which is Python, so the',
-      'pages are read by `src/vlm/vlm_page.py` in one subprocess for the whole',
-      'book — one model load, not one per page. The interpreter needs mlx-vlm and',
-      'PyMuPDF in it; pass it with --python or FOUNDRY_VLM_PYTHON, or leave it and',
-      'a `vlmtest` conda environment is looked for. Weights are pulled by mlx-vlm',
-      'into the HuggingFace cache on first use. Python is needed even with',
-      '--vlm-endpoint: the pages still have to be rasterised, and PyMuPDF is what',
-      'does it.',
+      'THE PAGES ARE READ BY A CRUCIBLE. They are rasterised here, in-process, on',
+      'MuPDF (the `mupdf` package), and sent to the server --vlm-endpoint names,',
+      'twelve at a time. There is no local reader: the MLX path is retired.',
       '',
-      '--vlm-endpoint sends the pages to a Crucible instead, twelve at a time. A',
-      'chat endpoint is right here (ARCHITECTURE §4): a document VLM\'s published',
-      'interface IS the chat template, and the MLX path reaches the same one',
-      'through apply_chat_template. WHAT A PAGE REQUEST IS, THAT SERVER SAYS —',
+      'A chat endpoint is right here (ARCHITECTURE §4): a document VLM\'s published',
+      'interface IS the chat template. WHAT A PAGE REQUEST IS, THAT SERVER SAYS —',
       'the prompt, the dpi, the pixel budget, the token ceiling and the dialect',
       'all come off its GET /v1/info, because they are facts about the weights',
       'and a second copy here would read the book worse the day it drifted. A',
       'server that publishes no such contract is refused before the first page.',
-      'On MLX nothing is asked of anybody: this machine holds the weights, so the',
-      'pixel budget is capped at 2,000,000 — halving the per-page cost — and that',
-      'is the same number the boxes are scaled with.',
       '',
       '--readings banks every answer as it lands and re-reads only what is',
       'missing, so a killed run costs one page and a change to the parser or the',
@@ -2988,7 +2951,7 @@ export const COMMANDS: readonly Command[] = [
       'and is unchanged by it: that route forks before notes exist and writes no',
       'data-bf attributes, so its cast and its edition are the same file.',
       '',
-      'Pages are rendered by PyMuPDF at 200 dpi. That is the resolution the models',
+      'Pages are rendered by MuPDF at 200 dpi. That is the resolution the models',
       'were measured at and it is not a setting (ARCHITECTURE §5).',
       '',
       'What comes out is an ordinary EPUB3: one XHTML document per chapter, a nav',
@@ -3106,7 +3069,7 @@ export const COMMANDS: readonly Command[] = [
       'silently ignored is a book somebody believes is the translation.',
     ].join('\n'),
     options: [
-      PDF_IN, OUT_PATH, VLM_FORMAT, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VLM_LANGUAGE,
+      PDF_IN, OUT_PATH, VLM_FORMAT, VLM_MODEL, VLM_RENDERS, VLM_LANGUAGE,
       VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_FIXED_CAP, VLM_READINGS,
       VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
       VLM_OVERLAY, VLM_CHAPTERS, VLM_STRIP_MARKERS, VLM_FINAL, VLM_RECORDS,
@@ -3232,7 +3195,7 @@ export const COMMANDS: readonly Command[] = [
       'package\'s own dc:language rather than defaulting over it, and neither',
       '--pdf nor --pages has anything to cut.',
     ].join('\n'),
-    options: [BOOK_READINGS, BOOK_EPUB, BOOK_OUT, BOOK_PDF, BOOK_PAGES, BOOK_LANGUAGE, BOOK_PYTHON],
+    options: [BOOK_READINGS, BOOK_EPUB, BOOK_OUT, BOOK_PDF, BOOK_PAGES, BOOK_LANGUAGE],
     run: runVlmBook,
   },
   {
@@ -3386,7 +3349,7 @@ export const COMMANDS: readonly Command[] = [
     name: 'vlm-read',
     summary: 'Read a PDF into a readings bank with a document VLM. No book is written.',
     usage: '--pdf <file.pdf> --readings <file.jsonl> [--vlm-model <id>] [--vlm-endpoint <url>]'
-      + ' [--skip-pages <3,17,19-24>] [--language <bcp47>] [--python <path>]',
+      + ' [--skip-pages <3,17,19-24>] [--language <bcp47>]',
     detail: [
       'THE READING IS THE PRODUCT. This command renders every page at 200 dpi,',
       'asks the model for it, and appends the answer to --readings as it lands.',
@@ -3441,7 +3404,7 @@ export const COMMANDS: readonly Command[] = [
       'real GPU. What never happens is a page quietly guessed at.',
     ].join('\n'),
     options: [
-      PDF_IN, PAGES_IN, VR_READINGS, VLM_MODEL, VLM_PYTHON, VLM_RENDERS, VR_LANGUAGE,
+      PDF_IN, PAGES_IN, VR_READINGS, VLM_MODEL, VLM_RENDERS, VR_LANGUAGE,
       VLM_ENDPOINT, VLM_ENDPOINT_MODEL, VLM_CONCURRENCY, VLM_FIXED_CAP,
       VLM_FRESH_READINGS, VLM_REUSE_READINGS, VLM_SKIP_PAGES,
     ],
@@ -3450,7 +3413,7 @@ export const COMMANDS: readonly Command[] = [
   {
     name: 'vlm-blocks',
     summary: 'Print the blocks of a banked reading as JSON: page, order, part, category, box, text.',
-    usage: '--readings <file.jsonl> [--pdf <file.pdf>] [--vlm-model <id>] [--python <path>]',
+    usage: '--readings <file.jsonl> [--pdf <file.pdf>] [--vlm-model <id>]',
     detail: [
       'The blocks a conversion would build its book out of, as data on stdout,',
       'for something with a screen to draw. It reads a --readings bank and parses',
@@ -3480,7 +3443,7 @@ export const COMMANDS: readonly Command[] = [
       'A BOX ONLY MEANS SOMETHING IN A FRAME, and the frame is the render size and',
       'the pixel budget together. A bank written by this version records both',
       'beside every answer, and then this command needs nothing else — no PDF, no',
-      'rasteriser, no Python. A bank written before it does not, so --pdf is asked',
+      'rasteriser. A bank written before it does not, so --pdf is asked',
       'for and the pages are rasterised again at 200 dpi to measure them; the',
       'renders are thrown away as they are made. Each page in the output says',
       'which of the two it got its geometry from.',
@@ -3505,7 +3468,7 @@ export const COMMANDS: readonly Command[] = [
       'The output is versioned JSON. Machine-consumed: fields are added, never',
       'renamed, without a version bump.',
     ].join('\n'),
-    options: [VB_READINGS, VB_PDF_IN, VLM_MODEL, VLM_PYTHON, VLM_ENDPOINT],
+    options: [VB_READINGS, VB_PDF_IN, VLM_MODEL, VLM_ENDPOINT],
     run: runVlmBlocks,
   },
   {
@@ -4574,7 +4537,7 @@ export const COMMANDS: readonly Command[] = [
     usage: '[--json] [--endpoint <url>]',
     detail: [
       'Answers one question: where would vlm-convert read pages RIGHT NOW, and',
-      'why not anywhere faster? Four probes, concurrent, each reported with a',
+      'why not anywhere faster? Three probes, concurrent, each reported with a',
       'detail a person can act on:',
       '',
       '  endpoint    GET <url>/models on the OpenAI-compatible server. The first',
@@ -4583,20 +4546,18 @@ export const COMMANDS: readonly Command[] = [
       '              settings URL, else http://localhost:8000/v1 (vLLM\'s default).',
       '  wsl-vllm    (Windows) a WSL distro whose named interpreter can import',
       '              vllm — a server COULD be started there. Nothing is started.',
-      '  mlx         (Apple silicon) a local interpreter can import mlx_vlm.',
-      '  rasteriser  a local interpreter can import fitz (PyMuPDF). EVERY run',
-      '              needs this one, endpoint or not: the pages render locally.',
+      '  vllm-local  (Linux) a named interpreter can import vllm.',
       '',
       'The chosen tier follows the settings mode (auto: first available;',
-      'endpoint/mlx: that tier or nothing). It NAMES and never degrades: an',
+      'endpoint: that tier or nothing). It NAMES and never degrades: an',
       'explicit mode whose tier is down chooses null and the detail says what to',
       'fix — the next tier down is 10-100x slower and is not a thing to slide',
       'into silently.',
       '',
       `Settings are read from ${settingsPath()}`,
       '(FOUNDRY_CONFIG_DIR overrides the directory). Recognised keys, all under',
-      '"backend": mode (auto|endpoint|mlx), endpointUrl, endpointModel,',
-      'wslDistro, vllmPython, python, endpointHeaders. Flags beat settings',
+      '"backend": mode (auto|endpoint), endpointUrl, endpointModel,',
+      'wslDistro, vllmPython, endpointHeaders. Flags beat settings',
       'everywhere; a value a setting supplied is logged on the runs that use it.',
       '',
       'endpointHeaders is the exception to that last sentence and the only key',

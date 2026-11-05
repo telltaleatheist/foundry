@@ -22,11 +22,14 @@ import * as path from 'node:path';
 import { stripBom } from '../bom.js';
 
 /** How the reading backend is picked. */
-export const BACKEND_MODES = ['auto', 'endpoint', 'mlx'] as const;
+export const BACKEND_MODES = ['auto', 'endpoint'] as const;
 export type BackendMode = (typeof BACKEND_MODES)[number];
 
 export interface BackendSettings {
-  /** auto: first available tier wins. endpoint/mlx: that tier or a loud error. */
+  /**
+   * auto: first available tier wins. endpoint: that tier or a loud error. ("mlx",
+   * the local reader, is retired — 2026-11-04 — and is refused like any unknown mode.)
+   */
   mode?: BackendMode;
   /** The OpenAI-compatible server vlm-convert reads through (e.g. vLLM). */
   endpointUrl?: string;
@@ -36,8 +39,6 @@ export interface BackendSettings {
   wslDistro?: string;
   /** Interpreter inside WSL with vllm importable. Default: named candidates. */
   vllmPython?: string;
-  /** Local interpreter with PyMuPDF (and mlx-vlm on Apple silicon). Same as --python. */
-  python?: string;
   /**
    * Headers every request to `endpointUrl` carries — an opaque map, validated
    * but never interpreted. This is the FALLBACK path, for a person running the
@@ -153,7 +154,6 @@ export function loadSettings(): FoundrySettings {
   if (b['endpointModel'] !== undefined) backend.endpointModel = requireString(b['endpointModel'], 'backend.endpointModel');
   if (b['wslDistro'] !== undefined) backend.wslDistro = requireString(b['wslDistro'], 'backend.wslDistro');
   if (b['vllmPython'] !== undefined) backend.vllmPython = requireString(b['vllmPython'], 'backend.vllmPython');
-  if (b['python'] !== undefined) backend.python = requireString(b['python'], 'backend.python');
   if (b['endpointHeaders'] !== undefined) {
     const raw = b['endpointHeaders'];
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {

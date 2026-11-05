@@ -173,7 +173,7 @@ export function renderPath(dir: string, page: number): string {
  * many pages the book has until the PDF is opened, so a resume is a run that
  * intends to read whatever is missing, and it needs a backend for it. Being
  * wrong in that direction costs a refusal somebody can act on; being wrong in
- * the other costs a run that dies inside Python with the wrong sentence.
+ * the other costs a run that dies mid-render with the wrong sentence.
  *
  * A bank with no answers in it is still true here, and deliberately:
  * `openReadingsBank` refuses `--reuse-readings` over an empty bank in its own
@@ -255,7 +255,6 @@ export interface ReadPhaseOptions {
    * this run actually used and is what a caller must read afterwards.
    */
   maxPixels: number | undefined;
-  python?: string;
   endpoint?: string;
   endpointModel?: string;
   concurrency?: number;
@@ -288,7 +287,7 @@ export interface ReadPhaseOptions {
   language?: string;
   log: (message: string) => void;
   /**
-   * The subprocess and the socket, swappable.
+   * The rasteriser and the socket, swappable.
    *
    * Here for one reason: THE PROMISE THIS FILE MAKES ABOUT A REPLAY IS A PROMISE
    * ABOUT WHAT IT ASKS FOR — that a run over a complete bank loads no model and
@@ -346,10 +345,9 @@ export interface ReadPhase {
  *
  * The order is the order of what things cost. The bank is opened and its verdict
  * PRINTED before a page is rendered, so the log of a forty-minute run opens by
- * saying whether that run is going to read the book or replay it. Then one
- * subprocess renders the whole book — one model load, not one per page — and
- * either reads it on this machine or leaves the PNGs for the endpoint pass to
- * post. Every answer is appended and fsynced the moment it exists, so a kill
+ * saying whether that run is going to read the book or replay it. Then the
+ * rasteriser renders the whole book and leaves the PNGs for the endpoint pass to
+ * post (the local MLX reader that once read them here is retired). Every answer is appended and fsynced the moment it exists, so a kill
  * costs the page that was in flight and nothing else.
  */
 export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPhase> {
@@ -484,7 +482,7 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
    * A recorded mode is one an EARLIER run of this book chose — read here, keyed
    * by the bank (the PDF's sha), and handed to the helper so a RESUME snaps to
    * the SAME grid rather than recomputing the mode off whatever page subset it
-   * renders this time (`readings.ts`, `vlm_page.py`). On a first run there is
+   * renders this time (`readings.ts`, `raster.ts`). On a first run there is
    * none: the helper computes it, reports it in the document event, and it is
    * recorded there and then — before pages are rendered, so an interrupted first
    * run still leaves it for its resume. A run with no bank never records one and
@@ -498,7 +496,6 @@ export async function readPagesIntoBank(opts: ReadPhaseOptions): Promise<ReadPha
     source: opts.source,
     model,
     dpi: contract !== null ? contract.dpi : VLM_DPI,
-    ...(opts.python ? { python: opts.python } : {}),
     ...(geometric || viaEndpoint || opts.keepRenders ? { rendersDir } : {}),
     ...(maxPixels !== undefined ? { maxPixels } : {}),
     // Snap near-identical pages onto one grid so a batching server sees one deep
@@ -1008,7 +1005,6 @@ export interface VlmReadOptions {
   /** WHERE THE READING GOES. Required: it is the whole product of this command. */
   readingsPath: string;
   modelId: string;
-  python?: string;
   endpoint?: string;
   endpointModel?: string;
   concurrency?: number;
@@ -1040,7 +1036,7 @@ export interface VlmReadOptions {
    */
   language?: string;
   log: (message: string) => void;
-  /** The subprocess and the socket, swappable — see `ReadPhaseOptions.bridge`. */
+  /** The rasteriser and the socket, swappable — see `ReadPhaseOptions.bridge`. */
   bridge?: VlmBridge;
 }
 
@@ -1168,7 +1164,6 @@ export async function vlmRead(opts: VlmReadOptions): Promise<VlmReadReport> {
       maxPixels: localBudget,
       skipPages,
       readingsPath,
-      ...(opts.python !== undefined ? { python: opts.python } : {}),
       ...(opts.endpoint !== undefined ? { endpoint: opts.endpoint } : {}),
       ...(opts.endpointModel !== undefined ? { endpointModel: opts.endpointModel } : {}),
       ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),

@@ -194,14 +194,14 @@ export function forgetSettingsHeaders(): void {
  * A child's environment with the map taken out.
  *
  * Every `spawn` in this program that does not itself speak to the endpoint gets
- * its environment through here. The rasteriser is the case that motivated it:
- * `vlm_page.py` renders pages and runs MLX locally and makes no HTTP request at
- * all, so a credential in its environment is a credential somewhere it can
- * never be used and could only leak from.
+ * its environment through here. The rasteriser was the case that motivated it
+ * (the retired `vlm_page.py`, which rendered pages and ran MLX locally and made
+ * no HTTP request at all): a credential in such a child's environment is a
+ * credential somewhere it can never be used and could only leak from.
  *
  * STRIPPING, NOT ALLOWLISTING, and the difference matters. An allowlist of
  * variables to pass breaks the moment somebody adds a fourth spawn or the
- * Python needs a variable nobody listed, and the repair for that is always to
+ * child needs a variable nobody listed, and the repair for that is always to
  * pass everything again — which puts the secret back. Removing one known name
  * cannot break a child that never wanted it.
  */

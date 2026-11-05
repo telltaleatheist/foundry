@@ -1,8 +1,9 @@
 /**
  * vlm/endpoint — reading the pages on somebody else's GPU.
  *
- * The MLX path holds the model in one Python process on this machine and reads
- * the pages one at a time, because that is what Apple silicon can do. A vLLM
+ * The (now retired) MLX path held the model in one Python process on this
+ * machine and read the pages one at a time, because that is what Apple silicon
+ * can do. A vLLM
  * server on a 3090 reads twelve at a time and is an order of magnitude faster
  * per book, and it speaks the OpenAI chat-completions shape. `--vlm-endpoint`
  * points at one; everything else about the run is identical, and deliberately

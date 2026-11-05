@@ -206,7 +206,7 @@ export interface DotsCropped {
 }
 
 /**
- * The page renders `vlm_page.py` left on disk, as far as the assembler is
+ * The page renders the rasteriser left on disk, as far as the assembler is
  * concerned.
  *
  * A NAMED SEAM RATHER THAN A BARE OBJECT, and it is worth keeping as one even
@@ -214,7 +214,7 @@ export interface DotsCropped {
  * one at a time — a 300-page book at 200 dpi is 800 MB of them — and that half
  * of it went with the ink test. What it still marks is the boundary the
  * assembler does not cross: everything above this line is arithmetic over
- * banked answers, and everything past it is a subprocess reaching for pixels.
+ * banked answers, and everything past it is the rasteriser reaching for pixels.
  * A test hands over a crop function that returns nothing and gets a whole book
  * out of it, which is the property that boundary exists to preserve.
  */
@@ -4027,7 +4027,7 @@ export async function buildDotsBook(opts: DotsBookOptions): Promise<DotsBookResu
   /*
    * The pictures are cropped for the format that can hold one.
    *
-   * A crop reaches back into the page renders through a subprocess, and its
+   * A crop reaches back into the page renders through the rasteriser, and its
    * entire product is a PNG inside the EPUB's container. A text book has no
    * container to put one in, so doing the work anyway would cost a run the
    * renders it had already finished with — and, worse, would let a text

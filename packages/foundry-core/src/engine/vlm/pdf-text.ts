@@ -556,7 +556,7 @@ type PageGeometry = Pick<PageFrame, 'crop' | 'rotation'>;
  *
  * This is the frame the render is of, and — since this file makes new paper
  * rather than writing on the old — it is also the size of the page that comes
- * out. PyMuPDF applies /Rotate when it rasterises, so a 90°-rotated portrait
+ * out. MuPDF applies /Rotate when it rasterises, so a 90°-rotated portrait
  * page arrives as a landscape image and every box is in that landscape frame.
  *
  * THE OUTPUT PAGE IS THE DISPLAY FRAME, WHICH IS WHY THIS FILE TRANSFORMS
@@ -666,9 +666,9 @@ export interface TextPdfOptions {
    * Cut these regions out of the scan, as PNG, at `dpi`.
    *
    * The seam rather than the implementation, for the same reason `dots-book.ts`
-   * takes one: cutting a picture out means a Python with PyMuPDF in it. Every
-   * request this file will make is made in ONE call, so the subprocess is
-   * spawned once for the whole book however many pictures are in it.
+   * takes one: cutting a picture out means opening the PDF in the rasteriser.
+   * Every request this file will make is made in ONE call, so the PDF is opened
+   * once for the whole book however many pictures are in it.
    */
   crop: (requests: readonly PdfCropRequest[]) => Promise<readonly PdfCropped[]>;
   /**
@@ -954,7 +954,7 @@ export async function buildTextPdf(opts: TextPdfOptions): Promise<TextPdfResult>
    * built, because both things that can be wrong here are refusals: an angle
    * this file cannot honour, and a render that is not of the page it claims. A
    * refusal after two hundred pages have been typeset costs the run everything —
-   * and worse, it arrives after the crops below have spawned a subprocess to cut
+   * and worse, it arrives after the crops below have opened the rasteriser to cut
    * up a scan this run was never going to finish.
    */
   const geometry: PageGeometry[] = [];
@@ -969,8 +969,8 @@ export async function buildTextPdf(opts: TextPdfOptions): Promise<TextPdfResult>
    * WHAT HAS TO BE CUT OUT OF THE SCAN, ASKED FOR ONCE.
    *
    * Both kinds of image are gathered before a page is built and fetched in a
-   * single call: cutting a region out means a Python subprocess (`bridge.ts`),
-   * and a book with ninety plates should pay for one of those rather than ninety.
+   * single call: cutting a region out means opening the PDF in the rasteriser
+   * (`bridge.ts`), and a book with ninety plates should pay for that once, not ninety times.
    */
   const requests: PdfCropRequest[] = [];
   const facsimilePages: number[] = [];
@@ -983,7 +983,7 @@ export async function buildTextPdf(opts: TextPdfOptions): Promise<TextPdfResult>
        * size and the dpi rather than read off a render, because this is exactly
        * the page nobody rendered for a reading — a `--skip-pages` leaf was never
        * offered to the model at all — and the crop seam re-renders from the PDF.
-       * The Python side clips the box to the page, so a rounding of half a pixel
+       * The rasteriser clips the box to the page, so a rounding of half a pixel
        * cannot ask for paper that is not there.
        */
       const display = displaySize(geometry[number - 1]);

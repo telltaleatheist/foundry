@@ -1,49 +1,38 @@
 /**
- * vlm/bridge — the seam between foundry and MLX.
+ * vlm/bridge — the seam between a read and the page rasteriser.
  *
- * One `vlm_page.py` per BOOK: the config goes in on stdin, one JSON object per
- * page comes back on stdout, and this module turns that stream into pages while
- * reporting each one as it lands. The header of `vlm_page.py` carries the
- * reasons for the shape; what lives here is everything that must FAIL rather
- * than be accepted.
+ * The pages of a book are rendered in-process on MuPDF (`raster.ts`), and this
+ * module turns that into pages while reporting each one as it lands. It was
+ * the seam to `vlm_page.py` — one Python subprocess per book, which also read
+ * the pages with MLX. That local reader is RETIRED (Owen, 2026-11-04: Foundry
+ * ships with Crucible and every model call goes to Crucible), and with it the
+ * interpreter. What lives here is still everything that must FAIL rather than
+ * be accepted:
  *
- * Four ways a page is refused, and all four are the same refusal:
- *
- *  - **the process exits nonzero** — the tail of its stderr is the message
+ *  - **the rasteriser refuses** — a page that renders to nothing, a skip list
+ *    naming pages the document does not have — and its sentence is the message
  *  - **a page hit the token cap** (`finishReason === 'length'`) — the model was
  *    still writing when it was cut off, so that page is TRUNCATED. Half a page
- *    reads as a whole one in the finished book: the prose simply stops
- *    mid-sentence and nothing anywhere says it was cut
+ *    reads as a whole one in the finished book
  *  - **a page came back empty** — a blank page in a book is a claim, and a
  *    model that answered with nothing did not make it
- *  - **the pages do not arrive once each, in order** — a book assembled out of
- *    a stream that skipped page nine is wrong in a way no reader can see. A
- *    page named by `excludePages` is expected NOT to arrive; every other page
- *    of the document is, exactly once, in ascending order
+ *  - **the pages do not arrive once each, in order** — a page named by
+ *    `excludePages` is expected NOT to arrive; every other page of the
+ *    document is, exactly once, in ascending order
  *
- * The interpreter is not searched for on PATH. `python3` on this machine is a
- * Homebrew build with neither mlx-vlm nor PyMuPDF in it, and MLX lives in one
- * specific environment; picking up the wrong interpreter would produce an
- * ImportError from a subprocess for a package the operator installed an hour
- * ago somewhere else. So the candidates are named, tried in order, and a
- * failure prints every one of them.
+ * The middle two judge an ANSWER and a rendering produces none: every page
+ * this module returns is `skipped` (rendered, not read), and the endpoint pass
+ * (`endpoint.ts`) or the bank supplies the text. They stay because the shapes
+ * they guard are the ones the read path is built on.
+ *
+ * A run that would have to READ a page here — no endpoint, and a page with no
+ * banked answer — is refused by name before a page is rendered.
  */
-import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-// The helper's source, embedded at build time so a compiled binary carries it.
-// See `scriptPath()` for why this is text rather than a file on disk.
-import VLM_PAGE_SOURCE from './vlm_page.py' with { type: 'text' };
-
-import { withoutEndpointHeaders } from '../backend/endpoint-headers.js';
-import { defaultLocalPythonCandidates } from '../backend/probe.js';
-import { ensureDir } from '../fsdirs.js';
-import { replaceFileSync } from '../fs-replace.js';
 import type { VlmModelDef } from './models.js';
+import { cropPages, readTextLayer, RasterError, renderPages } from './raster.js';
 
 export class VlmBridgeError extends Error {
   constructor(message: string) {
@@ -53,7 +42,11 @@ export class VlmBridgeError extends Error {
 }
 
 /**
- * The pixel budget the MLX path hands the processor, and it is a measurement.
+ * The pixel budget the MLX path handed the processor, and it is a measurement.
+ *
+ * The MLX reader is retired; the number is not. It is the frame every box a
+ * local read banked was measured in, and a bank old enough to record no budget
+ * of its own is rescaled with it (`blocks-dump.ts`).
  *
  * dots.ocr's own processor allows 11,289,600 pixels, which at 200 dpi means a
  * page is passed through untouched — and costs about twice as long per page on
@@ -107,10 +100,10 @@ export interface VlmDocumentInfo {
   heightPt: number;
   /**
    * The canonical render size this run snapped near-identical pages onto, in
-   * render pixels — the "mode" the helper computed over every page's true size,
+   * render pixels — the "mode" the rasteriser computed over every page's true size,
    * or was handed for a resume. NULL where nothing was snapped: a page-image
    * source, or a PDF with no pages left after exclusions. See the render snap in
-   * `vlm_page.py`. Optional because a mock or an older helper carries no field.
+   * `raster.ts`. Optional because a mock carries no field.
    */
   renderMode?: readonly [number, number] | null;
 }
@@ -120,16 +113,15 @@ export interface VlmRunResult {
   pages: VlmPage[];
   /** Empty unless `unreadablePages: 'record'` — see the option. */
   unreadable: VlmUnreadablePage[];
-  /** Process start through model resident. The fixed cost, paid once. */
+  /** Process start through model resident — 0 now that nothing is loaded here. */
   loadSeconds: number;
   renderSeconds: number;
   inferenceSeconds: number;
   /**
-   * macOS reports this in bytes; the helper normalises Linux's kilobytes.
-   *
-   * NULL on Windows, where there is no `resource` module to ask. That is a real
-   * absence — the platform cannot answer — and it is carried as null rather than
-   * as 0, which would be indistinguishable from a run that used no memory.
+   * The engine process's peak resident set in bytes (`process.resourceUsage`),
+   * now that the pages are rendered in it rather than in a helper. Null where
+   * the platform cannot answer — never 0, which would read as a run that used
+   * no memory.
    */
   peakRssBytes: number | null;
 }
@@ -144,7 +136,7 @@ export interface VlmRunResult {
  * a re-encode of the same JPEG, to arrive where it started.
  *
  * Both kinds answer the same questions and produce the same page events, so
- * nothing downstream of the helper's page source knows which one it read. See
+ * nothing downstream of the rasteriser's page source knows which one it read. See
  * docs/CAPTURE.md, "The mint's output is PAGES".
  */
 export type VlmSource =
@@ -181,7 +173,7 @@ export function pagesInDirectory(dir: string): string[] {
   return named.map((one) => path.join(dir, one.name));
 }
 
-/** What this build can hand a model as a page. Matches the helper's loader. */
+/** What this build can hand a model as a page. Matches the rasteriser's loader. */
 const PAGE_IMAGE = /\.(jpe?g|png|tiff?|bmp|webp)$/i;
 
 /** What a source is called when something has to say so in a sentence. */
@@ -193,8 +185,6 @@ export interface VlmRunOptions {
   source: VlmSource;
   model: VlmModelDef;
   dpi: number;
-  /** Explicit interpreter, from `--python`. Tried first and never skipped. */
-  python?: string;
   /** Keep the page renders here instead of deleting them. */
   rendersDir?: string;
   /**
@@ -205,7 +195,7 @@ export interface VlmRunOptions {
   /**
    * The book's canonical render size to snap near-identical pages onto, from an
    * EARLIER run of this same book — recorded beside the readings bank, keyed by
-   * the PDF's sha (`readings.ts`). Absent on a first run: the helper computes the
+   * the PDF's sha (`readings.ts`). Absent on a first run: the rasteriser computes the
    * mode itself and reports it in the document event, and the caller records it.
    * Present on a RESUME so the resumed run snaps to the SAME grid rather than
    * recomputing the mode off a different page subset. Ignored for a page-image
@@ -219,7 +209,7 @@ export interface VlmRunOptions {
    * OPT-IN, because not every render wants it: `blocks-dump` re-measures a page
    * to recover the TRUE frame an old bank's boxes were measured in, and snapping
    * there would hand it a frame the model never saw. The bank-producing route
-   * (`read.ts`) sets it; the helper then either snaps to `renderMode` when one is
+   * (`read.ts`) sets it; the rasteriser then either snaps to `renderMode` when one is
    * given or computes the book's mode and snaps to that. Ignored for a page-image
    * source and when `renderMode` is given (an explicit mode is itself the ask).
    */
@@ -228,9 +218,8 @@ export interface VlmRunOptions {
    * Render every page and read NONE of them — no model is loaded at all.
    *
    * The endpoint path (`endpoint.ts`) does its own inference over HTTP but
-   * still needs the pages rasterised, and rasterising is PyMuPDF's job on the
-   * far side of this seam (see `vlm_page.py`). One flag rather than a second
-   * script.
+   * still needs the pages rasterised, as does a replay of a bank. Without it a
+   * run with a page to read is refused: the local reader is retired.
    */
   renderOnly?: boolean;
   /**
@@ -244,7 +233,7 @@ export interface VlmRunOptions {
    * side opens one of these files.
    *
    * Kept for one more pass because taking it out is not this pass's change:
-   * it reaches across the Python seam into `vlm_page.py`, and it alters what a
+   * it alters what a
    * run leaves behind under `--renders`, which is a directory somebody may be
    * looking at. Whoever removes it should remove `src/scan/pgm.ts` in the same
    * breath — that module's last caller went with the ink test too.
@@ -292,86 +281,7 @@ export interface VlmRunOptions {
   onDocument?: (document: VlmDocumentInfo) => void;
 }
 
-/**
- * Where `vlm_page.py` is.
- *
- * The helper is EMBEDDED as text (`with { type: 'text' }`), so a compiled
- * binary carries its own copy and materialises it beside the machine's cache
- * on first use. The earlier reading — that a Python environment is a
- * prerequisite anyway, so the script may as well be one too — conflated two
- * different things. The ENVIRONMENT is the operator's: their python, their
- * mlx-vlm, their PyMuPDF, and foundry can only name what it could not find.
- * The SCRIPT is foundry's own source, versioned with the bridge that speaks to
- * it, and a release that ships the caller without the callee is incomplete.
- * `bun build --compile` cannot hand an external interpreter a path inside the
- * executable (`/$bunfs/root/vlm_page.py`, which is what a user got), so the
- * text is written out to a real file that python can open.
- *
- * The materialised copy is named for the CONTENT's hash: a foundry that
- * changed the helper writes a different file rather than running the old one
- * out of a cache, and two foundry versions on one machine cannot fight over
- * the same path.
- */
-function scriptPath(): string {
-  const override = process.env['FOUNDRY_VLM_SCRIPT'];
-  if (override) {
-    if (!fs.existsSync(override)) {
-      throw new VlmBridgeError(`FOUNDRY_VLM_SCRIPT points at ${override}, which does not exist`);
-    }
-    return override;
-  }
-  // Source tree: the file beside this module IS the helper, and running it
-  // directly is what makes an edit take effect without a build step.
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const beside = path.join(here, 'vlm_page.py');
-  if (fs.existsSync(beside)) return beside;
-
-  const digest = createHash('sha256').update(VLM_PAGE_SOURCE).digest('hex').slice(0, 16);
-  const dir = path.join(os.tmpdir(), 'foundry-vlm');
-  const materialised = path.join(dir, `vlm_page-${digest}.py`);
-  if (!fs.existsSync(materialised)) {
-    ensureDir(dir);
-    // Written beside the target and renamed: two foundry runs starting at once
-    // must never hand python a half-written script.
-    const partial = `${materialised}.${process.pid}.part`;
-    fs.writeFileSync(partial, VLM_PAGE_SOURCE, 'utf8');
-    replaceFileSync(partial, materialised);
-  }
-  return materialised;
-}
-
-/**
- * The interpreter, in order of how sure we are about it.
- *
- * `vlmtest` is the conda environment mlx-vlm and PyMuPDF were installed into on
- * the machine this mode was built and measured on. It is a name, not a
- * requirement: `--python` and `FOUNDRY_VLM_PYTHON` both override, and the error
- * below names every path that was tried so an operator with a different
- * environment knows exactly what to pass.
- */
-function resolvePython(explicit?: string): string {
-  const named = explicit ?? process.env['FOUNDRY_VLM_PYTHON'];
-  if (named) {
-    if (!fs.existsSync(named)) {
-      throw new VlmBridgeError(`--python ${named} does not exist`);
-    }
-    return named;
-  }
-  // ONE candidate list, owned by backend/probe.ts and shared with `doctor`:
-  // an interpreter doctor reports as the rasteriser must be the one a run
-  // picks, or the report is about a machine this program does not run on.
-  const candidates = defaultLocalPythonCandidates();
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  throw new VlmBridgeError(
-    'no Python for this mode was found. Rendering needs PyMuPDF (and local reading needs mlx-vlm);'
-    + ' pass an interpreter with --python or FOUNDRY_VLM_PYTHON. Tried:\n'
-    + candidates.map((c) => `  ${c}`).join('\n'),
-  );
-}
-
-/** Read every page of the PDF with the model, in one interpreter. */
+/** Render every page of the source; read none of them. */
 export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResult> {
   const source = opts.source;
   if (source.kind === 'pdf') {
@@ -390,143 +300,71 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
       throw new VlmBridgeError(`no such page image: ${gone}`);
     }
   }
-  const python = resolvePython(opts.python);
-  const script = scriptPath();
-
-  const config = JSON.stringify({
-    mode: opts.renderOnly ? 'render' : 'read',
-    ...(source.kind === 'pdf'
-      ? { pdf: path.resolve(source.path) }
-      : { pages: source.paths.map((one) => path.resolve(one)) }),
-    repo: opts.model.repo,
-    // Verbatim, and it travels as a JSON string on stdin rather than as an
-    // argv word: no shell, no quoting, no truncation in a process listing.
-    prompt: opts.model.prompt,
-    dpi: opts.dpi,
-    maxTokens: opts.model.maxTokens,
-    grayscale: opts.grayscale === true,
-    skipPages: opts.skipPages ?? [],
-    excludePages: opts.excludePages ?? [],
-    ...(opts.maxPixels !== undefined ? { maxPixels: opts.maxPixels } : {}),
-    ...(opts.renderMode !== undefined ? { renderMode: opts.renderMode } : {}),
-    ...(opts.snap === true ? { snap: true } : {}),
-    ...(opts.rendersDir ? { rendersDir: path.resolve(opts.rendersDir) } : {}),
-  });
-
-  const proc = spawn(python, [script], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    // The child gets the environment MINUS the endpoint's headers. It renders
-    // pages and runs MLX locally and makes no HTTP request at all (`vlm_page.py`
-    // imports no HTTP client), so a credential here could only ever leak, never
-    // be used. This option is not redundant: without it a spawn inherits the
-    // parent's whole environment. See `backend/endpoint-headers.ts`.
-    env: withoutEndpointHeaders(),
-  });
 
   let document: VlmDocumentInfo | null = null;
-  let loadSeconds = 0;
-  let totals: { renderSeconds: number; inferenceSeconds: number; peakRssBytes: number | null } | null = null;
   const pages: VlmPage[] = [];
-  const stderrTail: string[] = [];
-
-  const finished = new Promise<void>((resolve, reject) => {
-    let stdout = '';
-    let stderr = '';
-    let failure: Error | null = null;
-
-    proc.stdout.setEncoding('utf8');
-    proc.stdout.on('data', (chunk: string) => {
-      stdout += chunk;
-      let nl = stdout.indexOf('\n');
-      while (nl !== -1) {
-        const line = stdout.slice(0, nl);
-        stdout = stdout.slice(nl + 1);
-        nl = stdout.indexOf('\n');
-        if (line.trim().length === 0) continue;
-        try {
-          const event = JSON.parse(line) as Record<string, unknown>;
-          switch (event['event']) {
-            case 'document':
-              document = event as unknown as VlmDocumentInfo;
-              opts.onDocument?.(document);
-              break;
-            case 'loaded':
-              loadSeconds = event['seconds'] as number;
-              opts.onLoaded?.(loadSeconds);
-              break;
-            case 'page': {
-              const page = event as unknown as VlmPage;
-              pages.push(page);
-              opts.onPage?.(page, document?.pages ?? 0);
-              break;
+  const banked = new Set(opts.skipPages ?? []);
+  const excluded = new Set(opts.excludePages ?? []);
+  let renderSeconds: number;
+  try {
+    ({ renderSeconds } = await renderPages({
+      source: source.kind === 'pdf'
+        ? { kind: 'pdf', path: path.resolve(source.path) }
+        : { kind: 'pages', paths: source.paths.map((one) => path.resolve(one)) },
+      dpi: opts.dpi,
+      ...(opts.rendersDir ? { rendersDir: path.resolve(opts.rendersDir) } : {}),
+      grayscale: opts.grayscale === true,
+      excludePages: [...excluded],
+      ...(opts.renderMode !== undefined ? { renderMode: opts.renderMode } : {}),
+      snap: opts.snap === true,
+      onDocument: (info) => {
+        // Known only now, with the document open: is there a page this run
+        // would have to READ? That was the MLX reader's job, and it is retired.
+        if (opts.renderOnly !== true) {
+          for (let page = 1; page <= info.pages; page += 1) {
+            if (!excluded.has(page) && !banked.has(page)) {
+              throw new VlmBridgeError(
+                `page ${page} has no answer and nothing on this machine can read it: the local MLX reader is `
+                + 'retired, and every page is read by a Crucible. Pass --vlm-endpoint <url> (a Crucible\'s OpenAI '
+                + 'door), or set backend.mode to "endpoint" with backend.endpointUrl.',
+              );
             }
-            case 'done':
-              totals = {
-                renderSeconds: event['renderSeconds'] as number,
-                inferenceSeconds: event['inferenceSeconds'] as number,
-                peakRssBytes: (event['peakRssBytes'] ?? null) as number | null,
-              };
-              break;
-            default:
-              throw new VlmBridgeError(`the helper sent an event this bridge does not know: ${line}`);
           }
-        } catch (err) {
-          // Recorded and rethrown at exit rather than here: killing the process
-          // mid-stream would lose the stderr that usually explains it.
-          failure ??= err instanceof Error ? err : new Error(String(err));
         }
-      }
-    });
+        document = info;
+        opts.onDocument?.(info);
+      },
+      onPage: (rendered) => {
+        const page: VlmPage = {
+          number: rendered.number,
+          width: rendered.width,
+          height: rendered.height,
+          renderSeconds: rendered.renderSeconds,
+          seconds: 0,
+          chars: 0,
+          tokens: 0,
+          finishReason: null,
+          text: '',
+          skipped: true,
+        };
+        pages.push(page);
+        opts.onPage?.(page, document?.pages ?? 0);
+      },
+    }));
+  } catch (err) {
+    if (err instanceof RasterError) throw new VlmBridgeError(err.message);
+    throw err;
+  }
 
-    proc.stderr.setEncoding('utf8');
-    proc.stderr.on('data', (chunk: string) => {
-      stderr += chunk;
-      let nl = stderr.indexOf('\n');
-      while (nl !== -1) {
-        const line = stderr.slice(0, nl);
-        stderr = stderr.slice(nl + 1);
-        nl = stderr.indexOf('\n');
-        stderrTail.push(line);
-        if (stderrTail.length > 40) stderrTail.shift();
-        process.stderr.write(`${line}\n`);
-      }
-    });
-
-    proc.on('error', (err) => reject(
-      new VlmBridgeError(`could not start ${python}: ${err.message}`),
-    ));
-    proc.on('close', (code) => {
-      if (failure) return reject(failure);
-      if (code !== 0) {
-        return reject(new VlmBridgeError(
-          `${path.basename(script)} exited ${code}. Its last output:\n`
-          + stderrTail.map((l) => `  ${l}`).join('\n'),
-        ));
-      }
-      resolve();
-    });
-  });
-
-  proc.stdin.write(config);
-  proc.stdin.end();
-  await finished;
-
-  if (!document) throw new VlmBridgeError('the helper exited without describing the document');
-  if (!totals) throw new VlmBridgeError('the helper exited without a done event — the run is incomplete');
+  if (!document) throw new VlmBridgeError('the rasteriser finished without describing the document');
   const doc: VlmDocumentInfo = document;
-  const sums: { renderSeconds: number; inferenceSeconds: number; peakRssBytes: number | null } = totals;
 
   /*
-   * The pages this run was ever going to be about, in order.
-   *
-   * "All of them" is the ordinary answer, and then this is `1..doc.pages` and
-   * the two checks below are the ones that have always been here. With
-   * `--skip-pages` it is that list with the gaps taken out — and the gaps are
-   * what the checks have to be stated against, because a helper that silently
-   * dropped page nine and a helper that was TOLD to drop page nine produce
-   * exactly the same stream.
+   * The pages this run was ever going to be about, in order: `1..doc.pages`
+   * with the `--skip-pages` gaps taken out — and the gaps are what the checks
+   * are stated against, because a rasteriser that silently dropped page nine
+   * and one that was TOLD to drop page nine produce exactly the same stream.
    */
-  const excluded = new Set(opts.excludePages ?? []);
   const expected: number[] = [];
   for (let page = 1; page <= doc.pages; page += 1) {
     if (!excluded.has(page)) expected.push(page);
@@ -535,9 +373,9 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
   if (pages.length !== expected.length) {
     throw new VlmBridgeError(
       excluded.size === 0
-        ? `the PDF has ${doc.pages} pages and the helper reported ${pages.length} of them`
+        ? `the PDF has ${doc.pages} pages and the rasteriser reported ${pages.length} of them`
         : `the PDF has ${doc.pages} pages with ${excluded.size} skipped, so ${expected.length}`
-          + ` were expected and the helper reported ${pages.length}`,
+          + ` were expected and the rasteriser reported ${pages.length}`,
     );
   }
 
@@ -569,16 +407,18 @@ export async function readPagesWithVlm(opts: VlmRunOptions): Promise<VlmRunResul
     unreadable.push({ number: page.number, reason });
   }
 
+  const maxRss = process.resourceUsage().maxRSS;
   return {
     document: doc,
     pages: usable,
     unreadable,
-    loadSeconds,
-    renderSeconds: sums.renderSeconds,
-    inferenceSeconds: sums.inferenceSeconds,
-    peakRssBytes: sums.peakRssBytes,
+    loadSeconds: 0,
+    renderSeconds,
+    inferenceSeconds: 0,
+    peakRssBytes: Number.isFinite(maxRss) && maxRss > 0 ? maxRss * 1024 : null,
   };
 }
+
 
 // ── cropping a picture out of a page ────────────────────────────────────────
 
@@ -596,104 +436,44 @@ export interface VlmCropResult {
   data: Uint8Array;
 }
 
+
 /**
- * Cut the pictures out of the renders, in one more turn of the same seam.
+ * Cut the pictures out of the renders.
  *
- * A second short subprocess rather than a PNG codec in TypeScript, and that is
- * the same decision `src/scan/pgm.ts` records: an image decoder is a dependency
- * in the most portable part of the program, and this mode ALREADY requires a
- * Python with PyMuPDF in it. The boxes are not known until the pages have been
- * parsed, which is why it cannot be folded into the read pass.
+ * The boxes are not known until the pages have been parsed, which is why this
+ * cannot be folded into the render pass.
  *
  * IT TAKES A `VlmSource`, THE SAME ONE A READ TAKES, and that is the whole of
  * what Wave 37 changed here. A crop is pixels out of a page, a page is either a
  * leaf of a document or a photograph somebody took, and this had only ever
  * believed the first — so a captured book, whose archive IS its pages, reflowed
- * with nothing to cut and refused every one of its figures at export. The helper
- * decides nothing new either: it builds the same `PdfPages`/`ImagePages` the read
- * builds, out of the same field names, so the pixels a crop is taken from are the
- * pixels the model was shown.
+ * with nothing to cut and refused every one of its figures at export. The same
+ * page sources the render builds are built here, so the pixels a crop is taken
+ * from are the pixels the model was shown (`cropPages`, raster.ts, says what a
+ * box means in each face).
  */
 export async function cropPageRenders(opts: {
   source: VlmSource;
   dpi: number;
   cropsDir: string;
   requests: readonly VlmCropRequest[];
-  python?: string;
 }): Promise<VlmCropResult[]> {
   if (opts.requests.length === 0) return [];
-  const python = resolvePython(opts.python);
-  const script = scriptPath();
-  const cropsDir = path.resolve(opts.cropsDir);
-
-  const config = JSON.stringify({
-    mode: 'crop',
-    // Exactly one of them, spelled the way the read spells it — the helper
-    // refuses both and neither in one line rather than picking a winner.
-    ...(opts.source.kind === 'pdf'
-      ? { pdf: path.resolve(opts.source.path) }
-      : { pages: opts.source.paths.map((page) => path.resolve(page)) }),
-    dpi: opts.dpi,
-    cropsDir,
-    crops: opts.requests.map((r) => ({
-      page: r.page,
-      name: r.name,
-      box: [r.box.x1, r.box.y1, r.box.x2, r.box.y2],
-    })),
-  });
-
-  const proc = spawn(python, [script], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    // The child gets the environment MINUS the endpoint's headers. It renders
-    // pages and runs MLX locally and makes no HTTP request at all (`vlm_page.py`
-    // imports no HTTP client), so a credential here could only ever leak, never
-    // be used. This option is not redundant: without it a spawn inherits the
-    // parent's whole environment. See `backend/endpoint-headers.ts`.
-    env: withoutEndpointHeaders(),
-  });
   const written: { name: string; path: string }[] = [];
-  const stderrTail: string[] = [];
-
-  const finished = new Promise<void>((resolve, reject) => {
-    let stdout = '';
-    proc.stdout.setEncoding('utf8');
-    proc.stdout.on('data', (chunk: string) => {
-      stdout += chunk;
-      let nl = stdout.indexOf('\n');
-      while (nl !== -1) {
-        const line = stdout.slice(0, nl);
-        stdout = stdout.slice(nl + 1);
-        nl = stdout.indexOf('\n');
-        if (line.trim().length === 0) continue;
-        const event = JSON.parse(line) as Record<string, unknown>;
-        if (event['event'] === 'crop') {
-          written.push({ name: event['name'] as string, path: event['path'] as string });
-        }
-      }
+  try {
+    await cropPages({
+      source: opts.source.kind === 'pdf'
+        ? { kind: 'pdf', path: path.resolve(opts.source.path) }
+        : { kind: 'pages', paths: opts.source.paths.map((page) => path.resolve(page)) },
+      dpi: opts.dpi,
+      cropsDir: path.resolve(opts.cropsDir),
+      crops: opts.requests.map((r) => ({ page: r.page, name: r.name, box: [r.box.x1, r.box.y1, r.box.x2, r.box.y2] as const })),
+      onCrop: (name, file) => written.push({ name, path: file }),
     });
-    proc.stderr.setEncoding('utf8');
-    proc.stderr.on('data', (chunk: string) => {
-      for (const line of chunk.split('\n')) {
-        if (line.length === 0) continue;
-        stderrTail.push(line);
-        if (stderrTail.length > 40) stderrTail.shift();
-      }
-    });
-    proc.on('error', (err) => reject(new VlmBridgeError(`could not start ${python}: ${err.message}`)));
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        return reject(new VlmBridgeError(
-          `${path.basename(script)} exited ${code} while cropping. Its last output:\n`
-          + stderrTail.map((l) => `  ${l}`).join('\n'),
-        ));
-      }
-      resolve();
-    });
-  });
-
-  proc.stdin.write(config);
-  proc.stdin.end();
-  await finished;
+  } catch (err) {
+    if (err instanceof RasterError) throw new VlmBridgeError(`cropping failed: ${err.message}`);
+    throw err;
+  }
 
   if (written.length !== opts.requests.length) {
     throw new VlmBridgeError(
@@ -706,6 +486,7 @@ export async function cropPageRenders(opts: {
     data: new Uint8Array(fs.readFileSync(entry.path)),
   }));
 }
+
 
 // ── reading the PDF's own text layer ────────────────────────────────────────
 
@@ -733,71 +514,20 @@ export interface VlmLayerSpan {
  *
  * A pure scan has no layer and comes back as an EMPTY map, and that is an
  * absence rather than an error: the facsimile's own measurements stand, as
- * they always did. The one hard failure is the subprocess itself dying —
- * a Python without PyMuPDF, an unopenable PDF — because that is a machine
- * problem, not a fact about the book.
+ * they always did. The one hard failure is an unopenable PDF, because that
+ * is a machine or file problem, not a fact about the book.
  */
 export async function readPdfTextLayer(opts: {
   pdfPath: string;
-  python?: string;
 }): Promise<Map<number, VlmLayerSpan[]>> {
-  const python = resolvePython(opts.python);
-  const script = scriptPath();
-  const config = JSON.stringify({ mode: 'textlayer', pdf: path.resolve(opts.pdfPath) });
-
-  const proc = spawn(python, [script], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    // The child gets the environment MINUS the endpoint's headers. It renders
-    // pages and runs MLX locally and makes no HTTP request at all (`vlm_page.py`
-    // imports no HTTP client), so a credential here could only ever leak, never
-    // be used. This option is not redundant: without it a spawn inherits the
-    // parent's whole environment. See `backend/endpoint-headers.ts`.
-    env: withoutEndpointHeaders(),
-  });
-  const layer = new Map<number, VlmLayerSpan[]>();
-  const stderrTail: string[] = [];
-
-  const finished = new Promise<void>((resolve, reject) => {
-    let stdout = '';
-    proc.stdout.setEncoding('utf8');
-    proc.stdout.on('data', (chunk: string) => {
-      stdout += chunk;
-      let nl = stdout.indexOf('\n');
-      while (nl !== -1) {
-        const line = stdout.slice(0, nl);
-        stdout = stdout.slice(nl + 1);
-        nl = stdout.indexOf('\n');
-        if (line.trim().length === 0) continue;
-        const event = JSON.parse(line) as Record<string, unknown>;
-        if (event['event'] === 'layer') {
-          const spans = (event['spans'] as [number, number, number, number][])
-            .map(([x, y, size, chars]) => ({ x, y, size, chars }));
-          layer.set(event['page'] as number, spans);
-        }
-      }
-    });
-    proc.stderr.setEncoding('utf8');
-    proc.stderr.on('data', (chunk: string) => {
-      for (const line of chunk.split('\n')) {
-        if (line.length === 0) continue;
-        stderrTail.push(line);
-        if (stderrTail.length > 40) stderrTail.shift();
-      }
-    });
-    proc.on('error', (err) => reject(new VlmBridgeError(`could not start ${python}: ${err.message}`)));
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        return reject(new VlmBridgeError(
-          `${path.basename(script)} exited ${code} while reading the PDF's text layer. Its last output:\n`
-          + stderrTail.map((l) => `  ${l}`).join('\n'),
-        ));
-      }
-      resolve();
-    });
-  });
-
-  proc.stdin.write(config);
-  proc.stdin.end();
-  await finished;
-  return layer;
+  let layer: Map<number, [number, number, number, number][]>;
+  try {
+    layer = await readTextLayer(path.resolve(opts.pdfPath));
+  } catch (err) {
+    if (err instanceof RasterError) throw new VlmBridgeError(`reading the PDF's text layer failed: ${err.message}`);
+    throw err;
+  }
+  const out = new Map<number, VlmLayerSpan[]>();
+  for (const [page, spans] of layer) out.set(page, spans.map(([x, y, size, chars]) => ({ x, y, size, chars })));
+  return out;
 }

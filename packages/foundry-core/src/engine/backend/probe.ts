@@ -21,9 +21,8 @@
  *  - wsl-vllm   wsl.exe lists a distro, and a named interpreter inside it can
  *               import vllm. This is the "could foundry START a server" probe,
  *               for the settings screen; nothing here starts one.
- *  - mlx        a local interpreter can import mlx_vlm (Apple silicon only).
- *  - rasteriser a local interpreter can import fitz (PyMuPDF). Needed by EVERY
- *               run, endpoint or not — the pages are rendered locally.
+ *  (The `mlx` and `rasteriser` probes — mlx_vlm and PyMuPDF in a local
+ *  interpreter — retired with Foundry's Python, 2026-11-04.)
  *
  * Module presence is checked with importlib.util.find_spec rather than a real
  * import: importing vllm or mlx_vlm costs seconds and can drag CUDA
@@ -298,80 +297,4 @@ export async function probeWslVllm(
 
 export interface PythonProbe extends ProbeReport {
   python: string | null;
-}
-
-/**
- * Local interpreter candidates — ONE list, shared with vlm/bridge.ts.
- *
- * The doctor probes these and the bridge runs the first that exists; a
- * candidate the doctor reports as the rasteriser MUST be one the bridge would
- * pick, or `doctor` says "ok" about an interpreter no run ever uses. Conda
- * roots in both their unix (`env/bin/python`) and Windows (`env\python.exe`)
- * spellings, then the envs BookForge ships.
- */
-export function defaultLocalPythonCandidates(): string[] {
-  const home = os.homedir();
-  const roots = [
-    // The Homebrew cask root is a macOS location; on Windows path.join turns
-    // it into a plausible-looking backslash path that can never exist.
-    ...(process.platform === 'darwin' ? ['/opt/homebrew/Caskroom/miniconda/base'] : []),
-    path.join(home, 'miniconda3'),
-    path.join(home, 'miniforge3'),
-    path.join(home, 'anaconda3'),
-  ];
-  const conda = roots.flatMap((root) =>
-    process.platform === 'win32'
-      ? [path.join(root, 'envs', 'vlmtest', 'python.exe')]
-      : [path.join(root, 'envs', 'vlmtest', 'bin', 'python')]);
-
-  /*
-   * BookForge ships a relocatable Python WITH PyMuPDF in it (its tools env,
-   * unpacked under its user-data directory), and it is how BookForge already
-   * rasterises for this very engine. A machine with BookForge on it therefore
-   * has a working rasteriser whether or not anyone made a conda env — named
-   * here so foundry finds it too.
-   *
-   * It is `runtime/tools-env`. It was `runtime/e2a-env` until BookForge renamed
-   * it (2026-10-03, BookForge docs/DISTRIBUTION.md); this list kept the old
-   * name, and every PDF read from the picker then failed with "no Python for
-   * this mode was found" on a machine whose tools env has PyMuPDF. The
-   * ebook2audiobook checkout's `python_env` went with e2a and is not listed.
-   */
-  const bookforgeRuntime =
-    process.platform === 'win32'
-      ? path.join(process.env['APPDATA'] ?? path.join(home, 'AppData', 'Roaming'), 'bookforge', 'runtime', 'tools-env', 'python.exe')
-      : process.platform === 'darwin'
-        ? path.join(home, 'Library', 'Application Support', 'bookforge', 'runtime', 'tools-env', 'bin', 'python')
-        : path.join(home, '.config', 'bookforge', 'runtime', 'tools-env', 'bin', 'python');
-
-  return [...conda, bookforgeRuntime];
-}
-
-/** Can a named local interpreter import `module`? Reports every miss by path. */
-export async function probeLocalPython(
-  module: string,
-  settings: FoundrySettings,
-  run: Runner = spawnRunner,
-): Promise<PythonProbe> {
-  const explicit = settings.backend?.python ?? process.env['FOUNDRY_VLM_PYTHON'];
-  const candidates = explicit ? [explicit] : defaultLocalPythonCandidates();
-  const misses: string[] = [];
-  for (const candidate of candidates) {
-    if (!fs.existsSync(candidate)) {
-      misses.push(`${candidate} (does not exist)`);
-      continue;
-    }
-    const probe = await run(candidate, ['-c', findSpecProgram(module)], 15_000);
-    if (probe.exitCode === 0) {
-      return { available: true, detail: `${candidate} can import ${module}`, python: candidate };
-    }
-    misses.push(`${candidate} (${probe.failure ?? `no module ${module}`})`);
-  }
-  return {
-    available: false,
-    python: null,
-    detail:
-      `no interpreter with ${module} found. Tried:\n${misses.map((m) => `  ${m}`).join('\n')}`
-      + '\nPass one with --python, FOUNDRY_VLM_PYTHON, or settings (backend.python).',
-  };
 }

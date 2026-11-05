@@ -97,7 +97,7 @@ export interface VlmReading {
    *
    * ABSENT ON THE MLX ROUTE, and that is an absence with nothing behind it: the
    * helper's page event carries `number, width, height, renderSeconds, seconds,
-   * chars, tokens, finishReason, skipped, text` (see `vlm_page.py`), and every
+   * chars, tokens, finishReason, skipped, text` (see `bridge.ts`), and every
    * one of those is already a field here. There is no residue to keep.
    */
   response?: unknown;
@@ -384,7 +384,7 @@ export function writeCompletionMarker(
 //
 // The snap "mode": the one pixel grid this book's near-identical pages are all
 // rasterised to, so a batching VLM server collapses them into one deep batch
-// instead of splitting jitter across adjacent grids (`vlm_page.py`, "ONE GRID
+// instead of splitting jitter across adjacent grids (`raster.ts`, "ONE GRID
 // FOR A BOOK OF NEARLY-IDENTICAL PAGES"). It is a property of the WHOLE book, so
 // it is recorded once, beside the bank, keyed by the same PDF sha the bank is:
 //

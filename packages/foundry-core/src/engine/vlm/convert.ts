@@ -83,8 +83,6 @@ export interface VlmConvertOptions {
    */
   format?: VlmOutputFormat;
   modelId: string;
-  /** Explicit interpreter. See `bridge.ts` for what is tried without one. */
-  python?: string;
   /** Keep the page renders here — they are deleted after the run otherwise. */
   rendersDir?: string;
   /**
@@ -203,7 +201,7 @@ export interface VlmConvertOptions {
    */
   narrationStampPath?: string;
   log: (message: string) => void;
-  /** The subprocess and the socket, swappable — see `ReadPhaseOptions.bridge`. */
+  /** The rasteriser and the socket, swappable — see `ReadPhaseOptions.bridge`. */
   bridge?: VlmBridge;
 }
 
@@ -555,7 +553,6 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       keepRenders,
       maxPixels: localBudget,
       skipPages,
-      ...(opts.python !== undefined ? { python: opts.python } : {}),
       ...(opts.endpoint !== undefined ? { endpoint: opts.endpoint } : {}),
       ...(opts.endpointModel !== undefined ? { endpointModel: opts.endpointModel } : {}),
       ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
@@ -811,16 +808,16 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
       const built = await buildTextPdf({
         pdfBytes: fs.readFileSync(pdfPath),
         dpi: VLM_DPI,
-        crop: (requests) => cropRenders(requests, pdfPath, rendersDir, opts.python),
+        crop: (requests) => cropRenders(requests, pdfPath, rendersDir),
         /*
          * The source's own text layer, read before anything is typeset. A
          * born-digital PDF and a publisher-OCR'd scan both state the size of
          * every span of type they carry, and `pdf-text.ts` sets its type at
          * those sizes wherever they exist — the one statement about the
          * book's type that is a record rather than an inference. A pure scan
-         * answers with an empty map and costs one short subprocess.
+         * answers with an empty map and costs one pass over the PDF.
          */
-        layer: await readPdfTextLayer({ pdfPath, python: opts.python }),
+        layer: await readPdfTextLayer({ pdfPath }),
         pages: geometryPages.map((page) => {
           const render = sizes.get(page.page)!;
           return {
@@ -984,7 +981,7 @@ export async function vlmConvert(opts: VlmConvertOptions): Promise<VlmConvertRep
         // And the same again for a transform's words: a run with no records
         // hands the assembler exactly the object it has always been handed.
         ...(records !== null ? { records } : {}),
-        images: openPageImages((requests) => cropRenders(requests, pdfPath, rendersDir, opts.python)),
+        images: openPageImages((requests) => cropRenders(requests, pdfPath, rendersDir)),
       });
       bytes = built.bytes;
       sidecars = built.sidecars;
@@ -1334,7 +1331,6 @@ async function cropRenders(
   requests: readonly DotsCrop[],
   pdfPath: string,
   rendersDir: string,
-  python?: string,
 ): Promise<readonly DotsCropped[]> {
   const cropped = await cropPageRenders({
     // The bank route always has a document — `vlm-convert` is the command that
@@ -1343,7 +1339,6 @@ async function cropRenders(
     dpi: VLM_DPI,
     cropsDir: path.join(rendersDir, 'crops'),
     requests: requests.map((r) => ({ page: r.page, box: r.box, name: r.name })),
-    ...(python ? { python } : {}),
   });
   return cropped;
 }

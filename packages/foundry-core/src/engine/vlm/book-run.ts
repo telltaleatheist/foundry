@@ -91,8 +91,6 @@ export interface BookRunOptions {
    * conflated them would hand a directory to something that opens documents.
    */
   pagesDir?: string;
-  /** The interpreter with PyMuPDF in it, where the crops need one. */
-  python?: string;
   log: (line: string) => void;
 }
 
@@ -498,7 +496,7 @@ async function clearStaleCrops(cropsDir: string, log: (line: string) => void): P
  * export, whatever comes after them — opens the same PNG.
  *
  * ONLY THE PAGES THAT CARRY A PICTURE ARE OPENED. The crop mode of
- * `vlm_page.py` takes a pixmap per named box — rasterising that leaf of the PDF,
+ * `raster.ts` takes a pixmap per named box — rasterising that leaf of the PDF,
  * or decoding that one photograph — so a book with four figures pays for four
  * pages however long it is, which is what makes this affordable in a command
  * whose whole promise is that it is instant.
@@ -562,7 +560,7 @@ async function cutFigures(
    * Through `openPageImages`, which is the seam the assembler already reaches
    * for pixels through (`dots-book.ts`). It forwards one function and is worth
    * going through anyway: everything on this side of it is arithmetic over
-   * banked answers, and everything past it is a subprocess. One boundary, one
+   * banked answers, and everything past it is the rasteriser. One boundary, one
    * place a run stops being pure.
    */
   const images = openPageImages((crops) => cropPageRenders({
@@ -570,7 +568,6 @@ async function cutFigures(
     dpi: VLM_DPI,
     cropsDir,
     requests: crops.map((crop) => ({ page: crop.page, box: crop.box, name: crop.name })),
-    ...(opts.python !== undefined ? { python: opts.python } : {}),
   }));
   const cropped = await images.crop(requests);
   if (cropped.length !== requests.length) {
