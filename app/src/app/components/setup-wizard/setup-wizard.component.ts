@@ -87,6 +87,7 @@ import { CrucibleDoorsComponent } from '../crucible-doors/crucible-doors.compone
 import { CrucibleInstallOutcomeComponent } from '../crucible-doors/install-outcome.component';
 import {
   FOUNDRY_ACTS,
+  HOSTED_ONLY_ACTS,
   actWords,
   cardWords,
   coordinationWords,
@@ -716,7 +717,10 @@ export class SetupWizardComponent {
   protected readonly engineActs = computed(() => {
     const record = this.engineCap();
     if (record === null) return [];
+    // The wizard only ever runs standalone, so the hosted-only acts are not
+    // reported as this app's (`HOSTED_ONLY_ACTS`).
     return FOUNDRY_ACTS
+      .filter((name) => !HOSTED_ONLY_ACTS.has(name))
       .map((name) => record.classes.find((row) => row.capability === name))
       .filter((row): row is CapabilityRow => row !== undefined)
       .map((row) => ({

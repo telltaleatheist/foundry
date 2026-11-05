@@ -105,7 +105,7 @@ import { api } from '../../core/foundry';
     -->
     <p class="muted">
       Nothing on this page needs a graphics card. Every act that needs one — reading a scanned
-      page, cleaning up text, translating, simplifying, and the judging half of analysis — runs
+      page, translating, simplifying, and the judging half of analysis — runs
       on a Crucible server, and Foundry keeps no local copy of any of it to be missing. What this
       computer does for itself is draw the pages, and for analysis the first pass that scores
       every sentence. Both run on the processor, inside the app.

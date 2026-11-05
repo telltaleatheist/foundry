@@ -373,6 +373,18 @@ function preparingWords(
 export const FOUNDRY_ACTS = ['pages', 'decide', 'clean', 'translate', 'simplify', 'analysis'] as const;
 
 /**
+ * THE ACTS A STANDALONE FOUNDRY DOES NOT OFFER. Clean text is BookForge's
+ * (Owen, 2026-09-05: *"cleanup will only ever be done on behalf of bookforge"*,
+ * and again for the reorganisation, 2026-11-04: AI cleanup and the pronunciation
+ * guide are BookForge features). The act stays in the library and its doors stay
+ * registered; a window that is its own simply does not draw it — not on the rail
+ * (already hosted-only), not as a model to choose in Settings, not as an act the
+ * setup wizard reports. `decide` is NOT here: it is the cleanup's triage AND the
+ * analysis ranker, and analysis is in both apps.
+ */
+export const HOSTED_ONLY_ACTS: ReadonlySet<string> = new Set(['clean']);
+
+/**
  * What Foundry's menu calls the act a class serves.
  *
  * Deliberately NOT {@link CLASS_WORDS}, which names the MODEL ("the text

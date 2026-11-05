@@ -89,8 +89,8 @@ import {
 import type { CruciblePullProgress } from '@owen/foundry-core/shared/model-wire';
 import type { CrucibleServerView } from '@owen/foundry-core/shared/slots';
 import { MODEL_CLASSES, type ModelClass } from '@owen/foundry-core/shared/types';
-import { actWords, shortfallWords, sizeWords } from '../../core/crucible-words';
-import { api } from '../../core/foundry';
+import { actWords, HOSTED_ONLY_ACTS, shortfallWords, sizeWords } from '../../core/crucible-words';
+import { api, hosted } from '../../core/foundry';
 import {
   EngineUpstreamsComponent,
   type UpstreamApply,
@@ -497,8 +497,11 @@ export class AiPaneComponent {
     const settings = this.doc();
     if (settings === null) return [];
     const cap = this.capability();
+    // A standalone window draws no row for an act it does not offer
+    // (`HOSTED_ONLY_ACTS`): a model picker for Clean text is a door to it.
+    const offered = (cls: ModelClass): boolean => hosted() || !HOSTED_ONLY_ACTS.has(cls);
     return MODEL_CLASSES
-      .filter((cls) => classes.includes(cls))
+      .filter((cls) => classes.includes(cls) && offered(cls))
       .map((cls) => {
         const klass = cap?.classes.find((row) => row.capability === cls) ?? null;
         /*
