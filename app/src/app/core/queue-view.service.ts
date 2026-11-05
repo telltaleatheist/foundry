@@ -1,13 +1,13 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 
-import { typeLabel } from '@shared/documents';
-import { fold } from '@shared/original';
+import { typeLabel } from '@owen/foundry-core/shared/documents';
+import { fold } from '@owen/foundry-core/shared/original';
 import {
   CPU_LANE_SLOTS, JOB_RESOURCE, LANES, computeLanes, laneOf, laneOfRun, slotOfLane,
   type ComputeLane, type JobResource, type Lane,
-} from '@shared/queue-board';
-import type { ComputeSlot, ComputeSlotKind, SlotRefusal } from '@shared/slots';
-import type { Job, JobProgress } from '@shared/types';
+} from '@owen/foundry-core/shared/queue-board';
+import type { ComputeSlot, ComputeSlotKind, SlotRefusal } from '@owen/foundry-core/shared/slots';
+import type { Job, JobProgress } from '@owen/foundry-core/shared/types';
 
 import { OpenDocumentsService } from './documents.service';
 import { NoticeService } from './notice.service';

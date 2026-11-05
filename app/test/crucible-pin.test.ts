@@ -102,3 +102,25 @@ test('the adoption script reads the same release out of package.json as the pins
     new RegExp(`-${adopt.pinnedVersion(found.parsed).replace(/\./g, '\\.')}(-[A-Za-z0-9.]+)?\\.tgz$`),
   );
 });
+
+/**
+ * THE LIBRARY BUILDS AGAINST WHAT THE APP SHIPS (FOUNDRY-CORE-PLAN step 3).
+ *
+ * `@owen/foundry-core` takes the Crucible SDKs and tool-loop as PEERS — the app
+ * supplies the one copy both use — and as devDependencies naming this app's own
+ * vendor/ tarballs, so its tests run against the bytes the app ships. Nothing
+ * else keeps the two manifests together: `tools/adopt-crucible-release.mjs`
+ * repins app/package.json only, and deletes the tarballs it leaves. So after an
+ * adoption this fails until packages/foundry-core/package.json names the same
+ * files (devDependencies) and a range starting at their version (peers).
+ */
+test('packages/foundry-core pins the same Crucible SDKs and tool-loop as app/ (dev: the same vendor/ files; peer: ^ that version)', () => {
+  const core = JSON.parse(fs.readFileSync(path.join(REPO, 'packages', 'foundry-core', 'package.json'), 'utf8'));
+  for (const name of [...PACKAGES, '@owen/tool-loop']) {
+    const specifier: string = manifest.dependencies[name];
+    expect(core.devDependencies?.[name]).toBe(`file:../../app/${specifier.replace(/^file:/, '')}`);
+    const version = /-(\d+\.\d+\.\d+)(?:-[A-Za-z0-9.]+)?\.tgz$/.exec(specifier)?.[1];
+    expect(core.peerDependencies?.[name]).toBe(`^${version}`);
+    expect(core.dependencies?.[name]).toBeUndefined();
+  }
+});

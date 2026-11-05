@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 
-import { exportNodeId, type HostOperationOffer } from '@shared/host-ops';
+import { exportNodeId, type HostOperationOffer } from '@owen/foundry-core/shared/host-ops';
 /*
  * THE POSSIBILITY PREDICATES, shared with the dialogs that refuse and with the
  * tree that offers — see shared/stages.ts. This menu held the original of three
@@ -12,9 +12,9 @@ import { exportNodeId, type HostOperationOffer } from '@shared/host-ops';
 import {
   canCleanFrom, canExportFrom, canReadPages, canRunHostActFrom, canSimplifyFrom,
   canTranslateFrom, hostActAimFrom,
-} from '@shared/stages';
-import { fold } from '@shared/original';
-import type { ActName } from '@shared/types';
+} from '@owen/foundry-core/shared/stages';
+import { fold } from '@owen/foundry-core/shared/original';
+import type { ActName } from '@owen/foundry-core/shared/types';
 
 import { ActGatesService } from '../../core/act-gates.service';
 import { BookEditService } from '../../core/book-edit.service';

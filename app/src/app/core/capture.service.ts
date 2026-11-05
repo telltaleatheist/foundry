@@ -12,12 +12,12 @@ import type {
   CaptureRecipe,
   CaptureSplit,
   CaptureStanding,
-} from '@shared/types';
+} from '@owen/foundry-core/shared/types';
 
 import {
   arrangementOf, cutOf, halvesOf, isPdfName, isWholeFrameTurned, joinedQuad,
   splitFromFraction, turnedLike, turnQuad, turnsOf, WHOLE_FRAME,
-} from '@shared/capture';
+} from '@owen/foundry-core/shared/capture';
 import type { CaptureCard } from '../components/capture-grid/capture-grid.component';
 import { api } from './foundry';
 import { NoticeService } from './notice.service';

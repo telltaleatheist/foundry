@@ -9,8 +9,8 @@ import {
   viewChild,
 } from '@angular/core';
 
-import { joinedQuad, mintedPageIds, turnedLike } from '@shared/capture';
-import type { CaptureQuad } from '@shared/types';
+import { joinedQuad, mintedPageIds, turnedLike } from '@owen/foundry-core/shared/capture';
+import type { CaptureQuad } from '@owen/foundry-core/shared/types';
 
 import { CaptureMintService } from '../../core/capture-mint.service';
 import { ConfirmService } from '../../core/confirm.service';
@@ -21,7 +21,7 @@ import {
   CaptureEditorModalComponent,
   type EditorFrame,
 } from '../capture-editor/capture-editor-modal.component';
-import type { FractionQuad } from '@browser/geometry';
+import type { FractionQuad } from '@owen/foundry-core/browser/geometry';
 import { CaptureGridComponent } from '../capture-grid/capture-grid.component';
 import { CaptureRailComponent, type Population } from '../capture-rail/capture-rail.component';
 import { LedgerService } from '../../core/ledger.service';

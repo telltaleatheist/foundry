@@ -1,0 +1,28 @@
+/*
+ * The engine program (typecheck only — the engine is bundled by
+ * tools/build-engine.mjs, never emitted by tsc): src/engine and its tests, with
+ * the options the repo-root tsconfig.json checked them with before they moved
+ * here (FOUNDRY-CORE-PLAN step 3).
+ */
+{
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "types": ["bun"]
+  },
+  "include": ["src/engine/**/*.ts", "test/engine/**/*.ts"]
+}

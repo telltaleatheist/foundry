@@ -1,15 +1,15 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { fold } from '@shared/original';
-import { canCleanFrom } from '@shared/stages';
+import { fold } from '@owen/foundry-core/shared/original';
+import { canCleanFrom } from '@owen/foundry-core/shared/stages';
 import {
   DEFAULT_CLEAN_TEXT_MODEL as DEFAULT_MODEL,
   DEFAULT_OLLAMA_ENDPOINT as DEFAULT_OLLAMA,
-} from '@shared/pipeline';
-import { withChosenModel } from '@shared/job-model-offer';
-import type { HostPassOffer } from '@shared/host-ops';
-import type { CleanRequest } from '@shared/types';
+} from '@owen/foundry-core/shared/pipeline';
+import { withChosenModel } from '@owen/foundry-core/shared/job-model-offer';
+import type { HostPassOffer } from '@owen/foundry-core/shared/host-ops';
+import type { CleanRequest } from '@owen/foundry-core/shared/types';
 
 import { HostOpsService } from '../../core/host-ops.service';
 import { LedgerService } from '../../core/ledger.service';

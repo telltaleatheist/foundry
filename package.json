@@ -4,31 +4,25 @@
   "private": true,
   "description": "Recast poorly scanned PDFs into clean EPUBs. A document vision model (dots-ocr by default) reads each page whole — locally via MLX, or against any OpenAI-compatible server such as vLLM.",
   "type": "module",
-  "module": "src/cli.ts",
+  "module": "packages/foundry-core/src/engine/cli.ts",
   "bin": {
-    "foundry": "./src/cli.ts"
+    "foundry": "./packages/foundry-core/src/engine/cli.ts"
   },
   "engines": {
     "bun": ">=1.1.0"
   },
   "scripts": {
-    "start": "bun run src/cli.ts",
+    "start": "bun run packages/foundry-core/src/engine/cli.ts",
     "electron:dev": "npm --prefix app run electron:dev",
     "package:win-x64": "npm --prefix app run package:win-x64",
     "package:mac": "npm --prefix app run package:mac",
-    "typecheck": "tsc --noEmit",
-    "build:engine": "node tools/build-engine.mjs",
+    "typecheck": "npm --prefix packages/foundry-core run typecheck && tsc --noEmit",
+    "build:engine": "node packages/foundry-core/tools/build-engine.mjs",
+    "build:core": "npm --prefix packages/foundry-core run build",
     "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "esbuild": "0.28.1",
     "typescript": "^5.6.0"
-  },
-  "dependencies": {
-    "@pdf-lib/fontkit": "^1.1.1",
-    "diff": "8.0.3",
-    "pdf-lib": "^1.17.1",
-    "undici": "6.21.1"
   }
 }

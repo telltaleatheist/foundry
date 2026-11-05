@@ -1,10 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { qualify } from '@shared/documents';
-import { LANGUAGE_CHOICES } from '@shared/languages';
-import { reReadAhead } from '@shared/reread';
-import type { Job, JobRequest } from '@shared/types';
+import { qualify } from '@owen/foundry-core/shared/documents';
+import { LANGUAGE_CHOICES } from '@owen/foundry-core/shared/languages';
+import { reReadAhead } from '@owen/foundry-core/shared/reread';
+import type { Job, JobRequest } from '@owen/foundry-core/shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';

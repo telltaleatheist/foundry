@@ -1,4 +1,4 @@
-import type { CaptureQuad } from '@shared/types';
+import type { CaptureQuad } from '@owen/foundry-core/shared/types';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -12,7 +12,7 @@ import {
   signal,
 } from '@angular/core';
 
-import { Rectifier } from '@browser/rectify';
+import { Rectifier } from '@owen/foundry-core/browser/rectify';
 import { CaptureCardComponent } from './capture-card.component';
 
 /** One page on the table, as the grid needs to draw it. */

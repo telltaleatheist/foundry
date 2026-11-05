@@ -105,19 +105,19 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, inject, input, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import type { CrucibleInstallPlan, CrucibleProbe } from '@shared/slots';
-import { applyInstallEvent, initialInstallRows } from '@shared/crucible-install-wire';
+import type { CrucibleInstallPlan, CrucibleProbe } from '@owen/foundry-core/shared/slots';
+import { applyInstallEvent, initialInstallRows } from '@owen/foundry-core/shared/crucible-install-wire';
 import type {
   CrucibleInstallChildRow,
   CrucibleInstallOutcome,
   CrucibleInstallRow,
   CrucibleInstallStatus,
-} from '@shared/crucible-install-wire';
-import type { RemotePairingProgress } from '@shared/remote-pairing';
+} from '@owen/foundry-core/shared/crucible-install-wire';
+import type { RemotePairingProgress } from '@owen/foundry-core/shared/remote-pairing';
 import type {
   CrucibleUninstallAvailability,
   CrucibleUninstallPlan,
-} from '@shared/uninstall-wire';
+} from '@owen/foundry-core/shared/uninstall-wire';
 import { cardWords, diskWords, jobTypeWords, sizeWords } from '../../core/crucible-words';
 import { api } from '../../core/foundry';
 

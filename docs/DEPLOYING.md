@@ -1,5 +1,15 @@
 # Deploying foundry
 
+> **FOUNDRY-CORE-PLAN step 3 (2026-11-04, branch `feat/foundry-core`): `app/` is no
+> longer self-contained.** The engine (`packages/foundry-core/src/engine`, bundle
+> `packages/foundry-core/engine/`), `app/shared`, `app/browser` and every library
+> file of `app/electron` moved into the package `@owen/foundry-core`
+> (`packages/foundry-core/README.md`). **Do not re-vendor `app/` into BookForge
+> from a commit that has this note** — the copy would have no engine and no
+> library. BookForge takes this code by pinning the package's tarball (step 4).
+> Below, read `app/engine/` as `packages/foundry-core/engine/` and
+> `tools/build-engine.mjs` as `packages/foundry-core/tools/build-engine.mjs`.
+
 **The engine is part of the app (2026-09-24).** It used to be a separate
 `bun build --compile` executable per platform, published as its own release and
 downloaded by BookForge as its `foundry-cli` add-on. Owen: *"i dont think it

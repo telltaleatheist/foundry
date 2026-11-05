@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { ANY_SLOT, GPU_DIAL_ANY } from '@shared/slots';
-import type { Job } from '@shared/types';
+import { ANY_SLOT, GPU_DIAL_ANY } from '@owen/foundry-core/shared/slots';
+import type { Job } from '@owen/foundry-core/shared/types';
 
 import { NoticeService } from '../../core/notice.service';
 import { QueueService } from '../../core/queue.service';

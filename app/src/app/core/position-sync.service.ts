@@ -1,7 +1,7 @@
 import { Injectable, effect, inject, signal, untracked } from '@angular/core';
 
-import { positionPicture, positionView, type PositionView } from '@shared/ledger';
-import { fold } from '@shared/original';
+import { positionPicture, positionView, type PositionView } from '@owen/foundry-core/shared/ledger';
+import { fold } from '@owen/foundry-core/shared/original';
 
 import { normalise, OpenDocumentsService, pathIsProject, type Tab } from './documents.service';
 import { LedgerService } from './ledger.service';

@@ -15,10 +15,10 @@
  *
  * Every `app/electron/*.ts` is LIBRARY unless it is named in `APP_SIDE` below,
  * and a library file must not reach the `electron` package by any chain of
- * relative imports (static, `export … from`, `import()`, `require`, and
- * type-only imports too — a library whose types need Electron's is not
- * headless either). New files are library by default; making one app-side is
- * an edit to this list, which is a decision somebody has to write down.
+ * imports (static, `export … from`, `import()`, `require`, and type-only
+ * imports too — a library whose types need Electron's is not headless either).
+ * New files are library by default; making one app-side is an edit to this
+ * list, which is a decision somebody has to write down.
  *
  * `APP_SIDE` is what legitimately owns Electron: the shell, the window, the
  * preload, Crucible's own web-UI window, and the two files whose app halves
@@ -38,6 +38,19 @@
  * work to library files (doors-*.ts, mount-work.ts, document-intake.ts), and each
  * still keeps a dialog, a window or the scheme registration, so each still
  * reaches electron and stays listed.
+ *
+ * ── STEP 3 (2026-11-04): THE LIBRARY IS A PACKAGE ──────────────────────────
+ *
+ * Every library file left app/electron for `packages/foundry-core/src/node`,
+ * shared/ became `src/shared` and browser/ `src/shared-browser`; the app
+ * imports them as `@owen/foundry-core/node/*`, `/shared/*`, `/browser/*`.
+ * APP_SIDE did not change, and is now exactly what app/electron holds. The walk
+ * follows those package specifiers into the package's sources, so a chain from
+ * an app file through the library is still a chain. And the PACKAGE is held to
+ * more than "its main-process half is headless": no file anywhere under its
+ * src/ (the engine included) imports electron, its package.json does not name
+ * electron at all, and its sources import nothing outside the package except
+ * the repo's package.json (the engine's version, inlined by the bundler).
  */
 import { expect, test } from 'bun:test';
 import * as fs from 'node:fs';
@@ -45,9 +58,22 @@ import * as path from 'node:path';
 import * as ts from 'typescript';
 
 const APP = path.dirname(import.meta.dir);
+const REPO = path.dirname(APP);
 const ELECTRON = path.join(APP, 'electron');
-const SHARED = path.join(APP, 'shared');
-const BROWSER = path.join(APP, 'browser');
+const PKG = path.join(REPO, 'packages', 'foundry-core');
+const SRC = path.join(PKG, 'src');
+const NODE = path.join(SRC, 'node');
+const SHARED = path.join(SRC, 'shared');
+const BROWSER = path.join(SRC, 'shared-browser');
+
+/** `@owen/foundry-core/<subpath>` to the source directory (or file) it names. */
+const PACKAGE_SUBPATHS: ReadonlyArray<[string, string]> = [
+  ['@owen/foundry-core/node/', NODE],
+  ['@owen/foundry-core/shared/', SHARED],
+  ['@owen/foundry-core/browser/', BROWSER],
+  ['@owen/foundry-core/host', path.join(NODE, 'host')],
+  ['@owen/foundry-core/engine', path.join(NODE, 'engine')],
+];
 
 const APP_SIDE = new Set([
   'main.ts',
@@ -64,13 +90,31 @@ function importsOf(file: string): string[] {
   return info.importedFiles.map((ref) => ref.fileName);
 }
 
-/** A relative specifier to the file it names, or null for one that is not ours. */
-function resolveLocal(from: string, spec: string): string {
-  const base = path.resolve(path.dirname(from), spec);
+const rel = (file: string): string => path.relative(REPO, file).replace(/\\/g, '/');
+
+function resolveCandidates(base: string, from: string, spec: string): string {
   for (const candidate of [base, `${base}.ts`, path.join(base, 'index.ts')]) {
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
   }
-  throw new Error(`${path.relative(APP, from)} imports '${spec}', which resolves to no file`);
+  throw new Error(`${rel(from)} imports '${spec}', which resolves to no file`);
+}
+
+/** The package source a `@owen/foundry-core/…` specifier names, or null for any other package. */
+function resolvePackage(from: string, spec: string): string | null {
+  for (const [prefix, dir] of PACKAGE_SUBPATHS) {
+    if (prefix.endsWith('/') ? spec.startsWith(prefix) : spec === prefix) {
+      return resolveCandidates(prefix.endsWith('/') ? path.join(dir, spec.slice(prefix.length)) : dir, from, spec);
+    }
+  }
+  if (spec === '@owen/foundry-core' || spec.startsWith('@owen/foundry-core/')) {
+    throw new Error(`${rel(from)} imports '${spec}', which is not one of the package's exports`);
+  }
+  return null;
+}
+
+/** A relative specifier to the file it names, or null for one that is not ours. */
+function resolveLocal(from: string, spec: string): string {
+  return resolveCandidates(path.resolve(path.dirname(from), spec), from, spec);
 }
 
 /** The chain from `start` to the `electron` package, or null when there is none. */
@@ -79,12 +123,11 @@ function chainToElectron(start: string): string[] | null {
   const walk = (file: string, trail: string[]): string[] | null => {
     if (seen.has(file)) return null;
     seen.add(file);
-    const here = [...trail, path.relative(APP, file).replace(/\\/g, '/')];
+    const here = [...trail, rel(file)];
     for (const spec of importsOf(file)) {
       if (spec === 'electron' || spec.startsWith('electron/')) return [...here, spec];
-      if (!spec.startsWith('.')) continue;
-      const target = resolveLocal(file, spec);
-      if (!target.endsWith('.ts')) continue; // JSON
+      const target = spec.startsWith('.') ? resolveLocal(file, spec) : resolvePackage(file, spec);
+      if (target === null || !target.endsWith('.ts')) continue; // another package, or JSON
       const found = walk(target, here);
       if (found !== null) return found;
     }
@@ -93,16 +136,28 @@ function chainToElectron(start: string): string[] | null {
   return walk(start, []);
 }
 
+function tsFilesUnder(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return tsFilesUnder(full);
+    return entry.name.endsWith('.ts') ? [full] : [];
+  }).sort();
+}
+
 const electronFiles = fs.readdirSync(ELECTRON).filter((f) => f.endsWith('.ts')).sort();
 
 test('every APP_SIDE entry exists', () => {
   expect([...APP_SIDE].filter((f) => !electronFiles.includes(f))).toEqual([]);
 });
 
-test('no library file under app/electron reaches electron, directly or transitively', () => {
-  const offenders = electronFiles
-    .filter((f) => !APP_SIDE.has(f))
-    .map((f) => chainToElectron(path.join(ELECTRON, f)))
+test('no library file (packages/foundry-core/src/node, or app/electron outside APP_SIDE) reaches electron, directly or transitively', () => {
+  const library = [
+    ...electronFiles.filter((f) => !APP_SIDE.has(f)).map((f) => path.join(ELECTRON, f)),
+    ...tsFilesUnder(NODE),
+  ];
+  expect(library.length).toBeGreaterThan(0);
+  const offenders = library
+    .map((file) => chainToElectron(file))
     .filter((chain): chain is string[] => chain !== null)
     .map((chain) => chain.join(' -> '));
   expect(offenders).toEqual([]);
@@ -115,22 +170,16 @@ test('every APP_SIDE file still reaches electron (else it is library and leaves 
 
 function importsOutside(root: string, allowed: readonly string[]): string[] {
   const offenders: string[] = [];
-  const visit = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) { visit(full); continue; }
-      if (!entry.name.endsWith('.ts')) continue;
-      for (const spec of importsOf(full)) {
-        const where = path.relative(APP, full).replace(/\\/g, '/');
-        if (!spec.startsWith('.')) { offenders.push(`${where} imports '${spec}'`); continue; }
-        const target = resolveLocal(full, spec);
-        if (allowed.every((dir) => path.relative(dir, target).startsWith('..'))) {
-          offenders.push(`${where} imports '${spec}' (outside ${allowed.map((dir) => path.basename(dir) + '/').join(' and ')})`);
-        }
+  for (const full of tsFilesUnder(root)) {
+    for (const spec of importsOf(full)) {
+      const where = rel(full);
+      if (!spec.startsWith('.')) { offenders.push(`${where} imports '${spec}'`); continue; }
+      const target = resolveLocal(full, spec);
+      if (allowed.every((dir) => path.relative(dir, target).startsWith('..'))) {
+        offenders.push(`${where} imports '${spec}' (outside ${allowed.map((dir) => path.basename(dir) + '/').join(' and ')})`);
       }
     }
-  };
-  visit(root);
+  }
   return offenders;
 }
 
@@ -139,20 +188,27 @@ test('browser/ imports nothing but shared/ and browser/ (no node:, no packages, 
 });
 
 test('shared/ imports nothing but shared/ (no node:, no packages, no electron)', () => {
+  expect(importsOutside(SHARED, [SHARED])).toEqual([]);
+});
+
+test('the package never reaches electron: no source imports it, its package.json does not name it, nothing leaves the package', () => {
   const offenders: string[] = [];
-  const visit = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) { visit(full); continue; }
-      if (!entry.name.endsWith('.ts')) continue;
-      for (const spec of importsOf(full)) {
-        const where = path.relative(APP, full).replace(/\\/g, '/');
-        if (!spec.startsWith('.')) { offenders.push(`${where} imports '${spec}'`); continue; }
-        const target = resolveLocal(full, spec);
-        if (path.relative(SHARED, target).startsWith('..')) offenders.push(`${where} imports '${spec}' (outside shared/)`);
+  const rootManifest = path.join(REPO, 'package.json');
+  for (const full of tsFilesUnder(SRC)) {
+    for (const spec of importsOf(full)) {
+      if (spec === 'electron' || spec.startsWith('electron/')) offenders.push(`${rel(full)} imports '${spec}'`);
+      if (!spec.startsWith('.')) continue;
+      const target = path.resolve(path.dirname(full), spec);
+      // The engine's version is the repo's package.json, inlined by the bundler (src/engine/version.ts).
+      if (path.relative(PKG, target).startsWith('..') && target !== rootManifest) {
+        offenders.push(`${rel(full)} imports '${spec}' (outside the package)`);
       }
     }
-  };
-  visit(SHARED);
+  }
+  const manifest = JSON.parse(fs.readFileSync(path.join(PKG, 'package.json'), 'utf8')) as Record<string, unknown>;
+  for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies', 'devDependencies']) {
+    const deps = (manifest[field] ?? {}) as Record<string, string>;
+    if ('electron' in deps) offenders.push(`packages/foundry-core/package.json names electron in ${field}`);
+  }
   expect(offenders).toEqual([]);
 });

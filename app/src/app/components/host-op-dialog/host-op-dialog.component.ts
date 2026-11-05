@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import type { HostOpField } from '@shared/host-ops';
+import type { HostOpField } from '@owen/foundry-core/shared/host-ops';
 
 import { HostOpsService } from '../../core/host-ops.service';
 import { NoticeService } from '../../core/notice.service';

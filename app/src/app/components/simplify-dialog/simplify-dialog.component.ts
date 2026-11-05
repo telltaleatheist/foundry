@@ -1,14 +1,14 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { fold } from '@shared/original';
-import { canSimplifyFrom } from '@shared/stages';
+import { fold } from '@owen/foundry-core/shared/original';
+import { canSimplifyFrom } from '@owen/foundry-core/shared/stages';
 import {
   DEFAULT_OLLAMA_ENDPOINT as DEFAULT_OLLAMA,
   DEFAULT_TRANSLATE_MODEL as DEFAULT_MODEL,
-} from '@shared/pipeline';
-import { withChosenModel } from '@shared/job-model-offer';
-import type { RewriteMode, SimplifyRequest } from '@shared/types';
+} from '@owen/foundry-core/shared/pipeline';
+import { withChosenModel } from '@owen/foundry-core/shared/job-model-offer';
+import type { RewriteMode, SimplifyRequest } from '@owen/foundry-core/shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';

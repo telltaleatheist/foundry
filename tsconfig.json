@@ -11,7 +11,7 @@
 
     // package.json (the version) and vendor/tesseract/manifest.json (the
     // Tesseract pin) are imported as modules so the bundler INLINES them into
-    // the compiled binary — see src/version.ts and src/scan/tesseract.ts.
+    // the compiled binary — see packages/foundry-core/src/engine/version.ts.
     "resolveJsonModule": true,
 
     "strict": true,
@@ -24,5 +24,8 @@
 
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "tools/**/*.ts", "test/**/*.ts"]
+  // The engine and its tests moved to packages/foundry-core (FOUNDRY-CORE-PLAN
+  // step 3), which checks them with these same options in tsconfig.engine.json;
+  // `npm run typecheck` runs that program and this one.
+  "include": ["tools/**/*.ts"]
 }

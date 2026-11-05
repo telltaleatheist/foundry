@@ -32,8 +32,8 @@ import type {
   CrucibleCoordinationState,
   CrucibleMissingEntry,
   CrucibleUnmetClass,
-} from '@shared/coordinate-wire';
-import type { CrucibleProbe } from '@shared/slots';
+} from '@owen/foundry-core/shared/coordinate-wire';
+import type { CrucibleProbe } from '@owen/foundry-core/shared/slots';
 
 /** The product name, for the one place per panel that earns a first mention. */
 export const ENGINE_FIRST = 'GPU engine (Crucible)';

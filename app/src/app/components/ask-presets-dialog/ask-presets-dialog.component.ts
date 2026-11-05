@@ -7,7 +7,7 @@ import {
   ASK_PRESET_QUESTION_MAX,
   checkedSteps,
   type AskPreset,
-} from '@shared/ask-presets';
+} from '@owen/foundry-core/shared/ask-presets';
 
 import { AskService } from '../../core/ask.service';
 import { BookStacksService } from '../../core/book-stacks.service';

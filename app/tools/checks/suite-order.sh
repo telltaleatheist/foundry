@@ -24,17 +24,17 @@ set -euo pipefail
 runs="${1:-5}"
 cd "$(dirname "$0")/../../.."
 
-if [ ! -d test ] || [ ! -d app/test ]; then
-  echo "run me from the repo root (no test/ and app/test/ here)" >&2
+if [ ! -d packages/foundry-core/test ] || [ ! -d app/test ]; then
+  echo "run me from the repo root (no packages/foundry-core/test/ and app/test/ here)" >&2
   exit 1
 fi
 
-echo "$runs shuffled orders over $(find app/test test -name '*.test.ts' | wc -l | tr -d ' ') files"
+echo "$runs shuffled orders over $(find app/test packages/foundry-core/test -name '*.test.ts' | wc -l | tr -d ' ') files"
 
 failed=0
 for i in $(seq 1 "$runs"); do
   # shellcheck disable=SC2046
-  out=$(bun test $(find app/test test -name '*.test.ts' | sort -R | tr '
+  out=$(bun test $(find app/test packages/foundry-core/test -name '*.test.ts' | sort -R | tr '
 ' ' ') 2>&1 || true)
   line=$(printf '%s' "$out" | grep -E '^ *[0-9]+ (pass|fail|skip)$' | tr '
 ' ' ')

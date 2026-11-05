@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import type { EnvCatalogItem, EnvInstallProgress, EnvTarget, Job } from '@shared/types';
+import type { EnvCatalogItem, EnvInstallProgress, EnvTarget, Job } from '@owen/foundry-core/shared/types';
 
 import { QueueService } from '../../core/queue.service';
 import { api } from '../../core/foundry';

@@ -335,7 +335,7 @@ listen	project:open	electron/preload.ts
 listen	projects:changed	electron/preload.ts
 listen	queue:changed	electron/preload.ts
 listen	window:closing	electron/preload.ts
-push	acts:gates-changed	electron/doors-crucible.ts
+push	acts:gates-changed	packages/foundry-core/src/node/doors-crucible.ts
 push	analysis:suggest-progress	electron/ipc.ts
 push	app:navigate	electron/main.ts
 push	ask:progress	electron/ipc.ts
@@ -346,9 +346,9 @@ push	crucible:pull-progress	electron/ipc.ts
 push	document:opened	electron/documents.ts
 push	document:relocated	electron/documents.ts
 push	env:install-progress	electron/ipc.ts
-push	host-ops:changed	electron/host-ops.ts
-push	host-ops:offers-changed	electron/host-ops.ts
-push	host-ops:status-changed	electron/host-ops.ts
+push	host-ops:changed	packages/foundry-core/src/node/host-ops.ts
+push	host-ops:offers-changed	packages/foundry-core/src/node/host-ops.ts
+push	host-ops:status-changed	packages/foundry-core/src/node/host-ops.ts
 push	menu:action	electron/main.ts
 push	project:open	electron/mount.ts
 push	projects:changed	electron/ipc.ts

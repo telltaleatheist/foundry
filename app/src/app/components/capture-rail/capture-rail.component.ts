@@ -1,7 +1,7 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 
-import type { CapturePrepared } from '@shared/types';
+import type { CapturePrepared } from '@owen/foundry-core/shared/types';
 
 import type { PrepareCounts, StampCost } from '../../core/capture.service';
 

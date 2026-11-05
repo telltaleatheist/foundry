@@ -27,7 +27,7 @@
 #     over GitHub's 2 GiB cap on the release and fail halfway.
 #
 # AFTER THIS RUNS, the numbers in <workdir>/foundry-env-<target>-v1.json are
-# copied into ENV_ASSETS in app/electron/env-catalog.ts. That copy is the step
+# copied into ENV_ASSETS in packages/foundry-core/src/node/env-catalog.ts. That copy is the step
 # nothing automates and nothing checks: a published asset whose hash is not in
 # the catalog is an environment the app refuses to install, which is the right
 # failure but is still a failure.
@@ -63,5 +63,5 @@ done
 
 gh release upload "$TAG" "${FILES[@]}" --repo "$REPO" --clobber
 
-echo "==> $NAME: uploaded. Now copy these into ENV_ASSETS (app/electron/env-catalog.ts):"
+echo "==> $NAME: uploaded. Now copy these into ENV_ASSETS (packages/foundry-core/src/node/env-catalog.ts):"
 cat "$NAME.json"

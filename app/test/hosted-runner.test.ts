@@ -37,7 +37,7 @@ import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import type { CleanRequest, RunPlacement } from '../shared/types';
+import type { CleanRequest, RunPlacement } from '@owen/foundry-core/shared/types';
 
 const APP_DIR = path.dirname(import.meta.dir);
 
@@ -61,14 +61,14 @@ mock.module('electron', () => ({
   shell: {},
 }));
 // The work code asks the platform port, not this mock, for its paths (2026-11-04).
-import { useTestPlatform } from './platform-fixture';
+import { useTestPlatform } from '../../packages/foundry-core/test/lib/platform-fixture';
 useTestPlatform((name: string) => path.join(os.tmpdir(), 'foundry-hosted-runner-test', name));
 
-type Queue = typeof import('../electron/job-queue');
-type Workspace = typeof import('../electron/workspace');
-type Dispatch = typeof import('../electron/crucible-dispatch');
-type Engine = typeof import('../electron/engine');
-type AppSettings = typeof import('../electron/app-settings');
+type Queue = typeof import('@owen/foundry-core/node/job-queue');
+type Workspace = typeof import('@owen/foundry-core/node/workspace');
+type Dispatch = typeof import('@owen/foundry-core/node/crucible-dispatch');
+type Engine = typeof import('@owen/foundry-core/node/engine');
+type AppSettings = typeof import('@owen/foundry-core/node/app-settings');
 type Mount = typeof import('../electron/mount');
 
 let queue: Queue;
@@ -79,11 +79,11 @@ let appSettings: AppSettings;
 let mount: Mount;
 
 beforeAll(async () => {
-  queue = await import('../electron/job-queue');
-  workspace = await import('../electron/workspace');
-  dispatch = await import('../electron/crucible-dispatch');
-  engine = await import('../electron/engine');
-  appSettings = await import('../electron/app-settings');
+  queue = await import('@owen/foundry-core/node/job-queue');
+  workspace = await import('@owen/foundry-core/node/workspace');
+  dispatch = await import('@owen/foundry-core/node/crucible-dispatch');
+  engine = await import('@owen/foundry-core/node/engine');
+  appSettings = await import('@owen/foundry-core/node/app-settings');
   mount = await import('../electron/mount');
 });
 

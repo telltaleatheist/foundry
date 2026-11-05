@@ -5,10 +5,10 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseBookFile, type BookRow } from '../../app/shared/book';
-import { parseOpsFile, replayOps, type BookOp, type TextOp } from '../../app/shared/ops';
-import { positionOf } from '../../app/shared/ledger';
-import type { LedgerStep, ProjectLedger } from '../../app/shared/types';
+import { parseBookFile, type BookRow } from '../../packages/foundry-core/src/shared/book';
+import { parseOpsFile, replayOps, type BookOp, type TextOp } from '../../packages/foundry-core/src/shared/ops';
+import { positionOf } from '../../packages/foundry-core/src/shared/ledger';
+import type { LedgerStep, ProjectLedger } from '../../packages/foundry-core/src/shared/types';
 
 export interface Block {
   id: string;

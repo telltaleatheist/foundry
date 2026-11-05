@@ -1,0 +1,31 @@
+/*
+ * The renderer half: src/shared and src/shared-browser, emitted as ES modules
+ * with declarations into dist/esm/ for a bundler (Angular's esbuild) to take —
+ * the imports stay extensionless, as they were when the renderer compiled these
+ * files itself. The options are the renderer program's (app/tsconfig.json +
+ * tsconfig.app.json), including `useDefineForClassFields: false`, which is what
+ * the Angular build compiled them with.
+ */
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "outDir": "./dist/esm",
+    "rootDir": "./src",
+    "declaration": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "useDefineForClassFields": false,
+    "types": []
+  },
+  "include": [
+    "src/shared/**/*.ts",
+    "src/shared-browser/**/*.ts"
+  ]
+}

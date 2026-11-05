@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 
-import { qualify } from '@shared/documents';
-import { translationInEffect } from '@shared/ledger';
-import { carriedFromPlan } from '@shared/pipeline';
-import type { ConversionKind, JobRequest } from '@shared/types';
+import { qualify } from '@owen/foundry-core/shared/documents';
+import { translationInEffect } from '@owen/foundry-core/shared/ledger';
+import { carriedFromPlan } from '@owen/foundry-core/shared/pipeline';
+import type { ConversionKind, JobRequest } from '@owen/foundry-core/shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { NoticeService } from '../../core/notice.service';

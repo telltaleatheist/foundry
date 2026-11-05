@@ -12,9 +12,9 @@ without meaning to.
 
 | Script | Run it when |
 |---|---|
-| `install-attach.ts` | You changed `electron/crucible-install-door.ts` and want to know the door still joins a move the tray started. |
+| `install-attach.ts` | You changed `packages/foundry-core/src/node/crucible-install-door.ts` and want to know the door still joins a move the tray started. |
 | `suite-order.sh` | A test passes alone and fails in the suite, or the reverse — anything that smells order-dependent. |
-| `lib-loads-without-electron.cjs` | After `build:electron`, to prove the compiled library modules load as plain Node (FOUNDRY-CORE-PLAN step 1 onward). |
+| `lib-loads-without-electron.cjs` | After `build:electron` (which builds and syncs the package), to prove the compiled library modules in `packages/foundry-core/dist/node` (or an installed copy, by argument) load as plain Node (FOUNDRY-CORE-PLAN step 1 onward). |
 
 ## install-attach.ts
 

@@ -8,18 +8,20 @@
   "scripts": {
     "ng": "ng",
     "clean:electron": "shx rm -rf dist/electron dist/shared",
-    "build:electron": "npm run clean:electron && tsc -p tsconfig.electron.json",
+    "build:electron": "npm run core:sync && npm run clean:electron && tsc -p tsconfig.electron.json",
     "build:renderer": "npm run test:templates && ng build && npm run test:surface",
     "build": "npm run build:electron && npm run build:renderer",
     "typecheck": "tsc -p tsconfig.electron.json --noEmit",
     "start": "npm run electron:dev",
-    "electron:dev": "node ../tools/build-engine.mjs && npm run build:electron && node tools/free-port.cjs 4260 && concurrently -k -n ng,electron \"ng serve --port 4260\" \"wait-on http-get://localhost:4260 && electron . --dev\"",
+    "electron:dev": "node ../packages/foundry-core/tools/build-engine.mjs && npm run build:electron && node tools/free-port.cjs 4260 && concurrently -k -n ng,electron \"ng serve --port 4260\" \"wait-on http-get://localhost:4260 && electron . --dev\"",
     "electron:prod": "npm run build && electron .",
     "package:win-x64": "npm run build && electron-builder --win --x64",
     "package:mac": "npm run build && electron-builder --mac --arm64",
     "package:mac:signed": "npm run build && node tools/package-mac.cjs",
     "test:templates": "node tools/test-no-backticks-in-templates.js",
-    "test:surface": "node tools/test-crucible-setup-surface.js"
+    "test:surface": "node tools/test-crucible-setup-surface.js",
+    "core:sync": "node tools/sync-foundry-core.cjs",
+    "core:check": "node tools/sync-foundry-core.cjs --check"
   },
   "build": {
     "appId": "com.telltale.foundry",
@@ -30,9 +32,7 @@
     },
     "files": [
       "dist/electron/**",
-      "dist/shared/**",
       "dist/renderer/**",
-      "engine/**",
       "package.json"
     ],
     "fileAssociations": [
@@ -70,9 +70,8 @@
     "@angular/router": "^21.0.0",
     "@crucible/bootstrap": "file:vendor/crucible-bootstrap-2.0.34.tgz",
     "@crucible/client": "file:vendor/crucible-client-2.0.34.tgz",
+    "@owen/foundry-core": "file:../packages/foundry-core",
     "@owen/tool-loop": "file:vendor/owen-tool-loop-0.1.0.tgz",
-    "libheif-js": "1.19.8",
-    "pdf-lib": "1.17.1",
     "pdfjs-dist": "^6.2.108",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0"

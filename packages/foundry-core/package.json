@@ -1,0 +1,105 @@
+{
+  "name": "@owen/foundry-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Foundry's features without a window: the engine bundle, the book/ledger/queue/Crucible logic a main process runs, and the browser-safe shapes and replay a renderer shares. Consumed by standalone Foundry (this repo's app/) and by BookForge.",
+  "license": "UNLICENSED",
+  "author": "Owen Morgan",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    "./node/*": {
+      "types": "./dist/node/*.d.ts",
+      "default": "./dist/node/*.js"
+    },
+    "./host": {
+      "types": "./dist/node/host.d.ts",
+      "default": "./dist/node/host.js"
+    },
+    "./engine": {
+      "types": "./dist/node/engine.d.ts",
+      "default": "./dist/node/engine.js"
+    },
+    "./engine/*": "./engine/*",
+    "./shared/*.json": "./dist/shared/*.json",
+    "./shared/*": {
+      "import": {
+        "types": "./dist/esm/shared/*.d.ts",
+        "default": "./dist/esm/shared/*.js"
+      },
+      "default": {
+        "types": "./dist/shared/*.d.ts",
+        "default": "./dist/shared/*.js"
+      }
+    },
+    "./browser/*": {
+      "types": "./dist/esm/shared-browser/*.d.ts",
+      "import": "./dist/esm/shared-browser/*.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "node/*": [
+        "dist/node/*.d.ts"
+      ],
+      "host": [
+        "dist/node/host.d.ts"
+      ],
+      "engine": [
+        "dist/node/engine.d.ts"
+      ],
+      "shared/*": [
+        "dist/shared/*.d.ts"
+      ],
+      "browser/*": [
+        "dist/esm/shared-browser/*.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist/node/**/*.js",
+    "dist/node/**/*.d.ts",
+    "dist/shared/**/*.js",
+    "dist/shared/**/*.d.ts",
+    "dist/shared/**/*.json",
+    "dist/esm/**/*.js",
+    "dist/esm/**/*.d.ts",
+    "dist/package.json",
+    "dist/esm/package.json",
+    "engine/**",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node tools/clean-dist.mjs",
+    "build": "npm run clean && tsc -p tsconfig.cjs.json && tsc -p tsconfig.esm.json && node tools/stamp-esm.mjs",
+    "build:engine": "node tools/build-engine.mjs",
+    "check:engine": "node tools/build-engine.mjs --check",
+    "typecheck": "tsc -p tsconfig.engine.json && tsc -p tsconfig.cjs.json --noEmit && tsc -p tsconfig.esm.json --noEmit",
+    "pack": "npm run build && npm pack"
+  },
+  "_peerNote": "The Crucible SDKs and tool-loop are PEERS, not dependencies: each app pins them itself (app/vendor/*.tgz here, BookForge's vendor/ there), because a file: tarball nested inside this package's tarball does not install cleanly, and because the app and this package must share ONE copy (instanceof CrucibleRefused, one registry). They are devDependencies only so this package builds and tests on its own.",
+  "dependencies": {
+    "libheif-js": "1.19.8",
+    "pdf-lib": "1.17.1"
+  },
+  "peerDependencies": {
+    "@crucible/bootstrap": "^2.0.34",
+    "@crucible/client": "^2.0.34",
+    "@owen/tool-loop": "^0.1.0"
+  },
+  "devDependencies": {
+    "@crucible/bootstrap": "file:../../app/vendor/crucible-bootstrap-2.0.34.tgz",
+    "@crucible/client": "file:../../app/vendor/crucible-client-2.0.34.tgz",
+    "@owen/tool-loop": "file:../../app/vendor/owen-tool-loop-0.1.0.tgz",
+    "@pdf-lib/fontkit": "1.1.1",
+    "@types/bun": "1.3.14",
+    "@types/node": "20.19.43",
+    "diff": "8.0.3",
+    "esbuild": "0.28.1",
+    "typescript": "5.9.3",
+    "undici": "6.21.1"
+  }
+}

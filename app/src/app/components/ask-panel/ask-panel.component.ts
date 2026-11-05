@@ -12,15 +12,15 @@ import {
   viewChild,
 } from '@angular/core';
 
-import type { AskHighlight, AskSession } from '@shared/ask';
+import type { AskHighlight, AskSession } from '@owen/foundry-core/shared/ask';
 
 import { AskService, type AskRunState, type AskStep } from '../../core/ask.service';
 import type { BookStack } from '../../core/book-stacks.service';
 import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
 import { ConfirmService } from '../../core/confirm.service';
-import { runsOf } from '@shared/ask-conversations';
-import type { AskPreset } from '@shared/ask-presets';
+import { runsOf } from '@owen/foundry-core/shared/ask-conversations';
+import type { AskPreset } from '@owen/foundry-core/shared/ask-presets';
 import { api } from '../../core/foundry';
 import { JobModelComponent } from '../job-model/job-model.component';
 

@@ -1,7 +1,7 @@
 import { Injectable, effect, inject, signal } from '@angular/core';
 
-import { fold } from '@shared/original';
-import type { JobKind } from '@shared/types';
+import { fold } from '@owen/foundry-core/shared/original';
+import type { JobKind } from '@owen/foundry-core/shared/types';
 
 import { BookStacksService } from './book-stacks.service';
 import { LedgerService } from './ledger.service';

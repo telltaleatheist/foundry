@@ -94,22 +94,22 @@ import { pathToFileURL } from 'node:url';
 
 import { app, nativeImage, net, protocol, session } from 'electron';
 
-import { bookFigureFile } from './book';
-import { captureServedFile } from './capture';
+import { bookFigureFile } from '@owen/foundry-core/node/book';
+import { captureServedFile } from '@owen/foundry-core/node/capture';
 import { openDocument } from './documents';
-import { type FoundryHost, recordHost } from './host';
+import { type FoundryHost, recordHost } from '@owen/foundry-core/node/host';
 import {
   type HostOperation, recordHostNodeActions, recordHostOperations, recordHostStatusOpen,
-} from './host-ops';
-import { connectLocalEngine } from './doors-crucible';
+} from '@owen/foundry-core/node/host-ops';
+import { connectLocalEngine } from '@owen/foundry-core/node/doors-crucible';
 import { registerIpc } from './ipc';
-import { jobsPending, settleAwaitedExports } from './mount-work';
-import * as queue from './job-queue';
-import { setPlatform } from './platform';
-import { listProjects, onImportLanded } from './projects';
+import { jobsPending, settleAwaitedExports } from '@owen/foundry-core/node/mount-work';
+import * as queue from '@owen/foundry-core/node/job-queue';
+import { setPlatform } from '@owen/foundry-core/node/platform';
+import { listProjects, onImportLanded } from '@owen/foundry-core/node/projects';
 import { broadcast, foundryWindow, isDev, openWindow, whenRendererReady } from './window';
-import { originalOf } from '../shared/original';
-import type { ExportLanding } from '../shared/types';
+import { originalOf } from '@owen/foundry-core/shared/original';
+import type { ExportLanding } from '@owen/foundry-core/shared/types';
 
 export type { FoundryHost, HostOperation };
 /*
@@ -120,7 +120,7 @@ export type { FoundryHost, HostOperation };
  * that are Foundry's business.
  */
 export type { ExportLanding };
-export { hostedLibraryDir } from './host';
+export { hostedLibraryDir } from '@owen/foundry-core/node/host';
 /*
  * THE WINDOW ITSELF, for a host that has to know whether the focused window is
  * this one. BookForge's Edit menu on a Mac routes Cmd+Z to `menu:action` when
@@ -139,13 +139,13 @@ export { foundryWindow } from './window';
  * types are here so a host can declare its operations array without reaching
  * past `mount.ts` into modules that are Foundry's own business.
  */
-export { setHostNodes } from './host-ops';
+export { setHostNodes } from '@owen/foundry-core/node/host-ops';
 /*
  * THE MINT SEED'S SHAPE, through the seam a host imports — what
  * `FoundryHost.mintMetaFor` answers with (Owen's inheritance ruling,
  * 2026-08-24; the shape and the precedence are argued where it is declared).
  */
-export type { HostMintMeta } from '../shared/host-ops';
+export type { HostMintMeta } from '@owen/foundry-core/shared/host-ops';
 /*
  * AND THE CHIP IN THE CHROME, which is the socket's second push door.
  * `setHostNodes` says what the host is making OF A PARTICULAR BOOK and lands on
@@ -154,8 +154,8 @@ export type { HostMintMeta } from '../shared/host-ops';
  * chrome goes back to being Foundry's alone — see electron/host-ops.ts, and
  * `FoundryHost.onStatusOpen` for what a click on it asks.
  */
-export { setHostStatus } from './host-ops';
-export type { HostStatus } from '../shared/host-ops';
+export { setHostStatus } from '@owen/foundry-core/node/host-ops';
+export type { HostStatus } from '@owen/foundry-core/shared/host-ops';
 /*
  * AND THE THIRD PUSH DOOR: THE ACTS THEMSELVES, REVISED.
  *
@@ -170,7 +170,7 @@ export type { HostStatus } from '../shared/host-ops';
  * the life of the process, which is what every host does today, and the ask the
  * renderer already makes at startup answers exactly what it always answered.
  */
-export { setHostOperations } from './host-ops';
+export { setHostOperations } from '@owen/foundry-core/node/host-ops';
 /*
  * DROPPING A STEP, FOR A HOST THAT LISTS ITS EXPORTS.
  *
@@ -195,7 +195,7 @@ export { setHostOperations } from './host-ops';
  * the one named is destroyed too. Owen: *"epubs shouldnt have any sub-steps.
  * theyre final pieces … but if there do happen to be sub-steps, remove them."*
  */
-export { deleteLedgerStep } from './doors-delete';
+export { deleteLedgerStep } from '@owen/foundry-core/node/doors-delete';
 /*
  * DELETING ONE EXPORT, FOR A HOST THAT LISTS IT AS A VERSION. Owen, 2026-09-28:
  * deleting the EPUB there deletes the EPUB — its file in `final/` and its row in
@@ -204,8 +204,8 @@ export { deleteLedgerStep } from './doors-delete';
  * path outside the library) are thrown sentences, as `deleteLedgerStep`'s are.
  * The windows re-read on the `projects:changed` the delete announces.
  */
-export { deleteExport } from './doors-delete';
-export type { HostNode, HostNodeProgress, HostNodeState, HostOperationKind, NodeOutput } from '../shared/types';
+export { deleteExport } from '@owen/foundry-core/node/doors-delete';
+export type { HostNode, HostNodeProgress, HostNodeState, HostOperationKind, NodeOutput } from '@owen/foundry-core/shared/types';
 /*
  * HOW A HOST SAYS ITS STOP IS NOT ITS CANCEL — re-exported here because this file
  * IS the host-facing surface, and a constant a host has to reach past the mount to
@@ -217,7 +217,7 @@ export type { HostNode, HostNodeProgress, HostNodeState, HostOperationKind, Node
  * The whole argument, including why it rides on the abort rather than on
  * `RunOptions`, is on the constant itself in shared/types.ts.
  */
-export { RESUMABLE_STOP } from '../shared/types';
+export { RESUMABLE_STOP } from '@owen/foundry-core/shared/types';
 /*
  * ── AND THE QUEUE SOCKET: ONE MACHINE'S GPU HAS ONE OWNER ───────────────────
  *
@@ -256,12 +256,12 @@ export { RESUMABLE_STOP } from '../shared/types';
  *
  * ABSENT, ALL THREE ARE UNREACHED and Foundry queues exactly as it always has.
  */
-export { hostQueueDrained, printedFormsAt, printedFormsForRun, runJob, setHostQueueRows } from './job-queue';
-export type { FoundryHostQueue } from './host';
+export { hostQueueDrained, printedFormsAt, printedFormsForRun, runJob, setHostQueueRows } from '@owen/foundry-core/node/job-queue';
+export type { FoundryHostQueue } from '@owen/foundry-core/node/host';
 export type {
   CleanRequest, FoundryJobRow, Job, JobRequest, RunOutcome, RunPlacement, RunVenue, SimplifyRequest,
   TextPassRequest, TranslateRequest,
-} from '../shared/types';
+} from '@owen/foundry-core/shared/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // foundry-file:// — how a book's figures reach the page
@@ -738,7 +738,7 @@ export function openFoundryWindow(
  * electron/mount-work.ts (FOUNDRY-CORE-PLAN step 2) and are this seam's by the
  * same names they always had.
  */
-export { exportEpubFromStep, planReadingsPass, stopFoundry } from './mount-work';
+export { exportEpubFromStep, planReadingsPass, stopFoundry } from '@owen/foundry-core/node/mount-work';
 
 /**
  * Whether Foundry is in the middle of something — the probe a host's own
@@ -765,4 +765,4 @@ export function foundryBusy(): { windowOpen: boolean; jobsPending: number } {
 }
 
 /** The host calls this after committing its first-run model/upstream choices. */
-export { prepareFoundryForUse as resumeModelPreparation } from './crucible-coordinate';
+export { prepareFoundryForUse as resumeModelPreparation } from '@owen/foundry-core/node/crucible-coordinate';

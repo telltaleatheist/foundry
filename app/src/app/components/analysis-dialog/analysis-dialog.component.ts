@@ -8,16 +8,16 @@ import {
   CUSTOM_CATEGORY_NAME_MAX,
   customCategoryId,
   type CustomAnalysisCategory,
-} from '@shared/analysis-categories';
-import { SUGGEST_HINT_MAX, type SuggestProgress } from '@shared/category-suggestions';
-import { fold } from '@shared/original';
-import { canTranslateFrom } from '@shared/stages';
+} from '@owen/foundry-core/shared/analysis-categories';
+import { SUGGEST_HINT_MAX, type SuggestProgress } from '@owen/foundry-core/shared/category-suggestions';
+import { fold } from '@owen/foundry-core/shared/original';
+import { canTranslateFrom } from '@owen/foundry-core/shared/stages';
 import {
   DEFAULT_OLLAMA_ENDPOINT as DEFAULT_OLLAMA,
   DEFAULT_TRANSLATE_MODEL as DEFAULT_MODEL,
-} from '@shared/pipeline';
-import { withChosenModel } from '@shared/job-model-offer';
-import type { AnalyzeRequest } from '@shared/types';
+} from '@owen/foundry-core/shared/pipeline';
+import { withChosenModel } from '@owen/foundry-core/shared/job-model-offer';
+import type { AnalyzeRequest } from '@owen/foundry-core/shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';

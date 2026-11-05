@@ -6,8 +6,8 @@ import {
 } from '@angular/core';
 import { Router } from '@angular/router';
 
-import { typeLabel } from '@shared/documents';
-import type { ProjectSummary } from '@shared/types';
+import { typeLabel } from '@owen/foundry-core/shared/documents';
+import type { ProjectSummary } from '@owen/foundry-core/shared/types';
 
 import { api, hosted } from '../../core/foundry';
 import { CaptureService } from '../../core/capture.service';

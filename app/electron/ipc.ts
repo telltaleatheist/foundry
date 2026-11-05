@@ -22,62 +22,62 @@ import * as path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { startPairing, pollPairing } from '@crucible/client';
-import { RemotePairingSessions } from './crucible-remote-pairing';
+import { RemotePairingSessions } from '@owen/foundry-core/node/crucible-remote-pairing';
 
-import { actGates } from './act-gates';
+import { actGates } from '@owen/foundry-core/node/act-gates';
 import {
   readAppSettings,
   writeAppSettings
-} from './app-settings';
-import { probeCloud } from './cloud-providers';
+} from '@owen/foundry-core/node/app-settings';
+import { probeCloud } from '@owen/foundry-core/node/cloud-providers';
 import { openCrucibleUi } from './crucible-ui';
 import {
   coordinateServer,
   coordinationStates,
   onCoordination
-} from './crucible-coordinate';
+} from '@owen/foundry-core/node/crucible-coordinate';
 import {
   cloudSettingsView, crucibleServerNamed,
   crucibleSettingsView, engineClientFor,
   probeCrucible,
   slotAvailability,
   probeCrucibleAt
-} from './crucible-registry';
-import { readCapability } from './crucible-dispatch';
-import { readEngineSettings, testUpstream } from './crucible-settings';
-import { engineCatalog, jobModelOffer, pullSubject, rememberJobModel, removeModel } from './crucible-models';
+} from '@owen/foundry-core/node/crucible-registry';
+import { readCapability } from '@owen/foundry-core/node/crucible-dispatch';
+import { readEngineSettings, testUpstream } from '@owen/foundry-core/node/crucible-settings';
+import { engineCatalog, jobModelOffer, pullSubject, rememberJobModel, removeModel } from '@owen/foundry-core/node/crucible-models';
 import {
   cancelAsk, deleteAskConversation, readAskConversations, readAskSessions, renameAskConversation, saveAskSession, startAsk,
-} from './ask-document';
-import { cancelSuggest, startSuggest } from './suggest-categories';
-import type { SuggestCategoriesRequest } from '../shared/category-suggestions';
-import type { AskRequest, AskSession } from '../shared/ask';
-import type { AskPresetsKept } from '../shared/ask-presets';
-import type { JobModelKind } from '../shared/job-models';
+} from '@owen/foundry-core/node/ask-document';
+import { cancelSuggest, startSuggest } from '@owen/foundry-core/node/suggest-categories';
+import type { SuggestCategoriesRequest } from '@owen/foundry-core/shared/category-suggestions';
+import type { AskRequest, AskSession } from '@owen/foundry-core/shared/ask';
+import type { AskPresetsKept } from '@owen/foundry-core/shared/ask-presets';
+import type { JobModelKind } from '@owen/foundry-core/shared/job-models';
 import type {
   SettingsDocument,
   SettingsPatch,
   UpstreamName,
   UpstreamProbe,
-} from '../shared/engine-settings';
-import { crucibleInstallPlan } from './crucible-install';
-import { crucibleInstallDoor } from './crucible-install-door';
+} from '@owen/foundry-core/shared/engine-settings';
+import { crucibleInstallPlan } from '@owen/foundry-core/node/crucible-install';
+import { crucibleInstallDoor } from '@owen/foundry-core/node/crucible-install-door';
 import {
   crucibleUninstallAvailability,
   crucibleUninstallDryRun
-} from './crucible-uninstall';
+} from '@owen/foundry-core/node/crucible-uninstall';
 import type {
   CrucibleUninstallFlags,
   CrucibleUninstallPlan,
   CrucibleUninstallRun,
-} from '../shared/uninstall-wire';
-import { anyServerServing } from './crucible-provider';
+} from '@owen/foundry-core/shared/uninstall-wire';
+import { anyServerServing } from '@owen/foundry-core/node/crucible-provider';
 import {
   type CloudProviderEdit,
   type ConnectCodePreview,
   type CrucibleProbe,
   type CrucibleServerEdit, type NewJobsWaitFor
-} from '../shared/slots';
+} from '@owen/foundry-core/shared/slots';
 import {
   ensureCapture,
   intakePhotos,
@@ -92,7 +92,7 @@ import {
   pdfStageRelease,
   removePhotos,
   writeRecipe,
-} from './capture';
+} from '@owen/foundry-core/node/capture';
 import {
   amendBookOps,
   applyBookOps,
@@ -103,7 +103,7 @@ import {
   readPendingStack,
   savePendingStack,
   viewExportedBook,
-} from './book';
+} from '@owen/foundry-core/node/book';
 import { admitted, openDocument, promptForDocument } from './documents';
 import {
   engineInfo,
@@ -111,44 +111,44 @@ import {
   stampMintMetadata,
   readPdfMetadata,
   runDoctor
-} from './engine';
-import { catalogForThisMachine, onEnvInstallProgress } from './env-install';
-import { hosted, hostMintMeta } from './host';
+} from '@owen/foundry-core/node/engine';
+import { catalogForThisMachine, onEnvInstallProgress } from '@owen/foundry-core/node/env-install';
+import { hosted, hostMintMeta } from '@owen/foundry-core/node/host';
 import {
   actOnHostNode, hostNodesFor, hostOffers, hostOperationStates, hostOpensStatus, hostStatus, openHostStatus
-} from './host-ops';
-import type { HostNodeAction } from '../shared/host-ops';
-import * as queue from './job-queue';
-import { setupState } from './setup';
-import { probeSystem } from './system-probe';
+} from '@owen/foundry-core/node/host-ops';
+import type { HostNodeAction } from '@owen/foundry-core/shared/host-ops';
+import * as queue from '@owen/foundry-core/node/job-queue';
+import { setupState } from '@owen/foundry-core/node/setup';
+import { probeSystem } from '@owen/foundry-core/node/system-probe';
 import {
   createCaptureProject, exportInTray,
   goToStep, listProjects, onProjectsChanged, readAnalysisReport,
   readManifest,
   readStepLedger, recordMintMeta,
   standForDocument
-} from './projects';
+} from '@owen/foundry-core/node/projects';
 import {
   clearRecents,
   forgetRecent, listRecents
-} from './recents';
-import { readSettings } from './settings';
+} from '@owen/foundry-core/node/recents';
+import { readSettings } from '@owen/foundry-core/node/settings';
 import { answerLetGo, broadcast, foundryWindow } from './window';
-import { confirmClose, confirmReRead, confirmUnapplied, confirmRemoveModel } from './doors-questions';
-import { deleteLedgerStep, describeProjectDelete, deleteProjectFolder, describeDocumentDelete, openExportDeleteDoor, deleteDocumentFile, describeLedgerStepDelete, openStepDeleteDoor } from './doors-delete';
-import { invokeHostOperationAt, documentAtPositionAdmitted, documentAtStepAdmitted } from './doors-ledger';
-import { planExportFrom, planTranslationFor, planSimplificationFor, hostPassOfferFor, planCleanupFor, planAnalysisFor } from './doors-plan';
-import { namedServerOr, afterRegistryChanged, adoptPairingFile, registerApprovedPairing, saveCrucibleServers, addCrucibleServerDoor, addLocalCrucibleDoor, parseConnectCode, testConnectCode, addConnectCode, putEngineSettings, runInstallAndCoordinate, restartWindows, uninstallCrucible, offerCrucibleStart, startCrucibleAndConnect, saveCloudProviders, sweepAtStartup } from './doors-crucible';
-import { readDocumentBytes, recordsBusy, refuseHostedLibraryMove, readAskPresets, saveAskPresets, writeSettingsOutsideHost, finishSetupFor } from './doors-library';
-import { admittedPdf, writePdfMetadataFor, exportedBook, writeEpubMetadataFor } from './doors-meta';
-import { enqueueJob, enqueueTextPassFor, enqueueTriagedCleanupFor, enqueueAnalysisFor, runJobNow } from './doors-queue';
-import { planReading } from './workspace';
+import { confirmClose, confirmReRead, confirmUnapplied, confirmRemoveModel } from '@owen/foundry-core/node/doors-questions';
+import { deleteLedgerStep, describeProjectDelete, deleteProjectFolder, describeDocumentDelete, openExportDeleteDoor, deleteDocumentFile, describeLedgerStepDelete, openStepDeleteDoor } from '@owen/foundry-core/node/doors-delete';
+import { invokeHostOperationAt, documentAtPositionAdmitted, documentAtStepAdmitted } from '@owen/foundry-core/node/doors-ledger';
+import { planExportFrom, planTranslationFor, planSimplificationFor, hostPassOfferFor, planCleanupFor, planAnalysisFor } from '@owen/foundry-core/node/doors-plan';
+import { namedServerOr, afterRegistryChanged, adoptPairingFile, registerApprovedPairing, saveCrucibleServers, addCrucibleServerDoor, addLocalCrucibleDoor, parseConnectCode, testConnectCode, addConnectCode, putEngineSettings, runInstallAndCoordinate, restartWindows, uninstallCrucible, offerCrucibleStart, startCrucibleAndConnect, saveCloudProviders, sweepAtStartup } from '@owen/foundry-core/node/doors-crucible';
+import { readDocumentBytes, recordsBusy, refuseHostedLibraryMove, readAskPresets, saveAskPresets, writeSettingsOutsideHost, finishSetupFor } from '@owen/foundry-core/node/doors-library';
+import { admittedPdf, writePdfMetadataFor, exportedBook, writeEpubMetadataFor } from '@owen/foundry-core/node/doors-meta';
+import { enqueueJob, enqueueTextPassFor, enqueueTriagedCleanupFor, enqueueAnalysisFor, runJobNow } from '@owen/foundry-core/node/doors-queue';
+import { planReading } from '@owen/foundry-core/node/workspace';
 import {
   type CustomAnalysisCategory
-} from '../shared/analysis-categories';
-import type { ReadAsk } from '../shared/ledger';
-import type { BookOp, PendingStack } from '../shared/ops';
-import type { ReReadPrompt } from '../shared/reread';
+} from '@owen/foundry-core/shared/analysis-categories';
+import type { ReadAsk } from '@owen/foundry-core/shared/ledger';
+import type { BookOp, PendingStack } from '@owen/foundry-core/shared/ops';
+import type { ReReadPrompt } from '@owen/foundry-core/shared/reread';
 import type {
   Asked,
   BackendSettingsPatch,
@@ -164,7 +164,7 @@ import type {
   ModelClass,
   UnappliedAnswer,
   UnappliedWarning
-} from '../shared/types';
+} from '@owen/foundry-core/shared/types';
 
 /*
  * THE FOUR NAMES THIS FILE USED TO DEFINE, re-exported so ipc.js offers what it
@@ -172,8 +172,8 @@ import type {
  * (docs/FOUNDRY-CORE-PLAN.md step 2); what stayed here is the table of
  * registrations and the halves that need a window, a dialog or the shell.
  */
-export { adoptPairingFile, connectLocalEngine } from './doors-crucible';
-export { deleteExport, deleteLedgerStep } from './doors-delete';
+export { adoptPairingFile, connectLocalEngine } from '@owen/foundry-core/node/doors-crucible';
+export { deleteExport, deleteLedgerStep } from '@owen/foundry-core/node/doors-delete';
 
 export function registerIpc(): void {
   const pairingSessions = new RemotePairingSessions(registerApprovedPairing, startPairing, pollPairing);

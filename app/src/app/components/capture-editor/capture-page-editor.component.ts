@@ -22,13 +22,13 @@ import {
   distanceToEdge,
   toPixels,
   withCorner,
-} from '@browser/geometry';
+} from '@owen/foundry-core/browser/geometry';
 import {
   cutOf, joinedQuad, outputSizeFor, seatSplit, slideSplit, turnsOf, WHOLE_FRAME,
-} from '@shared/capture';
-import type { CaptureQuad, CaptureSplit } from '@shared/types';
+} from '@owen/foundry-core/shared/capture';
+import type { CaptureQuad, CaptureSplit } from '@owen/foundry-core/shared/types';
 
-import { Rectifier } from '@browser/rectify';
+import { Rectifier } from '@owen/foundry-core/browser/rectify';
 
 /**
  * ONE PHOTOGRAPH, WITH ITS CORNERS IN THE USER'S HANDS.

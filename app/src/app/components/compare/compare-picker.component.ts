@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 
-import type { LedgerStep } from '@shared/types';
+import type { LedgerStep } from '@owen/foundry-core/shared/types';
 
 import { OpenDocumentsService } from '../../core/documents.service';
 import { LedgerService } from '../../core/ledger.service';

@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { qualify } from '@shared/documents';
-import { fold } from '@shared/original';
-import type { DocumentMetadata, StepLedgerView } from '@shared/types';
+import { qualify } from '@owen/foundry-core/shared/documents';
+import { fold } from '@owen/foundry-core/shared/original';
+import type { DocumentMetadata, StepLedgerView } from '@owen/foundry-core/shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';

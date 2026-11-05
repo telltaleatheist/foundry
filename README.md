@@ -31,7 +31,7 @@ page that stays keeps its true page number in `data-bf-page`. A paragraph is
 never joined across the hole a skip leaves.
 
 What foundry needs beyond its own binary is a Python with PyMuPDF in it, and
-with MLX too unless the reading happens elsewhere — `src/vlm/vlm_page.py`
+with MLX too unless the reading happens elsewhere — `packages/foundry-core/src/engine/vlm/vlm_page.py`
 renders the pages at 200 dpi and, on the MLX path, reads them in ONE subprocess
 for the whole book (one model load, not one per page), streaming a JSON object
 per page back.
@@ -187,8 +187,11 @@ a **subprocess**, the same way it already drives ebook2audiobook:
 BookForge ──spawn──> foundry vlm-convert --pdf in.pdf --out out.epub
 ```
 
-Nothing in foundry knows what an audiobook is. The engine is bundled into the
-app folder (`app/engine/`), so BookForge takes a change by re-vendoring `app/` —
+Nothing in foundry knows what an audiobook is. The engine and every feature
+without a window live in the package `@owen/foundry-core`
+([`packages/foundry-core/`](packages/foundry-core/README.md)); the engine is
+bundled into it (`packages/foundry-core/engine/`). Until BookForge pins that
+package (FOUNDRY-CORE-PLAN step 4) it takes a change by re-vendoring `app/` —
 see [`docs/DEPLOYING.md`](docs/DEPLOYING.md).
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the decisions and why.
@@ -196,9 +199,12 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the decisions and why.
 ## Build
 
 ```bash
-bun run typecheck
+npm --prefix packages/foundry-core ci   # the package's own dependencies (once)
+npm --prefix app ci                     # the app; installs the package as a COPY (app/.npmrc)
+npm run typecheck
 bun test
-node tools/build-engine.mjs   # src/ -> app/engine/ (commit it; bun test checks it is current)
+npm run build:engine    # packages/foundry-core/src/engine -> packages/foundry-core/engine (commit it; bun test checks it is current)
+npm --prefix app run build              # builds the package, syncs it into app/node_modules, builds the app
 ```
 
 The bundle's `--version` is `foundry X.Y.Z (src <digest>)`: the digest names the
@@ -207,7 +213,7 @@ exact sources it was built from.
 ## Install
 
 Foundry ships as a desktop app with the engine inside it; a dev shell runs
-`bun run src/cli.ts <command>` or `node app/engine/foundry-engine.cjs <command>`.
+`bun run packages/foundry-core/src/engine/cli.ts <command>` or `node packages/foundry-core/engine/foundry-engine.cjs <command>`.
 Beyond it, a run needs a Python
 with **PyMuPDF** (and **mlx-vlm**, on Apple silicon reading locally), and — off
 Apple silicon — a VLM server to point `--vlm-endpoint` at. Weights are pulled

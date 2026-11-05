@@ -3,10 +3,10 @@ import { FormsModule } from '@angular/forms';
 
 import {
   asciiFilename, contributorsFromString, generatedFilename, inheritMintMeta, MINT_LANGUAGES,
-} from '@shared/mint-meta';
-import type { MintContributor, MintMeta } from '@shared/mint-meta';
-import { carriedFromPlan } from '@shared/pipeline';
-import type { JobRequest, WorkspacePlan } from '@shared/types';
+} from '@owen/foundry-core/shared/mint-meta';
+import type { MintContributor, MintMeta } from '@owen/foundry-core/shared/mint-meta';
+import { carriedFromPlan } from '@owen/foundry-core/shared/pipeline';
+import type { JobRequest, WorkspacePlan } from '@owen/foundry-core/shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { NoticeService } from '../../core/notice.service';

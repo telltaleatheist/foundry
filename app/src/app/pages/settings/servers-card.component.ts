@@ -74,16 +74,16 @@ import { CrucibleDoorsComponent } from '../../components/crucible-doors/crucible
 import { CrucibleInstallOutcomeComponent } from '../../components/crucible-doors/install-outcome.component';
 import { NoticeService } from '../../core/notice.service';
 import { cardWords, coordinationWords } from '../../core/crucible-words';
-import type { CrucibleCoordinationMap } from '@shared/coordinate-wire';
-import { ANY_SLOT } from '@shared/slots';
+import type { CrucibleCoordinationMap } from '@owen/foundry-core/shared/coordinate-wire';
+import { ANY_SLOT } from '@owen/foundry-core/shared/slots';
 import type {
   ComputeSlot,
   CrucibleProbe,
   CrucibleServerEdit,
   CrucibleServerView,
   NewJobsWaitFor,
-} from '@shared/slots';
-import type { Job } from '@shared/types';
+} from '@owen/foundry-core/shared/slots';
+import type { Job } from '@owen/foundry-core/shared/types';
 import { api } from '../../core/foundry';
 import { QueueService } from '../../core/queue.service';
 

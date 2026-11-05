@@ -10,8 +10,8 @@ import {
   viewChild,
 } from '@angular/core';
 
-import { isWholeFrameTurned, joinedQuad } from '@shared/capture';
-import type { CaptureQuad, CaptureSplit } from '@shared/types';
+import { isWholeFrameTurned, joinedQuad } from '@owen/foundry-core/shared/capture';
+import type { CaptureQuad, CaptureSplit } from '@owen/foundry-core/shared/types';
 
 // The scope's three words, from the service that owns the state — the same
 // import the rail makes for `StampCost`, and for the same reason: a second
@@ -19,7 +19,7 @@ import type { CaptureQuad, CaptureSplit } from '@shared/types';
 // them.
 import type { CaptureScope } from '../../core/capture.service';
 import { CapturePageEditorComponent } from './capture-page-editor.component';
-import { type Dimensions, type FractionQuad } from '@browser/geometry';
+import { type Dimensions, type FractionQuad } from '@owen/foundry-core/browser/geometry';
 
 /**
  * ONE PHOTOGRAPH IN THE FILMSTRIP along the modal's foot.

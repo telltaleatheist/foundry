@@ -68,7 +68,7 @@
  */
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 
-import type { DoctorReport, EngineInfo } from '@shared/types';
+import type { DoctorReport, EngineInfo } from '@owen/foundry-core/shared/types';
 
 import { api } from '../../core/foundry';
 import { EnvCardComponent } from './env-card.component';

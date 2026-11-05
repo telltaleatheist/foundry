@@ -74,15 +74,15 @@
  */
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, inject, signal } from '@angular/core';
 
-import type { CrucibleCoordinationMap } from '@shared/coordinate-wire';
-import type { CrucibleProbe, CrucibleServerView } from '@shared/slots';
+import type { CrucibleCoordinationMap } from '@owen/foundry-core/shared/coordinate-wire';
+import type { CrucibleProbe, CrucibleServerView } from '@owen/foundry-core/shared/slots';
 import {
   LLM_CLASSES,
   defaultEngineServer,
   splitUpstreamModel,
   type CapabilityRecord,
   type CapabilityRow,
-} from '@shared/engine-settings';
+} from '@owen/foundry-core/shared/engine-settings';
 import { CrucibleDoorsComponent } from '../crucible-doors/crucible-doors.component';
 import { CrucibleInstallOutcomeComponent } from '../crucible-doors/install-outcome.component';
 import {

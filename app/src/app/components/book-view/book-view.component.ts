@@ -17,21 +17,21 @@ import {
 
 // The ONE hue table the analysis's colours come from — the panel's rails and the
 // paper's tints are two treatments of it, never two lists. See `tintOf`.
-import { analysisCategoryHue } from '@shared/analysis-categories';
-import { PDF_BLOCK_CATEGORIES, pdfCategoryColour, pdfCategoryLabel } from '@shared/categories';
-import type { BookLoad, BookRow } from '@shared/book';
+import { analysisCategoryHue } from '@owen/foundry-core/shared/analysis-categories';
+import { PDF_BLOCK_CATEGORIES, pdfCategoryColour, pdfCategoryLabel } from '@owen/foundry-core/shared/categories';
+import type { BookLoad, BookRow } from '@owen/foundry-core/shared/book';
 import { OriginalPanelComponent } from './original-panel.component';
 // The reader's words for the three rewrites, and the only copy of them: the
 // dialog's cards, the queue's row and this pane's sentences all print the same
 // table, so a mode cannot be one thing in the history and another on a tooltip.
-import { REWRITE_LABELS } from '@shared/ledger';
+import { REWRITE_LABELS } from '@owen/foundry-core/shared/ledger';
 // The model's inline dialect, mirrored from the emitter's — see `cut`.
-import { INLINE_DROPPED, INLINE_ITALIC, INLINE_STRONG, inlineEmphasis } from '@shared/inline';
-import { replayOps, struckNotes, unwritten, type BookOp, type ReplayedRow } from '@shared/ops';
-import type { AskStackInput } from '@shared/ask-history';
+import { INLINE_DROPPED, INLINE_ITALIC, INLINE_STRONG, inlineEmphasis } from '@owen/foundry-core/shared/inline';
+import { replayOps, struckNotes, unwritten, type BookOp, type ReplayedRow } from '@owen/foundry-core/shared/ops';
+import type { AskStackInput } from '@owen/foundry-core/shared/ask-history';
 // The compare column's light: which characters went and which came, per block,
 // drawn through the same walk as the analysis's — see `cut`.
-import { foldQuotes, wordDiff, type ChangeRange, type WordDiff } from '@shared/word-diff';
+import { foldQuotes, wordDiff, type ChangeRange, type WordDiff } from '@owen/foundry-core/shared/word-diff';
 
 import { api } from '../../core/foundry';
 import { LedgerService } from '../../core/ledger.service';
@@ -39,15 +39,15 @@ import { AnalysisViewService } from '../../core/analysis-view.service';
 import { AskService } from '../../core/ask.service';
 import { ChangesService } from '../../core/changes.service';
 import { StageService } from '../../core/stage.service';
-import type { LitRange } from '@shared/analysis';
+import type { LitRange } from '@owen/foundry-core/shared/analysis';
 import { AnalysisPickerComponent } from '../analysis-panel/analysis-picker.component';
 import { ComparePickerComponent } from '../compare/compare-picker.component';
 import { BookStacksService, type BookStack } from '../../core/book-stacks.service';
 import { type Tab } from '../../core/documents.service';
 import { NoticeService } from '../../core/notice.service';
-import { editionFlow, editionPieces } from '@shared/edition';
-import { chapterOrder, flowNeighbours, seamJoins, sharedAnchor } from '@shared/flow';
-import { readTable, type TableRow } from '@shared/table';
+import { editionFlow, editionPieces } from '@owen/foundry-core/shared/edition';
+import { chapterOrder, flowNeighbours, seamJoins, sharedAnchor } from '@owen/foundry-core/shared/flow';
+import { readTable, type TableRow } from '@owen/foundry-core/shared/table';
 
 /**
  * THE BOOK — a proof sheet on a dark workbench, and the one surface this app

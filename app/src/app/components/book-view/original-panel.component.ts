@@ -12,7 +12,7 @@ import {
   viewChild,
 } from '@angular/core';
 
-import type { BookRow } from '@shared/book';
+import type { BookRow } from '@owen/foundry-core/shared/book';
 import { api } from '../../core/foundry';
 
 /**

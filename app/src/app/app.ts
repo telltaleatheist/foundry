@@ -3,7 +3,7 @@ import {
 } from '@angular/core';
 import { Router, RouterOutlet } from '@angular/router';
 
-import { isPdfName } from '@shared/capture';
+import { isPdfName } from '@owen/foundry-core/shared/capture';
 
 import { InspectorComponent } from './components/inspector/inspector.component';
 import { ConfirmDialogComponent } from './components/confirm-dialog/confirm-dialog.component';

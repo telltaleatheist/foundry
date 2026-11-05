@@ -1,0 +1,28 @@
+/*
+ * The main-process half: src/node and src/shared, emitted as CommonJS with
+ * declarations into dist/ (dist/node/x.js requires ../shared/y.js, as the app's
+ * dist/electron did). The options are app/tsconfig.electron.json's, the program
+ * that compiled these files before they moved here (FOUNDRY-CORE-PLAN step 3).
+ */
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/node/**/*.ts",
+    "src/shared/**/*.ts"
+  ]
+}

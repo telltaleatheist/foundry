@@ -2,8 +2,8 @@ import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 
-import { typeLabel } from '@shared/documents';
-import { CHAINABLE_FROM, PRODUCES_OF, exportNodeId, exportOfNodeId } from '@shared/host-ops';
+import { typeLabel } from '@owen/foundry-core/shared/documents';
+import { CHAINABLE_FROM, PRODUCES_OF, exportNodeId, exportOfNodeId } from '@owen/foundry-core/shared/host-ops';
 /*
  * WHAT IS POSSIBLE FROM A STAGE — one function per act, shared with the dock's
  * buttons and with the dialogs' own refusals (shared/stages.ts). The footer is
@@ -13,11 +13,11 @@ import { CHAINABLE_FROM, PRODUCES_OF, exportNodeId, exportOfNodeId } from '@shar
 import {
   canCleanFrom, canExportFrom, canReadPages, canSimplifyFrom, canTranslateFrom,
   hostActPositionFrom,
-} from '@shared/stages';
-import type { HostNodeAction, HostOperationState } from '@shared/host-ops';
-import { languageNameFor } from '@shared/languages';
-import { isTextPass, mintedFromPhotographs } from '@shared/ledger';
-import { pendingStepOf } from '@shared/pending';
+} from '@owen/foundry-core/shared/stages';
+import type { HostNodeAction, HostOperationState } from '@owen/foundry-core/shared/host-ops';
+import { languageNameFor } from '@owen/foundry-core/shared/languages';
+import { isTextPass, mintedFromPhotographs } from '@owen/foundry-core/shared/ledger';
+import { pendingStepOf } from '@owen/foundry-core/shared/pending';
 import type {
   HostNode,
   HostNodeProgress,
@@ -28,7 +28,7 @@ import type {
   NodeOutput,
   ProjectDocumentKind,
   ProjectSummary,
-} from '@shared/types';
+} from '@owen/foundry-core/shared/types';
 
 import { api, hosted } from '../../core/foundry';
 import { ConfirmService } from '../../core/confirm.service';

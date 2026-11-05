@@ -15,7 +15,10 @@
  *
  * ── WHAT IT READS, AND HOW ────────────────────────────────────────────────
  *
- * Every `.ts` under `app/electron/`, PARSED with the TypeScript compiler (not
+ * Every `.ts` under `app/electron/` AND under the library's main-process half,
+ * `packages/foundry-core/src/node/` (where every non-shell file of app/electron
+ * moved in FOUNDRY-CORE-PLAN step 3 — a push from a library file, host-ops'
+ * broadcasts, must stay counted), PARSED with the TypeScript compiler (not
  * grepped — about a third of the handlers open `ipcMain.handle(` on one line
  * and put the channel on the next, behind a comment). It records:
  *
@@ -53,6 +56,13 @@ const ts = require('typescript');
 
 const APP = path.resolve(__dirname, '..');
 const ELECTRON = path.join(APP, 'electron');
+const LIBRARY = path.resolve(APP, '..', 'packages', 'foundry-core', 'src', 'node');
+
+/** [directory, the label its rows carry in the file column]. */
+const ROOTS = [
+  [ELECTRON, 'electron'],
+  [LIBRARY, 'packages/foundry-core/src/node'],
+];
 const BASELINE = path.join(__dirname, 'ipc-channels.baseline.txt');
 
 const HANDLE = new Set(['handle', 'handleOnce', 'on', 'once']);
@@ -67,11 +77,11 @@ function channelOf(arg) {
 
 function collect() {
   const rows = [];
-  const files = fs.readdirSync(ELECTRON).filter((f) => f.endsWith('.ts')).sort();
-  for (const file of files) {
-    const text = fs.readFileSync(path.join(ELECTRON, file), 'utf8');
+  const files = ROOTS.flatMap(([dir, label]) => fs.readdirSync(dir).filter((f) => f.endsWith('.ts')).sort()
+    .map((f) => ({ file: f, full: path.join(dir, f), rel: `${label}/${f}`, app: dir === ELECTRON })));
+  for (const { file, full, rel, app } of files) {
+    const text = fs.readFileSync(full, 'utf8');
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
-    const rel = `electron/${file}`;
     const visit = (node) => {
       if (ts.isCallExpression(node)) {
         const callee = node.expression;
@@ -91,8 +101,8 @@ function collect() {
         } else if (ts.isIdentifier(callee)) {
           const name = callee.text;
           if (name === 'broadcast' && node.arguments.length >= 1) rows.push(['push', channelOf(first), rel]);
-          else if (file === 'preload.ts' && name === 'subscribe') rows.push(['listen', channelOf(first), rel]);
-          else if (file === 'preload.ts' && name === 'ask') rows.push(['invoke', channelOf(first), rel]);
+          else if (app && file === 'preload.ts' && name === 'subscribe') rows.push(['listen', channelOf(first), rel]);
+          else if (app && file === 'preload.ts' && name === 'ask') rows.push(['invoke', channelOf(first), rel]);
         }
       }
       ts.forEachChild(node, visit);

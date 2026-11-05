@@ -1,7 +1,7 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 
-import type { HostStatus } from '@shared/host-ops';
+import type { HostStatus } from '@owen/foundry-core/shared/host-ops';
 
 import { HostOpsService } from '../../core/host-ops.service';
 import { NoticeService } from '../../core/notice.service';

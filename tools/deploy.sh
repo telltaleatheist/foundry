@@ -55,8 +55,8 @@ fi
 
 # The engine inside the installers must be the one src/ builds to. The test
 # suite checks this too; checking here as well means an installer built from a
-# stale app/engine/ is never published.
-node tools/build-engine.mjs --check
+# stale packages/foundry-core/engine/ is never published.
+node packages/foundry-core/tools/build-engine.mjs --check
 
 # The version to publish. Derived from the LATEST PUBLISHED RELEASE rather than
 # from package.json alone: a package.json that drifted from them would publish

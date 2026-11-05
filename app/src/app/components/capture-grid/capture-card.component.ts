@@ -10,12 +10,12 @@ import {
   viewChild,
 } from '@angular/core';
 
-import { outputSizeFor, turnsOf } from '@shared/capture';
-import type { CaptureQuad } from '@shared/types';
+import { outputSizeFor, turnsOf } from '@owen/foundry-core/shared/capture';
+import type { CaptureQuad } from '@owen/foundry-core/shared/types';
 
-import type { FractionQuad } from '@browser/geometry';
-import { toPixels } from '@browser/geometry';
-import type { Rectifier } from '@browser/rectify';
+import type { FractionQuad } from '@owen/foundry-core/browser/geometry';
+import { toPixels } from '@owen/foundry-core/browser/geometry';
+import type { Rectifier } from '@owen/foundry-core/browser/rectify';
 
 /**
  * HOW BIG THE CARD'S OWN COPY OF THE REGISTERED PAGE IS, in device pixels.

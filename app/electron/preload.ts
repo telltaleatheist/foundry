@@ -8,13 +8,13 @@
  */
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import type { FoundryApi, MenuAction } from '../shared/api';
-import type { CrucibleCoordinationState } from '../shared/coordinate-wire';
-import type { CrucibleInstallEvent } from '../shared/crucible-install-wire';
-import type { HostOffers, HostStatus } from '../shared/host-ops';
-import type { CruciblePullProgress } from '../shared/model-wire';
-import type { AskProgress } from '../shared/ask';
-import type { SuggestProgress } from '../shared/category-suggestions';
+import type { FoundryApi, MenuAction } from '@owen/foundry-core/shared/api';
+import type { CrucibleCoordinationState } from '@owen/foundry-core/shared/coordinate-wire';
+import type { CrucibleInstallEvent } from '@owen/foundry-core/shared/crucible-install-wire';
+import type { HostOffers, HostStatus } from '@owen/foundry-core/shared/host-ops';
+import type { CruciblePullProgress } from '@owen/foundry-core/shared/model-wire';
+import type { AskProgress } from '@owen/foundry-core/shared/ask';
+import type { SuggestProgress } from '@owen/foundry-core/shared/category-suggestions';
 import type {
   AppQuestion,
   Asked,
@@ -28,7 +28,7 @@ import type {
   ReReadAnswer,
   ServerStatus,
   UnappliedAnswer,
-} from '../shared/types';
+} from '@owen/foundry-core/shared/types';
 
 function subscribe<T>(channel: string, listener: (value: T) => void): () => void {
   const wrapped = (_event: unknown, value: T): void => listener(value);

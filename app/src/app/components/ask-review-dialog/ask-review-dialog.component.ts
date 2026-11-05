@@ -1,8 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 
-import { askRowStates, planUndo, retypeSaid, reviewOf, structureSaid, type AskMark } from '@shared/ask';
-import type { ReplayedRow } from '@shared/ops';
-import { wordDiff, type ChangeRange } from '@shared/word-diff';
+import { askRowStates, planUndo, retypeSaid, reviewOf, structureSaid, type AskMark } from '@owen/foundry-core/shared/ask';
+import type { ReplayedRow } from '@owen/foundry-core/shared/ops';
+import { wordDiff, type ChangeRange } from '@owen/foundry-core/shared/word-diff';
 
 import { AskService } from '../../core/ask.service';
 import { BookStacksService, type BookStack } from '../../core/book-stacks.service';

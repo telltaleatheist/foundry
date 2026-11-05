@@ -40,7 +40,7 @@ mock.module('electron', () => ({
 }));
 
 const bootstrap = await import('@crucible/bootstrap');
-const door = await import('../../electron/crucible-install-door');
+const door = await import('@owen/foundry-core/node/crucible-install-door');
 
 const SEP = String.fromCharCode(92);
 const NL = String.fromCharCode(10);

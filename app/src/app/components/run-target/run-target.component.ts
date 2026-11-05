@@ -55,10 +55,10 @@ import {
   ChangeDetectionStrategy, Component, computed, effect, input, model, output, signal,
 } from '@angular/core';
 
-import type { CapabilityRecord } from '@shared/engine-settings';
-import { defaultEngineServer } from '@shared/engine-settings';
-import type { CrucibleServerView } from '@shared/slots';
-import type { ModelClass } from '@shared/types';
+import type { CapabilityRecord } from '@owen/foundry-core/shared/engine-settings';
+import { defaultEngineServer } from '@owen/foundry-core/shared/engine-settings';
+import type { CrucibleServerView } from '@owen/foundry-core/shared/slots';
+import type { ModelClass } from '@owen/foundry-core/shared/types';
 
 /**
  * WHAT EACH ACT IS CALLED when telling somebody a machine cannot do it.

@@ -49,7 +49,7 @@ import {
   type SettingsPatch,
   type UpstreamName,
   type UpstreamTestResult,
-} from '@shared/engine-settings';
+} from '@owen/foundry-core/shared/engine-settings';
 import { api } from '../../core/foundry';
 
 /**

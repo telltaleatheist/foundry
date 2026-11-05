@@ -159,7 +159,9 @@ if (usable) {
   app.setPath('userData', store);
 }
 const mount = usable ? require(path.join(appDir, 'dist', 'electron', 'mount.js')) : null;
-const projects = usable ? require(path.join(appDir, 'dist', 'electron', 'projects.js')) : null;
+// projects is @owen/foundry-core since FOUNDRY-CORE-PLAN step 3: the app's own installed copy,
+// the same module instance mount.js requires.
+const projects = usable ? require(path.join(appDir, 'node_modules', '@owen', 'foundry-core', 'dist', 'node', 'projects.js')) : null;
 
 async function main() {
   if (!usable) {

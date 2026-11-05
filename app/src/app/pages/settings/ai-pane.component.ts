@@ -85,10 +85,10 @@ import {
   type CapabilityRecord,
   type SettingsDocument,
   type SettingsPatch,
-} from '@shared/engine-settings';
-import type { CruciblePullProgress } from '@shared/model-wire';
-import type { CrucibleServerView } from '@shared/slots';
-import { MODEL_CLASSES, type ModelClass } from '@shared/types';
+} from '@owen/foundry-core/shared/engine-settings';
+import type { CruciblePullProgress } from '@owen/foundry-core/shared/model-wire';
+import type { CrucibleServerView } from '@owen/foundry-core/shared/slots';
+import { MODEL_CLASSES, type ModelClass } from '@owen/foundry-core/shared/types';
 import { actWords, shortfallWords, sizeWords } from '../../core/crucible-words';
 import { api } from '../../core/foundry';
 import {

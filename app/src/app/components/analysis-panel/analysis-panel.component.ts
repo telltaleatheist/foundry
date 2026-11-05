@@ -9,12 +9,12 @@ import {
   untracked,
 } from '@angular/core';
 
-import { analysisCategoryHue, analysisCategoryName } from '@shared/analysis-categories';
+import { analysisCategoryHue, analysisCategoryName } from '@owen/foundry-core/shared/analysis-categories';
 
 import { AnalysisViewService } from '../../core/analysis-view.service';
 import { BookStacksService } from '../../core/book-stacks.service';
 import { StageService } from '../../core/stage.service';
-import type { AnalysisHit } from '@shared/analysis';
+import type { AnalysisHit } from '@owen/foundry-core/shared/analysis';
 
 /**
  * THE HITS PANEL — what the analysis found, in the slot Compare would have had.

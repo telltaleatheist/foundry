@@ -1,16 +1,16 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
-import { LANGUAGE_CHOICES, languageNameFor, tagForLanguageName } from '@shared/languages';
-import { languageTagFor, translationInEffect } from '@shared/ledger';
-import { fold } from '@shared/original';
-import { canTranslateFrom } from '@shared/stages';
+import { LANGUAGE_CHOICES, languageNameFor, tagForLanguageName } from '@owen/foundry-core/shared/languages';
+import { languageTagFor, translationInEffect } from '@owen/foundry-core/shared/ledger';
+import { fold } from '@owen/foundry-core/shared/original';
+import { canTranslateFrom } from '@owen/foundry-core/shared/stages';
 import {
   DEFAULT_OLLAMA_ENDPOINT as DEFAULT_OLLAMA,
   DEFAULT_TRANSLATE_MODEL as DEFAULT_MODEL,
-} from '@shared/pipeline';
-import { withChosenModel } from '@shared/job-model-offer';
-import type { TranslateRequest } from '@shared/types';
+} from '@owen/foundry-core/shared/pipeline';
+import { withChosenModel } from '@owen/foundry-core/shared/job-model-offer';
+import type { TranslateRequest } from '@owen/foundry-core/shared/types';
 
 import { LedgerService } from '../../core/ledger.service';
 import { ProjectsService } from '../../core/projects.service';

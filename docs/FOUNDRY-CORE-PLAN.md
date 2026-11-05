@@ -3,6 +3,46 @@
 Surveyed 2026-11-04 at foundry `f2a6fa5` (== bookforge `foundry-app/` vendored sha) and bookforge `f9a3a161`.
 Read-only survey; nothing was changed.
 
+## Status (branch `feat/foundry-core`, not merged)
+
+| Step | State | Commit |
+| --- | --- | --- |
+| 0 baseline | done | 580cb63 |
+| 1 cut the Electron edges | done | ca173c9 |
+| 2 thin ipc/mount/documents; renderer modules out | done | 53658eb |
+| 3 create `packages/foundry-core` | **done** — numbers in `FOUNDRY-CORE-BASELINE.md` "After step 3"; the packaged-app run is Owen's | see `git log` |
+| 4 BookForge adopts the package | not started | |
+
+**Step 3 as built, where it differs from §6/§7 below:**
+
+- **Consumption by `app/`**: not a pinned tarball. `app/package.json` has
+  `"@owen/foundry-core": "file:../packages/foundry-core"` with `install-links=true` in
+  `app/.npmrc`, so npm installs a packed COPY (no junction, no lockfile integrity churn on
+  every change); `app/tools/sync-foundry-core.cjs` rebuilds the package and refreshes the copy,
+  and `build:electron` runs it first. bun's tests resolve the package to `src/` through
+  `app/tsconfig.json` `paths` (emptied for Angular in `tsconfig.app.json`), so the app-side
+  test (`hosted-runner`) and the library share module instances. BookForge (step 4) is the
+  one consumer that pins a tarball.
+- **Peers** are `^` ranges (`^2.0.34`, `^0.1.0`), not exact, so `adopt-crucible-release`'s
+  `npm install` in `app/` is not refused before the package is repointed; they are also
+  devDependencies naming `../../app/vendor/*.tgz`, and `app/test/crucible-pin.test.ts` fails
+  until both follow an adoption. `@anthropic-ai/sdk` stays unlisted (tool-loop's optional peer;
+  nothing installs it).
+- **Tests**: `test/**` → `packages/foundry-core/test/engine/`, library `app/test/*` →
+  `packages/foundry-core/test/lib/`; `app/test` keeps `hosted-runner` (imports `mount.ts`),
+  `crucible-pin`, `lib-no-electron`.
+- **Exports**: `./node/*` deep paths, no `./node` barrel; `./host` and `./engine` are the same
+  modules as `node/host` and `node/engine`. The ES build is for bundlers (extensionless imports).
+- **Package is `"type": "module"`** (dist/ gets `{"type":"commonjs"}`, dist/esm `module`), because
+  esbuild bundles the engine's ES modules in node mode only under a module-typed package — the
+  repo root was; without it the bundle's CJS interop changes.
+- `tools/build-engine.mjs` moved into the package's `tools/` and gained `absWorkingDir: repo`
+  (the metafile keys no longer depend on the directory it is started in). The engine's version
+  is still the REPO's package.json (`src/engine/version.ts`), the one import that leaves the
+  package. Root `package.json` lost the engine's dependencies; root `tsconfig.json` checks
+  `tools/` only and `npm run typecheck` runs the package's programs first.
+- No source maps in the package build (the app's main build had them); the tarball ships no `src/`.
+
 ---
 
 ## 0. The numbers

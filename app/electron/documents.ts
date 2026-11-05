@@ -9,7 +9,7 @@
  */
 import { BrowserWindow, dialog } from 'electron';
 
-import { openDocumentWith } from './document-intake';
+import { openDocumentWith } from '@owen/foundry-core/node/document-intake';
 import { foundryWindow } from './window';
 
 /*
@@ -17,12 +17,12 @@ import { foundryWindow } from './window';
  * path without importing this file's window half. Re-exported here because this
  * is still the door every open passes through, and ipc.ts asks it for both.
  */
-export { admit, admitted } from './openable';
+export { admit, admitted } from '@owen/foundry-core/node/openable';
 /*
  * WHAT AN OPEN DOES lives in document-intake.ts (2026-11-04, FOUNDRY-CORE-PLAN
  * step 2); the argv reader went with the extension list it reads.
  */
-export { documentFromArgv } from './document-intake';
+export { documentFromArgv } from '@owen/foundry-core/node/document-intake';
 
 /**
  * Admit a path and tell every window about it — the single door every open

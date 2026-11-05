@@ -37,11 +37,11 @@ import {
 } from 'electron';
 
 import { documentFromArgv, openDocument, promptForDocument } from './documents';
-import { planProvisioning } from './env-provision';
-import * as queue from './job-queue';
+import { planProvisioning } from '@owen/foundry-core/node/env-provision';
+import * as queue from '@owen/foundry-core/node/job-queue';
 import { mountFoundry, openFoundryWindow, stopFoundry } from './mount';
 import { foundryWindow, letTheWindowGo, whenRendererReady, windowLetGo } from './window';
-import type { MenuAction } from '../shared/api';
+import type { MenuAction } from '@owen/foundry-core/shared/api';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Menu
