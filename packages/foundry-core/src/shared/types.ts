@@ -11,7 +11,6 @@
  * describe, and this file re-uses rather than re-declares them.
  */
 import type { MintContributor, MintMeta } from './mint-meta';
-import type { LlmServerKind } from './pipeline';
 
 export type { MintContributor, MintMeta };
 
