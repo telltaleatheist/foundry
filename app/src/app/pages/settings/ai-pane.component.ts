@@ -69,6 +69,7 @@
  * group headed "Cloud — costs credits" — and only the card is gone. Restoring
  * it is one import.
  */
+import { capabilityRowFor } from '@owen/foundry-core/shared/types';
 import {
   ChangeDetectionStrategy, Component, computed, signal,
 } from '@angular/core';
@@ -261,7 +262,7 @@ export class AiPaneComponent {
     return MODEL_CLASSES
       .filter((cls) => classes.includes(cls) && offered(cls))
       .map((cls) => {
-        const klass = cap?.classes.find((row) => row.capability === cls) ?? null;
+        const klass = (cap === null || cap === undefined ? undefined : capabilityRowFor(cap.classes, cls)) ?? null;
         /*
          * THE REASON IS DRAWN ONLY WHEN IT IS NEWS. On a class that runs, the
          * server's sentence restates the row above it ("X fits: it needs 20.1

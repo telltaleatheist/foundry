@@ -72,6 +72,7 @@
  * and `library:set` refuses outright. A first-run wizard there would be five
  * steps of asking for things somebody else already decided.
  */
+import { capabilityRowFor } from '@owen/foundry-core/shared/types';
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, effect, inject, signal } from '@angular/core';
 
 import type { CrucibleCoordinationMap } from '@owen/foundry-core/shared/coordinate-wire';
@@ -260,8 +261,10 @@ export class SetupWizardComponent {
     // reported as this app's (`HOSTED_ONLY_ACTS`).
     return FOUNDRY_ACTS
       .filter((name) => !HOSTED_ONLY_ACTS.has(name))
-      .map((name) => record.classes.find((row) => row.capability === name))
-      .filter((row): row is CapabilityRow => row !== undefined)
+      .flatMap((name) => {
+        const row = capabilityRowFor(record.classes, name);
+        return row === undefined ? [] : [{ ...row, capability: name }];
+      })
       .map((row) => ({
         act: actWords(row.capability),
         enabled: row.enabled,

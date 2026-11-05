@@ -1,0 +1,478 @@
+{
+ "backend_kind": "cuda-linux",
+ "total_bytes": 25757220864,
+ "desktop_allowance_bytes": 3221225472,
+ "classes": [
+  {
+   "capability": "echo",
+   "enabled": true,
+   "selected": "",
+   "reason": "always available: the test job type; it never touches the accelerator",
+   "summary": "can run the test job",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "generate",
+   "enabled": true,
+   "selected": "qwen3.8-27b-4bit",
+   "reason": "qwen3.8-27b-4bit (goal 27B; 4-bit fits with 2.1 GiB to spare): it needs 18.9 GiB — 16.8 GiB weights + 1.4 GiB overhead + 0.7 GiB KV for 8192 tokens x 1 in flight and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 6 of 6 qwen3.8 and qwen3.5 variants fit",
+   "summary": "can generate text, using qwen3.8-27b-4bit (goal 27B; 4-bit fits with 2.1 GiB to spare)",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": {
+    "tokens": 8192,
+    "concurrency": 1,
+    "source": "Owen 2026-09-23: \"context limit can be set to 8k tokens by default, and it can request higher\"; one in flight, as its first measured user (ContentStudio, whose calls are serial) sends. A client states its own with ?context_tokens= and ?concurrency= (ContentStudio asks for up to its LOCAL_FIELD_CTX_MAX, 40960)",
+    "from": "default"
+   },
+   "goal": {
+    "params_b": 27,
+    "source": "Owen 2026-10-09: \"chat should shoot for 27b\" (docs/VERB-SIZING.md rule 2)"
+   },
+   "context_ceilings": [
+    {
+     "model": "qwen3.8-27b-4bit",
+     "tokens": 32768,
+     "bound_by": "served",
+     "served_context": 32768,
+     "served_context_source": "the most this backend ever starts an engine with: the model manifest's max_context for this backend, or its context_default where it states none (manifest.max_context_for; a load-model's params.context may raise --max-model-len / -c / max_model_len up to it)",
+     "memory_context": 33945,
+     "memory_context_source": "this host's available bytes less the model's weights and overhead, over its KV bytes per token x 1 in flight (MemoryTerms.max_context)",
+     "concurrency": 1
+    },
+    {
+     "model": "qwen3.5-9b",
+     "tokens": 65536,
+     "bound_by": "served",
+     "served_context": 65536,
+     "served_context_source": "the most this backend ever starts an engine with: the model manifest's max_context for this backend, or its context_default where it states none (manifest.max_context_for; a load-model's params.context may raise --max-model-len / -c / max_model_len up to it)",
+     "memory_context": 74887,
+     "memory_context_source": "this host's available bytes less the model's weights and overhead, over its KV bytes per token x 1 in flight (MemoryTerms.max_context)",
+     "concurrency": 1
+    },
+    {
+     "model": "qwen3.5-4b",
+     "tokens": 131072,
+     "bound_by": "served",
+     "served_context": 131072,
+     "served_context_source": "the most this backend ever starts an engine with: the model manifest's max_context for this backend, or its context_default where it states none (manifest.max_context_for; a load-model's params.context may raise --max-model-len / -c / max_model_len up to it)",
+     "memory_context": 210448,
+     "memory_context_source": "this host's available bytes less the model's weights and overhead, over its KV bytes per token x 1 in flight (MemoryTerms.max_context)",
+     "concurrency": 1
+    },
+    {
+     "model": "qwen3.5-2b",
+     "tokens": 131072,
+     "bound_by": "served",
+     "served_context": 131072,
+     "served_context_source": "the most this backend ever starts an engine with: the model manifest's max_context for this backend, or its context_default where it states none (manifest.max_context_for; a load-model's params.context may raise --max-model-len / -c / max_model_len up to it)",
+     "memory_context": 802028,
+     "memory_context_source": "this host's available bytes less the model's weights and overhead, over its KV bytes per token x 1 in flight (MemoryTerms.max_context)",
+     "concurrency": 1
+    },
+    {
+     "model": "qwen3.5-4b-8bit",
+     "tokens": 32768,
+     "bound_by": "served",
+     "served_context": 32768,
+     "served_context_source": "the most this backend ever starts an engine with: the model manifest's max_context for this backend, or its context_default where it states none (manifest.max_context_for; a load-model's params.context may raise --max-model-len / -c / max_model_len up to it)",
+     "memory_context": 356754,
+     "memory_context_source": "this host's available bytes less the model's weights and overhead, over its KV bytes per token x 1 in flight (MemoryTerms.max_context)",
+     "concurrency": 1
+    },
+    {
+     "model": "qwen3.5-0.8b",
+     "tokens": 131072,
+     "bound_by": "served",
+     "served_context": 131072,
+     "served_context_source": "the most this backend ever starts an engine with: the model manifest's max_context for this backend, or its context_default where it states none (manifest.max_context_for; a load-model's params.context may raise --max-model-len / -c / max_model_len up to it)",
+     "memory_context": 990210,
+     "memory_context_source": "this host's available bytes less the model's weights and overhead, over its KV bytes per token x 1 in flight (MemoryTerms.max_context)",
+     "concurrency": 1
+    }
+   ],
+   "route": "local"
+  },
+  {
+   "capability": "decide",
+   "enabled": true,
+   "selected": "qwen3.5-9b",
+   "reason": "qwen3.5-9b (goal 9B; bf16 fits with 2.2 GiB to spare): it needs 18.8 GiB — 16.8 GiB weights + 1.4 GiB overhead + 0.6 GiB KV for 8192 tokens x 2 in flight and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 6 of 8 qwen3.8 and qwen3.5 variants fit. qwen3.8-27b-4bit also fits, and is above the 9B goal, which the automatic pick never exceeds; Settings can still choose it. With images: qwen3.5-4b, the largest model that reads images and fits at or below the 9B goal, because qwen3.5-9b-vl, the vision form of qwen3.5-9b, needs 21.5 GiB — 17.6 GiB weights + 3.3 GiB overhead + 0.6 GiB KV for 8192 tokens x 2 in flight and there is only 21.0 GiB.",
+   "summary": "can decide, using qwen3.5-9b (goal 9B; bf16 fits with 2.2 GiB to spare); with images, qwen3.5-4b",
+   "shortfall_bytes": 0,
+   "with_images": "qwen3.5-4b",
+   "with_images_reason": "qwen3.5-4b, the largest model that reads images and fits at or below the 9B goal, because qwen3.5-9b-vl, the vision form of qwen3.5-9b, needs 21.5 GiB — 17.6 GiB weights + 3.3 GiB overhead + 0.6 GiB KV for 8192 tokens x 2 in flight and there is only 21.0 GiB",
+   "work": {
+    "tokens": 8192,
+    "concurrency": 2,
+    "source": "one 8192-token state (Foundry's Categorize tile: ~24 blocks with 12 of context each side) shared through the prefix cache by up to 16 questions (enginespec.UNSTATED_ENGINE_CONCURRENCY), whose tails at one 544-token vLLM block each (docs/internals/engines-and-capability.md, \"The decision door\") come to about one more state",
+    "from": "default"
+   },
+   "goal": {
+    "params_b": 9,
+    "source": "Owen 2026-10-09: \"decide shoots for 9b\" and \"each job should have a goal - 9b 16 bit for decide, for example\" (docs/VERB-SIZING.md rule 2)"
+   },
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "embed",
+   "enabled": true,
+   "selected": "qwen3-embedding-8b",
+   "reason": "qwen3-embedding-8b (goal 8B; 16-bit fits with 5.1 GiB to spare): it needs 15.9 GiB — 14.1 GiB weights + 0.7 GiB overhead + 1.1 GiB KV for 8192 tokens x 1 in flight and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 embedding models fit",
+   "summary": "can embed text, using qwen3-embedding-8b (goal 8B; 16-bit fits with 5.1 GiB to spare)",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": {
+    "tokens": 8192,
+    "concurrency": 1,
+    "source": "one input of up to 8192 tokens at a time: llama-server embeds a request's inputs in turn on its one slot, and the Mac's items route reads them as rows of the same forward, bounded the same way; Qwen3-Embedding's model card embeds at max_length 8192",
+    "from": "default"
+   },
+   "goal": {
+    "params_b": 8,
+    "source": "Owen 2026-10-10: embed's goal is Qwen3-Embedding-8B; for now the catalog ships the 8B alone at bf16, and a smaller one is a manifest added when it is needed (docs/VERB-SIZING.md section 9)"
+   },
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "rerank",
+   "enabled": true,
+   "selected": "qwen3-reranker-8b",
+   "reason": "qwen3-reranker-8b (goal 8B; 16-bit fits with 3.9 GiB to spare): it needs 17.1 GiB — 15.3 GiB weights + 0.7 GiB overhead + 1.1 GiB KV for 8192 tokens x 1 in flight and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 7 of 7 rerankers and text models fit. qwen3.8-27b-4bit, qwen3.5-9b also fit, and are above the 8B goal, which the automatic pick never exceeds; Settings can still choose one.",
+   "summary": "can rerank documents, using qwen3-reranker-8b (goal 8B; 16-bit fits with 3.9 GiB to spare)",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": {
+    "tokens": 8192,
+    "concurrency": 1,
+    "source": "one query and one document at a time, up to 8192 tokens together: llama-server scores each document's reply in turn on its one slot over the query it holds in its cache; Qwen3-Reranker's model card scores at max_length 8192",
+    "from": "default"
+   },
+   "goal": {
+    "params_b": 8,
+    "source": "Owen 2026-10-10: rerank's goal is Qwen3-Reranker-8B; for now the catalog ships the 8B alone at bf16, and a smaller one is a manifest added when it is needed (docs/VERB-SIZING.md section 9)"
+   },
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "pages",
+   "enabled": true,
+   "selected": "dots-ocr",
+   "reason": "dots-ocr fits: it needs 12.0 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 page readers fit",
+   "summary": "can read pages, using dots-ocr",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": {
+    "tokens": 32768,
+    "concurrency": 12,
+    "source": "models/dots-ocr.toml: context_default 32768 on cuda-linux, and its own note that one page is ~3450 image tokens plus up to 8192 of answer, at the 12 pages in flight crucible/pages.py publishes to clients",
+    "from": "default"
+   },
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "tts",
+   "enabled": true,
+   "selected": "deathstalker",
+   "reason": "deathstalker fits: it needs 17.7 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 7 of 7 voices fit",
+   "summary": "can narrate, using deathstalker",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "asr",
+   "enabled": true,
+   "selected": "qwen3-asr-1.7b",
+   "reason": "qwen3-asr-1.7b fits: it needs 10.3 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 4 of 4 transcribers fit",
+   "summary": "can transcribe, using qwen3-asr-1.7b",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "align",
+   "enabled": true,
+   "selected": "qwen3-aligner",
+   "reason": "qwen3-aligner fits: it needs 5.5 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 aligners fit",
+   "summary": "can align audio to text, using qwen3-aligner",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "rvc",
+   "enabled": true,
+   "selected": "deathstalker-rvc-v1",
+   "reason": "deathstalker-rvc-v1 fits: it needs 2.5 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 7 of 7 RVC models fit",
+   "summary": "can convert a voice, using deathstalker-rvc-v1",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "denoise",
+   "enabled": true,
+   "selected": "instrumental-roformer-becruily",
+   "reason": "instrumental-roformer-becruily fits: it needs 2.4 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 5 of 5 separator models fit",
+   "summary": "can remove noise or split stems, using instrumental-roformer-becruily",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "image",
+   "enabled": true,
+   "selected": "qwen-image-2.1",
+   "reason": "qwen-image-2.1 fits: it needs 17.7 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 2 of 2 image models fit",
+   "summary": "can generate images, using qwen-image-2.1",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "sfx",
+   "enabled": true,
+   "selected": "stable-audio-3-small-sfx",
+   "reason": "stable-audio-3-small-sfx fits: it needs 3.3 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 sound-effect models fit",
+   "summary": "can make sound effects, using stable-audio-3-small-sfx",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "music",
+   "enabled": true,
+   "selected": "stable-audio-3-medium",
+   "reason": "stable-audio-3-medium fits: it needs 6.3 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 music models fit",
+   "summary": "can make music, using stable-audio-3-medium",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "song",
+   "enabled": true,
+   "selected": "yue2-3b",
+   "reason": "yue2-3b fits: it needs 14.9 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 song models fit",
+   "summary": "can make songs with vocals, using yue2-3b",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "cutout",
+   "enabled": true,
+   "selected": "birefnet",
+   "reason": "birefnet fits: it needs 4.2 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 cutout models fit",
+   "summary": "can cut out a picture's subject, using birefnet",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "select",
+   "enabled": true,
+   "selected": "sam2.1-hiera-large",
+   "reason": "sam2.1-hiera-large fits: it needs 3.7 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 selection models fit",
+   "summary": "can select what is pointed at in a picture, using sam2.1-hiera-large",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "video",
+   "enabled": true,
+   "selected": "ltx-2.5-distilled",
+   "reason": "ltx-2.5-distilled fits: it needs 19.1 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 video models fit",
+   "summary": "can make video, using ltx-2.5-distilled",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  },
+  {
+   "capability": "score",
+   "enabled": true,
+   "selected": "sheetsage2",
+   "reason": "sheetsage2 fits: it needs 5.6 GiB and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 score transcribers fit",
+   "summary": "can transcribe a song into a score, using sheetsage2",
+   "shortfall_bytes": 0,
+   "with_images": null,
+   "with_images_reason": null,
+   "work": null,
+   "goal": null,
+   "context_ceilings": null,
+   "route": "local"
+  }
+ ],
+ "job_types": [
+  {
+   "job_type": "echo",
+   "classes": [
+    "echo"
+   ],
+   "installer": null,
+   "narrator_engines": []
+  },
+  {
+   "job_type": "llm",
+   "classes": [
+    "generate",
+    "decide",
+    "embed",
+    "rerank",
+    "pages"
+   ],
+   "installer": "llm",
+   "narrator_engines": []
+  },
+  {
+   "job_type": "tts",
+   "classes": [
+    "tts"
+   ],
+   "installer": "tts",
+   "narrator_engines": [
+    "higgs-v3"
+   ]
+  },
+  {
+   "job_type": "asr",
+   "classes": [
+    "asr"
+   ],
+   "installer": "asr",
+   "narrator_engines": []
+  },
+  {
+   "job_type": "align",
+   "classes": [
+    "align"
+   ],
+   "installer": "align",
+   "narrator_engines": []
+  },
+  {
+   "job_type": "rvc",
+   "classes": [
+    "rvc"
+   ],
+   "installer": "rvc",
+   "narrator_engines": []
+  },
+  {
+   "job_type": "denoise",
+   "classes": [
+    "denoise"
+   ],
+   "installer": "rvc",
+   "narrator_engines": []
+  },
+  {
+   "job_type": "image",
+   "classes": [
+    "image"
+   ],
+   "installer": "image",
+   "narrator_engines": []
+  },
+  {
+   "job_type": "audio",
+   "classes": [
+    "sfx",
+    "music",
+    "song"
+   ],
+   "installer": "audio",
+   "narrator_engines": []
+  },
+  {
+   "job_type": "segment",
+   "classes": [
+    "cutout",
+    "select"
+   ],
+   "installer": "segment",
+   "narrator_engines": []
+  },
+  {
+   "job_type": "video",
+   "classes": [
+    "video"
+   ],
+   "installer": "video",
+   "narrator_engines": []
+  },
+  {
+   "job_type": "score",
+   "classes": [
+    "score"
+   ],
+   "installer": "score",
+   "narrator_engines": []
+  }
+ ]
+}

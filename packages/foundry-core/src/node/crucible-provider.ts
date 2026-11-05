@@ -68,6 +68,7 @@ import type { CrucibleServerEntry } from './app-settings';
 import { crucibleServers } from './crucible-registry';
 import { readCapability, type CapabilityRecord } from './crucible-dispatch';
 import { isLoopbackUrl } from '../shared/slots';
+import { capabilityRowFor } from '../shared/types';
 import type { MachineModelItem, ModelClass } from '../shared/types';
 
 /**
@@ -185,7 +186,7 @@ export function forgetCrucibleFacts(): void {
  * delete this machine's reader in favour of a server that cannot read a page.
  */
 function serves(record: CapabilityRecord, cls: ModelClass): boolean {
-  const row = record.classes.find((entry) => entry.capability === cls);
+  const row = capabilityRowFor(record.classes, cls);
   return row !== undefined && row.enabled && row.selected.length > 0;
 }
 
@@ -227,7 +228,7 @@ export function anyServerServing(
   ];
   for (const server of ranked) {
     if (server.record === null) continue;
-    const row = server.record.classes.find((entry) => entry.capability === cls);
+    const row = capabilityRowFor(server.record.classes, cls);
     if (row === undefined || !row.enabled || row.selected.length === 0) continue;
     return { server: server.name, route: row.route, selected: row.selected, reason: row.reason };
   }
@@ -257,7 +258,7 @@ export function firstServerReason(cls: ModelClass): { server: string; reason: st
   ];
   for (const server of ranked) {
     if (server.record === null) continue;
-    const row = server.record.classes.find((entry) => entry.capability === cls);
+    const row = capabilityRowFor(server.record.classes, cls);
     const said = (row?.reason ?? '').trim();
     return said.length === 0 ? null : { server: server.name, reason: said };
   }

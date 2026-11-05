@@ -1,0 +1,1863 @@
+{
+ "server": {
+  "name": "crucible@owens-pc-wsl",
+  "version": "2.0.34",
+  "api_version": 1,
+  "auth": "none"
+ },
+ "role": "engine",
+ "managed_by": {
+  "name": "crucible-orchestrator@owens-pc",
+  "url": "http://127.0.0.1:7101"
+ },
+ "host": {
+  "platform": "linux",
+  "arch": "x86_64",
+  "backend": "cuda-linux",
+  "gpu": {
+   "vendor": "nvidia",
+   "name": "NVIDIA GeForce RTX 3090 Ti",
+   "vram_bytes": 25757220864
+  }
+ },
+ "features": [
+  "accelerator",
+  "activity",
+  "align",
+  "align.longform",
+  "asr",
+  "audio",
+  "catalog",
+  "chat",
+  "chat.verbs",
+  "decide",
+  "decide.items",
+  "denoise",
+  "embed",
+  "embed.openai",
+  "events",
+  "events.topics",
+  "image",
+  "image.inpaint",
+  "jobs.events",
+  "jobs.hold",
+  "jobs.resume",
+  "models.forms",
+  "packages",
+  "playground",
+  "queue.calls",
+  "queue.default",
+  "queue.events",
+  "queue.jobs",
+  "queue.sessions",
+  "rerank",
+  "rerank.compat",
+  "resolve",
+  "rvc",
+  "score",
+  "segment",
+  "settings",
+  "tasks",
+  "tts",
+  "tts.stream",
+  "uploads",
+  "video",
+  "voices"
+ ],
+ "job_types": [
+  "align",
+  "align-longform",
+  "asr",
+  "audio",
+  "denoise",
+  "echo",
+  "image",
+  "load-audio",
+  "load-image",
+  "load-model",
+  "load-segment",
+  "load-video",
+  "load-voice",
+  "rvc",
+  "segment",
+  "tts",
+  "unload-aligner",
+  "unload-audio",
+  "unload-denoiser",
+  "unload-image",
+  "unload-model",
+  "unload-segment",
+  "unload-video",
+  "unload-voice",
+  "video"
+ ],
+ "capabilities": [
+  {
+   "job_type": "align",
+   "models": [
+    {
+     "id": "qwen3-aligner",
+     "revision": "c7cbfc2048c462b0d63a45797104fc9db3ad62b7",
+     "source": "Qwen/Qwen3-ForcedAligner-0.6B",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 5905580032
+    }
+   ]
+  },
+  {
+   "job_type": "asr",
+   "models": [
+    {
+     "id": "qwen3-asr-0.6b",
+     "revision": "5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
+     "source": "Qwen/Qwen3-ASR-0.6B",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 14089904952
+    },
+    {
+     "id": "qwen3-asr-0.6b-mlx",
+     "revision": "",
+     "source": "",
+     "installed": false,
+     "resident": false,
+     "vram_bytes": 0
+    },
+    {
+     "id": "qwen3-asr-1.7b",
+     "revision": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+     "source": "Qwen/Qwen3-ASR-1.7B",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 16912334760
+    },
+    {
+     "id": "qwen3-asr-1.7b-mlx",
+     "revision": "",
+     "source": "",
+     "installed": false,
+     "resident": false,
+     "vram_bytes": 0
+    },
+    {
+     "id": "whisper-large-v3-turbo",
+     "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+     "source": "dropbox-dash/faster-whisper-large-v3-turbo",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 3228497665
+    },
+    {
+     "id": "whisper-tiny",
+     "revision": "d90ca5fe260221311c53c58e660288d3deb8d356",
+     "source": "Systran/faster-whisper-tiny",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 1686151006
+    }
+   ]
+  },
+  {
+   "job_type": "audio",
+   "models": [
+    {
+     "id": "stable-audio-3-medium",
+     "revision": "27b5a21b791b1b033d193a9e1e3ce78493f102f9",
+     "source": "stabilityai/stable-audio-3-medium",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 6800000000
+    },
+    {
+     "id": "stable-audio-3-small-sfx",
+     "revision": "ae12755283df9d62ca39a9b050a39a0b607b8c20",
+     "source": "stabilityai/stable-audio-3-small-sfx",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 3500000000
+    },
+    {
+     "id": "yue2-3b",
+     "revision": "c044757a011169583f363168348ae380946efff8",
+     "source": "m-a-p/YuE2-3B",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 16000000000
+    }
+   ]
+  },
+  {
+   "job_type": "denoise",
+   "models": [
+    {
+     "id": "bleed-suppressor-roformer",
+     "revision": "929e057b81aa49bc2e6490bef8671f47b2c120f6",
+     "source": "Politrees/UVR_resources:models/Roformer/MelBand/mel_band_roformer_bleed_suppressor_v1.ckpt",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 2523715460
+    },
+    {
+     "id": "denoise-roformer",
+     "revision": "929e057b81aa49bc2e6490bef8671f47b2c120f6",
+     "source": "Politrees/UVR_resources:models/Roformer/MelBand/denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 2523710036
+    },
+    {
+     "id": "instrumental-roformer-becruily",
+     "revision": "929e057b81aa49bc2e6490bef8671f47b2c120f6",
+     "source": "Politrees/UVR_resources:models/Roformer/MelBand/mel_band_roformer_instrumental_becruily.ckpt",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 2523719636
+    },
+    {
+     "id": "instrumental-roformer-unwa-v1e",
+     "revision": "929e057b81aa49bc2e6490bef8671f47b2c120f6",
+     "source": "Politrees/UVR_resources:models/Roformer/MelBand/melband_roformer_inst_v1e.ckpt",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 2523715460
+    },
+    {
+     "id": "vocals-roformer",
+     "revision": "929e057b81aa49bc2e6490bef8671f47b2c120f6",
+     "source": "Politrees/UVR_resources:models/Roformer/MelBand/vocals_mel_band_roformer.ckpt",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 2523719636
+    }
+   ]
+  },
+  {
+   "job_type": "echo",
+   "models": []
+  },
+  {
+   "job_type": "image",
+   "models": [
+    {
+     "id": "dreamshaper-xl-lightning",
+     "revision": "561086c22aba3925b1e8803a73857f061635c7c3",
+     "source": "Lykon/dreamshaper-xl-lightning",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 7300000000
+    },
+    {
+     "id": "qwen-image-2.1",
+     "revision": "790c92633540aa0cb11d9abf19eb46d861714758",
+     "source": "Qwen/Qwen-Image-2.1",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 19000000000
+    }
+   ]
+  },
+  {
+   "job_type": "llm",
+   "models": [
+    {
+     "id": "dots-ocr",
+     "family": "dots",
+     "params_b": 3,
+     "revision": "c0111ce6bc07803dbc267932ffef0ae3a51dc951",
+     "fingerprint": "dots-ocr@c0111ce6bc07803dbc267932ffef0ae3a51dc951",
+     "modalities": [
+      "text",
+      "image"
+     ],
+     "serves": [
+      "text",
+      "image"
+     ],
+     "backend_supported": true,
+     "installed": true,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": true,
+     "memory_bytes_estimate": 12878610432,
+     "context_default": 32768,
+     "max_model_len": 32768,
+     "trained_context": 131072,
+     "max_context": null,
+     "memory_terms": null,
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": null
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "pages"
+     ],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": null
+    },
+    {
+     "id": "qwen3-embedding-8b",
+     "family": "qwen3-embedding",
+     "params_b": 8,
+     "revision": "ac37281f64377cd7546c556999bc7dbc6791f8da",
+     "fingerprint": "qwen3-embedding-8b@ac37281f64377cd7546c556999bc7dbc6791f8da",
+     "modalities": [
+      "text"
+     ],
+     "serves": [
+      "text"
+     ],
+     "backend_supported": true,
+     "installed": true,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": true,
+     "memory_bytes_estimate": 17099115936,
+     "context_default": 8192,
+     "max_model_len": 8192,
+     "trained_context": 32768,
+     "max_context": {
+      "tokens": 32768,
+      "card_affords": 45063,
+      "max_context": 32768,
+      "weights_allow": 32768,
+      "limited_by": "max_context",
+      "concurrency": 1,
+      "basis": "computed"
+     },
+     "memory_terms": {
+      "weights_bytes": 15141156384,
+      "overhead_bytes": 750000000,
+      "kv_bytes_per_token": 147456,
+      "basis": "computed",
+      "measured_at_context": 8192
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": null
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "embed"
+     ],
+     "package": "retrieval",
+     "package_installed": true,
+     "embed": {
+      "dimensions": 4096,
+      "dimensions_range": [
+       32,
+       4096
+      ],
+      "matryoshka": true,
+      "pooling": "last",
+      "normalized": true,
+      "input_types": [
+       "query",
+       "document"
+      ],
+      "query_takes_instruction": true,
+      "default_instruction": "Given a web search query, retrieve relevant passages that answer the query",
+      "query_template": "Instruct: {instruction}\nQuery:{text}<|endoftext|>",
+      "document_template": "{text}<|endoftext|>",
+      "source": "Qwen/Qwen3-Embedding-8B @ 1d8ad4ca9b3dd8059ad90a75d4983776a23d44af: config_sentence_transformers.json prompts.query 'Instruct: <task>\nQuery:' (no space after the colon, as the model card's get_detailed_instruct writes it) and prompts.document '' (no instruction on a document); 1_Pooling/config.json pooling_mode_lasttoken, then 2_Normalize; tokenizer.json's TemplateProcessing appends <|endoftext|> (151643) to every input, so the template writes it and nothing is added on top; README: output dimensions 32 to 4096 (MRL), context 32k",
+      "max_inputs": 256,
+      "max_input_tokens": 8192
+     },
+     "rerank": null
+    },
+    {
+     "id": "qwen3-reranker-8b",
+     "family": "qwen3-reranker",
+     "params_b": 8,
+     "revision": "fb4e6db0e58b2f236672e5eba58823de3af43d68",
+     "fingerprint": "qwen3-reranker-8b@fb4e6db0e58b2f236672e5eba58823de3af43d68",
+     "modalities": [
+      "text"
+     ],
+     "serves": [
+      "text"
+     ],
+     "backend_supported": true,
+     "installed": true,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": true,
+     "memory_bytes_estimate": 18341622912,
+     "context_default": 8192,
+     "max_model_len": 8192,
+     "trained_context": 32768,
+     "max_context": {
+      "tokens": 32768,
+      "card_affords": 36636,
+      "max_context": 32768,
+      "weights_allow": 32768,
+      "limited_by": "max_context",
+      "concurrency": 1,
+      "basis": "computed"
+     },
+     "memory_terms": {
+      "weights_bytes": 16383663360,
+      "overhead_bytes": 750000000,
+      "kv_bytes_per_token": 147456,
+      "basis": "computed",
+      "measured_at_context": 8192
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": null
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "rerank"
+     ],
+     "package": "retrieval",
+     "package_installed": true,
+     "embed": null,
+     "rerank": {
+      "template": "model",
+      "prefix_template": "<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\".<|im_end|>\n<|im_start|>user\n<Instruct>: {instruction}\n<Query>: {query}\n",
+      "document_template": "<Document>: {document}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+      "yes": "yes",
+      "no": "no",
+      "default_instruction": "Given a web search query, retrieve relevant passages that answer the query",
+      "source": "Qwen/Qwen3-Reranker-8B @ 77d193c791ed757ca307ee72715aa132723da912: the model card's prefix, format_instruction and suffix (system 'Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\".', then '<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {doc}', then the assistant turn with an empty think block), its default instruction, and the score: log_softmax over the last position's logits for 'no' (2152) and 'yes' (9693) (1_LogitScore/config.json false_token_id, true_token_id), exp of yes's",
+      "max_documents": 256,
+      "max_tokens": 8192
+     }
+    },
+    {
+     "id": "qwen3.5-0.8b",
+     "family": "qwen3.5",
+     "params_b": 0.8,
+     "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+     "fingerprint": "qwen3.5-0.8b@2fc06364715b967f1860aea9cf38778875588b17",
+     "modalities": [
+      "text",
+      "image"
+     ],
+     "serves": [
+      "text",
+      "image"
+     ],
+     "backend_supported": true,
+     "installed": false,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": false,
+     "memory_bytes_estimate": 4837071033,
+     "context_default": 8192,
+     "max_model_len": 8192,
+     "trained_context": 262144,
+     "max_context": {
+      "tokens": 131072,
+      "card_affords": 990210,
+      "max_context": 131072,
+      "weights_allow": 262144,
+      "limited_by": "max_context",
+      "concurrency": 1,
+      "basis": "computed"
+     },
+     "memory_terms": {
+      "weights_bytes": 1844010783,
+      "overhead_bytes": 2845415834,
+      "kv_bytes_per_token": 18023,
+      "basis": "computed",
+      "measured_at_context": 8192
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": false
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "decide",
+      "generate",
+      "rerank"
+     ],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": {
+      "template": "crucible-general-1",
+      "default_instruction": "Given a web search query, retrieve relevant passages that answer the query",
+      "max_documents": 256,
+      "max_tokens": 8192
+     },
+     "reason": "no weights at /home/telltale/.crucible/models/qwen3.5-0.8b/cuda-linux — run `crucible models pull qwen3.5-0.8b`"
+    },
+    {
+     "id": "qwen3.5-2b",
+     "family": "qwen3.5",
+     "params_b": 2,
+     "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+     "fingerprint": "qwen3.5-2b@15852e8c16360a2fea060d615a32b45270f8a8fc",
+     "modalities": [
+      "text",
+      "image"
+     ],
+     "serves": [
+      "text",
+      "image"
+     ],
+     "backend_supported": true,
+     "installed": true,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": true,
+     "memory_bytes_estimate": 8376315577,
+     "context_default": 16384,
+     "max_model_len": 16384,
+     "trained_context": 262144,
+     "max_context": {
+      "tokens": 131072,
+      "card_affords": 802028,
+      "max_context": 131072,
+      "weights_allow": 262144,
+      "limited_by": "max_context",
+      "concurrency": 1,
+      "basis": "computed"
+     },
+     "memory_terms": {
+      "weights_bytes": 4564522271,
+      "overhead_bytes": 3516504474,
+      "kv_bytes_per_token": 18023,
+      "basis": "computed",
+      "measured_at_context": 16384
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": false
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "decide",
+      "generate",
+      "rerank"
+     ],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": {
+      "template": "crucible-general-1",
+      "default_instruction": "Given a web search query, retrieve relevant passages that answer the query",
+      "max_documents": 256,
+      "max_tokens": 16384
+     }
+    },
+    {
+     "id": "qwen3.5-4b",
+     "family": "qwen3.5",
+     "params_b": 4,
+     "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+     "fingerprint": "qwen3.5-4b@851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+     "modalities": [
+      "text",
+      "image"
+     ],
+     "serves": [
+      "text",
+      "image"
+     ],
+     "backend_supported": true,
+     "installed": true,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": true,
+     "memory_bytes_estimate": 13393958393,
+     "context_default": 16384,
+     "max_model_len": 16384,
+     "trained_context": 262144,
+     "max_context": {
+      "tokens": 131072,
+      "card_affords": 210448,
+      "max_context": 131072,
+      "weights_allow": 262144,
+      "limited_by": "max_context",
+      "concurrency": 1,
+      "basis": "computed"
+     },
+     "memory_terms": {
+      "weights_bytes": 9216572511,
+      "overhead_bytes": 3516504474,
+      "kv_bytes_per_token": 46581,
+      "basis": "computed",
+      "measured_at_context": 16384
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": false
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "decide",
+      "generate",
+      "rerank"
+     ],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": {
+      "template": "crucible-general-1",
+      "default_instruction": "Given a web search query, retrieve relevant passages that answer the query",
+      "max_documents": 256,
+      "max_tokens": 16384
+     }
+    },
+    {
+     "id": "qwen3.5-4b-8bit",
+     "family": "qwen3.5",
+     "params_b": 4,
+     "revision": "84a25838e4890597cffb63c4f69dcf0164172ff3",
+     "fingerprint": "qwen3.5-4b-8bit@84a25838e4890597cffb63c4f69dcf0164172ff3",
+     "modalities": [
+      "text"
+     ],
+     "serves": [
+      "text"
+     ],
+     "backend_supported": true,
+     "installed": false,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": false,
+     "memory_bytes_estimate": 6300000000,
+     "context_default": 8192,
+     "max_model_len": 8192,
+     "trained_context": 262144,
+     "max_context": {
+      "tokens": 32768,
+      "card_affords": 356754,
+      "max_context": 32768,
+      "weights_allow": 262144,
+      "limited_by": "max_context",
+      "concurrency": 1,
+      "basis": "measured"
+     },
+     "memory_terms": {
+      "weights_bytes": 5218000000,
+      "overhead_bytes": 700000000,
+      "kv_bytes_per_token": 46581,
+      "basis": "measured",
+      "measured_at_context": 8192
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": false
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "decide",
+      "generate",
+      "rerank"
+     ],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": {
+      "template": "crucible-general-1",
+      "default_instruction": "Given a web search query, retrieve relevant passages that answer the query",
+      "max_documents": 256,
+      "max_tokens": 8192
+     },
+     "reason": "no weights at /home/telltale/.crucible/models/qwen3.5-4b-8bit/cuda-linux — run `crucible models pull qwen3.5-4b-8bit`"
+    },
+    {
+     "id": "qwen3.5-4b-bside",
+     "family": "bside",
+     "params_b": 4,
+     "revision": "2a9bc5673485439ecff9fcd55eb81743b1fc0c2f",
+     "fingerprint": "qwen3.5-4b-bside@2a9bc5673485439ecff9fcd55eb81743b1fc0c2f",
+     "modalities": [
+      "text"
+     ],
+     "serves": [
+      "text"
+     ],
+     "backend_supported": true,
+     "installed": true,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": true,
+     "memory_bytes_estimate": 9952490976,
+     "context_default": 16384,
+     "max_model_len": 16384,
+     "trained_context": 262144,
+     "max_context": {
+      "tokens": 131072,
+      "card_affords": 400402,
+      "max_context": 131072,
+      "weights_allow": 262144,
+      "limited_by": "max_context",
+      "concurrency": 1,
+      "basis": "computed"
+     },
+     "memory_terms": {
+      "weights_bytes": 8665620064,
+      "overhead_bytes": 750000000,
+      "kv_bytes_per_token": 32768,
+      "basis": "computed",
+      "measured_at_context": 16384
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": false
+     },
+     "form": "bf16",
+     "form_reason": "bf16 needs 9.27 GiB and NVIDIA GeForce RTX 3090 Ti gives a model 20.99 GiB (23.99 GiB less the 3.00 GiB desktop allowance): the best form",
+     "forms": [
+      {
+       "name": "bf16",
+       "bits": 16,
+       "file": "qwen3.5-4b-bside-BF16.gguf",
+       "memory_bytes_estimate": 9952490976,
+       "fits": true,
+       "installed": true,
+       "picked": true,
+       "resident": false,
+       "pull_command": "crucible models pull qwen3.5-4b-bside"
+      },
+      {
+       "name": "q8_0",
+       "bits": 8,
+       "file": "qwen3.5-4b-bside-Q8_0.gguf",
+       "memory_bytes_estimate": 5897450784,
+       "fits": true,
+       "installed": true,
+       "picked": false,
+       "resident": false,
+       "pull_command": "crucible models pull qwen3.5-4b-bside --form q8_0"
+      }
+     ],
+     "verbs": [],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": null
+    },
+    {
+     "id": "qwen3.5-9b",
+     "family": "qwen3.5",
+     "params_b": 9,
+     "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+     "fingerprint": "qwen3.5-9b@c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+     "modalities": [
+      "text"
+     ],
+     "serves": [
+      "text"
+     ],
+     "backend_supported": true,
+     "installed": true,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": true,
+     "memory_bytes_estimate": 20950548480,
+     "context_default": 16384,
+     "max_model_len": 16384,
+     "trained_context": 262144,
+     "max_context": {
+      "tokens": 65536,
+      "card_affords": 74887,
+      "max_context": 65536,
+      "weights_allow": 262144,
+      "limited_by": "max_context",
+      "concurrency": 1,
+      "basis": "measured"
+     },
+     "memory_terms": {
+      "weights_bytes": 18038862643,
+      "overhead_bytes": 1476395008,
+      "kv_bytes_per_token": 40337,
+      "basis": "measured",
+      "measured_at_context": 16384
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": false
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "decide",
+      "generate",
+      "rerank"
+     ],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": {
+      "template": "crucible-general-1",
+      "default_instruction": "Given a web search query, retrieve relevant passages that answer the query",
+      "max_documents": 256,
+      "max_tokens": 16384
+     }
+    },
+    {
+     "id": "qwen3.5-9b-vl",
+     "family": "qwen3.5",
+     "params_b": 9,
+     "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+     "fingerprint": "qwen3.5-9b-vl@c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+     "modalities": [
+      "text",
+      "image"
+     ],
+     "serves": [
+      "text",
+      "image"
+     ],
+     "backend_supported": true,
+     "installed": true,
+     "weights_of": "qwen3.5-9b",
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": true,
+     "memory_bytes_estimate": 22990657946,
+     "context_default": 16384,
+     "max_model_len": 16384,
+     "trained_context": 262144,
+     "max_context": {
+      "tokens": 1700,
+      "card_affords": 1700,
+      "max_context": 16384,
+      "weights_allow": 262144,
+      "limited_by": "card",
+      "concurrency": 1,
+      "basis": "computed"
+     },
+     "memory_terms": {
+      "weights_bytes": 18950883603,
+      "overhead_bytes": 3516504474,
+      "kv_bytes_per_token": 40337,
+      "basis": "computed",
+      "measured_at_context": 16384
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": false
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "decide"
+     ],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": null
+    },
+    {
+     "id": "qwen3.8-27b-4bit",
+     "family": "qwen3.8",
+     "params_b": 27,
+     "revision": "5a2ee524cbc9f3ac5df12729ecf0c4b57f311192",
+     "fingerprint": "qwen3.8-27b-4bit@5a2ee524cbc9f3ac5df12729ecf0c4b57f311192",
+     "modalities": [
+      "text"
+     ],
+     "serves": [
+      "text"
+     ],
+     "backend_supported": true,
+     "installed": true,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": true,
+     "memory_bytes_estimate": 21633171456,
+     "context_default": 16384,
+     "max_model_len": 16384,
+     "trained_context": 262144,
+     "max_context": {
+      "tokens": 32768,
+      "card_affords": 33945,
+      "max_context": 32768,
+      "weights_allow": 262144,
+      "limited_by": "max_context",
+      "concurrency": 1,
+      "basis": "measured"
+     },
+     "memory_terms": {
+      "weights_bytes": 18061981175,
+      "overhead_bytes": 1546188226,
+      "kv_bytes_per_token": 86251,
+      "basis": "measured",
+      "measured_at_context": 16384
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": null
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "decide",
+      "generate",
+      "rerank"
+     ],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": {
+      "template": "crucible-general-1",
+      "default_instruction": "Given a web search query, retrieve relevant passages that answer the query",
+      "max_documents": 256,
+      "max_tokens": 16384
+     }
+    },
+    {
+     "id": "qwen3.8-27b-4bit-vl",
+     "family": "qwen3.8",
+     "params_b": 27,
+     "revision": "5a2ee524cbc9f3ac5df12729ecf0c4b57f311192",
+     "fingerprint": "qwen3.8-27b-4bit-vl@5a2ee524cbc9f3ac5df12729ecf0c4b57f311192",
+     "modalities": [
+      "text",
+      "image"
+     ],
+     "serves": [
+      "text",
+      "image"
+     ],
+     "backend_supported": true,
+     "installed": true,
+     "weights_of": "qwen3.8-27b-4bit",
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": true,
+     "memory_bytes_estimate": 23673280922,
+     "context_default": 16384,
+     "max_model_len": 16384,
+     "trained_context": 262144,
+     "max_context": {
+      "tokens": 0,
+      "card_affords": 0,
+      "max_context": 16384,
+      "weights_allow": 262144,
+      "limited_by": "card",
+      "concurrency": 1,
+      "basis": "computed"
+     },
+     "memory_terms": {
+      "weights_bytes": 18983441367,
+      "overhead_bytes": 3586297692,
+      "kv_bytes_per_token": 86251,
+      "basis": "computed",
+      "measured_at_context": 16384
+     },
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": null
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "decide"
+     ],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": null
+    },
+    {
+     "id": "qwen3.8-27b-8bit",
+     "family": "qwen3.8",
+     "params_b": 27,
+     "revision": null,
+     "fingerprint": null,
+     "modalities": [
+      "text"
+     ],
+     "serves": null,
+     "backend_supported": false,
+     "installed": false,
+     "weights_of": null,
+     "ollama_copy": null,
+     "resident": false,
+     "loadable": false,
+     "memory_bytes_estimate": null,
+     "context_default": 12288,
+     "max_model_len": null,
+     "trained_context": 262144,
+     "max_context": null,
+     "memory_terms": null,
+     "defaults": {
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "max_tokens": null,
+      "repetition_penalty": null,
+      "thinking": null
+     },
+     "form": null,
+     "form_reason": null,
+     "forms": null,
+     "verbs": [
+      "decide",
+      "generate",
+      "rerank"
+     ],
+     "package": null,
+     "package_installed": null,
+     "embed": null,
+     "rerank": {
+      "template": "crucible-general-1",
+      "default_instruction": "Given a web search query, retrieve relevant passages that answer the query",
+      "max_documents": 256,
+      "max_tokens": null
+     },
+     "reason": "qwen3.8-27b-8bit.toml has no cuda-linux block; it declares ['mlx-darwin']"
+    }
+   ]
+  },
+  {
+   "job_type": "rvc",
+   "models": [
+    {
+     "id": "deathstalker-rvc-v1",
+     "revision": "dd3504ae68cc8f042a20d7ed8a84238615d398e3",
+     "source": "owenmorgan/owen-morgan-bookforge:rvc/deathstalker_rvc_v1.tar.gz",
+     "installed": false,
+     "resident": false,
+     "vram_bytes": 2684354560
+    },
+    {
+     "id": "deathstalker-rvc-v3",
+     "revision": "dd3504ae68cc8f042a20d7ed8a84238615d398e3",
+     "source": "owenmorgan/owen-morgan-bookforge:rvc/deathstalker_rvc_v3.tar.gz",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 2684354560
+    },
+    {
+     "id": "girlfriend",
+     "revision": "dd3504ae68cc8f042a20d7ed8a84238615d398e3",
+     "source": "owenmorgan/owen-morgan-bookforge:rvc/girlfriend.tar.gz",
+     "installed": false,
+     "resident": false,
+     "vram_bytes": 2684354560
+    },
+    {
+     "id": "mistborn-rvc-v1",
+     "revision": "dd3504ae68cc8f042a20d7ed8a84238615d398e3",
+     "source": "owenmorgan/owen-morgan-bookforge:rvc/mistborn_rvc_v1.tar.gz",
+     "installed": false,
+     "resident": false,
+     "vram_bytes": 2684354560
+    },
+    {
+     "id": "owen-morgan",
+     "revision": "dd3504ae68cc8f042a20d7ed8a84238615d398e3",
+     "source": "owenmorgan/owen-morgan-bookforge:rvc/owen-morgan.tar.gz",
+     "installed": false,
+     "resident": false,
+     "vram_bytes": 2684354560
+    },
+    {
+     "id": "sigma",
+     "revision": "dd3504ae68cc8f042a20d7ed8a84238615d398e3",
+     "source": "owenmorgan/owen-morgan-bookforge:rvc/sigma.tar.gz",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 2684354560
+    },
+    {
+     "id": "us-female-1",
+     "revision": "dd3504ae68cc8f042a20d7ed8a84238615d398e3",
+     "source": "owenmorgan/owen-morgan-bookforge:rvc/us-female-1.tar.gz",
+     "installed": false,
+     "resident": false,
+     "vram_bytes": 2684354560
+    }
+   ]
+  },
+  {
+   "job_type": "segment",
+   "models": [
+    {
+     "id": "birefnet",
+     "revision": "e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4",
+     "source": "ZhengPeng7/BiRefNet",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 4500000000
+    },
+    {
+     "id": "sam2.1-hiera-large",
+     "revision": "665f8e2ad61cf5f53d65644ff27c8ee525124610",
+     "source": "facebook/sam2.1-hiera-large",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 4000000000
+    }
+   ]
+  },
+  {
+   "job_type": "tts",
+   "models": [
+    {
+     "id": "deathstalker",
+     "display": "Deathstalker",
+     "kind": "checkpoint",
+     "language": "en",
+     "narrator_engine": "higgs-v3",
+     "backend_supported": true,
+     "installed": true,
+     "resident": false,
+     "orphan": false,
+     "loadable": true,
+     "reason": null,
+     "revision": "3d778ad4f44845174f1fa9aa0bfffd1167b802ac",
+     "fingerprint": "deathstalker@3d778ad4f44845174f1fa9aa0bfffd1167b802ac",
+     "source": "pinned",
+     "identity_basis": "verified",
+     "memory_bytes_estimate": 19000000000,
+     "estimate_basis": "declared",
+     "serving": {
+      "max_num_seqs": 12,
+      "max_num_seqs_note": "12 since 2026-11-02, down from 16, chosen to FIT and not yet speed-measured. Observed on owens-pc (RTX 3090 Ti 24 GB) 2026-11-02: the thirdreich fine-tune at 16 in flight, mem-fraction-static 0.60, cuda_graph_max_bs 16 and the fp32 vocoder (narrator 2.0.24 hiss fix) held 22,290 MiB in the WSL VM (Windows GPU Process Memory counter for vmwp) with the desktop at ~1.7 GiB, the card at 24,024 of 24,564 MiB and ~0.45 GiB spilled to shared memory - the WDDM paging that 2026-09-19 measured as 4-10x slower with no error. The 16 before was vllm-omni's own stage-0 value and a measured ceiling at the OLD fractions (11,387-11,584 chars/min, 2026-09-05), taken before the fp32 vocoder. THE deathstalker CAP CERTIFICATE RAN AT 64; nothing measured says whether width moves the safe chunk length. It is also the width of narrator's own batch (v3_served.serve_concurrency), so it moves concurrent POSTs and VRAM pressure together. Owed: a chars/min and VRAM reading at 12.",
+      "mem_fraction": null,
+      "mem_fraction_note": null,
+      "context_length": null,
+      "context_length_note": null,
+      "stall_guard": {
+       "enabled": true,
+       "frames": 37,
+       "rate": 1,
+       "max": 20,
+       "window": 16,
+       "env": "37,1,20,16",
+       "basis": "default",
+       "note": "Crucible's default for every Higgs v3 voice that states no stall_guard (campaign 2026-10-02-stall-guard). A Higgs stall is codebook 0 emitting the same silence code frame after frame and never leaving: at top-k 50 / top-p 0.95 the exit tokens are cut to zero, so the state is absorbing (the no-bed Mistborn MM02 render: 98 % of frames repeated the previous cb0 code, 5 unique codes in 90 s). Past `frames` counted frames whose cb0 code is already among the last `window` cb0 codes, each of those codes loses min(max, rate * (run - frames)) of logit before temperature/top-k/top-p, and the model's own next choice takes over; nothing is forced. 37 frames is ~1.5 s at 25 fps. Accepted 2026-10-02 (training-pc-1) from the A/B through Crucible on the PC, the stalling no-bed Mistborn ckpt-3510, Mutineers' Moon bank x 16 per arm: generated pauses over 5 s 5 -> 0, the longest 35.3 s -> 4.5 s, the dead air the render-side cap trims 108 s -> 48 s, coverage 0.984 -> 0.985, speed -2.5 % (inside run noise). (37, 0.5, 20, 8) reached 4.2 s with 65 s trimmed; the ~2 s target was dropped because the leftovers sit inside the voice's own pause range (corpus max 4.44 s)."
+      }
+     },
+     "max_chars": 1000,
+     "max_chars_basis": "placeholder",
+     "pace_basis": "measured",
+     "inherited_from": null,
+     "manifest": "repo",
+     "sample_rate": 24000,
+     "takes": 2,
+     "needs_reference": false,
+     "pace": {
+      "pace_chars_per_sec": 15.69,
+      "max_chars_per_sec": 20.4,
+      "min_chars_per_sec": 12.07,
+      "target_chars": null,
+      "safe_min_chars": 600,
+      "safe_max_chars": 900
+     },
+     "ref": "crucible",
+     "latest_revision": "3d778ad4f44845174f1fa9aa0bfffd1167b802ac",
+     "update_available": false,
+     "update_checked_at": "2026-10-13T19:34:12.261544+00:00",
+     "update_error": null,
+     "sampling": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "top_k": 50
+     },
+     "edge_fade_ms": null,
+     "chunk_gap": null,
+     "reference_seconds_cap": null,
+     "allowed_controls": null
+    },
+    {
+     "id": "higgs-default",
+     "display": "Higgs v3 built-in voice",
+     "kind": "token",
+     "language": "en",
+     "narrator_engine": "higgs-v3",
+     "backend_supported": true,
+     "installed": true,
+     "resident": false,
+     "orphan": false,
+     "loadable": false,
+     "reason": "a token voice loads on mlx-darwin only: narrator's served arm on cuda-linux serves a default voice from the HuggingFace cache, not from the pinned directory Crucible names (RULING OWED on narrator's side)",
+     "revision": "239f63fb7b02b1aa085f98d9efae5e35cc5523e8",
+     "fingerprint": "higgs-default@239f63fb7b02b1aa085f98d9efae5e35cc5523e8",
+     "source": "pinned",
+     "identity_basis": "verified",
+     "memory_bytes_estimate": 19000000000,
+     "estimate_basis": "declared",
+     "serving": {
+      "max_num_seqs": 16,
+      "max_num_seqs_note": "16 is vllm-omni's OWN stage-0 value in higgs_multimodal_qwen3.yaml, and it is ALSO a measured ceiling at the shipped memory fractions: on owens-pc (RTX 3090 Ti, 2026-09-05) 16 concurrent at 0.35 + 0.10 ran 11,387-11,584 chars/min over three runs while 32 filled the card and stalled. It replaced a 2 that was never anything but a placeholder and reached nothing until 2026-09-05, so no measurement was ever taken against it. THE deathstalker CAP CERTIFICATE RAN AT 64, at the older fractions and before that stall was measured, so 16 is not the width its cap was certified at; nothing measured says whether batch width moves the safe chunk length, and if it does, that certificate is bound to 64 and this is the field that would have to change. It is also the width of narrator's own batch (v3_served.serve_concurrency), so raising it raises concurrent POSTs and VRAM pressure together. Translated from BookForge's electron/data/higgs-models.json serving._maxNumSeqsNote, where it was measured.",
+      "mem_fraction": null,
+      "mem_fraction_note": null,
+      "context_length": null,
+      "context_length_note": null,
+      "stall_guard": {
+       "enabled": true,
+       "frames": 37,
+       "rate": 1,
+       "max": 20,
+       "window": 16,
+       "env": "37,1,20,16",
+       "basis": "default",
+       "note": "Crucible's default for every Higgs v3 voice that states no stall_guard (campaign 2026-10-02-stall-guard). A Higgs stall is codebook 0 emitting the same silence code frame after frame and never leaving: at top-k 50 / top-p 0.95 the exit tokens are cut to zero, so the state is absorbing (the no-bed Mistborn MM02 render: 98 % of frames repeated the previous cb0 code, 5 unique codes in 90 s). Past `frames` counted frames whose cb0 code is already among the last `window` cb0 codes, each of those codes loses min(max, rate * (run - frames)) of logit before temperature/top-k/top-p, and the model's own next choice takes over; nothing is forced. 37 frames is ~1.5 s at 25 fps. Accepted 2026-10-02 (training-pc-1) from the A/B through Crucible on the PC, the stalling no-bed Mistborn ckpt-3510, Mutineers' Moon bank x 16 per arm: generated pauses over 5 s 5 -> 0, the longest 35.3 s -> 4.5 s, the dead air the render-side cap trims 108 s -> 48 s, coverage 0.984 -> 0.985, speed -2.5 % (inside run noise). (37, 0.5, 20, 8) reached 4.2 s with 65 s trimmed; the ~2 s target was dropped because the leftovers sit inside the voice's own pause range (corpus max 4.44 s)."
+      }
+     },
+     "max_chars": 600,
+     "max_chars_basis": null,
+     "pace_basis": null,
+     "inherited_from": null,
+     "manifest": "engine",
+     "sample_rate": 24000,
+     "takes": 1,
+     "needs_reference": false,
+     "pace": {
+      "pace_chars_per_sec": null,
+      "max_chars_per_sec": null,
+      "min_chars_per_sec": null,
+      "target_chars": null,
+      "safe_min_chars": null,
+      "safe_max_chars": null
+     },
+     "ref": null,
+     "latest_revision": null,
+     "update_available": false,
+     "update_checked_at": null,
+     "update_error": null,
+     "sampling": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "top_k": 50
+     },
+     "edge_fade_ms": null,
+     "chunk_gap": null,
+     "reference_seconds_cap": null,
+     "allowed_controls": null
+    },
+    {
+     "id": "mistborn",
+     "display": "Mistborn",
+     "kind": "checkpoint",
+     "language": "en",
+     "narrator_engine": "higgs-v3",
+     "backend_supported": true,
+     "installed": true,
+     "resident": false,
+     "orphan": false,
+     "loadable": true,
+     "reason": null,
+     "revision": "61a4d41216071dd8cad0a727728a4f463b14fc61",
+     "fingerprint": "mistborn@61a4d41216071dd8cad0a727728a4f463b14fc61",
+     "source": "pinned",
+     "identity_basis": "verified",
+     "memory_bytes_estimate": 19000000000,
+     "estimate_basis": "declared",
+     "serving": {
+      "max_num_seqs": 12,
+      "max_num_seqs_note": "12 since 2026-11-02, down from 16, chosen to FIT and not yet speed-measured. Observed on owens-pc (RTX 3090 Ti 24 GB) 2026-11-02: the thirdreich fine-tune at 16 in flight, mem-fraction-static 0.60, cuda_graph_max_bs 16 and the fp32 vocoder (narrator 2.0.24 hiss fix) held 22,290 MiB in the WSL VM (Windows GPU Process Memory counter for vmwp) with the desktop at ~1.7 GiB, the card at 24,024 of 24,564 MiB and ~0.45 GiB spilled to shared memory - the WDDM paging that 2026-09-19 measured as 4-10x slower with no error. The 16 before was vllm-omni's own stage-0 value and a measured ceiling at the OLD fractions (11,387-11,584 chars/min, 2026-09-05), taken before the fp32 vocoder. THE deathstalker CAP CERTIFICATE RAN AT 64; nothing measured says whether width moves the safe chunk length. It is also the width of narrator's own batch (v3_served.serve_concurrency), so it moves concurrent POSTs and VRAM pressure together. Owed: a chars/min and VRAM reading at 12.",
+      "mem_fraction": null,
+      "mem_fraction_note": null,
+      "context_length": null,
+      "context_length_note": null,
+      "stall_guard": {
+       "enabled": true,
+       "frames": 37,
+       "rate": 1,
+       "max": 20,
+       "window": 16,
+       "env": "37,1,20,16",
+       "basis": "default",
+       "note": "Crucible's default for every Higgs v3 voice that states no stall_guard (campaign 2026-10-02-stall-guard). A Higgs stall is codebook 0 emitting the same silence code frame after frame and never leaving: at top-k 50 / top-p 0.95 the exit tokens are cut to zero, so the state is absorbing (the no-bed Mistborn MM02 render: 98 % of frames repeated the previous cb0 code, 5 unique codes in 90 s). Past `frames` counted frames whose cb0 code is already among the last `window` cb0 codes, each of those codes loses min(max, rate * (run - frames)) of logit before temperature/top-k/top-p, and the model's own next choice takes over; nothing is forced. 37 frames is ~1.5 s at 25 fps. Accepted 2026-10-02 (training-pc-1) from the A/B through Crucible on the PC, the stalling no-bed Mistborn ckpt-3510, Mutineers' Moon bank x 16 per arm: generated pauses over 5 s 5 -> 0, the longest 35.3 s -> 4.5 s, the dead air the render-side cap trims 108 s -> 48 s, coverage 0.984 -> 0.985, speed -2.5 % (inside run noise). (37, 0.5, 20, 8) reached 4.2 s with 65 s trimmed; the ~2 s target was dropped because the leftovers sit inside the voice's own pause range (corpus max 4.44 s)."
+      }
+     },
+     "max_chars": 1000,
+     "max_chars_basis": "placeholder",
+     "pace_basis": "measured",
+     "inherited_from": null,
+     "manifest": "repo",
+     "sample_rate": 24000,
+     "takes": 2,
+     "needs_reference": false,
+     "pace": {
+      "pace_chars_per_sec": 13.06,
+      "max_chars_per_sec": 16.98,
+      "min_chars_per_sec": 10.05,
+      "target_chars": null,
+      "safe_min_chars": 300,
+      "safe_max_chars": 600
+     },
+     "ref": "crucible",
+     "latest_revision": "61a4d41216071dd8cad0a727728a4f463b14fc61",
+     "update_available": false,
+     "update_checked_at": "2026-10-13T19:34:12.306733+00:00",
+     "update_error": null,
+     "sampling": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "top_k": 50
+     },
+     "edge_fade_ms": null,
+     "chunk_gap": null,
+     "reference_seconds_cap": null,
+     "allowed_controls": null
+    },
+    {
+     "id": "owen-audiobook",
+     "display": "Owen Morgan (audiobook)",
+     "kind": "checkpoint",
+     "language": "en",
+     "narrator_engine": "higgs-v3",
+     "backend_supported": true,
+     "installed": true,
+     "resident": false,
+     "orphan": false,
+     "loadable": true,
+     "reason": null,
+     "revision": "26e635cccd1981ede17295c1dd3430e07a1c6a23",
+     "fingerprint": "owen-audiobook@26e635cccd1981ede17295c1dd3430e07a1c6a23",
+     "source": "pinned",
+     "identity_basis": "verified",
+     "memory_bytes_estimate": 19000000000,
+     "estimate_basis": "declared",
+     "serving": {
+      "max_num_seqs": 12,
+      "max_num_seqs_note": "12 since 2026-11-02, down from 16, chosen to FIT and not yet speed-measured. Observed on owens-pc (RTX 3090 Ti 24 GB) 2026-11-02: the thirdreich fine-tune at 16 in flight, mem-fraction-static 0.60, cuda_graph_max_bs 16 and the fp32 vocoder (narrator 2.0.24 hiss fix) held 22,290 MiB in the WSL VM (Windows GPU Process Memory counter for vmwp) with the desktop at ~1.7 GiB, the card at 24,024 of 24,564 MiB and ~0.45 GiB spilled to shared memory - the WDDM paging that 2026-09-19 measured as 4-10x slower with no error. The 16 before was vllm-omni's own stage-0 value and a measured ceiling at the OLD fractions (11,387-11,584 chars/min, 2026-09-05), taken before the fp32 vocoder. THE deathstalker CAP CERTIFICATE RAN AT 64; nothing measured says whether width moves the safe chunk length. It is also the width of narrator's own batch (v3_served.serve_concurrency), so it moves concurrent POSTs and VRAM pressure together. Owed: a chars/min and VRAM reading at 12.",
+      "mem_fraction": null,
+      "mem_fraction_note": null,
+      "context_length": null,
+      "context_length_note": null,
+      "stall_guard": {
+       "enabled": true,
+       "frames": 37,
+       "rate": 1,
+       "max": 20,
+       "window": 16,
+       "env": "37,1,20,16",
+       "basis": "default",
+       "note": "Crucible's default for every Higgs v3 voice that states no stall_guard (campaign 2026-10-02-stall-guard). A Higgs stall is codebook 0 emitting the same silence code frame after frame and never leaving: at top-k 50 / top-p 0.95 the exit tokens are cut to zero, so the state is absorbing (the no-bed Mistborn MM02 render: 98 % of frames repeated the previous cb0 code, 5 unique codes in 90 s). Past `frames` counted frames whose cb0 code is already among the last `window` cb0 codes, each of those codes loses min(max, rate * (run - frames)) of logit before temperature/top-k/top-p, and the model's own next choice takes over; nothing is forced. 37 frames is ~1.5 s at 25 fps. Accepted 2026-10-02 (training-pc-1) from the A/B through Crucible on the PC, the stalling no-bed Mistborn ckpt-3510, Mutineers' Moon bank x 16 per arm: generated pauses over 5 s 5 -> 0, the longest 35.3 s -> 4.5 s, the dead air the render-side cap trims 108 s -> 48 s, coverage 0.984 -> 0.985, speed -2.5 % (inside run noise). (37, 0.5, 20, 8) reached 4.2 s with 65 s trimmed; the ~2 s target was dropped because the leftovers sit inside the voice's own pause range (corpus max 4.44 s)."
+      }
+     },
+     "max_chars": 1000,
+     "max_chars_basis": "placeholder",
+     "pace_basis": "measured",
+     "inherited_from": null,
+     "manifest": "repo",
+     "sample_rate": 24000,
+     "takes": 2,
+     "needs_reference": false,
+     "pace": {
+      "pace_chars_per_sec": 16.37,
+      "max_chars_per_sec": 21.28,
+      "min_chars_per_sec": 12.59,
+      "target_chars": null,
+      "safe_min_chars": 200,
+      "safe_max_chars": 500
+     },
+     "ref": "crucible",
+     "latest_revision": "26e635cccd1981ede17295c1dd3430e07a1c6a23",
+     "update_available": false,
+     "update_checked_at": "2026-10-25T16:11:06.018796+00:00",
+     "update_error": null,
+     "sampling": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "top_k": 50
+     },
+     "edge_fade_ms": null,
+     "chunk_gap": null,
+     "reference_seconds_cap": null,
+     "allowed_controls": null
+    },
+    {
+     "id": "owen-youtube",
+     "display": "Owen Morgan (YouTube)",
+     "kind": "checkpoint",
+     "language": "en",
+     "narrator_engine": "higgs-v3",
+     "backend_supported": true,
+     "installed": true,
+     "resident": false,
+     "orphan": false,
+     "loadable": true,
+     "reason": null,
+     "revision": "a2f930ff126b7e87a4ccc9998fbfe84b3cf6edb2",
+     "fingerprint": "owen-youtube@a2f930ff126b7e87a4ccc9998fbfe84b3cf6edb2",
+     "source": "pinned",
+     "identity_basis": "verified",
+     "memory_bytes_estimate": 19000000000,
+     "estimate_basis": "declared",
+     "serving": {
+      "max_num_seqs": 12,
+      "max_num_seqs_note": "12 since 2026-11-02, down from 16, chosen to FIT and not yet speed-measured. Observed on owens-pc (RTX 3090 Ti 24 GB) 2026-11-02: the thirdreich fine-tune at 16 in flight, mem-fraction-static 0.60, cuda_graph_max_bs 16 and the fp32 vocoder (narrator 2.0.24 hiss fix) held 22,290 MiB in the WSL VM (Windows GPU Process Memory counter for vmwp) with the desktop at ~1.7 GiB, the card at 24,024 of 24,564 MiB and ~0.45 GiB spilled to shared memory - the WDDM paging that 2026-09-19 measured as 4-10x slower with no error. The 16 before was vllm-omni's own stage-0 value and a measured ceiling at the OLD fractions (11,387-11,584 chars/min, 2026-09-05), taken before the fp32 vocoder. THE deathstalker CAP CERTIFICATE RAN AT 64; nothing measured says whether width moves the safe chunk length. It is also the width of narrator's own batch (v3_served.serve_concurrency), so it moves concurrent POSTs and VRAM pressure together. Owed: a chars/min and VRAM reading at 12.",
+      "mem_fraction": null,
+      "mem_fraction_note": null,
+      "context_length": null,
+      "context_length_note": null,
+      "stall_guard": {
+       "enabled": true,
+       "frames": 37,
+       "rate": 1,
+       "max": 20,
+       "window": 16,
+       "env": "37,1,20,16",
+       "basis": "default",
+       "note": "Crucible's default for every Higgs v3 voice that states no stall_guard (campaign 2026-10-02-stall-guard). A Higgs stall is codebook 0 emitting the same silence code frame after frame and never leaving: at top-k 50 / top-p 0.95 the exit tokens are cut to zero, so the state is absorbing (the no-bed Mistborn MM02 render: 98 % of frames repeated the previous cb0 code, 5 unique codes in 90 s). Past `frames` counted frames whose cb0 code is already among the last `window` cb0 codes, each of those codes loses min(max, rate * (run - frames)) of logit before temperature/top-k/top-p, and the model's own next choice takes over; nothing is forced. 37 frames is ~1.5 s at 25 fps. Accepted 2026-10-02 (training-pc-1) from the A/B through Crucible on the PC, the stalling no-bed Mistborn ckpt-3510, Mutineers' Moon bank x 16 per arm: generated pauses over 5 s 5 -> 0, the longest 35.3 s -> 4.5 s, the dead air the render-side cap trims 108 s -> 48 s, coverage 0.984 -> 0.985, speed -2.5 % (inside run noise). (37, 0.5, 20, 8) reached 4.2 s with 65 s trimmed; the ~2 s target was dropped because the leftovers sit inside the voice's own pause range (corpus max 4.44 s)."
+      }
+     },
+     "max_chars": 1000,
+     "max_chars_basis": "placeholder",
+     "pace_basis": "measured",
+     "inherited_from": null,
+     "manifest": "repo",
+     "sample_rate": 24000,
+     "takes": 2,
+     "needs_reference": false,
+     "pace": {
+      "pace_chars_per_sec": 16.49,
+      "max_chars_per_sec": 21.43,
+      "min_chars_per_sec": 12.68,
+      "target_chars": null,
+      "safe_min_chars": 200,
+      "safe_max_chars": 500
+     },
+     "ref": "crucible",
+     "latest_revision": "a2f930ff126b7e87a4ccc9998fbfe84b3cf6edb2",
+     "update_available": false,
+     "update_checked_at": "2026-10-25T16:13:43.988352+00:00",
+     "update_error": null,
+     "sampling": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "top_k": 50
+     },
+     "edge_fade_ms": null,
+     "chunk_gap": null,
+     "reference_seconds_cap": null,
+     "allowed_controls": null
+    },
+    {
+     "id": "sigma",
+     "display": "Sigma",
+     "kind": "checkpoint",
+     "language": "en",
+     "narrator_engine": "higgs-v3",
+     "backend_supported": true,
+     "installed": true,
+     "resident": false,
+     "orphan": false,
+     "loadable": true,
+     "reason": null,
+     "revision": "8f6b3ca274cbc7b83a537ce25e05d223eb35c987",
+     "fingerprint": "sigma@8f6b3ca274cbc7b83a537ce25e05d223eb35c987",
+     "source": "pinned",
+     "identity_basis": "verified",
+     "memory_bytes_estimate": 19000000000,
+     "estimate_basis": "declared",
+     "serving": {
+      "max_num_seqs": 12,
+      "max_num_seqs_note": "12 since 2026-11-02, down from 16, chosen to FIT and not yet speed-measured. Observed on owens-pc (RTX 3090 Ti 24 GB) 2026-11-02: the thirdreich fine-tune at 16 in flight, mem-fraction-static 0.60, cuda_graph_max_bs 16 and the fp32 vocoder (narrator 2.0.24 hiss fix) held 22,290 MiB in the WSL VM (Windows GPU Process Memory counter for vmwp) with the desktop at ~1.7 GiB, the card at 24,024 of 24,564 MiB and ~0.45 GiB spilled to shared memory - the WDDM paging that 2026-09-19 measured as 4-10x slower with no error. The 16 before was vllm-omni's own stage-0 value and a measured ceiling at the OLD fractions (11,387-11,584 chars/min, 2026-09-05), taken before the fp32 vocoder. THE deathstalker CAP CERTIFICATE RAN AT 64; nothing measured says whether width moves the safe chunk length. It is also the width of narrator's own batch (v3_served.serve_concurrency), so it moves concurrent POSTs and VRAM pressure together. Owed: a chars/min and VRAM reading at 12.",
+      "mem_fraction": null,
+      "mem_fraction_note": null,
+      "context_length": null,
+      "context_length_note": null,
+      "stall_guard": {
+       "enabled": true,
+       "frames": 37,
+       "rate": 1,
+       "max": 20,
+       "window": 16,
+       "env": "37,1,20,16",
+       "basis": "default",
+       "note": "Crucible's default for every Higgs v3 voice that states no stall_guard (campaign 2026-10-02-stall-guard). A Higgs stall is codebook 0 emitting the same silence code frame after frame and never leaving: at top-k 50 / top-p 0.95 the exit tokens are cut to zero, so the state is absorbing (the no-bed Mistborn MM02 render: 98 % of frames repeated the previous cb0 code, 5 unique codes in 90 s). Past `frames` counted frames whose cb0 code is already among the last `window` cb0 codes, each of those codes loses min(max, rate * (run - frames)) of logit before temperature/top-k/top-p, and the model's own next choice takes over; nothing is forced. 37 frames is ~1.5 s at 25 fps. Accepted 2026-10-02 (training-pc-1) from the A/B through Crucible on the PC, the stalling no-bed Mistborn ckpt-3510, Mutineers' Moon bank x 16 per arm: generated pauses over 5 s 5 -> 0, the longest 35.3 s -> 4.5 s, the dead air the render-side cap trims 108 s -> 48 s, coverage 0.984 -> 0.985, speed -2.5 % (inside run noise). (37, 0.5, 20, 8) reached 4.2 s with 65 s trimmed; the ~2 s target was dropped because the leftovers sit inside the voice's own pause range (corpus max 4.44 s)."
+      }
+     },
+     "max_chars": 1000,
+     "max_chars_basis": "placeholder",
+     "pace_basis": "measured",
+     "inherited_from": null,
+     "manifest": "repo",
+     "sample_rate": 24000,
+     "takes": 2,
+     "needs_reference": false,
+     "pace": {
+      "pace_chars_per_sec": 15.94,
+      "max_chars_per_sec": 20.72,
+      "min_chars_per_sec": 12.26,
+      "target_chars": null,
+      "safe_min_chars": 400,
+      "safe_max_chars": 800
+     },
+     "ref": "crucible",
+     "latest_revision": "8f6b3ca274cbc7b83a537ce25e05d223eb35c987",
+     "update_available": false,
+     "update_checked_at": "2026-10-13T19:34:12.394856+00:00",
+     "update_error": null,
+     "sampling": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "top_k": 50
+     },
+     "edge_fade_ms": null,
+     "chunk_gap": null,
+     "reference_seconds_cap": null,
+     "allowed_controls": null
+    },
+    {
+     "id": "thirdreich",
+     "display": "Third Reich",
+     "kind": "checkpoint",
+     "language": "en",
+     "narrator_engine": "higgs-v3",
+     "backend_supported": true,
+     "installed": true,
+     "resident": false,
+     "orphan": false,
+     "loadable": true,
+     "reason": null,
+     "revision": "3e96bea6074010703cd9f12a251bb34dd04bfcf2",
+     "fingerprint": "thirdreich@3e96bea6074010703cd9f12a251bb34dd04bfcf2",
+     "source": "pinned",
+     "identity_basis": "verified",
+     "memory_bytes_estimate": 19000000000,
+     "estimate_basis": "declared",
+     "serving": {
+      "max_num_seqs": 12,
+      "max_num_seqs_note": "12 since 2026-11-02, down from 16, chosen to FIT and not yet speed-measured. Observed on owens-pc (RTX 3090 Ti 24 GB) 2026-11-02: the thirdreich fine-tune at 16 in flight, mem-fraction-static 0.60, cuda_graph_max_bs 16 and the fp32 vocoder (narrator 2.0.24 hiss fix) held 22,290 MiB in the WSL VM (Windows GPU Process Memory counter for vmwp) with the desktop at ~1.7 GiB, the card at 24,024 of 24,564 MiB and ~0.45 GiB spilled to shared memory - the WDDM paging that 2026-09-19 measured as 4-10x slower with no error. The 16 before was vllm-omni's own stage-0 value and a measured ceiling at the OLD fractions (11,387-11,584 chars/min, 2026-09-05), taken before the fp32 vocoder. THE deathstalker CAP CERTIFICATE RAN AT 64; nothing measured says whether width moves the safe chunk length. It is also the width of narrator's own batch (v3_served.serve_concurrency), so it moves concurrent POSTs and VRAM pressure together. Owed: a chars/min and VRAM reading at 12.",
+      "mem_fraction": null,
+      "mem_fraction_note": null,
+      "context_length": null,
+      "context_length_note": null,
+      "stall_guard": {
+       "enabled": true,
+       "frames": 37,
+       "rate": 1,
+       "max": 20,
+       "window": 16,
+       "env": "37,1,20,16",
+       "basis": "default",
+       "note": "Crucible's default for every Higgs v3 voice that states no stall_guard (campaign 2026-10-02-stall-guard). A Higgs stall is codebook 0 emitting the same silence code frame after frame and never leaving: at top-k 50 / top-p 0.95 the exit tokens are cut to zero, so the state is absorbing (the no-bed Mistborn MM02 render: 98 % of frames repeated the previous cb0 code, 5 unique codes in 90 s). Past `frames` counted frames whose cb0 code is already among the last `window` cb0 codes, each of those codes loses min(max, rate * (run - frames)) of logit before temperature/top-k/top-p, and the model's own next choice takes over; nothing is forced. 37 frames is ~1.5 s at 25 fps. Accepted 2026-10-02 (training-pc-1) from the A/B through Crucible on the PC, the stalling no-bed Mistborn ckpt-3510, Mutineers' Moon bank x 16 per arm: generated pauses over 5 s 5 -> 0, the longest 35.3 s -> 4.5 s, the dead air the render-side cap trims 108 s -> 48 s, coverage 0.984 -> 0.985, speed -2.5 % (inside run noise). (37, 0.5, 20, 8) reached 4.2 s with 65 s trimmed; the ~2 s target was dropped because the leftovers sit inside the voice's own pause range (corpus max 4.44 s)."
+      }
+     },
+     "max_chars": 1000,
+     "max_chars_basis": "placeholder",
+     "pace_basis": "measured",
+     "inherited_from": null,
+     "manifest": "repo",
+     "sample_rate": 24000,
+     "takes": 2,
+     "needs_reference": false,
+     "pace": {
+      "pace_chars_per_sec": 14.94,
+      "max_chars_per_sec": 19.42,
+      "min_chars_per_sec": 11.49,
+      "target_chars": null,
+      "safe_min_chars": 500,
+      "safe_max_chars": 800
+     },
+     "ref": "crucible",
+     "latest_revision": "3e96bea6074010703cd9f12a251bb34dd04bfcf2",
+     "update_available": false,
+     "update_checked_at": "2026-10-13T19:34:12.440866+00:00",
+     "update_error": null,
+     "sampling": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "top_k": 50
+     },
+     "edge_fade_ms": null,
+     "chunk_gap": null,
+     "reference_seconds_cap": null,
+     "allowed_controls": null
+    },
+    {
+     "id": "zeroshot",
+     "display": "Zero-shot (clip from the request)",
+     "kind": "zeroshot",
+     "language": "en",
+     "narrator_engine": "higgs-v3",
+     "backend_supported": true,
+     "installed": true,
+     "resident": false,
+     "orphan": false,
+     "loadable": true,
+     "reason": null,
+     "revision": "239f63fb7b02b1aa085f98d9efae5e35cc5523e8",
+     "fingerprint": "zeroshot@239f63fb7b02b1aa085f98d9efae5e35cc5523e8",
+     "source": "pinned",
+     "identity_basis": "verified",
+     "memory_bytes_estimate": 19000000000,
+     "estimate_basis": "declared",
+     "serving": {
+      "max_num_seqs": 16,
+      "max_num_seqs_note": "16 is vllm-omni's OWN stage-0 value in higgs_multimodal_qwen3.yaml, and it is ALSO a measured ceiling at the shipped memory fractions: on owens-pc (RTX 3090 Ti, 2026-09-05) 16 concurrent at 0.35 + 0.10 ran 11,387-11,584 chars/min over three runs while 32 filled the card and stalled. It replaced a 2 that was never anything but a placeholder and reached nothing until 2026-09-05, so no measurement was ever taken against it. THE deathstalker CAP CERTIFICATE RAN AT 64, at the older fractions and before that stall was measured, so 16 is not the width its cap was certified at; nothing measured says whether batch width moves the safe chunk length, and if it does, that certificate is bound to 64 and this is the field that would have to change. It is also the width of narrator's own batch (v3_served.serve_concurrency), so raising it raises concurrent POSTs and VRAM pressure together. Translated from BookForge's electron/data/higgs-models.json serving._maxNumSeqsNote, where it was measured.",
+      "mem_fraction": null,
+      "mem_fraction_note": null,
+      "context_length": null,
+      "context_length_note": null,
+      "stall_guard": {
+       "enabled": true,
+       "frames": 37,
+       "rate": 1,
+       "max": 20,
+       "window": 16,
+       "env": "37,1,20,16",
+       "basis": "default",
+       "note": "Crucible's default for every Higgs v3 voice that states no stall_guard (campaign 2026-10-02-stall-guard). A Higgs stall is codebook 0 emitting the same silence code frame after frame and never leaving: at top-k 50 / top-p 0.95 the exit tokens are cut to zero, so the state is absorbing (the no-bed Mistborn MM02 render: 98 % of frames repeated the previous cb0 code, 5 unique codes in 90 s). Past `frames` counted frames whose cb0 code is already among the last `window` cb0 codes, each of those codes loses min(max, rate * (run - frames)) of logit before temperature/top-k/top-p, and the model's own next choice takes over; nothing is forced. 37 frames is ~1.5 s at 25 fps. Accepted 2026-10-02 (training-pc-1) from the A/B through Crucible on the PC, the stalling no-bed Mistborn ckpt-3510, Mutineers' Moon bank x 16 per arm: generated pauses over 5 s 5 -> 0, the longest 35.3 s -> 4.5 s, the dead air the render-side cap trims 108 s -> 48 s, coverage 0.984 -> 0.985, speed -2.5 % (inside run noise). (37, 0.5, 20, 8) reached 4.2 s with 65 s trimmed; the ~2 s target was dropped because the leftovers sit inside the voice's own pause range (corpus max 4.44 s)."
+      }
+     },
+     "max_chars": 600,
+     "max_chars_basis": null,
+     "pace_basis": null,
+     "inherited_from": null,
+     "manifest": "engine",
+     "sample_rate": 24000,
+     "takes": 1,
+     "needs_reference": true,
+     "pace": {
+      "pace_chars_per_sec": null,
+      "max_chars_per_sec": null,
+      "min_chars_per_sec": null,
+      "target_chars": 600,
+      "safe_min_chars": null,
+      "safe_max_chars": null
+     },
+     "ref": null,
+     "latest_revision": null,
+     "update_available": false,
+     "update_checked_at": null,
+     "update_error": null,
+     "sampling": {
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "top_k": 50
+     },
+     "edge_fade_ms": null,
+     "chunk_gap": null,
+     "reference_seconds_cap": null,
+     "allowed_controls": null
+    }
+   ]
+  },
+  {
+   "job_type": "video",
+   "models": [
+    {
+     "id": "ltx-2.3-dubit",
+     "revision": "",
+     "source": "",
+     "installed": false,
+     "resident": false,
+     "vram_bytes": 0
+    },
+    {
+     "id": "ltx-2.5-distilled",
+     "revision": "426936f8b22dc28e4def61e515478b0b7e4a53cc",
+     "source": "Lightricks/LTX-2.5-Diffusers",
+     "installed": true,
+     "resident": false,
+     "vram_bytes": 20500000000
+    }
+   ]
+  }
+ ],
+ "verbs": {
+  "embed": {
+   "route": "POST /v1/embed",
+   "available": true,
+   "registered": "qwen3-embedding-8b",
+   "reason": "qwen3-embedding-8b (goal 8B; 16-bit fits with 5.1 GiB to spare): it needs 15.9 GiB — 14.1 GiB weights + 0.7 GiB overhead + 1.1 GiB KV for 8192 tokens x 1 in flight and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 1 of 1 embedding models fit",
+   "package": "retrieval",
+   "package_installed": true,
+   "models": [
+    "qwen3-embedding-8b"
+   ],
+   "limits": {
+    "max_inputs": 256
+   }
+  },
+  "rerank": {
+   "route": "POST /v1/rerank",
+   "available": true,
+   "registered": "qwen3-reranker-8b",
+   "reason": "qwen3-reranker-8b (goal 8B; 16-bit fits with 3.9 GiB to spare): it needs 17.1 GiB — 15.3 GiB weights + 0.7 GiB overhead + 1.1 GiB KV for 8192 tokens x 1 in flight and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 7 of 7 rerankers and text models fit. qwen3.8-27b-4bit, qwen3.5-9b also fit, and are above the 8B goal, which the automatic pick never exceeds; Settings can still choose one.",
+   "package": "retrieval",
+   "package_installed": true,
+   "models": [
+    "qwen3-reranker-8b",
+    "qwen3.5-4b",
+    "qwen3.5-4b-8bit",
+    "qwen3.5-2b",
+    "qwen3.5-0.8b",
+    "qwen3.8-27b-4bit",
+    "qwen3.5-9b"
+   ],
+   "limits": {
+    "max_documents": 256
+   }
+  },
+  "generate": {
+   "route": "POST /v1/openai/chat/completions",
+   "available": true,
+   "registered": "qwen3.8-27b-4bit",
+   "reason": "qwen3.8-27b-4bit (goal 27B; 4-bit fits with 2.1 GiB to spare): it needs 18.9 GiB — 16.8 GiB weights + 1.4 GiB overhead + 0.7 GiB KV for 8192 tokens x 1 in flight and there is 21.0 GiB available (24.0 GiB card less a 3.0 GiB desktop allowance); 6 of 6 qwen3.8 and qwen3.5 variants fit",
+   "package": null,
+   "package_installed": true,
+   "models": [
+    "qwen3.8-27b-4bit",
+    "qwen3.5-9b",
+    "qwen3.5-4b",
+    "qwen3.5-4b-8bit",
+    "qwen3.5-2b",
+    "qwen3.5-0.8b"
+   ],
+   "limits": {}
+  }
+ },
+ "pages_engine": {
+  "engine": "vllm",
+  "installed": true,
+  "detail": "vllm serves dots-ocr from /home/telltale/.crucible/models/dots-ocr/cuda-linux (6.09 GB, dots-studio/dots.ocr@c0111ce6bc07)",
+  "request": {
+   "model": "dots-ocr",
+   "dpi": 200,
+   "max_pixels": 11289600,
+   "max_tokens": 8192,
+   "temperature": 0,
+   "prompt": "Please output the layout information from the PDF image, including each layout element's bbox, its category, and the corresponding text content within the bbox.\n\n1. Bbox format: [x1, y1, x2, y2]\n\n2. Layout Categories: The possible categories are ['Caption', 'Footnote', 'Formula', 'List-item', 'Page-footer', 'Page-header', 'Picture', 'Section-header', 'Table', 'Text', 'Title'].\n\n3. Text Extraction & Formatting Rules:\n    - Picture: For the 'Picture' category, the text field should be omitted.\n    - Formula: Format its text as LaTeX.\n    - Table: Format its text as HTML.\n    - All Others (Text, Title, etc.): Format their text as Markdown.\n\n4. Constraints:\n    - The output text must be the original text from the image, with no translation.\n    - All layout elements must be sorted according to human reading order.\n\n5. Final Output: The entire output must be a single JSON object.",
+   "dialect": "dots-json",
+   "concurrency": 12,
+   "truncated_finish_reason": "length"
+  }
+ },
+ "terminal_states": {
+  "jobs": [
+   "cancelled",
+   "done",
+   "failed",
+   "interrupted",
+   "removed"
+  ],
+  "tasks": [
+   "cancelled",
+   "done",
+   "failed"
+  ]
+ },
+ "voice_sources": {
+  "repo": {
+   "label": "from its repo",
+   "tone": "ok"
+  },
+  "override": {
+   "label": "set on this machine",
+   "tone": "warn"
+  },
+  "engine": {
+   "label": "the engine's own",
+   "tone": "floor"
+  }
+ },
+ "service_commands": [
+  {
+   "command": "crucible service status",
+   "does": "is it installed, and is it up"
+  },
+  {
+   "command": "crucible service start",
+   "does": "start it now"
+  },
+  {
+   "command": "crucible service stop",
+   "does": "stop it"
+  },
+  {
+   "command": "crucible service restart",
+   "does": "stop and start it in one step"
+  },
+  {
+   "command": "crucible service install",
+   "does": "have the machine run it at boot"
+  },
+  {
+   "command": "crucible service uninstall",
+   "does": "stop having it do that"
+  },
+  {
+   "command": "crucible token --url",
+   "does": "print the pairing lines again"
+  }
+ ]
+}

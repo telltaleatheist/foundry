@@ -2538,6 +2538,24 @@ export const MODEL_CLASSES: readonly ModelClass[] =
   ['pages', 'decide', 'clean', 'translate', 'simplify', 'analysis'];
 
 /**
+ * THE CAPABILITY ROW THAT ANSWERS FOR ONE OF THIS APP'S CLASSES.
+ *
+ * Crucible retired `clean`, `translate`, `simplify` and `analysis` on 2026-10-25:
+ * all four are chats now, sized by the app, so a current server files them under
+ * `generate`. An older server still has its own row, and that row is the answer
+ * while it exists.
+ */
+export function capabilityRowFor<Row extends { capability: string }>(
+  classes: readonly Row[],
+  cls: string,
+): Row | undefined {
+  const own = classes.find((row) => row.capability === cls);
+  if (own !== undefined) return own;
+  const isChat = cls === 'clean' || cls === 'translate' || cls === 'simplify' || cls === 'analysis';
+  return isChat ? classes.find((row) => row.capability === 'generate') : undefined;
+}
+
+/**
  * The acts the dock draws a tile for and this machine can refuse.
  *
  * `read` is the page reader rather than a class name, because the tile says OCR
