@@ -114,6 +114,7 @@ handle	library:dir	electron/ipc-ask.ts
 handle	library:set	electron/ipc-ask.ts
 handle	meta:mint-host	electron/ipc-projects.ts
 handle	meta:mint-read	electron/ipc-projects.ts
+handle	meta:mint-seed	electron/ipc-projects.ts
 handle	meta:mint-stamp	electron/ipc-projects.ts
 handle	meta:mint-write	electron/ipc-projects.ts
 handle	meta:read-epub	electron/ipc-projects.ts
@@ -273,6 +274,7 @@ invoke	library:dir	electron/preload.ts
 invoke	library:set	electron/preload.ts
 invoke	meta:mint-host	electron/preload.ts
 invoke	meta:mint-read	electron/preload.ts
+invoke	meta:mint-seed	electron/preload.ts
 invoke	meta:mint-stamp	electron/preload.ts
 invoke	meta:mint-write	electron/preload.ts
 invoke	meta:read-epub	electron/preload.ts

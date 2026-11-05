@@ -15,6 +15,7 @@ import type { CrucibleCoordinationMap, CrucibleCoordinationState } from './coord
 import type { CrucibleInstallEvent, CrucibleInstallStatus } from './crucible-install-wire';
 import type { RepairState } from './crucible-repair-wire';
 import type { HostMintMeta, HostNodeAction, HostOffers, HostOperationState, HostPassOffer, HostStatus } from './host-ops';
+import type { MintSeed } from './mint-meta';
 import type { ReadAsk } from './ledger';
 import type {
   CapabilityRecord,
@@ -378,6 +379,11 @@ export interface FoundryApi {
      * per-field over this; the position still feeds the language.
      */
     hostSeed(projectDir: string): Promise<HostMintMeta | null>;
+    /**
+     * What the project says about itself for the card's empty fields: the scan's
+     * Info dictionary and the project's name, read by main (`mintSeedFor`).
+     */
+    mintSeed(projectDir: string): Promise<MintSeed>;
   };
 
   /**

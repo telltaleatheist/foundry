@@ -1,5 +1,15 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
+## The export card reads its seed by project (2026-11-05)
+
+**COUNTED BY SCRIPT (`node app/tools/ipc-channels.js`): 159 `ipcMain.handle`, 160
+preload invokes, 20 listens, 19 pushes.** The figure before this change was 158 /
+159 / 20 / 19; one channel arrived and none left.
+
+| Channel | |
+| --- | --- |
+| `meta:mint-seed` | **New.** What a project says about itself for the export card's empty fields: the scan's Info dictionary and the project's name read through BookForge's filename convention (`mintSeedFor`, doors-meta.ts). Keyed by the project: main composes the scan's path, because the card's old read by path was refused for a working PDF nobody had opened. |
+
 ## The prebuilt environments are gone (2026-11-04)
 
 **COUNTED BY SCRIPT (`node app/tools/ipc-channels.js`): 158 `ipcMain.handle`, 159
@@ -1240,6 +1250,7 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `library:dir` | The effective library directory — the host's, when hosted. |
 | `library:set` | Move the library. Refuses while hosted. |
 | `meta:mint-host` | The HOST's record of who this book is (`FoundryHost.mintMetaFor`), or null — the hosted mint modal's seed. Null standalone; a host that throws REJECTS in its own words so the form can say so. |
+| `meta:mint-seed` | The project's own word for the mint card's empty fields: `{ pdf, name, problem }` — the scan's Info and the project's name (BookForge's convention, strictly), read by main by project. Refuses a directory that is not a project. |
 | `meta:mint-read` | The project's mint metadata block (shared/mint-meta.ts), or null for a project that has never confirmed one. |
 | `meta:mint-stamp` | The whole block onto ONE finished export, in place — the metadata tile's Save over an EPUB. Tray-gated like the flat writer. |
 | `meta:mint-write` | Replace that block — what the mint modal saves, and what the next mint pre-fills from. |

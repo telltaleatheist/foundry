@@ -239,3 +239,46 @@ export function inheritMintMeta(
     ...(coverPath !== undefined ? { coverPath } : {}),
   };
 }
+
+/**
+ * What a project says about itself before anybody has filled the card: the
+ * scan's own Info dictionary, and the project's name read through BookForge's
+ * convention (`mintMetaFromName`, shared/book-filename.ts). Main reads both
+ * (`meta:mint-seed`), so the scan's path is one main composed rather than one
+ * the renderer named.
+ *
+ * `problem` is a read that failed, in words for the card to show under the
+ * form: the scan could not be read, and the person should know the empty
+ * fields are not the scan's answer.
+ */
+export interface MintSeed {
+  pdf: MintMeta | null;
+  name: MintMeta | null;
+  problem: string | null;
+}
+
+/**
+ * `above` with every field it leaves empty taken from `below`. Field by field,
+ * and `above` always wins where it says anything: the export card stacks its
+ * sources this way — the stored block, then the host's record, then the scan's
+ * Info, then the project's name (Owen's order, 2026-11-05).
+ */
+export function fillMintGaps(above: MintMeta | null, below: MintMeta | null): MintMeta | null {
+  if (above === null) return below === null ? null : { ...below, contributors: below.contributors.map((one) => ({ ...one })) };
+  if (below === null) return above;
+  const said = (value: string | undefined): string | undefined =>
+    value !== undefined && value.trim().length > 0 ? value : undefined;
+  const subtitle = said(above.subtitle) ?? said(below.subtitle);
+  const year = said(above.year) ?? said(below.year);
+  const language = said(above.language) ?? said(below.language);
+  const coverPath = said(above.coverPath) ?? said(below.coverPath);
+  const named = (people: readonly MintContributor[]) => people.some((one) => one.first || one.last);
+  return {
+    title: said(above.title) ?? below.title,
+    contributors: (named(above.contributors) ? above.contributors : below.contributors).map((one) => ({ ...one })),
+    ...(subtitle !== undefined ? { subtitle } : {}),
+    ...(year !== undefined ? { year } : {}),
+    ...(language !== undefined ? { language } : {}),
+    ...(coverPath !== undefined ? { coverPath } : {}),
+  };
+}

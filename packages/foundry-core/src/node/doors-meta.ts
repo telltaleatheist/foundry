@@ -11,13 +11,17 @@ import * as path from 'node:path';
 
 import { admitted } from './openable';
 import {
+  readPdfMetadata,
   writeEpubMetadata,
   writePdfMetadata
 } from './engine';
 import {
   exportInTray, isArchived,
-  isManaged, metadataDir, projectDirOf, recordMetadata
+  isManaged, listProjects, metadataDir, projectDirOf, readManifest, recordMetadata
 } from './projects';
+import { mintMetaFromName } from '../shared/book-filename';
+import { contributorsFromString, type MintMeta, type MintSeed } from '../shared/mint-meta';
+import { fold, originalOf } from '../shared/original';
 import type {
   MetadataPatch,
   MetadataWriteOutcome, StepLedgerView
@@ -233,4 +237,47 @@ export async function writeEpubMetadataFor(
    */
   const landed = await landMetadata(book, 'epub', patch);
   return landed === undefined ? outcome : { ...outcome, landed };
+}
+
+/**
+ * `meta:mint-seed` — what a project says about itself, for the export card's
+ * empty fields: the scan's Info dictionary, and the project's name read through
+ * BookForge's convention.
+ *
+ * ── KEYED BY THE PROJECT, AND WHY THAT IS THE FIX ───────────────────────────
+ *
+ * The card used to name the scan's path itself and ask `meta:read-pdf`, which
+ * reads only a document this app has OPEN (`admittedPdf`). The path it named
+ * is the project's working PDF, and opening a book admits the archived scan,
+ * never the working copy — so the read was refused, the card's catch turned the
+ * refusal into an empty form, and even a scan whose Info names its title and
+ * author filled nothing (Owen, 2026-11-05: "when i export an epub, it doesnt
+ * automatically fill the metadata"). Here main finds the project in its own
+ * list, composes the original's path out of the catalogue and reads it; the
+ * renderer names a project, which is what the card has.
+ *
+ * A PROJECT THIS LIBRARY DOES NOT HOLD IS REFUSED, as every door that names a
+ * directory refuses one. A scan that cannot be read is NOT a refusal: the name
+ * can still say who the book is, and the failure comes back as `problem` for
+ * the card to show.
+ */
+export async function mintSeedFor(projectDir: string): Promise<MintSeed> {
+  const project = (await listProjects()).find((one) => fold(one.dir) === fold(projectDir));
+  if (project === undefined) {
+    throw new Error(`"${projectDir}" is not a project in this library, so there is nothing to read about it.`);
+  }
+  const name = mintMetaFromName((await readManifest(project.dir)).stem);
+  const original = originalOf(project.documents);
+  if (original === null || original.kind !== 'pdf') return { pdf: null, name, problem: null };
+  const read = await readPdfMetadata(original.path);
+  if (!read.ok) {
+    return { pdf: null, name, problem: `The scan's own title and author could not be read: ${read.reason}` };
+  }
+  if (read.metadata.kind !== 'pdf') return { pdf: null, name, problem: null };
+  const { title, author } = read.metadata.fields;
+  const contributors = author ? contributorsFromString(author) : [];
+  const pdf: MintMeta | null = title || contributors.length > 0
+    ? { title: title ?? '', contributors }
+    : null;
+  return { pdf, name, problem: null };
 }
