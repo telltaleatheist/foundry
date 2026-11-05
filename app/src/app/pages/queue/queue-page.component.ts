@@ -594,7 +594,7 @@ interface PickerGroup {
                           [class.bad]="job.state === 'failed'">{{ job.state }}</span>
                   </td>
                   <td class="acts">
-                    @if (job.state === 'done' && job.kind !== 'env-install') {
+                    @if (job.state === 'done') {
                       @if (job.kind === 'pdf') {
                         <button class="btn xs" (click)="view.open(job)"
                                 title="Open this PDF in a tab">Open</button>
@@ -1296,7 +1296,6 @@ export class QueuePageComponent {
       case 'pdf': return 'Reprinting';
       case 'txt': return 'Plain text';
       case 'mint': return 'Assembling the photographs';
-      case 'env-install': return 'Installing the environment';
       /*
        * "Reading against the categories" and not "Analysing", because the word
        * alone says nothing about what is being done to somebody's book — and this
@@ -1320,7 +1319,6 @@ export class QueuePageComponent {
   protected outcome(job: Job): string {
     if (job.state === 'failed') return this.view.failureLine(job.error);
     if (job.state === 'cancelled') return 'Cancelled';
-    if (job.kind === 'env-install') return 'Installed';
     if (job.kind === 'read') return 'Read · the book follows';
     if (job.kind === 'translate') return 'Translated · the book follows';
     if (job.kind === 'simplify') return 'Simplified · the book follows';

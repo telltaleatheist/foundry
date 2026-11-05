@@ -78,3 +78,48 @@ Not run (Owen gates packaging): the plan's step-3 "packaged Foundry runs" check 
 `package:win-x64`, open a PDF, run a job. The engine now lives in
 `node_modules/@owen/foundry-core/engine/` inside the archive instead of `engine/` beside
 `dist/`; that path is the one thing only a packaged run proves.
+
+## After A1 (release tooling) and A2 (no Python)
+
+A1 (`df8a25f`, `da7f7f1`) added tooling only; every check matched "After step 3".
+
+A2 is two commits. A2a moves the engine onto MuPDF and retires the local reader; A2b retires the
+environment machinery and its five channels.
+
+| Check | Result |
+| --- | --- |
+| IPC channel names | `--check` showed exactly ten `-` rows and no `+`: `handle`/`invoke` × `env:cancel`, `env:catalog`, `env:choose-dest`, `env:install`, `listen`/`push` `env:install-progress`. Baseline re-written: **handle 154, invoke 155, listen 19, push 18**. |
+| `bun test` | **1336 tests across 69 files: 1332 pass, the same 4 fail** (by name, as above). −2 tests / −1 file: `test/engine/local-python-candidates.test.ts`, which tested the deleted interpreter list. |
+| Typecheck | the same one error, `packages/foundry-core/src/shared/types.ts(14,1) TS6133 LlmServerKind` |
+| App build | exit 0; template keeper **104** literals (was 106: the deleted env card's template and styles); surface keeper 12 files / 6 checked; budget warning initial 1.10 MB |
+| Engine bundle | `--check` current, **src 7070147f2016** (the engine's sources changed) |
+| Load smoke | **46** library modules load with electron unresolvable (50 − `env-catalog`, `env-downloader`, `env-install`, `env-provision`); refusal and control as before |
+
+**Rasteriser parity** (`vlm_page.py` run exactly as the bridge spawned it, under the Windows env's
+PyMuPDF 1.28.0 = MuPDF 1.29.0, against `raster.ts` on `mupdf` 1.28.1). Inputs: Kershaw (JSTOR OCR,
+TimesNewRoman, two page sizes), Flashpoint (GlyphLessFont OCR, jittered sizes), Jehovah's Witnesses
+(base-14 Type1), Evans (1,251 pp), the witches capture mint (image-only, jittered), a copy of Kershaw
+with every /Rotate and two CropBoxes, and 11 page images (capture PNG/JPEG with ICC profiles, an
+alpha PNG, a CMYK PAM, a gray PNG). The page images are the models' input.
+
+| Mode | Result |
+| --- | --- |
+| render | 118 pages: pixel dimensions exact, **0 differing bytes** of 959 M (PNG samples and the PGM twin); document event (title, author, frame, snap mode) identical in all 7 cases |
+| textlayer | **130,810 spans on 1,740 pages, every page identical** |
+| crop | 235 crops: every box and pixel size identical; 234 pixel-identical. One 5×4 px Evans crop differs in 10 bytes of its bottom row (max 17): PyMuPDF draws a clip through a display-list *scissor* that culls whole nodes outside the clip, and mupdf.js's `DisplayList.run` takes no scissor. Crops are EPUB figures, never model input. |
+
+What faithfulness took, beyond calling MuPDF:
+- mupdf.js's `asPNG` converts ICC-tagged pixels to sRGB. `pngBytes` writes the raw samples with the
+  source's own profile in an iCCP chunk, as PyMuPDF did.
+- PyMuPDF's C++ span rules (`JM_make_spanlist`) and char-box correction (`JM_char_quad`), in float32.
+- A device pass recovers the two facts mupdf.js's walker hides: each font's ascender/descender (read
+  back off MuPDF's own quads with the glyph's exact matrix; the size cannot stand in under `Tz`
+  scaling) and each character's flags (FILLED/STROKED/CLIPPED/UNICODE_IS_CID, synthetic-large spaces).
+
+**End to end:** the Kershaw bank replayed (`--reuse-readings`) through the old and the new engine
+bundles gave an identical EPUB (all 7 entries) and a facsimile PDF identical but for its creation date
+and creator stamp, which also differ between two runs of the same bundle.
+
+**Not run (Owen gates packaging):** a packaged Foundry. The engine now imports `mupdf` (and reads
+`mupdf-wasm.wasm` with `fs`) from `node_modules` inside the app archive; asar reads under
+`ELECTRON_RUN_AS_NODE` are expected to work, and only a packaged run proves it.

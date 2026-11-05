@@ -84,10 +84,6 @@ handle	document:save-copy	electron/ipc.ts
 handle	documents:delete	electron/ipc.ts
 handle	documents:describe	electron/ipc.ts
 handle	engine:info	electron/ipc.ts
-handle	env:cancel	electron/ipc.ts
-handle	env:catalog	electron/ipc.ts
-handle	env:choose-dest	electron/ipc.ts
-handle	env:install	electron/ipc.ts
 handle	export:save-copy	electron/ipc.ts
 handle	foundry:crucible-pair-cancel	electron/ipc.ts
 handle	foundry:crucible-pair-decide	electron/ipc.ts
@@ -243,10 +239,6 @@ invoke	document:save-copy	electron/preload.ts
 invoke	documents:delete	electron/preload.ts
 invoke	documents:describe	electron/preload.ts
 invoke	engine:info	electron/preload.ts
-invoke	env:cancel	electron/preload.ts
-invoke	env:catalog	electron/preload.ts
-invoke	env:choose-dest	electron/preload.ts
-invoke	env:install	electron/preload.ts
 invoke	export:save-copy	electron/preload.ts
 invoke	foundry:crucible-pair-cancel	electron/preload.ts
 invoke	foundry:crucible-pair-decide	electron/preload.ts
@@ -326,7 +318,6 @@ listen	crucible:install-event	electron/preload.ts
 listen	crucible:pull-progress	electron/preload.ts
 listen	document:opened	electron/preload.ts
 listen	document:relocated	electron/preload.ts
-listen	env:install-progress	electron/preload.ts
 listen	host-ops:changed	electron/preload.ts
 listen	host-ops:offers-changed	electron/preload.ts
 listen	host-ops:status-changed	electron/preload.ts
@@ -345,7 +336,6 @@ push	crucible:install-event	electron/ipc.ts
 push	crucible:pull-progress	electron/ipc.ts
 push	document:opened	electron/documents.ts
 push	document:relocated	electron/documents.ts
-push	env:install-progress	electron/ipc.ts
 push	host-ops:changed	packages/foundry-core/src/node/host-ops.ts
 push	host-ops:offers-changed	packages/foundry-core/src/node/host-ops.ts
 push	host-ops:status-changed	packages/foundry-core/src/node/host-ops.ts

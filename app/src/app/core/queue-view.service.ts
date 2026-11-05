@@ -536,12 +536,10 @@ export class QueueViewService {
 
   /** True when the bar has a real fraction behind it. */
   determinate(job: Job): boolean {
-    if (job.kind === 'env-install') return job.envProgress?.phase === 'download';
     return (job.progress?.total ?? 0) > 0;
   }
 
   percent(job: Job): number {
-    if (job.kind === 'env-install') return job.envProgress?.percent ?? 0;
     const p = job.progress;
     if (!p || p.total <= 0) return 0;
     return Math.min(100, Math.round((p.page / p.total) * 100));
@@ -556,15 +554,6 @@ export class QueueViewService {
    * own (`stepDetail`) and this one went back to being the measurement.
    */
   stepLine(job: Job): string {
-    if (job.kind === 'env-install') {
-      const phase = job.envProgress?.phase;
-      const verb = phase === 'download' ? 'Downloading'
-        : phase === 'verify' ? 'Verifying'
-          : phase === 'unpack' ? 'Unpacking'
-            : phase === 'configure' ? 'Configuring'
-              : 'Starting';
-      return `${verb} · ${job.message ?? ''}`;
-    }
     const p = job.progress;
     if (!p) return job.message ?? 'Starting…';
     /*
@@ -734,7 +723,7 @@ export class QueueViewService {
    * truncation, it simply knows how much room it has been given.
    */
   stepDetail(job: Job, room = DETAIL_CHARS): string {
-    if (job.kind === 'env-install' || job.progress === null) return '';
+    if (job.progress === null) return '';
     const said = (job.note ?? '').trim();
     if (said.length === 0) return '';
     const bare = said.replace(/^(translate|vlm-convert|vlm-read|vlm-book):\s*/, '');
@@ -862,7 +851,7 @@ export class QueueViewService {
    * product is the bank — so it names only its input.
    */
   paths(job: Job): string {
-    if (job.kind === 'read' || job.kind === 'env-install') return job.inputPath;
+    if (job.kind === 'read') return job.inputPath;
     return `${job.inputPath}\n→ ${job.outputPath}`;
   }
 

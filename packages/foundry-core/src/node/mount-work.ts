@@ -323,10 +323,10 @@ export async function exportEpubFromStep(
      * SO THE RULE IS ABOUT THE DOOR SOMEBODY CAME THROUGH, not about the kind of
      * job: work ordered through the mount seam is Foundry's own, runs on
      * Foundry's own queue, and is invisible to the host's scheduler by design.
-     * The same reasoning makes environment installs unroutable
-     * (`enqueueEnvInstall`) — an install is a precondition of the engine running
-     * at all, and filing one behind a queue is filing it behind the job that
-     * needs it.
+     * The same reasoning made environment installs unroutable (retired with
+     * Foundry's Python, 2026-11-04) — an install was a precondition of the
+     * engine running at all, and filing one behind a queue was filing it behind
+     * the job that needed it.
      *
      * EVERYTHING ELSE ABOUT THIS EXPORT IS UNCHANGED, which is the whole promise
      * one function up: same plan, same request, same rotation, same `final/` name,

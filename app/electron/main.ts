@@ -14,7 +14,6 @@
  *
  *   the menu           `Menu.setApplicationMenu` is process-global
  *   the command line   `book.pdf` on argv, and macOS's `open-file`
- *   provisioning       the environments this machine is missing
  *   the lifecycle      ready → mount → window; all windows closed → quit;
  *                      quit → ask the documents, then `stopFoundry`
  *
@@ -37,8 +36,6 @@ import {
 } from 'electron';
 
 import { documentFromArgv, openDocument, promptForDocument } from './documents';
-import { planProvisioning } from '@owen/foundry-core/node/env-provision';
-import * as queue from '@owen/foundry-core/node/job-queue';
 import { mountFoundry, openFoundryWindow, stopFoundry } from './mount';
 import { foundryWindow, letTheWindowGo, whenRendererReady, windowLetGo } from './window';
 import type { MenuAction } from '@owen/foundry-core/shared/api';
@@ -232,71 +229,21 @@ function buildMenu(): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Provisioning
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Fetch what this machine is missing, once, after the window can show it.
- *
- * AFTER `did-finish-load`, not at `whenReady`: the first thing this does is run
- * `foundry doctor --json`, which takes seconds, and the rows it produces go into
- * the queue shelf — a job enqueued before there is a renderer to push to is a
- * download nobody can see or cancel.
- *
- * Only ONCE per launch. doctor is re-run after every install (the settings page
- * does it, and the shelf row's completion is what prompts it), so a second
- * automatic sweep would only ever find the same answer more slowly.
- *
- * `FOUNDRY_NO_AUTO_PROVISION=1` turns it off, for developing against a machine
- * that is deliberately missing something.
- *
- * THE SHELL'S, NOT THE MOUNT'S. A host has its own idea of when it is willing to
- * download twenty gigabytes of Python, and doing it behind a window it opened
- * for a book would be this app spending somebody else's bandwidth on their
- * startup.
- */
-let provisioned = false;
-
-async function provision(): Promise<void> {
-  if (provisioned) return;
-  provisioned = true;
-  if (process.env['FOUNDRY_NO_AUTO_PROVISION'] === '1') {
-    console.log('[provision] skipped: FOUNDRY_NO_AUTO_PROVISION=1');
-    return;
-  }
-  try {
-    const { needs, note } = await planProvisioning();
-    console.log(`[provision] ${note}`);
-    for (const need of needs) {
-      // No `dest`: the default location, silently, which is the whole point of
-      // provisioning. Anything the installer cannot decide for itself comes back
-      // out of it as a failed row saying what to do, rather than as a guess.
-      queue.enqueueEnvInstall({ target: need.target }, need.reason);
-    }
-  } catch (err) {
-    // Never fatal. An app that will not open a PDF because it could not decide
-    // whether to download a Python is worse than one that simply did not.
-    console.error(`[provision] gave up: ${(err as Error).message}`);
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The window, plus the two things only this program does with a fresh one.
+ * The window, plus the one thing only this program does with a fresh one.
  *
- * Both hang off `did-finish-load` and both did before the split, inside
+ * It hangs off `did-finish-load` and did before the split, inside
  * `createWindow` itself: a document named on the command line is handed over
  * once there is a renderer listening, because `document:opened` is a push and
- * sending it earlier sends it to nobody; and the environments this machine is
- * missing are fetched as shelf rows, not awaited, because the window is already
- * usable and a doctor run is seconds.
+ * sending it earlier sends it to nobody. (The second thing — fetching the
+ * Python environments this machine was missing as shelf rows — retired with
+ * Foundry's Python, 2026-11-04.)
  *
- * They are attached HERE rather than in `openWindow` because they are the
- * shell's: a hosted window has no argv of its own and is not the place to start
- * downloading a Python.
+ * It is attached HERE rather than in `openWindow` because it is the shell's:
+ * a hosted window has no argv of its own.
  */
 function openTheWindow(): void {
   openFoundryWindow();
@@ -305,7 +252,6 @@ function openTheWindow(): void {
   whenRendererReady(win, () => {
     const named = documentFromArgv(process.argv);
     if (named) void openDocument(named);
-    void provision();
   });
 }
 

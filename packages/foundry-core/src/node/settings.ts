@@ -24,7 +24,7 @@ import * as path from 'node:path';
 import { readJson } from '../shared/json';
 import type { BackendMode, BackendSettingsPatch, SettingsView } from '../shared/types';
 
-const MODES: readonly BackendMode[] = ['auto', 'endpoint', 'mlx'];
+const MODES: readonly BackendMode[] = ['auto', 'endpoint'];
 
 export function configDir(): string {
   const override = process.env['FOUNDRY_CONFIG_DIR'];
@@ -87,9 +87,51 @@ export function readSettings(): SettingsView {
   if (mode && (MODES as readonly string[]).includes(mode)) view.backend.mode = mode as BackendMode;
   const url = asString(b['endpointUrl']);
   if (url) view.backend.endpointUrl = url;
-  const python = asString(b['python']);
-  if (python) view.backend.python = python;
   return view;
+}
+
+/**
+ * Keys nothing reads any more, dropped from the file ONCE and said ONCE.
+ *
+ * Foundry has no Python (2026-11-04): the pages are rasterised in-process on
+ * MuPDF and every model call goes to Crucible. So `backend.python` (the
+ * interpreter the rasteriser and the MLX reader ran in, written by the
+ * environment installer) and `backend.mode: "mlx"` (the local reader) name
+ * things that no longer exist — and the engine REFUSES an unknown mode, so a
+ * file still saying "mlx" would stop every run. They are taken out and the file
+ * is written back, with one sentence saying so, rather than ignored (the key
+ * would outlive everyone who knew what it was) or refused (an upgrade would
+ * break a working install). Every other key is carried across untouched, as
+ * `writeSettings` carries them. The environments the installer downloaded are
+ * left on disk — they are the user's files — and the sentence says where.
+ *
+ * Null when there was nothing to drop, or no readable file to drop it from.
+ */
+export function retireSettingsKeys(): string | null {
+  const { parsed, problem } = readRaw();
+  if (problem || !parsed) return null;
+  const existing = parsed['backend'];
+  if (typeof existing !== 'object' || existing === null || Array.isArray(existing)) return null;
+  const backend: Record<string, unknown> = { ...(existing as Record<string, unknown>) };
+  const dropped: string[] = [];
+  if ('python' in backend) {
+    dropped.push(`backend.python (${JSON.stringify(backend['python'])})`);
+    delete backend['python'];
+  }
+  if (backend['mode'] === 'mlx') {
+    dropped.push('backend.mode "mlx"');
+    delete backend['mode'];
+  }
+  if (dropped.length === 0) return null;
+  parsed['backend'] = backend;
+  const file = settingsPath();
+  fs.writeFileSync(file, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+  const envs = process.platform === 'win32'
+    ? path.join(process.env['LOCALAPPDATA'] ?? path.join(os.homedir(), 'AppData', 'Local'), 'foundry', 'envs')
+    : path.join(os.homedir(), 'Library', 'Application Support', 'foundry', 'envs');
+  return `${file}: dropped ${dropped.join(' and ')} — Foundry has no local Python any more (pages render `
+    + `in-process; every model call goes to Crucible). Any environment it downloaded under ${envs} is unused `
+    + 'and can be deleted by hand.';
 }
 
 /**
@@ -121,7 +163,6 @@ export function writeSettings(patch: BackendSettingsPatch): SettingsView {
   };
   apply('mode');
   apply('endpointUrl');
-  apply('python');
 
   root['backend'] = backend;
 

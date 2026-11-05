@@ -95,32 +95,6 @@
  * landing leaves in a folder, and it leaves this queue with nothing in it that
  * starts a job of its own.
  *
- * ── Environment installs share this queue, and are NOT held ──────────────────
- *
- * An `env-install` row is not a conversion, but it belongs here rather than
- * beside here. It is long, it is cancellable, and — the reason that decides it —
- * a conversion that needs the environment must wait BEHIND it. One serial queue
- * gave that ordering for free, where a downloader running alongside would let a
- * run start against the Python it is halfway through replacing.
- *
- * A BOARD DOES NOT GIVE IT FOR FREE, SO THE BOARD SAYS IT OUT LOUD. An install
- * is `exclusive` (shared/queue-board.ts): it starts only when every slot is
- * free, nothing starts beside it, and nothing queued behind it starts before it
- * does. That is the serial queue's ordering written as a rule instead of
- * inherited from there having been only one slot — and it had to be written,
- * because the alternative on a two-lane board is exactly the race the paragraph
- * above forbids.
- *
- * IT STARTS ON ITS OWN, WHICH IS THE ONE EXCEPTION TO THE RULE ABOVE, and the
- * reason is that it ALREADY HAD ITS START GESTURE. An install arrives from a
- * user pressing Install in Settings, or from the startup provisioner deciding
- * the app cannot work without it — both are explicit, and neither leaves a
- * person wondering what they are waiting for. Holding one would put a second
- * button between somebody and a download they just asked for, and would let the
- * startup provisioner queue five gigabytes that then sat there until a shelf the
- * user has never opened was expanded and pressed. The batch this file exists to
- * make possible is a batch of BOOKS; an install is plumbing.
- *
  * ── A HOST MAY OWN THE SCHEDULING, AND THIS FILE SPLITS IN TWO FOR IT ────────
  *
  * Owen ruled it (docs/PLAN.md, Wave 16): *"we need to centralize the queue in
@@ -146,7 +120,7 @@
  * file is either a door a PERSON reached through the window (`enqueue`,
  * `enqueueTextPass`, `cancel`, `remove`, `start`, `clearFinished` — these route
  * when a host queue is registered) or a door FOUNDRY ITSELF reached for
- * (`enqueueHere`, `cancelHere`, `enqueueEnvInstall`, `runJob`, `runNow` — these
+ * (`enqueueHere`, `cancelHere`, `runJob`, `runNow` — these
  * never route). Nothing below the doors consults anything: `pump`, `executeJob`
  * and every landing are the same code in both worlds, so there is no flag for a
  * function to forget.
@@ -172,8 +146,6 @@ import { materializeTextPass } from './book';
 import {
   parseProgressLine, parseUsageLine, runEngine, stampMintMetadata, writeBookFile,
 } from './engine';
-import { ENV_SPECS } from './env-catalog';
-import { destFor, installEnv } from './env-install';
 import { foundryHost, type FoundryHostQueue, hostMintMeta } from './host';
 import {
   bookAtPosition,
@@ -228,7 +200,7 @@ import {
   CPU_LANE_SLOTS, JOB_RESOURCE, computeLanes, localLane, type ComputeLane, type JobResource,
 } from '../shared/queue-board';
 import type {
-  AnalysisRankRequest, AnalyzeRequest, CleanRemoval, CleanRequest, CleanTriageRequest, ConversionKind, DeferredPlan, EnvInstallRequest,
+  AnalysisRankRequest, AnalyzeRequest, CleanRemoval, CleanRequest, CleanTriageRequest, ConversionKind, DeferredPlan,
   ExportLanding, ExportMintMetadata, FoundryJobRow, Job, JobKind, JobRequest, RunOutcome,
   RunPlacement, RunVenue, SimplifyRequest, TextPassRequest, TranslateRequest,
 } from '../shared/types';
@@ -1359,7 +1331,6 @@ function cascadeFrom(job: Job): void {
     const index = jobs.indexOf(row);
     if (index >= 0) jobs.splice(index, 1);
     requests.delete(row.id);
-    envRequests.delete(row.id);
     // The copy goes out with the reason on it, and the recursion finds nothing:
     // this row's own children were collected above and are already settled by the
     // time their turn comes.
@@ -1373,7 +1344,6 @@ function copyOf(job: Job): Job {
   return {
     ...job,
     progress: job.progress ? { ...job.progress } : null,
-    envProgress: job.envProgress ? { ...job.envProgress } : null,
   };
 }
 
@@ -1600,8 +1570,9 @@ export function shelfJobsFor(projectDir: string): Job[] {
  * install different is not where its row is kept, it is that IT NEVER ROUTED —
  * 16e, an install is a precondition of the engine running rather than GPU work.
  * A gesture must go back through the same door the work went out of, and for an
- * install that door was always the internal one. This is `cancelEnvInstalls`'
- * rule (which has always refused to send an install's id to the host) reaching
+ * install that door was always the internal one. This was `cancelEnvInstalls`'
+ * rule (it always refused to send an install's id to the host; installs retired
+ * 2026-11-04) reaching
  * the two gestures a person can now actually press.
  *
  * An id belonging to no row of ours answers false and routes, which is the
@@ -1653,8 +1624,6 @@ const NEVER_ROUTED: Readonly<Record<JobKind, boolean>> = {
   // The analysis's ranking, on the analysis's clause — which today means it is
   // never ordered hosted at all (`enqueueAnalysis`).
   'analysis-rank': false,
-  // A precondition of the engine running rather than GPU work (16e).
-  'env-install': true,
   // Renderer-driven and interactive. It never entered the host’s queue and
   // never took the serial slot, so nothing over there can stop it or draw it.
   mint: true,
@@ -2090,7 +2059,6 @@ function samePath(a: string, b: string): boolean {
 
 /** The full request, kept beside the job — the job itself is the PUBLIC shape. */
 const requests = new Map<string, EngineRequest>();
-const envRequests = new Map<string, EnvInstallRequest>();
 
 /**
  * WHAT THE SHELF CALLS A TEXT-PASS ROW, or nothing at all for the one that keeps
@@ -2848,7 +2816,6 @@ export function remove(id: string): void {
   if (job.state !== 'held' && job.state !== 'queued') return;
   jobs.splice(index, 1);
   requests.delete(id);
-  envRequests.delete(id);
   changed();
   /*
    * The row is gone rather than finished, and anybody waiting on it has to hear
@@ -2872,56 +2839,6 @@ export function remove(id: string): void {
 }
 
 /**
- * Put an environment install in the queue.
- *
- * Returns the EXISTING row when one for the same target is already waiting or
- * running: the startup provisioner and a user's Install button can easily arrive
- * at the same conclusion seconds apart, and two rows downloading five gigabytes
- * into one directory is the worst outcome available.
- *
- * ── IT NEVER ROUTES TO A HOST QUEUE, whoever is hosting ─────────────────────
- *
- * An install is not GPU work being scheduled: it is the PRECONDITION of the
- * engine running at all, and half of them are ordered by the startup provisioner
- * before anybody has pressed anything. Filing one in a host's queue would put it
- * behind whatever that queue is holding — including, in the ordinary case, the
- * very job that cannot run until the install has finished. The queue this app
- * keeps for itself is exactly the size of that argument: installs, and the
- * unattended exports a host asks for by name.
- */
-export function enqueueEnvInstall(request: EnvInstallRequest, reason?: string): Job {
-  const pending = jobs.find(
-    (job) => job.kind === 'env-install'
-      && envRequests.get(job.id)?.target === request.target
-      && (job.state === 'held' || job.state === 'queued' || job.state === 'running'),
-  );
-  if (pending) return pending;
-
-  const spec = ENV_SPECS[request.target];
-  const job: Job = {
-    id: randomUUID(),
-    // An install has no document; these two carry what it is and where it goes,
-    // so the shelf's title attribute and the reveal button still mean something.
-    inputPath: request.target,
-    outputPath: destFor(request),
-    kind: 'env-install',
-    title: spec.label,
-    // `queued`, not `held`: an install already had its start gesture. The
-    // header says why this is the one exception.
-    state: 'queued',
-    progress: null,
-    envProgress: null,
-    message: reason,
-    createdAt: Date.now(),
-  };
-  jobs.push(job);
-  envRequests.set(job.id, request);
-  changed();
-  void pump();
-  return job;
-}
-
-/**
  * Cancel: kill the child if it is this job's, drop it from the queue if it is
  * not. Both end as `cancelled`, because from the shelf they are one gesture.
  *
@@ -2935,7 +2852,7 @@ export function enqueueEnvInstall(request: EnvInstallRequest, reason?: string): 
  * host's rows and the host is the only side that can stop it — even for work
  * that is running through `runJob` at this moment, because the host asked for
  * that run and holds the row people are looking at. Foundry's own gestures on
- * its own rows (`cancelEnvInstalls`, and the abort signal a `runJob` carries)
+ * its own rows (the abort signal a `runJob` carries)
  * go to `cancelHere` and cannot be routed away.
  */
 export function cancel(id: string): void {
@@ -2989,8 +2906,8 @@ export function cancel(id: string): void {
  * list to keep up to date, no second gate to remember. The same trick the hold
  * uses in reverse, and it means a mint and a read genuinely run at once.
  *
- * `env-install` is the precedent for a row the OCR panel never enqueued, and
- * this departs from it in exactly one way: an install DOES take slots — every
+ * The retired `env-install` was the precedent for a row the OCR panel never
+ * enqueued, and this departs from it in exactly one way: an install DID take slots — every
  * one of them (`pump` dispatches it as `exclusive`), because an install and a
  * read compete for the same disk, the same network and the same Python. A mint
  * competes with nothing.
@@ -3010,7 +2927,6 @@ export function beginMint(projectDir: string, title: string, pages: number): str
     // `render` because that is literally the pass: the renderer is rasterizing
     // page quads, and the shelf already knows how to say "page 3/27: rendered".
     progress: { page: 0, total: pages, phase: 'render' },
-    envProgress: null,
     createdAt: Date.now(),
   };
   jobs.push(job);
@@ -3268,29 +3184,6 @@ async function sweepDerivedBook(request: EngineRequest | undefined): Promise<voi
 }
 
 /**
- * Stop whichever environment install is going, from anywhere.
- *
- * Routed through `cancelHere` rather than reaching into the installer, because
- * the queue is what decides a row's final STATE: an abort that bypassed it
- * settled the install as `failed` with "Cancelled." as its error — technically
- * true, and a red exclamation mark in the shelf for something the user themselves
- * asked to stop.
- *
- * `cancelHere` AND NOT `cancel`, and this is the line that proves the internal
- * doors were worth having. An install is never in a host's queue (see
- * `enqueueEnvInstall`), so a cancel that routed would send one of OUR ids into a
- * list that has never heard of it — and the download would go on running while
- * the app reported it stopped.
- */
-export function cancelEnvInstalls(): void {
-  for (const job of [...jobs]) {
-    if (job.kind === 'env-install' && (job.state === 'running' || job.state === 'queued')) {
-      cancelHere(job.id);
-    }
-  }
-}
-
-/**
  * Clear everything that has stopped. The running job, the queue and the HELD
  * batch all survive.
  *
@@ -3320,7 +3213,6 @@ export function clearFinished(): void {
     if (job && job.state !== 'held' && job.state !== 'queued' && job.state !== 'running') {
       if (chainStillLive(job.id)) continue;
       requests.delete(job.id);
-      envRequests.delete(job.id);
       jobs.splice(i, 1);
     }
   }
@@ -4939,10 +4831,6 @@ async function pump(): Promise<void> {
  */
 async function runInSlot(job: Job, slot: Slot): Promise<void> {
   try {
-    if (job.kind === 'env-install') {
-      await runEnvInstall(job, slot);
-      return;
-    }
     const held = requests.get(job.id);
     if (held === undefined) {
       job.state = 'failed';
@@ -6773,7 +6661,7 @@ async function carry(
        * what reaches this function from a translated position is the BOOK cast from
        * those records — which carries `forStep` and returns above, uncatalogued.
        *
-       * The REQUEST's kind, not the job row's: `JobKind` also admits `env-install`,
+       * The REQUEST's kind, not the job row's: `JobKind` also admits `mint`,
        * which never reaches this branch but which the compiler cannot know that
        * about, and a cast here would be a promise made to the type system rather
        * than a fact. The request is the narrower shape — narrowed by the two arms
@@ -7725,72 +7613,4 @@ async function remakeBookFile(at: BookAtPosition): Promise<void> {
       + 'The bank is complete and the reading stands; opening the book makes it again.',
     );
   }
-}
-
-/**
- * The env-install branch, holding the WHOLE BOARD rather than one lane of it.
- *
- * ── Why it is exclusive, in one line each ───────────────────────────────────
- *
- * It replaces the Python every other job spawns, so nothing may run beside it;
- * it is a download and a disk, so it does not belong to a lane; and a conversion
- * that needs the environment must wait behind it, which is the whole reason an
- * install is in this queue at all (the header, and 16e). `canStart` is where
- * those three become a rule; this function is just the work.
- *
- * IT TAKES THE SLOT IT WAS GIVEN, exactly as `executeJob` does — the cancel goes
- * into the slot the scheduler already reserved, and `runInSlot`'s `finally` gives
- * it up. It used to set the serial slot and clear it itself, and it used to pump
- * on the way out of both endings; both of those now happen in one place for both
- * kinds of row.
- *
- * Every way this ends — not published, no distro chosen, a bad sha256, a
- * cancel — comes back as an `EnvInstallResult` with a sentence, because
- * `installEnv` never throws. The row's failure text is that sentence verbatim:
- * "download this later" and "your download was corrupt" are different problems
- * with different fixes and a shared exit code would hide both.
- */
-async function runEnvInstall(job: Job, slot: Slot): Promise<void> {
-  const request = envRequests.get(job.id);
-  if (!request) {
-    job.state = 'failed';
-    job.error = 'The install lost its configuration before it started.';
-    changed();
-    settled(job);
-    return;
-  }
-
-  job.state = 'running';
-  job.startedAt = Date.now();
-  job.message = `Installing ${job.title ?? request.target}…`;
-  changed();
-
-  let cancelled = false;
-  const handle = installEnv(request, (progress) => {
-    job.envProgress = progress;
-    job.message = progress.detail;
-    changed();
-  });
-  slot.cancel = () => { cancelled = true; handle.cancel(); };
-
-  const result = await handle.done;
-  slot.cancel = null;
-  job.finishedAt = Date.now();
-
-  if (result.ok) {
-    job.state = 'done';
-    job.message = result.detail;
-  } else if (cancelled) {
-    job.state = 'cancelled';
-    job.message = 'Cancelled.';
-  } else {
-    job.state = 'failed';
-    job.error = result.detail;
-  }
-  changed();
-  settled(job);
-  // NO PUMP HERE. It used to be this function's last line, back when it also
-  // owned the slot; `runInSlot`'s `finally` gives the slot up and pumps for
-  // both kinds of row, and a pump from here would ask the board a question
-  // while this install still held every lane of it.
 }

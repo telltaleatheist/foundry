@@ -234,7 +234,7 @@ import { hosted } from '../../core/foundry';
                   <button class="x" (click)="queue.cancel(job.id)"
                           title="Cancel"
                           [attr.aria-label]="'Cancel ' + view.label(job)">✕</button>
-                } @else if (job.state === 'done' && job.kind !== 'env-install') {
+                } @else if (job.state === 'done') {
                   <!--
                     Open comes FIRST because it is what a finished conversion is
                     for. Reveal stays beside it: the book is in the app's
@@ -346,8 +346,7 @@ import { hosted } from '../../core/foundry';
                       read. The engine's own last line is the tooltip either way,
                       and both paths are on the name above.
                     -->
-                    @if (job.kind === 'env-install') { Installed }
-                    @else if (job.kind === 'read') { Read · the book follows }
+                    @if (job.kind === 'read') { Read · the book follows }
                     @else if (job.kind === 'translate') { Translated · the book follows }
                     @else if (job.kind === 'simplify') { Simplified · the book follows }
                     @else if (job.kind === 'clean') { Cleaned · the book follows }

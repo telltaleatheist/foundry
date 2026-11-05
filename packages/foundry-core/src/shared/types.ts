@@ -22,12 +22,9 @@ export type { MintContributor, MintMeta };
 /**
  * What a row in the shelf IS.
  *
- * `epub` is the only thing the engine casts. `env-install` is not a conversion
- * at all — it is the app fetching a prebuilt Python — but it shares the queue on
- * purpose: it is long, it is cancellable, and a conversion that needs the
- * environment must wait BEHIND it rather than race it. One serial queue gave
- * that for free; a board of lanes has to say it, and does (an install is
- * `exclusive`, shared/queue-board.ts).
+ * `epub` is the only thing the engine casts. (`env-install` — the app fetching
+ * a prebuilt Python, which shared this queue as an `exclusive` row — retired
+ * with Foundry's Python on 2026-11-04.)
  *
  * `translate` is a conversion whose INPUT is an EPUB and whose output is
  * another one. It is not in `ConversionKind` and that is deliberate: a
@@ -60,14 +57,14 @@ export type { MintContributor, MintMeta };
  * differs, starting with the fact that one waits for a person to press Start and
  * the other must never.
  *
- * `mint` IS THE SECOND MEMBER THAT SPAWNS NOTHING, after `env-install`, and the
+ * `mint` IS A MEMBER THAT SPAWNS NOTHING (as the retired `env-install` was), and the
  * sentence above about the engine is the reason it needs saying here. A mint is
  * the capture stage assembling a PDF out of photographs (docs/CAPTURE.md): the
  * pixels are rectified in the RENDERER, one page at a time, so the row exists to
  * be seen and cancelled rather than to be run. It must never occupy a slot on
  * the board — an interactive mint sitting in one would hold a reading behind it
- * for minutes — and `env-install` is the precedent for a row the pump hands to
- * something other than `executeJob`.
+ * for minutes — and the retired `env-install` was the precedent for a row the
+ * pump hands to something other than `executeJob`.
  *
  * `analysis` IS THE SECOND KIND THAT PRODUCES NO DOCUMENT, after `read`, and it
  * is on the board for `translate`'s reason rather than for its own: the verify
@@ -103,7 +100,7 @@ export type { MintContributor, MintMeta };
  * to say which of the two is happening.
  */
 export type JobKind =
-  ConversionKind | 'read' | 'env-install' | 'translate' | 'simplify' | 'clean' | 'mint' | 'analysis'
+  ConversionKind | 'read' | 'translate' | 'simplify' | 'clean' | 'mint' | 'analysis'
   | 'clean-triage' | 'analysis-rank';
 
 /**
@@ -764,7 +761,7 @@ export type RewriteMode = 'dejargon' | 'destiffen' | 'learner';
  * because nothing the two carry is the same field: there is no readings bank
  * (a translation is not resumable — the engine banks nothing), no page skips,
  * no `--format`. Two shapes that share a queue is what `EnvInstallRequest`
- * already is, and it is the pattern that keeps `argsFor` honest — a request
+ * was, and it is the pattern that keeps `argsFor` honest — a request
  * cannot carry a flag the command it will become does not have.
  *
  * THE ENDPOINT AND THE MODEL ARE STILL FIELDS, and nobody chooses them. A
@@ -1798,15 +1795,9 @@ export interface Job {
   progress: JobProgress | null;
   /**
    * What the shelf calls this row. A conversion falls back to the input file's
-   * basename; an env install has no file to name itself after and sets this.
+   * basename; a row with no file to name itself after (a mint) sets this.
    */
   title?: string;
-  /**
-   * Set on `env-install` rows only: which of the four phases, and how far.
-   * Separate from `progress` because pages and megabytes are not the same
-   * quantity and a bar that silently changed units mid-run would be a lie.
-   */
-  envProgress?: EnvInstallProgress | null;
   /** The engine's own words on a failure. Never paraphrased, never an exit code. */
   error?: string;
   /** The last line the engine wrote — the job log, one line deep. */
@@ -1845,8 +1836,7 @@ export interface Job {
    * The user's commitment is the press. This is the state of the project at the
    * moment of it, and it is what the landing appends against.
    *
-   * NULL for a job in a project whose ledger has no steps to point at, and absent
-   * on an `env-install`, which is not about a book at all.
+   * NULL for a job in a project whose ledger has no steps to point at.
    */
   parentStep?: string | null;
   /**
@@ -2246,10 +2236,10 @@ export interface RunPlacement {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// `foundry doctor --json` — the engine's contract, version 1
+// `foundry doctor --json` — the engine's contract, version 2
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type TierId = 'endpoint' | 'wsl-vllm' | 'mlx' | 'native';
+export type TierId = 'endpoint' | 'wsl-vllm' | 'vllm-local';
 
 export interface TierReport {
   id: TierId;
@@ -2260,8 +2250,6 @@ export interface TierReport {
 export interface DoctorReport {
   version: number;
   platform: string;
-  /** PyMuPDF — every run needs it, on every tier, so it is reported beside them. */
-  rasteriser: { available: boolean; python: string | null; detail: string };
   tiers: TierReport[];
   /** The tier a run would use, or null with the reason in that tier's detail. */
   chosen: TierId | null;
@@ -2294,7 +2282,7 @@ export type DoctorResult =
 // settings.json — the ENGINE owns this schema (foundry src/backend/settings.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type BackendMode = 'auto' | 'endpoint' | 'mlx';
+export type BackendMode = 'auto' | 'endpoint';
 
 /**
  * The keys this app knows how to edit. Still a SUBSET of what the engine reads
@@ -2312,7 +2300,6 @@ export type BackendMode = 'auto' | 'endpoint' | 'mlx';
 export interface BackendSettingsPatch {
   mode?: BackendMode;
   endpointUrl?: string;
-  python?: string;
 }
 
 export interface SettingsView {
@@ -2424,80 +2411,6 @@ export interface PageReaderState {
    * offer on the Models card, not a reason to stop installing.
    */
   supersededBy: string | null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Prebuilt Python environments — electron/env-catalog.ts owns the numbers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * One environment on the release.
- *
- * The `nli-` pair — the analysis ranker's entailment worker, torch and the
- * DeBERTa weights baked in — went on 2026-09-25 with the worker: analysis ranks
- * on a Crucible's decide door now (src/analyze/snap.ts).
- *
- * `wsl-x64` — vLLM inside a WSL distro — was a sixth and is gone
- * (docs/SLOTS.md §6, package B). Every target left is a plain directory on this
- * machine's own filesystem.
- */
-export type EnvTarget =
-  | 'windows-x64'
-  | 'mac-arm64';
-
-/**
- * The four things an install does, in order. Only `download` has a meaningful
- * percentage — the other three are a bar the UI draws as indeterminate rather
- * than a number invented to keep it moving.
- */
-export type EnvPhase = 'download' | 'verify' | 'unpack' | 'configure';
-
-export interface EnvInstallProgress {
-  target: EnvTarget;
-  phase: EnvPhase;
-  /** 0–100 during `download`. Meaningless in the other phases; read `detail`. */
-  percent: number;
-  /** The sentence on screen. Bytes, the part being fetched, files unpacked. */
-  detail: string;
-}
-
-/** A catalog row as the settings card sees it: the fixed facts plus this machine's. */
-export interface EnvCatalogItem {
-  target: EnvTarget;
-  label: string;
-  purpose: string;
-  pythonVersion: string;
-  packages: string[];
-  /** The reassembled download size, or null when the entry is not published. */
-  bytes: number | null;
-  /** How many release assets it arrives in. 1 means it was uploaded whole. */
-  partCount: number;
-  /**
-   * False when the catalog has no sha256 for it. The card says "not yet
-   * published" and disables Install — never downloads it unverified.
-   */
-  published: boolean;
-  /** Where it goes by default. */
-  defaultDest: string;
-  /** The interpreter, when one is actually on disk. Null when it is not installed. */
-  installedPath: string | null;
-  /** True when settings.json already points the engine at that interpreter. */
-  configured: boolean;
-  /** One sentence about THIS machine — installed where, or why it could not be checked. */
-  detail: string;
-}
-
-export interface EnvInstallRequest {
-  target: EnvTarget;
-  /** Overrides the default location. */
-  dest?: string;
-}
-
-export interface EnvInstallResult {
-  ok: boolean;
-  /** The interpreter that now exists, when there is one. */
-  pythonPath: string | null;
-  detail: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

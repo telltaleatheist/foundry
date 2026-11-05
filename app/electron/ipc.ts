@@ -112,7 +112,6 @@ import {
   readPdfMetadata,
   runDoctor
 } from '@owen/foundry-core/node/engine';
-import { catalogForThisMachine, onEnvInstallProgress } from '@owen/foundry-core/node/env-install';
 import { hosted, hostMintMeta } from '@owen/foundry-core/node/host';
 import {
   actOnHostNode, hostNodesFor, hostOffers, hostOperationStates, hostOpensStatus, hostStatus, openHostStatus
@@ -156,7 +155,7 @@ import type {
   CloseAnswer,
   CloseWarning,
   ConversionKind, DocumentDeletion,
-  EnvInstallRequest, JobRequest, MetadataWriteOutcome,
+  JobRequest, MetadataWriteOutcome,
   MintMeta, ReReadAnswer,
   RewriteMode, TextPassRequest,
   AnalyzeRequest,
@@ -1561,31 +1560,16 @@ export function registerIpc(): void {
    * somebody else runs is reached the way every other server is: by its URL.
    */
 
-  // ── The prebuilt environments ────────────────────────────────────────────
-  ipcMain.handle('env:catalog', () => catalogForThisMachine());
-
-  // An install is QUEUED, never awaited across IPC. The download is minutes to
-  // an hour, and a renderer reload that dropped the promise would leave a job
-  // running that nothing was left to report to — the same reason conversions
-  // live in main. The shelf and `env:install-progress` carry the rest.
-  ipcMain.handle('env:install', (_event, request: EnvInstallRequest) =>
-    queue.enqueueEnvInstall(request).id);
-  // Through the QUEUE, so the row ends as `cancelled` rather than as a failure
-  // whose error text happens to read "Cancelled."
-  ipcMain.handle('env:cancel', () => { queue.cancelEnvInstalls(); });
-
-  ipcMain.handle('env:choose-dest', async (_event, defaultPath: string) => {
-    const win = foundryWindow() ?? BrowserWindow.getAllWindows()[0];
-    const options = {
-      title: 'Where should the environment go?',
-      defaultPath,
-      properties: ['openDirectory' as const, 'createDirectory' as const],
-    };
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options);
-    return result.canceled ? null : (result.filePaths[0] ?? null);
-  });
+  /*
+   * ── THE PREBUILT ENVIRONMENTS ARE GONE, AND WITH THEM FIVE DOORS ─────────
+   *
+   * `env:catalog`, `env:install`, `env:cancel`, `env:choose-dest` and the
+   * `env:install-progress` push. They downloaded and installed the Python the
+   * rasteriser and the MLX reader ran in; both are gone (2026-11-04: the pages
+   * render in-process on MuPDF and every model call goes to Crucible), so there
+   * is nothing to install. Folders an earlier version downloaded are left on
+   * disk (`retireSettingsKeys`, node/settings.ts, says where).
+   */
 
   /*
    * ── THE LOCAL PAGE READER IS GONE, AND WITH IT EIGHT DOORS ─────────────
@@ -2249,9 +2233,6 @@ export function registerIpc(): void {
    * for the list itself, the same way the queue's mirror asks for jobs on boot.
    */
   onProjectsChanged(() => broadcast('projects:changed', null));
-  // Published beside the job row, not instead of it: the shelf reads the queue,
-  // the settings card reads this, and neither of them owns the run.
-  onEnvInstallProgress((progress) => broadcast('env:install-progress', progress));
   // The same shape one door along: main talks while the invoke is still open,
   // because an intake of a whole shoot is a minute long and a promise that
   // resolves at the end cannot say anything until there is nothing to say.

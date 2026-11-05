@@ -40,6 +40,15 @@ so it is right wherever the package is installed — a repo checkout, an app's
 bundle run by the host's own Electron with `ELECTRON_RUN_AS_NODE=1`; a missing
 bundle is refused by name.
 
+### The rasteriser
+
+The engine renders pages, cuts figures and reads a PDF's own text layer on MuPDF
+(`src/engine/vlm/raster.ts`), through the official `mupdf` package — a dependency
+of this package, imported by the engine at run time from beside the bundle (it is
+an ES module with top-level await, which the CommonJS bundle cannot inline). There
+is no Python anywhere: `vlm_page.py` and the local MLX reader were retired on
+2026-11-04, and every model call goes to Crucible.
+
 ## `setPlatform` — the one call before anything else
 
 ```ts

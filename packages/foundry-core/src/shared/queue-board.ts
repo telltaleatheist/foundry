@@ -141,8 +141,6 @@ export const JOB_RESOURCE: Readonly<Record<JobKind, JobResource>> = {
   pdf: 'cpu',
   /** Rectify and assemble, in the renderer's hands. See `unscheduled` above. */
   mint: 'unscheduled',
-  /** The precondition of the engine running at all. See `exclusive` above. */
-  'env-install': 'exclusive',
   /*
    * TRANSLATE'S REASON, WORD FOR WORD: a model holds the card. An analysis is
    * one schema-constrained call per ranked (passage, category)

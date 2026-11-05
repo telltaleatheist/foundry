@@ -20,7 +20,6 @@ import type {
   Asked,
   CaptureIntakeProgress,
   CloseAnswer,
-  EnvInstallProgress,
   HostNodes,
   Job,
   PageReaderProgress,
@@ -383,14 +382,6 @@ const api: FoundryApi = {
   settings: {
     read: () => ipcRenderer.invoke('settings:read'),
     write: (patch) => ipcRenderer.invoke('settings:write', patch),
-  },
-
-  env: {
-    catalog: () => ipcRenderer.invoke('env:catalog'),
-    install: (request) => ipcRenderer.invoke('env:install', request),
-    cancel: () => ipcRenderer.invoke('env:cancel'),
-    chooseDest: (defaultPath) => ipcRenderer.invoke('env:choose-dest', defaultPath),
-    onInstallProgress: (listener) => subscribe<EnvInstallProgress>('env:install-progress', listener),
   },
 
   setup: {

@@ -1,5 +1,24 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
+## The prebuilt environments are gone (2026-11-04)
+
+**COUNTED BY SCRIPT (`node app/tools/ipc-channels.js`): 154 `ipcMain.handle`, 155
+preload invokes, 19 listens, 18 pushes.** The figure before this change was 158 /
+159 / 20 / 19; five channels left and none arrived.
+
+| Channel | |
+| --- | --- |
+| ~~`env:catalog`~~, ~~`env:install`~~, ~~`env:cancel`~~, ~~`env:choose-dest`~~ | **Gone.** They listed, queued, cancelled and placed the prebuilt Python environments (PyMuPDF on Windows, mlx-vlm + PyMuPDF on the Mac). |
+| ~~`env:install-progress`~~ (push) | **Gone** with them. |
+
+Foundry has no Python (FOUNDRY-CORE A2): the pages are rasterised in-process on
+MuPDF (`packages/foundry-core/src/engine/vlm/raster.ts`) and every model call goes
+to Crucible, so there is nothing to install. The `env-install` job kind, the startup
+provisioner, Settings' environment card and the doctor pane's rasteriser card went
+too. `FoundryApi.env` is removed from `shared/api.ts`.
+
+**FOR BOOKFORGE:** five fewer Foundry channels to collide with; nothing renamed.
+
 ## A host act's state at a node (2026-11-02)
 
 **COUNTED BY SCRIPT OVER `app/electron/ipc.ts`: 158 `ipcMain.handle` call sites,

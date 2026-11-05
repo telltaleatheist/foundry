@@ -106,6 +106,7 @@ import { registerIpc } from './ipc';
 import { jobsPending, settleAwaitedExports } from '@owen/foundry-core/node/mount-work';
 import * as queue from '@owen/foundry-core/node/job-queue';
 import { setPlatform } from '@owen/foundry-core/node/platform';
+import { retireSettingsKeys } from '@owen/foundry-core/node/settings';
 import { listProjects, onImportLanded } from '@owen/foundry-core/node/projects';
 import { broadcast, foundryWindow, isDev, openWindow, whenRendererReady } from './window';
 import { originalOf } from '@owen/foundry-core/shared/original';
@@ -501,6 +502,17 @@ export function mountFoundry(host?: FoundryHost): void {
     broadcast,
     image: nativeImage,
   });
+  /*
+   * ── SETTINGS KEYS THE ENGINE NO LONGER READS, DROPPED ONCE ────────────────
+   *
+   * `backend.python` and `backend.mode: "mlx"` went with Foundry's Python
+   * (2026-11-04), and the engine refuses an unknown mode. Here, for the shell
+   * and a host alike, before anything spawns the engine: the file is written
+   * back without them and the one sentence says what went and where the
+   * downloaded environments are left. A no-op on every later start.
+   */
+  const retired = retireSettingsKeys();
+  if (retired !== null) console.log(`[settings] ${retired}`);
   /*
    * ── EVERY EXPORT THAT LANDS, HEARD ONCE AND PASSED ON TWICE ────────────────
    *
