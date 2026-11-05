@@ -77,6 +77,7 @@ export function registerCrucibleInstallDoors(): void {
   ipcMain.handle('crucible:repair', (_event, server: string | null, verifyOnly: boolean) =>
     repairDoor.run(server, verifyOnly));
   ipcMain.handle('crucible:repair-states', () => repairDoor.states());
+  ipcMain.handle('crucible:repair-stop', (_event, server: string | null) => repairDoor.stop(server));
   ipcMain.handle('crucible:install-status', async () => {
     const answered = await installDoor.status();
     if (answered.running) installDoor.attach();

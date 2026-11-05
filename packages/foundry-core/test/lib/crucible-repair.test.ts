@@ -28,8 +28,10 @@ const RESULT = {
 
 function fakeClient(script: { refuse?: unknown; result?: unknown; state?: string; error?: unknown }) {
   const asked: unknown[] = [];
+  const cancelled: string[] = [];
   return {
     asked,
+    cancelled,
     client: {
       async submitTask(request: unknown) {
         asked.push(request);
@@ -41,6 +43,7 @@ function fakeClient(script: { refuse?: unknown; result?: unknown; state?: string
         yield { id: 2, event: 'progress', data: { bytesDone: 50, bytesTotal: 100, file: 'a.bin' } };
         yield { id: 3, event: 'repair', data: { step: 'wait', state: 'running', subject: { kind: 'env', id: 'tts' }, detail: null, bytesToCheck: null } };
       },
+      async cancelTask(taskId: string) { cancelled.push(taskId); return { taskId, status: 'cancelling' }; },
       async task() {
         return { state: script.state ?? 'done', result: 'result' in script ? script.result : RESULT, error: script.error ?? null };
       },
@@ -52,7 +55,7 @@ function door(client: unknown, repair?: unknown) {
   return crucibleRepairDoor({
     repair: (repair ?? (async () => { throw new Error('the local road was taken'); })) as never,
     clientForServer: async () => client as never,
-    clientForHere: async () => client as never,
+    localClient: () => client as never,
     now: () => Date.now(),
   });
 }
@@ -78,17 +81,21 @@ test('a remote server is asked through its task and its result comes back', asyn
 test('this machine goes through the bootstrapper and answers the same shape', async () => {
   remoteRow('http://127.0.0.1:7100');
   const repairs = door(fakeClient({}).client, async () =>
-    ({ server: 'reinstalled', service: 'started', task: RESULT, healthy: true }));
+    ({ server: 'reinstalled', service: 'started', task: RESULT, healthy: true, detail: null }));
   const state = await repairs.run('studio', false);
   expect(state.outcome).toEqual({ outcome: 'finished', result: RESULT, server: 'reinstalled', service: 'started' });
 });
 
-test('Check only on this machine never takes the road that can change it', async () => {
+test('a Check only that finds the server down says so, and is not called a check', async () => {
   remoteRow('http://127.0.0.1:7100');
-  const fake = fakeClient({});
-  const state = await door(fake.client).run('studio', true);
-  expect(fake.asked).toEqual([{ type: 'repair', scope: { verifyOnly: true } }]);
-  expect(state.outcome?.outcome).toBe('finished');
+  let scope: unknown;
+  const detail = 'the service is not running (stopped); a verify-only run does not start it';
+  const state = await door(fakeClient({}).client, async (options: { scope: unknown }) => {
+    scope = options.scope;
+    return { server: 'ok', service: 'stopped', task: null, healthy: false, detail };
+  }).run('studio', true);
+  expect(scope).toEqual({ verifyOnly: true });
+  expect(state.outcome).toEqual({ outcome: 'not-asked', server: 'ok', service: 'stopped', detail });
 });
 
 test('a server without the repair task fails by name, in a sentence', async () => {
@@ -96,6 +103,7 @@ test('a server without the repair task fails by name, in a sentence', async () =
   for (const refuse of [
     new CrucibleRefused(400, 'invalid_task', 'bad', null),
     new CrucibleRefused(422, 'bad_request', 'unknown task type: repair', null),
+    new CrucibleRefused(400, 'invalid_request', 'body.scope: Extra inputs are not permitted', null),
   ]) {
     const state = await door(fakeClient({ refuse }).client).run('studio', false);
     expect(state.running).toBe(false);
@@ -118,6 +126,16 @@ test('a server with nothing to put back says installing again is the cure', () =
     .toMatchObject({ code: 'server_unrepairable', reinstall: true, needsUpdate: false });
   expect(repairRefusal(new BootstrapRefusal('repair_failed', 'it ended')))
     .toMatchObject({ code: 'repair_failed', reinstall: false });
+});
+
+test('Stop cancels the running task, and a stopped repair is not called a failure', async () => {
+  remoteRow();
+  const fake = fakeClient({ state: 'cancelled', result: null });
+  const repairs = door(fake.client);
+  repairs.watch((state) => { if (state.step === 'plan' && !state.stopping) void repairs.stop('studio'); });
+  const state = await repairs.run('studio', false);
+  expect(fake.cancelled).toEqual(['task-1']);
+  expect(state.outcome).toEqual({ outcome: 'stopped' });
 });
 
 test('a second press while one runs joins it rather than starting another', async () => {

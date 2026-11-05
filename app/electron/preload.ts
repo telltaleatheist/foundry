@@ -307,6 +307,7 @@ const api: FoundryApi = {
     localPresence: () => ipcRenderer.invoke('crucible:local-presence'),
     repair: (server, verifyOnly) => ipcRenderer.invoke('crucible:repair', server, verifyOnly),
     repairStates: () => ipcRenderer.invoke('crucible:repair-states'),
+    repairStop: (server) => ipcRenderer.invoke('crucible:repair-stop', server),
     onRepairState: (listener) => subscribe<RepairState>('crucible:repair-state', listener),
     installStatus: () => ipcRenderer.invoke('crucible:install-status'),
     onInstallEvent: (listener) => subscribe<CrucibleInstallEvent>('crucible:install-event', listener),

@@ -8,6 +8,11 @@
             title="Report what is wrong and change nothing">
       {{ running() && state()?.verifyOnly ? 'Checking…' : 'Check only' }}
     </button>
+    @if (running()) {
+      <button class="ghost" type="button" [disabled]="state()?.stopping" (click)="stop()">
+        {{ state()?.stopping ? 'Stopping…' : 'Stop' }}
+      </button>
+    }
   </div>
 
   @if (state(); as now) {
@@ -19,7 +24,19 @@
       @if (now.waitingFor; as busy) {
         <p class="small">Waiting: {{ busy }} is in use.</p>
       }
+      @if (now.stopping) {
+        <p class="small">{{ stopWords() }}</p>
+      }
     }
+  }
+
+  @if (stopped()) {
+    <p class="small">Stopped. Anything not reached was not checked.</p>
+  }
+
+  @if (notAsked(); as down) {
+    <p class="small warn">Nothing was checked, and nothing was changed: {{ down.detail }}</p>
+    <p class="small">Repair can start it and put it right.</p>
   }
 
   @if (refused(); as no) {

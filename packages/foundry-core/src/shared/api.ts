@@ -1615,6 +1615,8 @@ export interface FoundryApi {
     repair(server: string | null, verifyOnly: boolean): Promise<RepairState>;
     /** The repairs this run of the app knows of, running or finished. */
     repairStates(): Promise<RepairState[]>;
+    /** Ask a running repair to stop. The state says when it has. */
+    repairStop(server: string | null): Promise<void>;
     onRepairState(listener: (state: RepairState) => void): () => void;
     /**
      * Every event of the install in flight, BROADCAST to every window: one

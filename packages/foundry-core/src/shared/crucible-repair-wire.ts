@@ -36,9 +36,17 @@ export type RepairOutcome =
     outcome: 'finished';
     result: RepairResultView;
     /** Only a repair of this machine reaches these; a task on a server cannot speak for its own runtime. */
-    server: 'ok' | 'reinstalled' | null;
-    service: 'running' | 'started' | null;
+    server: 'ok' | 'reinstalled' | 'broken' | null;
+    service: 'running' | 'started' | 'stopped' | null;
   }
+  | {
+    /** A Check only on this machine whose server or service was not up to ask. Nothing was checked or changed. */
+    outcome: 'not-asked';
+    server: 'ok' | 'reinstalled' | 'broken';
+    service: 'running' | 'started' | 'stopped';
+    detail: string;
+  }
+  | { outcome: 'stopped' }
   | {
     outcome: 'refused';
     code: string;
@@ -54,6 +62,10 @@ export interface RepairState {
   server: string | null;
   verifyOnly: boolean;
   running: boolean;
+  /** Stop was pressed and the task has not ended yet. */
+  stopping: boolean;
+  /** The step it is on, so Stop can say what stopping means there. */
+  step: string | null;
   /** What it is doing now, in the server's or the bootstrapper's own words. */
   doing: string | null;
   /** Something is in use and the repair is waiting for it. Cleared when it moves on. */

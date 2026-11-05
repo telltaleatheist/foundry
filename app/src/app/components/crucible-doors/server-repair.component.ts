@@ -34,6 +34,18 @@ export class ServerRepairComponent {
     const outcome = this.outcome();
     return outcome?.outcome === 'finished' ? outcome : null;
   });
+  protected readonly notAsked = computed(() => {
+    const outcome = this.outcome();
+    return outcome?.outcome === 'not-asked' ? outcome : null;
+  });
+  protected readonly stopped = computed(() => this.outcome()?.outcome === 'stopped');
+  /** What stopping means where it is: a rebuild cannot be interrupted, and a download is finished by the next repair. */
+  protected readonly stopWords = computed(() => {
+    const step = this.state()?.step;
+    if (step === 'rebuild') return 'It stops after this environment finishes.';
+    if (step === 'repull') return 'It stops now, and the next repair finishes this download.';
+    return 'It stops at the next file.';
+  });
   protected readonly refused = computed(() => {
     const outcome = this.outcome();
     return outcome?.outcome === 'refused' ? outcome : null;
@@ -67,6 +79,11 @@ export class ServerRepairComponent {
   protected async start(verifyOnly: boolean): Promise<void> {
     if (!api || this.running()) return;
     this.take(await api.crucible.repair(this.server(), verifyOnly));
+  }
+
+  protected stop(): void {
+    if (!api) return;
+    void api.crucible.repairStop(this.server());
   }
 
   protected subject(subject: { kind: string; id: string }): string {

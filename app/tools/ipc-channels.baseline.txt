@@ -64,6 +64,7 @@ handle	crucible:remember-job-model	electron/ipc-crucible.ts
 handle	crucible:remove-model	electron/ipc-crucible-install.ts
 handle	crucible:repair	electron/ipc-crucible-install.ts
 handle	crucible:repair-states	electron/ipc-crucible-install.ts
+handle	crucible:repair-stop	electron/ipc-crucible-install.ts
 handle	crucible:restart-windows	electron/ipc-crucible-install.ts
 handle	crucible:save	electron/ipc-crucible.ts
 handle	crucible:serves	electron/ipc-crucible.ts
@@ -222,6 +223,7 @@ invoke	crucible:remember-job-model	electron/preload.ts
 invoke	crucible:remove-model	electron/preload.ts
 invoke	crucible:repair	electron/preload.ts
 invoke	crucible:repair-states	electron/preload.ts
+invoke	crucible:repair-stop	electron/preload.ts
 invoke	crucible:restart-windows	electron/preload.ts
 invoke	crucible:save	electron/preload.ts
 invoke	crucible:serves	electron/preload.ts

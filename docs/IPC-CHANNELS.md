@@ -2,7 +2,7 @@
 
 ## The prebuilt environments are gone (2026-11-04)
 
-**COUNTED BY SCRIPT (`node app/tools/ipc-channels.js`): 157 `ipcMain.handle`, 158
+**COUNTED BY SCRIPT (`node app/tools/ipc-channels.js`): 158 `ipcMain.handle`, 159
 preload invokes, 20 listens, 19 pushes.** The figure before this change was 158 /
 159 / 20 / 19; five channels left and none arrived.
 
@@ -161,8 +161,9 @@ collides with itself.
 | Channel | Request/result |
 | --- | --- |
 | `crucible:local-presence` | → `LocalCruciblePresence` — whether this machine has a Crucible: `present`, `absent`, or `unknown` with the refusal. Pairing file, then the server's config, then `detectHost`. Install is offered only on `absent`. |
-| `crucible:repair` | (server name or null, verifyOnly) → `RepairState` when it ends. Never rejects: a refusal is in `outcome`. This machine goes through the bootstrapper's `repair`, another through its `repair` task; Check only always takes the task. |
+| `crucible:repair` | (server name or null, verifyOnly) → `RepairState` when it ends. Never rejects: a refusal is in `outcome`. This machine goes through the bootstrapper's `repair`, another through its `repair` task. |
 | `crucible:repair-states` | → `RepairState[]`, the repairs this run of the app knows of, so a page that comes back can pick one up. |
+| `crucible:repair-stop` | (server name or null) → void. Asks a running repair to stop; its state says when it has. |
 | `crucible:repair-state` | Push, BROADCAST to every window: one repair's whole state, on every step. |
 | `crucible:install-status` | → `{running, outcome}` — crucible `docs/PHASE19-AUTOMATIC-WSL.md` §2.6's `GET /install`. `outcome` null means nothing has said yet, never "it is fine". A READ. |
 | `crucible:install-event` | Push, BROADCAST to every window: one machine is being set up, not one window's install. The camelCase reading of `@crucible/bootstrap`'s `HostEvent` (`step`, `progress`, `state`, `line`, `done`, `failed`), shaped in `app/shared/crucible-install-wire.ts`. |
