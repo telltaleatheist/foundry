@@ -27,6 +27,8 @@ import { isExportView, OpenDocumentsService } from '../../core/documents.service
 import { StageService } from '../../core/stage.service';
 import { UiService } from '../../core/ui.service';
 import { UnappliedService } from '../../core/unapplied.service';
+import * as acts from './action-menu.acts';
+import * as gates_ from './action-menu.gates';
 
 /**
  * THE ACTION MENU — an ordered list of everything this app can be asked to do,
@@ -198,8 +200,8 @@ export class ActionMenuComponent {
   protected readonly ui = inject(UiService);
   protected readonly documents = inject(OpenDocumentsService);
   protected readonly stage = inject(StageService);
-  private readonly projects = inject(ProjectsService);
-  private readonly ledger = inject(LedgerService);
+  readonly projects = inject(ProjectsService);
+  readonly ledger = inject(LedgerService);
   /**
    * THE DOOR THAT TAKES A BOOK APART — protected rather than private because the
    * template reads its `busy` to grey the tile while a pass is running.
@@ -227,12 +229,12 @@ export class ActionMenuComponent {
    * while its tooltip said "there is no book at this step" would be sending
    * somebody to open a book that was never the problem.
    */
-  private readonly gates = inject(ActGatesService);
-  private readonly hostOps = inject(HostOpsService);
-  private readonly notices = inject(NoticeService);
+  readonly gates = inject(ActGatesService);
+  readonly hostOps = inject(HostOpsService);
+  readonly notices = inject(NoticeService);
   /** The card before any of the four make-acts below runs past unapplied work. */
-  private readonly unapplied = inject(UnappliedService);
-  private readonly router = inject(Router);
+  readonly unapplied = inject(UnappliedService);
+  readonly router = inject(Router);
 
   /** Lit when the panel is actually on screen, which needs both halves of it. */
   protected readonly documentsUp = computed(() =>
@@ -283,26 +285,7 @@ export class ActionMenuComponent {
     return both.filter((offer, at) => both.findIndex((one) => one.id === offer.id) === at);
   });
 
-  /**
-   * THE PRESS ITSELF, aimed and ready — the one fork the tree footer already
-   * takes (`open-documents`, the `act.form` branch), taken here through the
-   * same two doors so the two surfaces cannot mean different things by one
-   * offer. An offer WITH a form opens the host's questions in our card, on the
-   * workspace where the card lives; a FORMLESS offer is invoked immediately —
-   * the host raises its own window and asks there, so there is nothing to
-   * navigate to on this side and nothing irreversible in the click. Errors are
-   * a sentence on the strip, this menu's own habit.
-   */
-  private press(operationId: string, dir: string, nodeId: string): void {
-    if (this.hostOps.offer(operationId)?.form !== undefined) {
-      void this.router.navigateByUrl('/');
-      this.ui.openHostOp({ operationId, projectDir: dir, nodeId });
-      return;
-    }
-    void this.hostOps.invoke(operationId, dir, nodeId).catch((err: unknown) => {
-      this.notices.notice.set(err instanceof Error ? err.message : String(err));
-    });
-  }
+  press(operationId: string, dir: string, nodeId: string): void { return acts.press.call(this, operationId, dir, nodeId); }
 
   /**
    * WHICH PROJECT A MENU ACT IS ABOUT — the book in front of you, as a folder.
@@ -324,7 +307,7 @@ export class ActionMenuComponent {
    * GRAYED instead — present and disabled like Translate and Simplify, with the
    * title saying what would light them up. See `hostReady`.
    */
-  private readonly target = computed<string | null>(() => {
+  readonly target = computed<string | null>(() => {
     const tab = this.stage.activeDocument();
     if (tab === null) return null;
     return this.documents.projectDirOf(tab);
@@ -370,540 +353,47 @@ export class ActionMenuComponent {
     return canRunHostActFrom(project);
   });
 
-  /**
-   * Press one: work out what this act is aimed at, then open the host's questions
-   * in our card.
-   *
-   * ── TWO KINDS OF ACT REACH THIS BUTTON, AND THEY AIM AT DIFFERENT THINGS ───
-   *
-   * AN ACT THAT CONSUMES THE BOOK aims at the STEP the person is standing on —
-   * the same id the tree row for that step would send, which is the whole of why
-   * it can be pressed from here at all. What it does with a step that has no
-   * export behind it is the host's business: it asks Foundry to make one
-   * (`exportEpubFromStep`, electron/mount.ts) and then runs the work, which is
-   * Owen's ruling and the reason this branch exists.
-   *
-   * WHAT THE PRESS NAMES IS `hostActAimFrom` (shared/stages.ts), since
-   * 2026-09-11, and the argument for its order is written there. In short: the
-   * promise the window stands on wins; then a finished EPUB is named by file
-   * whenever one exists (Owen's ruling, 2026-08-24); then the position, which
-   * names itself — including an EPUB import, which IS the book — while a
-   * position parked on a SCAN gets a sentence instead of the old
-   * `hostActPositionFrom` hop onto the reading, the hop that cast and narrated
-   * the German text of a book whose English export was on screen. The mapping
-   * itself survives in shared/stages.ts for the TREE's row presses, where the
-   * row pressed says which lineage was meant.
-   *
-   * AN ACT THAT CONSUMES ONLY THE FINISHED FILE keeps every refusal it had. It
-   * has said it reads an export and nothing else, so a press has to name one, and
-   * a book with none — or with two, which this menu cannot choose between — is a
-   * sentence rather than a guess. That is unchanged behaviour for a host that has
-   * not moved its act onto the book.
-   *
-   * WHICH KIND THIS IS, ASKED THROUGH THE ONE RULE. `offersFor('book')` is
-   * `offeredFrom` (shared/host-ops.ts), the same function the tree gates on, so a
-   * declaration that reaches the tree's step rows and a declaration that takes
-   * this branch cannot come apart.
-   *
-   * EVERY REFUSAL IS A SENTENCE ON THE STRIP, which is this menu's own habit for
-   * a button that cannot grey itself out against a fact this deep in the model.
-   */
-  protected async runHostAct(operationId: string): Promise<void> {
-    /*
-     * ── AND NOTHING THIS PRESS CAN THROW IS ALLOWED TO BE SILENT ──────────────
-     *
-     * The tree's footer got this wrapper on 2026-09-08 (`run`, open-documents),
-     * after Owen pressed Narrate on a running promise and got no card, no notice
-     * and no line in the terminal — the signature of an uncaught throw in a click
-     * handler, which reaches the hosted window's devtools console where nobody is
-     * looking. This menu is the second door onto the same acts and had no
-     * wrapper, so on 2026-09-11 the dock's Narrate could still do exactly that.
-     * The refusals below return quietly by design; what is left to catch is a
-     * program error, which the person in front of the button should be told.
-     */
-    try {
-      await this.hostActPressed(operationId);
-    } catch (err) {
-      const label = this.hostOps.offer(operationId)?.label ?? 'This act';
-      this.notices.notice.set(
-        `“${label}” could not be started: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      console.error('[dock] the host act press threw', err);
-    }
-  }
+  protected runHostAct(operationId: string): Promise<void> { return acts.runHostAct.call(this, operationId); }
 
-  private async hostActPressed(operationId: string): Promise<void> {
-    const dir = this.target();
-    if (dir === null) return;
-    /*
-     * AND THE SAME QUESTION THE THREE DIALOGS ABOVE ASK, for the same reason and
-     * one seam further out. A host act that consumes the book asks Foundry to
-     * EXPORT the step it names (`exportEpubFromStep`, electron/mount.ts) and then
-     * works on that file — so an act ordered over a pane holding unapplied changes
-     * spends somebody else's queue on a book without them, and the result lands
-     * in the tree looking exactly like the one they meant.
-     *
-     * AIMED BY `target()`, NOT BY THE ACTIVE DOCUMENT. This menu can be pressed
-     * over a project it is holding rather than the one on screen, and the gate has
-     * to look at the book the act will actually be made from.
-     *
-     * ASKED BEFORE ANY OF THE REFUSALS BELOW, deliberately: those are about
-     * whether the act can be aimed at all, and a person who has just answered
-     * "apply them and continue" should have their changes recorded even if the
-     * aim then turns out to be impossible. The alternative — refuse first, ask
-     * second — would make the answer depend on the order two unrelated facts
-     * happen to be checked in.
-     */
-    if (!await this.unapplied.cleared(dir, 'host')) return;
-    if (this.hostOps.offersFor('book').some((offer) => offer.id === operationId)) {
-      /*
-       * ── WHAT THE PRESS NAMES IS ONE RULE, AND IT LIVES IN SHARED ────────────
-       *
-       * `hostActAimFrom` (shared/stages.ts) holds the order the facts are read
-       * in and the argument for each: the promise the window stands on wins
-       * outright (Owen, 2026-09-07 — the grayed card is a position and every
-       * surface answers for it); then the finished export on screen, then the one
-       * finished export (Owen, 2026-08-24 — *"name the file im actually
-       * exporting"*); then the position, which names itself unless it is an
-       * arrival, and an arrival names itself only when it IS the book (an EPUB
-       * import — the same answer the tree gives that row). This method's job is
-       * to gather those facts honestly and to say each refusal as a sentence on
-       * the strip, which is this menu's own habit for a button that cannot grey
-       * itself out against a fact this deep in the model.
-       *
-       * THE FACTS, AND WHERE EACH COMES FROM. The promise is `promiseIn` rather
-       * than a test on `standingIn`'s answer, because "is the window aimed at a
-       * promise here" is a question the ledger mirror already answers by name.
-       * The export on screen is the focused tab when it is one of this project's
-       * finished EPUBs — the strongest possible reading of "the file im actually
-       * exporting". The position and ledger are the mirror's, read after the
-       * unapplied gate so an Apply that just moved the pointer is what gets named.
-       */
-      const held = this.projects.items().find((one) => fold(one.dir) === fold(dir)) ?? null;
-      const finished = (held?.exports ?? [])
-        .filter((made) => made.kind === 'epub')
-        .map((made) => made.file);
-      const tab = this.stage.activeDocument();
-      const viewing = tab !== null && tab.kind === 'book' && isExportView(tab)
-        ? finished.find((file) => fold(tab.path) === fold(`${dir}/final/${file}`)) ?? null
-        : null;
-      const promise = this.ledger.promiseIn(dir);
-      const aim = hostActAimFrom({
-        promised: promise === null ? null : this.ledger.standingIn(dir),
-        finished,
-        viewing,
-        standing: this.ledger.standingIn(dir),
-        ledger: this.ledger.historyFor(dir)?.ledger ?? null,
-      });
-      if (aim.kind === 'node') {
-        this.press(operationId, dir, aim.nodeId);
-        return;
-      }
-      switch (aim.why) {
-        case 'several-exports':
-          this.notices.notice.set(
-            'This book has more than one finished export, so which one this should work from is '
-            + 'not obvious from here. Open the one you mean, or start it from its row in the '
-            + 'library tree.',
-          );
-          return;
-        case 'no-position':
-          /*
-           * `standingIn` answers null while a project's history is still in
-           * flight — `hasBookAt` deliberately reads that silence as "not the
-           * import" so the button is not greyed on a guess — and a press in that
-           * window has nothing to send. Saying so is the honest answer.
-           */
-          this.notices.notice.set(
-            'This book’s history has not finished loading in this window, so there is no step to '
-            + 'run this from yet. Give it a moment and press again.',
-          );
-          return;
-        case 'a-scan':
-          this.notices.notice.set(
-            'This book is standing on its scan, and there is no finished export to name — so '
-            + 'running this from here would be a guess about which text you mean. Export the book '
-            + 'first, or press the act on the step you mean in the library tree.',
-          );
-          return;
-      }
-    }
-    const project = this.projects.items().find((one) => fold(one.dir) === fold(dir)) ?? null;
-    /*
-     * THE EPUBS, not the whole tray: what these acts consume is the finished
-     * BOOK file, and counting a plain-text export here would refuse for
-     * ambiguity between two files only one of which the act can read — or,
-     * worse, aim the nodeId at the text file's own provenance. The same kind
-     * test the row's `produces` and this menu's gray both make, made a third
-     * time where the target is picked.
-     */
-    const exports = (project?.exports ?? []).filter((made) => made.kind === 'epub');
-    if (exports.length === 0) {
-      /*
-       * AND THIS IS REACHABLE AGAIN, which it was not while the gray was
-       * `hasEpubExport`. The button now greys on what the STAGE can do, so an act
-       * that consumes only the finished file can be pressed over a book that has
-       * none — and the honest answer is the sentence, because an act that did not
-       * say it consumes the book is an act this menu must not make an export for
-       * on its own initiative.
-       */
-      this.notices.notice.set(
-        'There is nothing finished to work from yet — export this book first, and the act will '
-        + 'have a file to consume.',
-      );
-      return;
-    }
-    if (exports.length > 1) {
-      this.notices.notice.set(
-        'This book has more than one finished export, so which one this should work from is not '
-        + 'obvious from here. Pick the one you mean in the library tree and start it from there.',
-      );
-      return;
-    }
-    /*
-     * ONE EXPORT, AND THE PRESS NAMES THAT EXPORT — the same id the tree's own
-     * press on the same file would send (`exportNodeId`, shared/host-ops.ts).
-     *
-     * IT USED TO SEND THE EXPORT'S PROVENANCE STEP, falling back to the standing
-     * one, and both are wrong for the same reason Owen's third ruling gives: the
-     * host echoes this id into every node it pushes back, so a menu press that
-     * named a STEP put the narration under that step in the tree while a tree
-     * press on the very same file put it under the file. Two doors onto one act
-     * that disagreed about where the result belongs is the shape this codebase
-     * refuses everywhere else; this menu aims at the export, so it says the
-     * export.
-     *
-     * NO FALLBACK IS NEEDED ANY MORE. The old one existed because a
-     * pre-`stepId` catalogue had no provenance to send; the file's own name is
-     * always available, so the one branch that could answer null is gone.
-     */
-    const target = exports[0];
-    if (target === undefined) return;
-    this.press(operationId, dir, exportNodeId(target.file));
-  }
+  hostActPressed(operationId: string): Promise<void> { return acts.hostActPressed.call(this, operationId); }
 
-  protected home(): void {
-    void this.router.navigateByUrl('/');
-    // This menu's Home is leaving on purpose: the held project lets go, so an
-    // empty workspace shows the library rather than the room just left.
-    this.stage.releaseProject();
-    this.stage.goHome();
-  }
+  protected home(): void { return acts.home.call(this); }
 
-  /**
-   * Reading the pages is a thing you do to the document in front of you, so
-   * opening the dialog from Settings takes you back to the documents first.
-   */
-  protected convert(): void {
-    void this.router.navigateByUrl('/');
-    this.ui.openOcr();
-  }
+  protected convert(): void { return acts.convert.call(this); }
 
-  /**
-   * THE STEP THIS BOOK IS WAITING ON, lit in the menu.
-   *
-   * True for a project with no completed reading. Everything else in this app is
-   * built on that bank — the block editor, every rendering, the chapter detection
-   * — so a book whose pages have not been read is a book where exactly one thing
-   * is worth pressing, and this menu says which.
-   *
-   * THE KIND OF THE FOCUSED TAB IS NO LONGER ASKED, and nothing is lost by it: a
-   * project that still needs reading has no book to be looking at, so the test was
-   * answering a question the project record had already settled. What it did do
-   * was make the light a fact about a PANE rather than about the book, which is
-   * the keying docs/WORKBENCH.md §6c retired.
-   *
-   * From the project RECORD (`ProjectSummary.reading`, derived once by main when
-   * the library was listed), never from probing the disk here: this method runs
-   * on every repaint of the menu.
-   */
-  protected ocrWaiting(): boolean {
-    const tab = this.stage.activeDocument();
-    if (tab === null) return false;
-    return canReadPages(this.projects.projectFor(tab.path));
-  }
+  protected ocrWaiting(): boolean { return gates_.ocrWaiting.call(this); }
 
-  /**
-   * Export needs a PROJECT in front of you, and not a particular file type.
-   *
-   * IT USED TO BE `kind === 'pdf'`, which was true while the only thing anybody
-   * stood on was the scan. It is false now: standing on the reading shows the
-   * flowing book, and that document is exactly the one somebody wants an EPUB
-   * of. Asking about the KIND of file in the pane was always asking the wrong
-   * question — what can be exported is a fact about the project behind the
-   * document (docs/DERIVED-BOOK.md §7, "anything that threads 'this is a PDF'
-   * through the renderer is building the wrong thing").
-   *
-   * SO THE TEST IS THE READING, off the project record main derived once when it
-   * listed the library — the same signal the OCR light reads, so this menu cannot
-   * say "read this" and "export this" about one book at the same time. There is
-   * nothing to export before a reading lands: every format this app makes is
-   * arithmetic over that bank.
-   *
-   * ── AND THE RULING HAS A SECOND CASE: A BOOK THAT ARRIVED AS A BOOK ─────────
-   *
-   * "Nothing to export before a reading lands" was written about a scan, where it
-   * is the whole truth, and it dead-bolted this door for every project imported
-   * from an EPUB — books that are FINISHED, whose chapters and figures and
-   * footnotes are all on the disk already. There is no bank under one and there
-   * never will be: its book is exploded out of the archived container rather than
-   * read off photographs (`bookAtPosition`, electron/projects.ts), so `done` is
-   * false about a book with nothing left to do. The rule is what it always meant —
-   * there is nothing to export until the blocks exist — and the blocks arrive by
-   * one of two roads. `arrivedAsBook` is the other one, asked of the same project
-   * record so that this and the dialog cannot disagree.
-   *
-   * AND IT STAYS LIVE FOR A DOCUMENT WHOSE PROJECT THIS WINDOW HAS NOT LISTED —
-   * the pre-import window, where a dead button explains nothing and the plan
-   * call's own refusal names the case precisely (the book nobody has read; the
-   * reading that was interrupted). The dialog puts that sentence on screen. A
-   * shut door explains itself, which is this menu's rule everywhere else.
-   *
-   * ── AND IT IS DEAD ON THE IMPORT ROW ────────────────────────────────────────
-   *
-   * The reading is necessary and is no longer sufficient. Standing on the import
-   * is standing BEFORE the reading everything is arithmetic over — the user has
-   * deliberately stepped back to the untouched scan — and an export from there
-   * would quietly make the book they had just stepped away from
-   * (docs/WORKBENCH.md §6c: "Translate on … the import row = disabled. Same rule
-   * for Export and Metadata"). The dialog says the same thing in a sentence for
-   * whoever arrives by the menu instead of by this button.
-   *
-   * EXCEPT WHERE THE IMPORT ROW IS THE BOOK. That refusal is about stepping BACK
-   * PAST a reading to the untouched scan, and a project that arrived as a book has
-   * no such step to step past: its ledger holds the import and nothing else, and
-   * `bookAtPosition`'s own EPUB branch reads exactly that position — `reading ===
-   * null` beside an EPUB archive — as the instruction to explode the container.
-   * The row a scan project is standing BEFORE its book on is the row an EPUB
-   * project's book IS, so applying one sentence to both would shut the only
-   * position such a project can ever occupy.
-   *
-   * A HISTORY THIS WINDOW HAS NOT READ ANSWERS NULL, AND NULL IS NOT THE IMPORT.
-   * The button stays live and main's own refusal is the backstop, on this menu's
-   * standing preference for a door that opens onto an explanation over one that is
-   * shut on a guess.
-   */
-  protected canExport(): boolean {
-    const tab = this.stage.activeDocument();
-    if (tab === null) return false;
-    const project = this.projects.projectFor(tab.path);
-    return canExportFrom(project, project === null ? null : this.ledger.standingIn(project.dir));
-  }
+  protected canExport(): boolean { return gates_.canExport.call(this); }
 
-  /*
-   * ── THE MACHINE GATE, AND THE FIVE SENTENCES IT WRITES ────────────────────
-   *
-   * `machineLit` is ANDed into the five tiles that need a model, and it is a
-   * separate call from the stage predicate rather than folded into it because
-   * the two answers are two different explanations — see the `gates` field.
-   *
-   * THE TITLES BELOW EXIST AS METHODS AND NOT AS TEMPLATE TERNARIES because
-   * every one of them is now a three-way choice: the machine cannot run this,
-   * the book is not ready for it, or here is what the act does. Three branches
-   * inline, twice per tile, is a template nobody can read — and the ORDER of the
-   * branches is a decision that deserves to be written down rather than implied
-   * by nesting.
-   *
-   * THE MACHINE ANSWERS FIRST WHEREVER IT IS DARK. A person standing on a scan
-   * with no model installed has two problems, and the one to name is the one
-   * that will still be there after they open a book. The exception is Analysis
-   * hosted, where the refusal is neither of these and is stated before both.
-   *
-   * EXPORT AND METADATA ARE NOT HERE, and that is not an omission: an export is
-   * arithmetic over recorded steps, and metadata is a form. Neither speaks to a
-   * model, so neither can be darkened by the absence of one.
-   */
-  protected machineLit(act: ActName): boolean {
-    return this.gates.gate(act).lit;
-  }
+  protected machineLit(act: ActName): boolean { return gates_.machineLit.call(this, act); }
 
-  protected ocrTitle(): string {
-    const gate = this.gates.gate('read');
-    if (!gate.lit) return gate.why;
-    return this.ocrWaiting()
-      ? 'These pages have not been read yet — this is the step everything else needs'
-      : 'Read this book\'s pages with the vision model';
-  }
+  protected ocrTitle(): string { return gates_.ocrTitle.call(this); }
 
-  protected translateTitle(): string {
-    const gate = this.gates.gate('translate');
-    return gate.lit ? 'Translate this book into another language' : gate.why;
-  }
+  protected translateTitle(): string { return gates_.translateTitle.call(this); }
 
-  protected simplifyTitle(): string {
-    const gate = this.gates.gate('simplify');
-    return gate.lit
-      ? 'Say this book again in its own language: plainer, more natural, or for a learner'
-      : gate.why;
-  }
+  protected simplifyTitle(): string { return gates_.simplifyTitle.call(this); }
 
-  protected cleanTitle(): string {
-    const gate = this.gates.gate('clean');
-    if (!gate.lit) return gate.why;
-    return this.canClean()
-      ? 'Say this book again with the punctuation and typography a narrator can read aloud'
-      : 'There is no book at this step to clean — read the pages first, or step onto the reading';
-  }
+  protected cleanTitle(): string { return gates_.cleanTitle.call(this); }
 
-  /**
-   * ANALYSIS SAYS THE HOSTED THING FIRST, and it is the one tile here that puts
-   * a refusal ahead of the machine's.
-   *
-   * A hosted window's gates are all lit — the work would run on the host's own
-   * compute (electron/act-gates.ts) — so there is no machine sentence to say
-   * there. What there IS is a permanent refusal of a different kind: a hosted
-   * queue takes two request shapes and an analysis is a third, so the act is not
-   * offered in that window at all. Naming the machine there would be answering a
-   * question nobody had reached.
-   */
-  protected analysisTitle(): string {
-    const gate = this.gates.gate('analysis');
-    return gate.lit
-      ? 'Read this book against the categories and list what it finds beside the page'
-      : gate.why;
-  }
+  protected analysisTitle(): string { return gates_.analysisTitle.call(this); }
 
-  /**
-   * ASKED ABOUT UNAPPLIED WORK FIRST, and this is the shape all three of these
-   * openers share.
-   *
-   * An export is arithmetic over the RECORDED STEPS, so a book pane holding
-   * changes nobody applied would have quietly produced the book without them
-   * (`UnappliedService` — Owen's own report, 2026-08-21). The card is raised
-   * BEFORE the dialog rather than at its Add press because none of these three
-   * dialogs has a source picker: each computes its `source()` from the active
-   * document's project, so the book this gate looks at is the book the card will
-   * act on for the whole life of it, and settling the question first beats
-   * settling it after somebody has picked a language and a model.
-   *
-   * THE NAVIGATION HAPPENS FIRST EITHER WAY. A press from Settings means "go and
-   * do this to the document", and a person who then answers Cancel is a person
-   * back among their documents rather than one stranded on a settings page.
-   */
-  protected async openExport(): Promise<void> {
-    void this.router.navigateByUrl('/');
-    if (!await this.unapplied.clearedHere('export')) return;
-    this.ui.openExport();
-  }
+  protected openExport(): Promise<void> { return acts.openExport.call(this); }
 
-  /**
-   * Enabled where the project HAS a book, on the same test the dialog itself
-   * applies — which is `canExport`'s test, because the two buttons ask the same
-   * question of the same ledger.
-   *
-   * IT USED TO TEST THE POSITION'S SHOWN DOCUMENT FOR `.epub`, which was the
-   * truth while every book was a cast EPUB in a pane and became its opposite at
-   * the pivot: a read or edit position is drawn natively on the proof sheet and
-   * shows NO document (`documentAtPosition` answers null), so the button was
-   * gray exactly where the book is — the user's own report, standing on their
-   * applied edits. What a translation consumes now is the POSITION'S book,
-   * materialised by main with every op replayed in (`planTranslation`), so the
-   * gate is "a book exists here": the reading landed, or the book arrived as
-   * one — and not the import row, where the user has deliberately stepped back
-   * to the untouched scan, except where the import IS the book.
-   *
-   * A LOOSE FILE ANSWERS FALSE, unlike Export's benefit of the doubt: what this
-   * app translates is a position read off a ledger, and a file with no ledger
-   * behind it has none.
-   */
-  protected canTranslate(): boolean {
-    const tab = this.stage.activeDocument();
-    if (tab === null) return false;
-    const project = this.projects.projectFor(tab.path);
-    return canTranslateFrom(project, project === null ? null : this.ledger.standingIn(project.dir));
-  }
+  protected canTranslate(): boolean { return gates_.canTranslate.call(this); }
 
-  protected async translate(): Promise<void> {
-    void this.router.navigateByUrl('/');
-    if (!await this.unapplied.clearedHere('translate')) return;
-    this.ui.openTranslate();
-  }
+  protected translate(): Promise<void> { return acts.translate.call(this); }
 
-  /**
-   * The two doors open onto one fact — the project has a book at its position —
-   * so this asks the question by asking the button beside it, rather than by
-   * keeping a second copy of a test that has already gone stale once.
-   */
-  protected canSimplify(): boolean {
-    const tab = this.stage.activeDocument();
-    if (tab === null) return false;
-    const project = this.projects.projectFor(tab.path);
-    return canSimplifyFrom(project, project === null ? null : this.ledger.standingIn(project.dir));
-  }
+  protected canSimplify(): boolean { return gates_.canSimplify.call(this); }
 
-  protected async simplify(): Promise<void> {
-    void this.router.navigateByUrl('/');
-    if (!await this.unapplied.clearedHere('simplify')) return;
-    this.ui.openSimplify();
-  }
+  protected simplify(): Promise<void> { return acts.simplify.call(this); }
 
-  /**
-   * THE SAME QUESTION THE TWO TILES ABOVE ASK, asked by the act's own name.
-   *
-   * `canCleanFrom` delegates to `canSimplifyFrom` today (shared/stages.ts argues
-   * why it is a named function rather than a call), so the three agree — which is
-   * Owen's own rule that the offer and the possibility are one fact, and not three
-   * copies of a test that has already gone stale once on this rail.
-   *
-   * IT DOES NOT ASK `hosted()`, and the tile above it does. Whether the act is
-   * POSSIBLE from a step is a fact about the book; whether it is OFFERED is a fact
-   * about the window, and folding the second into this method would leave the gray
-   * unable to explain itself — a permanently disabled tile whose title said the
-   * book was not ready when the truth was that the feature is BookForge's.
-   */
-  protected canClean(): boolean {
-    const tab = this.stage.activeDocument();
-    if (tab === null) return false;
-    const project = this.projects.projectFor(tab.path);
-    return canCleanFrom(project, project === null ? null : this.ledger.standingIn(project.dir));
-  }
+  protected canClean(): boolean { return gates_.canClean.call(this); }
 
-  protected async clean(): Promise<void> {
-    void this.router.navigateByUrl('/');
-    // THE SAME GATE THE OTHER MAKE-ACTS PASS THROUGH. A cleanup is arithmetic over
-    // the RECORDED steps — main materialises the position's book from them — so
-    // changes nobody has applied would silently not be in the book that is cleaned.
-    if (!await this.unapplied.clearedHere('clean')) return;
-    this.ui.openClean();
-  }
+  protected clean(): Promise<void> { return acts.clean.call(this); }
 
-  /**
-   * LIT WHERE A TRANSLATION WOULD BE, hosted or not.
-   *
-   * It asks the same predicate the two tiles above it ask, and that is not
-   * borrowing — it is Owen's own rule that the offer and the possibility are one
-   * fact. An analysis reads exactly what a translation reads (the position's
-   * materialised book file, every op replayed in), so "is there a book at this
-   * position" has one answer and one function.
-   *
-   * IT WAS NEVER OFFERED HOSTED until 2026-10-30, because the host's queue had not
-   * learned the analysis pair. It has (`enqueueAnalysis`, electron/job-queue.ts),
-   * and the one hosted case that still cannot work — a host with no queue — is
-   * refused by the door, by name.
-   */
-  protected canAnalyse(): boolean {
-    const tab = this.stage.activeDocument();
-    if (tab === null) return false;
-    const project = this.projects.projectFor(tab.path);
-    return canTranslateFrom(project, project === null ? null : this.ledger.standingIn(project.dir));
-  }
+  protected canAnalyse(): boolean { return gates_.canAnalyse.call(this); }
 
-  /**
-   * NO `clearedHere` IN FRONT OF THIS ONE, which puts it with the sweep rather
-   * than with Translate and Simplify.
-   *
-   * The guard protects acts that CONSUME a rendering or MOVE the position — acts
-   * that would otherwise run against a book missing the pending ops somebody is
-   * looking at. This one reads the position's book file, with every pending edit
-   * already replayed into it by main, and writes a report beside it: it consumes
-   * no rendering and the pointer does not follow the landing
-   * (\`RETAINED_BESIDE_YOU\`). docs/ANALYSIS.md §7 decides this explicitly, on the
-   * sweep's own rule.
-   */
-  protected analyse(): void {
-    void this.router.navigateByUrl('/');
-    this.ui.openAnalysis();
-  }
+  protected analyse(): void { return acts.analyse.call(this); }
 
   /**
    * THE CAPTURE PROJECT THE PERSON IS STANDING IN, or null -- and null is what
@@ -927,20 +417,7 @@ export class ActionMenuComponent {
   protected readonly atTheTable = computed<boolean>(
     () => this.stage.activeDocument()?.kind === 'capture');
 
-  /**
-   * Opens the table, or returns to the one already open.
-   *
-   * `captureTabIn` is idempotent by construction -- it hands back the existing
-   * tab for a project that already has one rather than making a second, which
-   * matters more here than on Home: this row is reachable FROM the table, so
-   * without that the door out of the room would put a second copy of the room
-   * beside it. The navigate is the neighbours' habit, for the case where this
-   * menu is drawn over a route that is not the workspace.
-   */
-  protected editPhotographs(dir: string): void {
-    void this.router.navigateByUrl('/');
-    this.documents.show(this.documents.captureTabIn(dir));
-  }
+  protected editPhotographs(dir: string): void { return acts.editPhotographs.call(this, dir); }
 
   /**
    * THE PROJECT IN FRONT OF THIS MENU, when its book is a PDF that could be
@@ -974,115 +451,11 @@ export class ActionMenuComponent {
     return this.bookEdit.pdfOf(project) === null ? null : project.dir;
   });
 
-  /**
-   * Take the open book apart into a light table of its own.
-   *
-   * THE NAVIGATE IS `editPhotographs`' HABIT, one flight up, for its reason: this
-   * menu is drawn beside routes that are not the workspace, and the light table
-   * this ends on is a tab rather than a route. It goes FIRST, before minutes of
-   * rasterizing, so the progress card the pass raises is on screen where somebody
-   * can watch it and press Stop — the drop card's ruling, which opens the panel
-   * before the first page is drawn rather than after the last.
-   *
-   * THE PROJECT IS RE-READ FROM THE CATALOGUE rather than captured by the
-   * computed above, which holds the DIRECTORY on purpose: a summary is a snapshot
-   * that main re-announces, and a press acting on a minutes-old copy of a
-   * project's document list is the class of bug this app keeps writing down. The
-   * directory is the one handle that cannot go stale.
-   */
-  protected editBook(): void {
-    const dir = this.editable();
-    if (dir === null) return;
-    const project = this.projects.projectFor(dir);
-    if (project === null) return;
-    void this.router.navigateByUrl('/');
-    void this.bookEdit.editBook(project);
-  }
+  protected editBook(): void { return acts.editBook.call(this); }
 
-  /**
-   * A document — either kind. Metadata is the one tool here that a SCAN has as
-   * much use for as a book: a PDF's Info dictionary is the same six facts under
-   * a different spelling, and a scan whose Title is the filename it was
-   * downloaded under is the ordinary case.
-   *
-   * ── AND IT IS DEAD ON THE IMPORT ROW, WHICH IS THE RULE IT ALREADY CITED ───
-   *
-   * `canExport` above records the ruling in full — docs/WORKBENCH.md §6c, "Same
-   * rule for Export and Metadata" — and this button was the half of it that was
-   * never built: it keyed off the focused TAB, so standing on the import (having
-   * deliberately stepped back to the untouched scan) still offered a dialog whose
-   * Save is refused by main, in a sentence about a folder, one click later.
-   * `archive/` is written once and never again, and the honest surface for that is
-   * a shut door rather than a form that fills in and then declines.
-   *
-   * IT IS THE EXPORT SHAPE, LINE FOR LINE, including the reading test: a metadata
-   * step is replayed onto what materialisation makes, and in a project with
-   * nothing read there is nothing yet to make. A loose file keeps tab keying,
-   * having no ledger to key off instead, and a history this window has not read
-   * answers null — which is not the import, so the button stays live and main's
-   * own refusal is the backstop.
-   *
-   * ── AND THE EPUB HALF IS BACK, AIMED SOMEWHERE ELSE ────────────────────────
-   *
-   * This was the PDF alone for a while, and the reason it was written down here:
-   * the EPUB half reached `meta:read-epub`, which resolved an open book's WORKING
-   * TREE, and the tree, the reader over it and the tab kind that held it are
-   * deleted (docs/RENDERER.md §7). The half that was missing was never the dialog
-   * — the form has drawn six `dc:` boxes the whole time — it was a DOCUMENT for it
-   * to be about.
-   *
-   * A FINISHED EXPORT IS ONE. `openExportView` puts a book tab over a file in
-   * `<project>/final/`, which is a real container with a real package in it, and
-   * `viewOnly` is the app's own word for "this book tab is a finished file rather
-   * than a position" (core/documents.service.ts). So the door is open exactly
-   * there and nowhere else: not over a project's book tab, which is blocks out of a
-   * bank and has no package to read, and not over anything the user imported.
-   *
-   * ── THE TWO TESTS BELOW ARE ABOUT THE PDF AND ARE NOT ASKED OF AN EXPORT ───
-   *
-   * The reading test asks whether there is anything to make yet; an export EXISTS,
-   * so the question is already answered by the file being there. The import test
-   * exists because a PDF tab's path can BE the untouched original in `archive/`,
-   * and an export's path is two segments deep under `final/` — a different folder
-   * by construction, whatever step the person happens to be standing on. Applying
-   * either to a book would shut a door for a reason that is not about it.
-   */
-  protected canEditMetadata(): boolean {
-    const tab = this.stage.activeDocument();
-    if (tab === null) return false;
-    if (tab.kind === 'book') return isExportView(tab);
-    if (tab.kind !== 'pdf') return false;
-    const project = this.projects.projectFor(tab.path);
-    if (project === null) return true;
-    if (!project.reading.done) return false;
-    return this.ledger.standingIn(project.dir)?.action !== 'import';
-  }
+  protected canEditMetadata(): boolean { return gates_.canEditMetadata.call(this); }
 
-  protected metadata(): void {
-    /*
-     * AN EPUB EXPORT GETS THE MINT DIALOG — Owen's ruling (2026-08-24): the
-     * tile over a finished book opens the same card the mint asked with, and
-     * Save stamps the very file on screen. The PDF keeps the older dialog,
-     * whose Info-dictionary fields are a different document's different
-     * questions.
-     */
-    const tab = this.stage.activeDocument();
-    if (tab !== null && tab.kind === 'book' && isExportView(tab)) {
-      const project = this.projects.projectFor(tab.path);
-      if (project !== null) {
-        void this.router.navigateByUrl('/');
-        this.ui.openMintMeta({
-          mode: 'edit',
-          projectDir: project.dir,
-          path: tab.path,
-          file: tab.path.split(/[\\/]/).pop() ?? tab.path,
-        });
-        return;
-      }
-    }
-    void this.router.navigateByUrl('/');
-    this.ui.openMetadata();
-  }
+  protected metadata(): void { return acts.metadata.call(this); }
 }
 
 /**

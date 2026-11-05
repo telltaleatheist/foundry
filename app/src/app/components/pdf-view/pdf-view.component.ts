@@ -35,6 +35,9 @@ import {
 import { ComparePickerComponent } from '../compare/compare-picker.component';
 import { OpenDocumentsService, type Tab } from '../../core/documents.service';
 import { api } from '../../core/foundry';
+import { PageBox, Shell, Match, PageText, TextItem, PdfPage, PDFJS_ASSETS, ZOOM_STEPS, WHEEL_RATE, THUMB_WIDTH, pageOf, layoutText } from './pdf-view.model';
+import * as search from './pdf-view.search';
+import * as drawing from './pdf-view.draw';
 
 /**
  * The scan — rendered here rather than by Chromium, so the app can show the
@@ -142,7 +145,7 @@ export class PdfViewComponent implements OnDestroy {
   protected readonly doc = signal<PDFDocumentProxy | null>(null);
   protected readonly problem = signal<string | null>(null);
   /** Page sizes in POINTS, in order. The shells are these times the scale. */
-  private readonly boxes = signal<readonly PageBox[]>([]);
+  readonly boxes = signal<readonly PageBox[]>([]);
   protected readonly scale = signal(1);
   protected readonly current = signal(1);
 
@@ -176,9 +179,9 @@ export class PdfViewComponent implements OnDestroy {
   private readonly viewportEl = viewChild<ElementRef<HTMLElement>>('viewport');
   private readonly layerViewportEl = viewChild<ElementRef<HTMLElement>>('layerViewport');
   private readonly stripEl = viewChild<ElementRef<HTMLElement>>('strip');
-  private readonly pageEls = viewChildren<ElementRef<HTMLElement>>('pageBox');
-  private readonly layerEls = viewChildren<ElementRef<HTMLElement>>('layerBox');
-  private readonly thumbEls = viewChildren<ElementRef<HTMLElement>>('thumbBox');
+  readonly pageEls = viewChildren<ElementRef<HTMLElement>>('pageBox');
+  readonly layerEls = viewChildren<ElementRef<HTMLElement>>('layerBox');
+  readonly thumbEls = viewChildren<ElementRef<HTMLElement>>('thumbBox');
 
   /**
    * pdf.js's parser thread, ours to make and ours to kill.
@@ -191,19 +194,19 @@ export class PdfViewComponent implements OnDestroy {
   // `create` rather than `new`: it is the overload pdf.js types properly, and
   // it returns the worker already attached to a port rather than throwing on a
   // second attach. Each component makes its own thread, so it always builds one.
-  private readonly worker = PDFWorker.create({ name: 'foundry-pdf', port: this.thread });
+  readonly worker = PDFWorker.create({ name: 'foundry-pdf', port: this.thread });
 
-  private loadingTask: PDFDocumentLoadingTask | null = null;
+  loadingTask: PDFDocumentLoadingTask | null = null;
   /** Bumped per load, so a document that arrives after the tab moved on is dropped. */
-  private generation = 0;
+  generation = 0;
 
   /** Page -> the scale it is currently drawn at. Absent means nothing is drawn. */
-  private readonly drawn = new Map<number, number>();
-  private readonly tasks = new Map<number, RenderTask>();
+  readonly drawn = new Map<number, number>();
+  readonly tasks = new Map<number, RenderTask>();
   /** Page -> its text items, with the empty ones already gone. Shared by both panes and the search. */
-  private readonly items = new Map<number, readonly TextItem[]>();
+  readonly items = new Map<number, readonly TextItem[]>();
   /** Page -> the spans of the invisible layer and of the visible one, index-aligned with `items`. */
-  private readonly spans = new Map<number, HTMLElement[][]>();
+  readonly spans = new Map<number, HTMLElement[][]>();
   /**
    * Pages the observer says are within reach of the viewport.
    *
@@ -216,17 +219,17 @@ export class PdfViewComponent implements OnDestroy {
    */
   private readonly near = new Set<number>();
   private readonly nearPages = signal<ReadonlySet<number>>(new Set());
-  private readonly thumbsDrawn = new Set<number>();
+  readonly thumbsDrawn = new Set<number>();
 
   private pages: IntersectionObserver | null = null;
   private thumbs: IntersectionObserver | null = null;
 
-  private searchIndex: readonly PageText[] | null = null;
-  private queryTimer: ReturnType<typeof setTimeout> | null = null;
+  searchIndex: readonly PageText[] | null = null;
+  queryTimer: ReturnType<typeof setTimeout> | null = null;
   private syncing = false;
   private scrollPending = false;
   /** Measures a string the way the browser will draw it, without touching the DOM. */
-  private readonly ruler = document.createElement('canvas').getContext('2d');
+  readonly ruler = document.createElement('canvas').getContext('2d');
 
   constructor() {
     /**
@@ -338,95 +341,9 @@ export class PdfViewComponent implements OnDestroy {
     this.thread.terminate();
   }
 
-  // ── Opening ──────────────────────────────────────────────────────────────
+  private open(filePath: string): Promise<void> { return drawing.open.call(this, filePath); }
 
-  /**
-   * Read the file and take its measurements.
-   *
-   * EVERY PAGE'S SIZE IS ASKED FOR UP FRONT, which for a long book is a few
-   * hundred round trips to the worker before the first page appears. It buys a
-   * scrollbar that tells the truth: guessing the rest of the book from page one
-   * makes every page after the first mixed-size one jump under the reader's
-   * cursor, and a viewer that moves the page while you read it is worse than
-   * one that took another moment to open.
-   */
-  private async open(filePath: string): Promise<void> {
-    this.generation += 1;
-    const mine = this.generation;
-    /*
-     * WHERE THE READER WAS, kept across the re-open.
-     *
-     * A tab's document is re-read for two reasons and BOTH of them are the same
-     * document: it was relocated onto the project's own copy of itself (the
-     * bytes are identical), or it was generated again under the same name. In
-     * neither case has the person stopped reading page 214 — but the pane threw
-     * them back to page one, because a re-open is a fresh document as far as
-     * everything below here is concerned.
-     *
-     * Restored only when the new document is long enough to have that page,
-     * which is the whole of the safety: a shorter book simply opens where it
-     * always did.
-     */
-    const wasAt = this.current();
-    this.teardown();
-    this.problem.set(null);
-    this.boxes.set([]);
-    this.itemCounts.set(new Map());
-    this.pageProblems.set(new Map());
-    this.matches.set([]);
-    this.query.set('');
-    this.current.set(1);
-
-    if (!api) {
-      this.problem.set('This window is not running inside Foundry, so it cannot read files.');
-      return;
-    }
-
-    try {
-      const bytes = await api.documentBytes(filePath);
-      if (mine !== this.generation) return;
-
-      const task = getDocument({
-        data: bytes,
-        worker: this.worker,
-        // Everything pdf.js may need at runtime, shipped beside the worker.
-        // Absent, an unusual scan renders blank and says nothing.
-        cMapUrl: new URL('cmaps/', PDFJS_ASSETS).href,
-        cMapPacked: true,
-        standardFontDataUrl: new URL('standard_fonts/', PDFJS_ASSETS).href,
-        wasmUrl: new URL('wasm/', PDFJS_ASSETS).href,
-        iccUrl: new URL('iccs/', PDFJS_ASSETS).href,
-      });
-      this.loadingTask = task;
-      const doc = await task.promise;
-      if (mine !== this.generation) { task.destroy().catch(() => undefined); return; }
-
-      const boxes: PageBox[] = [];
-      for (let number = 1; number <= doc.numPages; number += 1) {
-        const page = await doc.getPage(number);
-        if (mine !== this.generation) return;
-        const viewport = page.getViewport({ scale: 1 });
-        boxes.push({ number, width: viewport.width, height: viewport.height });
-      }
-      this.doc.set(doc);
-      this.boxes.set(boxes);
-      this.fitWidth();
-      // A frame later, because `jumpTo` measures the page divs `shells()` has
-      // only just been given the numbers for.
-      if (wasAt > 1 && wasAt <= boxes.length) {
-        requestAnimationFrame(() => {
-          if (mine === this.generation) this.jumpTo(wasAt);
-        });
-      }
-    } catch (err) {
-      if (mine !== this.generation) return;
-      // By name, never swallowed: a tab showing nothing with no reason on it is
-      // the failure this app refuses to ship (ARCHITECTURE §8).
-      this.problem.set(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  private teardown(): void {
+  teardown(): void {
     for (const task of this.tasks.values()) task.cancel();
     this.tasks.clear();
     this.drawn.clear();
@@ -445,71 +362,7 @@ export class PdfViewComponent implements OnDestroy {
     if (task) task.destroy().catch(() => undefined);
   }
 
-  // ── Drawing ──────────────────────────────────────────────────────────────
-
-  private async draw(number: number): Promise<void> {
-    const doc = this.doc();
-    const factor = this.scale();
-    if (!doc || this.drawn.get(number) === factor) return;
-    const shell = this.pageEls().find((box) => pageOf(box.nativeElement) === number)?.nativeElement;
-    const canvas = shell?.querySelector('canvas');
-    const textEl = shell?.querySelector<HTMLElement>('.text');
-    if (!shell || !canvas || !textEl) return;
-
-    this.tasks.get(number)?.cancel();
-    this.drawn.set(number, factor);
-    const mine = this.generation;
-
-    try {
-      const page = await doc.getPage(number);
-      if (mine !== this.generation || this.drawn.get(number) !== factor) return;
-      const viewport = page.getViewport({ scale: factor });
-
-      // devicePixelRatio-aware, capped. A 3× display would otherwise quadruple
-      // the memory of every page on screen for a difference nobody can see on
-      // a photograph of paper.
-      const density = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.round(viewport.width * density);
-      canvas.height = Math.round(viewport.height * density);
-      const context = canvas.getContext('2d');
-      if (!context) return;
-
-      const task = page.render({
-        canvas,
-        canvasContext: context,
-        viewport,
-        transform: density === 1 ? undefined : [density, 0, 0, density, 0, 0],
-      });
-      this.tasks.set(number, task);
-      await task.promise;
-      this.tasks.delete(number);
-      if (mine !== this.generation) return;
-
-      const items = await this.textOf(page, number);
-      if (mine !== this.generation || this.drawn.get(number) !== factor) return;
-
-      const layerEl = this.tab().layerView
-        ? this.layerEls().find((box) => pageOf(box.nativeElement) === number)
-          ?.nativeElement.querySelector<HTMLElement>('.text')
-        : null;
-      this.spans.set(number, [
-        layoutText(items, viewport, textEl, this.ruler),
-        layerEl ? layoutText(items, viewport, layerEl, this.ruler) : [],
-      ]);
-      this.paintHit();
-    } catch (err) {
-      // Our own cancel, by name — the one outcome that is not a failure.
-      if (err instanceof Error && err.name === 'RenderingCancelledException') return;
-      this.drawn.delete(number);
-      // ON THE PAGE, not over the document. A page that will not draw is a fact
-      // about that page, and taking the whole book down for it would hide the
-      // 499 that are fine — the reason is still said, by name, where the thing
-      // it is about would have been. A blank page with no explanation is the
-      // failure ARCHITECTURE §8 is about; this is not that.
-      this.pageProblems.update((problems) => new Map(problems)
-        .set(number, err instanceof Error ? err.message : String(err)));
-    }
-  }
+  private draw(number: number): Promise<void> { return drawing.draw.call(this, number); }
 
   private release(number: number): void {
     this.tasks.get(number)?.cancel();
@@ -536,52 +389,9 @@ export class PdfViewComponent implements OnDestroy {
     }
   }
 
-  /**
-   * A page's text items, cached and stripped of the empty ones.
-   *
-   * pdf.js emits a zero-length item every time the text state changes, which
-   * for foundry's layer is once per line. They would be zero-width spans in
-   * both panes and holes in the search's item indexing, so they go here — once,
-   * where every consumer sees the same list.
-   */
-  private async textOf(page: PdfPage, number: number): Promise<readonly TextItem[]> {
-    const cached = this.items.get(number);
-    if (cached) return cached;
-    const content = await page.getTextContent();
-    const items = (content.items as TextItem[]).filter(
-      (item) => typeof item.str === 'string' && item.str.length > 0,
-    );
-    this.items.set(number, items);
-    this.itemCounts.update((counts) => new Map(counts).set(number, items.length));
-    return items;
-  }
+  textOf(page: PdfPage, number: number): Promise<readonly TextItem[]> { return drawing.textOf.call(this, page, number); }
 
-  private async drawThumb(number: number): Promise<void> {
-    const doc = this.doc();
-    if (!doc || this.thumbsDrawn.has(number)) return;
-    const canvas = this.thumbEls().find((box) => pageOf(box.nativeElement) === number)
-      ?.nativeElement.querySelector('canvas');
-    if (!canvas) return;
-    this.thumbsDrawn.add(number);
-    const mine = this.generation;
-    try {
-      const page = await doc.getPage(number);
-      if (mine !== this.generation) return;
-      const unit = page.getViewport({ scale: 1 });
-      const viewport = page.getViewport({ scale: THUMB_WIDTH / unit.width });
-      canvas.width = Math.round(viewport.width);
-      canvas.height = Math.round(viewport.height);
-      const context = canvas.getContext('2d');
-      if (!context) return;
-      await page.render({ canvas, canvasContext: context, viewport }).promise;
-    } catch (err) {
-      // A thumbnail that will not draw stays blank rather than taking the
-      // viewer down with it — the page itself is where a real failure is said.
-      if (!(err instanceof Error && err.name === 'RenderingCancelledException')) {
-        this.thumbsDrawn.delete(number);
-      }
-    }
-  }
+  private drawThumb(number: number): Promise<void> { return drawing.drawThumb.call(this, number); }
 
   protected readonly thumbWidth = THUMB_WIDTH;
 
@@ -716,241 +526,15 @@ export class PdfViewComponent implements OnDestroy {
     this.scale.set(Math.max(0.1, (viewport.clientWidth - 28 - 12) / widest));
   }
 
-  // ── Searching ────────────────────────────────────────────────────────────
+  protected onQuery(text: string): void { return search.onQuery.call(this, text); }
 
-  /**
-   * CASE-INSENSITIVE SUBSTRING, and nothing cleverer. No word boundaries, no
-   * regex, no ligature or diacritic folding — the job this has to do is let
-   * Owen type a word he can see on the scan and find out whether the layer
-   * under it says the same thing, and for that a substring is the honest test.
-   * Anything smarter would find matches the layer does not literally contain,
-   * which is the one answer this feature must never give.
-   */
-  protected onQuery(text: string): void {
-    this.query.set(text);
-    if (this.queryTimer !== null) clearTimeout(this.queryTimer);
-    this.queryTimer = setTimeout(() => { void this.run(text); }, QUERY_DELAY_MS);
-  }
+  run(text: string): Promise<void> { return search.run.call(this, text); }
 
-  private async run(text: string): Promise<void> {
-    const needle = text.trim().toLowerCase();
-    if (needle.length === 0) {
-      this.matches.set([]);
-      this.paintHit();
-      return;
-    }
-    const index = await this.index();
-    if (index === null || this.query().trim().toLowerCase() !== needle) return;
+  index(): Promise<readonly PageText[] | null> { return search.index.call(this); }
 
-    const found: Match[] = [];
-    for (const page of index) {
-      const hay = page.lower;
-      for (let at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle, at + 1)) {
-        // The item the match STARTS in. A match that runs over the end of one
-        // item is highlighted on the item it began in rather than on both —
-        // the highlight is a pointer to the place, not a measurement of it.
-        found.push({ page: page.number, item: itemAt(page.starts, at) });
-      }
-    }
-    this.matches.set(found);
-    this.at.set(0);
-    if (found.length > 0) this.go(found[0]!);
-    else this.paintHit();
-  }
+  protected step(delta: number): void { return search.step.call(this, delta); }
 
-  /**
-   * Every page's text, read once.
-   *
-   * This is the expensive thing in the file — a whole book through the worker —
-   * so it happens on the first search rather than on open, and is kept until
-   * the document changes. The toolbar says "reading…" while it runs, because a
-   * search box that does nothing for four seconds looks broken.
-   */
-  private async index(): Promise<readonly PageText[] | null> {
-    if (this.searchIndex) return this.searchIndex;
-    const doc = this.doc();
-    if (!doc) return null;
-    const mine = this.generation;
-    this.searching.set(true);
-    try {
-      const pages: PageText[] = [];
-      for (let number = 1; number <= doc.numPages; number += 1) {
-        const page = await doc.getPage(number);
-        if (mine !== this.generation) return null;
-        const items = await this.textOf(page, number);
-        let text = '';
-        const starts: number[] = [];
-        for (const item of items) {
-          starts.push(text.length);
-          // A newline where the item said the line ended, so two lines of the
-          // layer cannot be read as one word run together.
-          text += item.hasEOL ? `${item.str}\n` : item.str;
-        }
-        pages.push({ number, lower: text.toLowerCase(), starts });
-      }
-      if (mine !== this.generation) return null;
-      this.searchIndex = pages;
-      return pages;
-    } finally {
-      this.searching.set(false);
-    }
-  }
+  go(match: Match): void { return search.go.call(this, match); }
 
-  protected step(delta: number): void {
-    const found = this.matches();
-    if (found.length === 0) {
-      // Enter on a query that has not run yet — run it now rather than nothing.
-      if (this.query().trim().length > 0) void this.run(this.query());
-      return;
-    }
-    const next = (this.at() + delta + found.length) % found.length;
-    this.at.set(next);
-    this.go(found[next]!);
-  }
-
-  private go(match: Match): void {
-    this.jumpTo(match.page);
-    // The page may not be drawn yet; `draw` calls paintHit when it finishes, so
-    // this call is for the case where it already is.
-    this.paintHit();
-  }
-
-  /** The current match's spans, in whichever panes are drawn. */
-  private paintHit(): void {
-    const found = this.matches();
-    const hit = found[this.at()] ?? null;
-    for (const [number, panes] of this.spans) {
-      for (const pane of panes) {
-        for (let index = 0; index < pane.length; index += 1) {
-          const wanted = hit !== null && hit.page === number && hit.item === index;
-          pane[index]?.classList.toggle('hit', wanted);
-        }
-      }
-    }
-  }
+  paintHit(): void { return search.paintHit.call(this); }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface PageBox { number: number; width: number; height: number }
-interface Shell { number: number; width: number; height: number }
-
-interface Match { page: number; item: number }
-interface PageText { number: number; lower: string; starts: readonly number[] }
-
-/**
- * A text item, as much of one as this file touches.
- *
- * Declared here rather than imported from pdfjs-dist's deep type paths: four
- * fields is the whole of the contract, and a structural type cannot break on a
- * version that moves a declaration file.
- */
-interface TextItem {
-  str: string;
-  width: number;
-  height: number;
-  hasEOL: boolean;
-  transform: number[];
-}
-
-/** Only the two methods this file calls, so the page proxy need not be imported. */
-interface PdfPage {
-  getTextContent(): Promise<{ items: unknown[] }>;
-}
-
-/**
- * Where pdf.js's own files were copied to, addressed off the document.
- *
- * `/pdfjs/…` under `ng serve` and `./pdfjs/…` beside index.html in a packaged
- * build, because the production configuration sets baseHref to `./` and a
- * packaged renderer is a `file://` page with no server under it.
- */
-const PDFJS_ASSETS = new URL('pdfjs/', document.baseURI);
-
-const ZOOM_STEPS = [0.25, 0.4, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3, 4] as const;
-/** e^(100·rate) ≈ 1.2 — one wheel notch is one comfortable zoom step. */
-const WHEEL_RATE = 0.0018;
-const THUMB_WIDTH = 84;
-/** Long enough that typing a word is one search, short enough to feel live. */
-const QUERY_DELAY_MS = 250;
-
-function pageOf(target: Element): number | null {
-  const raw = target.getAttribute('data-page');
-  if (raw === null) return null;
-  const number = Number.parseInt(raw, 10);
-  return Number.isFinite(number) ? number : null;
-}
-
-/** Which item a character offset falls in. The starts are ascending, so this is a walk. */
-function itemAt(starts: readonly number[], offset: number): number {
-  let found = 0;
-  for (let index = 0; index < starts.length; index += 1) {
-    if (starts[index]! > offset) break;
-    found = index;
-  }
-  return found;
-}
-
-/**
- * Put every text item where the page put it — THE arithmetic of this file.
- *
- * `Util.transform(viewport.transform, item.transform)` composes the item's text
- * matrix with the viewport's, which is what turns PDF user space (y up, origin
- * bottom-left, points) into CSS pixels (y down, origin top-left, at the scale
- * the canvas beside it was drawn at). Both panes call this, so a layer that is
- * half a page off is half a page off in both — which is the only way the right
- * pane can be evidence about the left.
- *
- * The horizontal squeeze is measured rather than assumed: the layer's own font
- * is not on this machine, so a span set at the right size is still the wrong
- * WIDTH, and a line of text 15% too long is a line that no longer sits over its
- * ink. The item carries the width it occupied; the ruler says what the browser
- * will actually draw; the ratio between them goes on as a scaleX.
- */
-function layoutText(
-  items: readonly TextItem[],
-  viewport: PageViewport,
-  into: HTMLElement,
-  ruler: CanvasRenderingContext2D | null,
-): HTMLElement[] {
-  const spans: HTMLElement[] = [];
-  const fragment = document.createDocumentFragment();
-  for (const item of items) {
-    const tx = Util.transform(viewport.transform, item.transform);
-    const size = Math.hypot(tx[2]!, tx[3]!);
-    const angle = Math.atan2(tx[1]!, tx[0]!);
-    const span = document.createElement('span');
-    span.textContent = item.str;
-    span.style.fontFamily = LAYER_FONT;
-    span.style.fontSize = `${size}px`;
-    // An upright item's baseline box hangs from its origin; a rotated one's
-    // hangs along the rotation. foundry never writes an angled line, but a page
-    // bound sideways or somebody else's layer can carry one.
-    span.style.left = `${angle === 0 ? tx[4]! : tx[4]! + size * Math.sin(angle)}px`;
-    span.style.top = `${angle === 0 ? tx[5]! - size : tx[5]! - size * Math.cos(angle)}px`;
-
-    let transform = angle === 0 ? '' : `rotate(${angle}rad)`;
-    if (ruler) {
-      ruler.font = `${size}px ${LAYER_FONT}`;
-      const drawn = ruler.measureText(item.str).width;
-      const wanted = item.width * viewport.scale;
-      if (drawn > 0 && wanted > 0) transform += ` scaleX(${wanted / drawn})`;
-    }
-    if (transform.length > 0) span.style.transform = transform;
-
-    spans.push(span);
-    fragment.append(span);
-  }
-  into.replaceChildren(fragment);
-  return spans;
-}
-
-/**
- * One family for both panes and for the ruler that measures them.
- *
- * The point is not that it resembles the scan's typeface — it cannot, and the
- * squeeze above corrects the width regardless. The point is that the measuring
- * and the drawing use the SAME font, because the moment they disagree every
- * span is scaled by a ratio computed for a different shape.
- */
-const LAYER_FONT = 'serif';

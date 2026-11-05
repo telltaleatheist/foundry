@@ -14,168 +14,9 @@ import {
 
 import { Rectifier } from '@owen/foundry-core/browser/rectify';
 import { CaptureCardComponent } from './capture-card.component';
-
-/** One page on the table, as the grid needs to draw it. */
-export interface CaptureCard {
-  /** The page id — `<photoId>:<n>`, the recipe's own. */
-  readonly id: string;
-  /**
-   * The PHOTOGRAPH this page is on.
-   *
-   * Here so the grid can count photographs without holding a recipe. It could
-   * be parsed out of the id, and must not be: a surface that derives an
-   * identity by splitting a string is a surface that keeps working until the
-   * day the id format changes under it.
-   */
-  readonly photoId: string;
-  /** The 640 px thumbnail's URL, through the capture door. */
-  readonly thumb: string;
-  /** What to call it on the table. */
-  readonly label: string;
-  /** Struck pages stay on the table and out of the mint. */
-  readonly struck: boolean;
-  /** The page this card will mint, for the crop drawn over its thumbnail. */
-  quad: CaptureQuad;
-  /**
-   * THE PHOTOGRAPH'S PIXELS, and the card cannot do without them.
-   *
-   * A quad is FRACTIONS of the working copy, so a half-width crop reads
-   * 0.5 x 1.0 on every photograph in the project -- and the page it prints is
-   * 2016 x 3024 on one shot and something else entirely on another. The shape a
-   * card must draw itself at is not recoverable from the quad alone.
-   *
-   * They are on the card rather than looked up because the grid holds cards and
-   * not a recipe, which is the line this file's docblock already draws.
-   */
-  readonly width: number;
-  readonly height: number;
-  /**
-   * THE BOOK HAS STOPPED MOVING THIS PHOTOGRAPH — `isComplete`, and the dot.
-   *
-   * The table has to say it because the promise is open-ended: a complete
-   * photograph sits out every global act for the life of the project. Without a
-   * mark, the way to find the ones that did not move is to press Apply, count
-   * the cards, and squint -- and a rail that says "3 complete" while saying
-   * nothing about WHICH three is a number with nowhere to go. It has somewhere
-   * to go now: the rail's counts are pressable and light exactly these cards.
-   *
-   * A fact about the PHOTOGRAPH, so both cards of a cut spread carry it. A pair
-   * showing the mark on one card and not its twin would read as a defect rather
-   * than as a pair.
-   *
-   * ── THE NAME IS P1's AND STAYS P1's ─────────────────────────────────────
-   *
-   * `own` was the Wave 24 word ("its own crop"), and the service's `cards`
-   * computed invites this package to rename it now that the question behind it
-   * is `isComplete` rather than `byHand`. It is not renamed, because the writer
-   * of this field is `capture.service.ts` — one word there, in ground this
-   * package consumes and does not edit. The CARD's input is called `complete`,
-   * which is the name a person meets; this one is the wire between two files
-   * and is documented rather than moved.
-   */
-  readonly own: boolean;
-}
-
-/**
- * The drag payload's type. A private MIME rather than `text/plain` so a page
- * dragged inside the grid is distinguishable, BEFORE the drop, from a file
- * dragged in from Explorer — `dataTransfer.types` is the only part of a payload
- * readable during a drag, and the two mean opposite things here. The dock does
- * the same for its document rows, and for the same reason.
- */
-const PAGE_MIME = 'application/x-foundry-capture-page';
-
-/**
- * THE LIGHT TABLE — the main viewer for a capture project with no minted PDF.
- *
- * ── What this owns, and what it refuses to ──────────────────────────────────
- *
- * The arrangement: which card sits where, which way the sort runs, where a
- * dragged page lands, and where files may be dropped. It owns none of the
- * meaning — a card is a row of pixels and a label handed to it, the recipe is
- * the service's, and every gesture leaves here as an event rather than as a
- * mutation.
- *
- * That is what lets the grid be drawn against anything: it never learns what a
- * quad is, and the rules about spreads and splits live where they can be shared
- * (`capture-editor/geometry.ts`, and the service above it).
- *
- * ── A CLICK CHOOSES; OPENING TAKES TWO ─────────────────────────────────────
- *
- * Wave 21 point 1. Until tonight a single click OPENED the editor, so the only
- * way to select one card was to draw a marquee band across it and stop -- and
- * selection is now the gesture the table is FOR: it feeds reorder, delete, and
- * which photograph the modal opens on. A gesture that common cannot cost a
- * rubber band.
- *
- * So a click chooses, ctrl and meta toggle, shift takes the run, and OPENING is
- * a double-click or Enter. The marquee is untouched and still starts anywhere
- * on the table, because at fifty-two cards almost every pixel is a card.
- *
- * The one number that moves between the two worlds is what "one selected" means
- * for Enter: PHOTOGRAPHS, not cards, through the same fold the menu and the
- * confirm use. Both halves of a split spread are two cards on one picture, and
- * the editor edits the picture.
- *
- * ── THE ORDER STOPS BEING A SORT THE MOMENT SOMEBODY DRAGS ──────────────────
- *
- * docs/CAPTURE.md: cards arrive "sorted by capture time … Cards drag to
- * reorder; once the user has dragged, the sort is history and their order is the
- * order." So this component emits a REORDER — the full list of ids in their new
- * arrangement — and never a "move card 3 to slot 7" that a re-sort could
- * silently undo. The service decides that the recipe's `order` is now the
- * person's and stops sorting.
- *
- * ── REVERSE IS ASKED FOR, NOT DONE ──────────────────────────────────────────
- *
- * The doc's sharpest trap: "Reverse operates on capture order, not on split
- * halves. A book shot back-to-front reverses into reading order by spread;
- * within each split the left page still precedes the right. Reversing raw page
- * cards would silently swap every pair." A grid holding a flat list of cards
- * CANNOT honour that — it cannot see which two cards were one photograph. So it
- * emits `reverse` and the service, which holds the photos, does it properly.
- * Reversing the array here would be exactly the bug the doc names.
- *
- * ── The drop zone stops the drop, and that was NOT ENOUGH ───────────────────
- *
- * This zone calls `stopPropagation` so the window’s own file-drop handler does
- * not also answer a drop the grid has taken. That much was always right and it
- * still is. What it was NOT is sufficient, and Owen found out in the first
- * minutes of the acceptance run: the zone is a STRIP DOWN ONE SIDE, so a drop
- * on the table, on the empty state, or on the header sailed past it to the
- * window and came back as “IMG_0238.HEIC is not something Foundry opens”.
- *
- * The window handler now routes a drop to intake whenever a capture tab is in
- * front (app.ts, `intaking`), which is the app’s own philosophy applied where
- * it had not been: dropping a book at the app is not aiming at a rectangle, and
- * neither is dropping photographs. So this strip is no longer the only way in —
- * it is the OBVIOUS one, kept because a gesture with nowhere visible to aim is
- * a gesture people do not discover.
- *
- * `stopPropagation` therefore now prevents a DOUBLE INTAKE rather than a wrong
- * one. Both paths call the same `intake`, and without it a drop on the strip
- * would be answered twice.
- */
-/**
- * How far a pointer must travel before a press becomes a sweep rather than a
- * click. Small enough that a deliberate drag is caught immediately, large
- * enough that a click with a shaky hand is still a click.
- */
-const SWEEP_STARTS_AT = 5;
-
-/**
- * How near the table's top or bottom edge a dragged card starts the scroll, and
- * how far one frame moves it at the very edge.
- *
- * The band is about a card's own margin — wide enough to fall into without
- * aiming, narrow enough that the middle of the table is dead ground where a
- * person can hold a card still. The step is a pixel figure per frame rather than
- * per second because the loop IS the clock here: sixteen pixels at sixty frames
- * is most of a row a second, which crosses a shoot of a hundred and seventy-nine
- * in a few seconds without overshooting the row somebody is aiming at.
- */
-const SCROLL_BAND = 48;
-const SCROLL_STEP = 16;
+import { CaptureCard, SWEEP_STARTS_AT, SCROLL_STEP } from './capture-grid.model';
+export type { CaptureCard } from './capture-grid.model';
+import * as carry from './capture-grid.carry';
 
 @Component({
   selector: 'app-capture-grid',
@@ -185,7 +26,7 @@ const SCROLL_STEP = 16;
   styleUrl: './capture-grid.component.scss',
 })
 export class CaptureGridComponent {
-  private readonly host = inject(ElementRef<HTMLElement>);
+  readonly host = inject(ElementRef<HTMLElement>);
 
   constructor() {
     // The context goes when the table does. Chromium would collect it with the
@@ -634,105 +475,19 @@ export class CaptureGridComponent {
    */
   protected readonly landing = signal<number | null>(null);
   protected readonly hot = signal(false);
-  private carrying: string | null = null;
+  carrying: string | null = null;
 
-  protected pickUp(event: DragEvent, id: string): void {
-    this.carrying = id;
-    event.dataTransfer?.setData(PAGE_MIME, id);
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
-  }
+  protected pickUp(event: DragEvent, id: string): void { return carry.pickUp.call(this, event, id); }
 
-  /**
-   * The pointer is over the table with a card in hand.
-   *
-   * Without `preventDefault` the browser refuses the drop and the whole gesture
-   * ends in the "return to origin" animation with nothing having happened. The
-   * guard comes first: a drag carrying FILES must fall through untouched, or
-   * this handler would claim it and the window's intake would never hear it.
-   */
-  protected overTable(event: DragEvent): void {
-    if (this.carrying === null) return;
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-    this.landing.set(this.landingFor(event));
-    this.chase(event.clientY);
-  }
+  protected overTable(event: DragEvent): void { return carry.overTable.call(this, event); }
 
-  /**
-   * WHERE THE POINTER SAYS THIS CARD GOES — by MIDPOINT, which is the fix.
-   *
-   * ── The half of the card the pointer is in decides the side ──────────────
-   *
-   * Aiming at a card used to mean "in front of this one", so the only way to put
-   * something after card N was to aim at card N+1 — and past the last card there
-   * is no N+1 to aim at. Reading the halves gives every card two answers and the
-   * last one an answer nobody could express before, and it is also what people
-   * already expect: the line appears on the side of the card the hand is on.
-   *
-   * ── AND THE TABLE'S OWN SPACE IS AN ANSWER RATHER THAN A MISS ────────────
-   *
-   * A pointer over the padding below the last row, or over the gap at the end of
-   * a half-full row, is not aiming at nothing — it is aiming past everything. So
-   * it lands at the end of the book, which is the only place it could sensibly
-   * mean.
-   */
-  private landingFor(event: DragEvent): number {
-    const ids = this.cards().map((card) => card.id);
-    const target = event.target;
-    const slot = target instanceof Element ? target.closest('[data-id]') : null;
-    const id = slot?.getAttribute('data-id') ?? null;
-    const index = id === null ? -1 : ids.indexOf(id);
-    if (slot === null || index === -1) return ids.length;
-    const box = slot.getBoundingClientRect();
-    return event.clientX > box.left + box.width / 2 ? index + 1 : index;
-  }
+  landingFor(event: DragEvent): number { return carry.landingFor.call(this, event); }
 
-  protected landOnTable(event: DragEvent): void {
-    const carried = this.carrying;
-    const to = this.landingFor(event);
-    this.putDown();
-    if (carried === null) return;
-    event.preventDefault();
-    // Inside the grid only — a file dropped on the table is not a reorder, and
-    // letting it fall through to the window would open it as a document.
-    event.stopPropagation();
+  protected landOnTable(event: DragEvent): void { return carry.landOnTable.call(this, event); }
 
-    const ids = this.cards().map((card) => card.id);
-    const from = ids.indexOf(carried);
-    if (from === -1) return;
-    // Landing on either side of where it already is moves nothing, and emitting
-    // an identical arrangement would mark the project changed for a gesture that
-    // did not change it.
-    if (to === from || to === from + 1) return;
+  protected putDown(): void { return carry.putDown.call(this); }
 
-    const rest = ids.filter((id) => id !== carried);
-    // The insertion is an index into the ORIGINAL list; once the carried card is
-    // removed, every position after it shifts down by one.
-    const at = from < to ? to - 1 : to;
-    this.reorder.emit([...rest.slice(0, at), carried, ...rest.slice(at)]);
-  }
-
-  protected putDown(): void {
-    this.carrying = null;
-    this.landing.set(null);
-    this.stopChasing();
-  }
-
-  /**
-   * The pointer left the table with a card still in hand — stop scrolling.
-   *
-   * `dragleave` also fires on every crossing BETWEEN children, which is
-   * continuous while somebody drags across fifty cards, so the relatedTarget is
-   * asked whether the pointer is still inside. Without that guard the scroll
-   * would stall the moment the pointer crossed a card boundary — which is to
-   * say, always.
-   */
-  protected leftTable(event: DragEvent): void {
-    const table = this.tableEl();
-    const into = event.relatedTarget;
-    if (table !== null && into instanceof Node && table.contains(into)) return;
-    this.stopChasing();
-  }
+  protected leftTable(event: DragEvent): void { return carry.leftTable.call(this, event); }
 
   /**
    * SCROLL THE TABLE WHILE A CARD IS HELD NEAR ITS EDGE.
@@ -755,63 +510,18 @@ export class CaptureGridComponent {
    * the edge. A single speed is either too slow to cross a long table or too
    * fast to stop on a row.
    */
-  private chasing = 0;
-  private chasingAt: number | null = null;
+  chasing = 0;
+  chasingAt: number | null = null;
 
-  private chase(y: number): void {
-    this.chasingAt = y;
-    if (this.chasing !== 0) return;
-    const step = (): void => {
-      const table = this.tableEl();
-      const at = this.chasingAt;
-      if (table === null || at === null) {
-        this.chasing = 0;
-        return;
-      }
-      const box = table.getBoundingClientRect();
-      const above = (box.top + SCROLL_BAND - at) / SCROLL_BAND;
-      const below = (at - (box.bottom - SCROLL_BAND)) / SCROLL_BAND;
-      if (above > 0) table.scrollTop -= Math.min(1, above) * SCROLL_STEP;
-      else if (below > 0) table.scrollTop += Math.min(1, below) * SCROLL_STEP;
-      this.chasing = requestAnimationFrame(step);
-    };
-    this.chasing = requestAnimationFrame(step);
-  }
+  chase(y: number): void { return carry.chase.call(this, y); }
 
-  private stopChasing(): void {
-    if (this.chasing !== 0) cancelAnimationFrame(this.chasing);
-    this.chasing = 0;
-    this.chasingAt = null;
-  }
+  stopChasing(): void { return carry.stopChasing.call(this); }
 
-  private tableEl(): HTMLElement | null {
-    return this.host.nativeElement.querySelector('.table');
-  }
+  tableEl(): HTMLElement | null { return carry.tableEl.call(this); }
 
-  protected warm(event: DragEvent): void {
-    if (!carriesFiles(event)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    this.hot.set(true);
-  }
+  protected warm(event: DragEvent): void { return carry.warm.call(this, event); }
 
-  protected cool(): void {
-    this.hot.set(false);
-  }
+  protected cool(): void { return carry.cool.call(this); }
 
-  protected take(event: DragEvent): void {
-    this.cool();
-    if (!carriesFiles(event)) return;
-    event.preventDefault();
-    // See the class docblock: the window now intakes too, so without this a
-    // drop on the strip would be answered twice.
-    event.stopPropagation();
-    const files = Array.from(event.dataTransfer?.files ?? []);
-    if (files.length > 0) this.dropped.emit(files);
-  }
-}
-
-/** Whether a drag carries files from outside the app rather than a page card. */
-function carriesFiles(event: DragEvent): boolean {
-  return event.dataTransfer?.types.includes('Files') === true;
+  protected take(event: DragEvent): void { return carry.take.call(this, event); }
 }
