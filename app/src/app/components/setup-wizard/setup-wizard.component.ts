@@ -219,6 +219,8 @@ export class SetupWizardComponent {
   protected readonly libraryDir = signal('');
   /** The registry, so the Crucible step can say what is already there. */
   protected readonly crucibleServers = signal<CrucibleServerView[]>([]);
+  /** Asked before the line that says none was found: it may not be true. */
+  protected readonly crucibleHere = signal(false);
   /**
    * WHAT THE CONNECTED ENGINE IS AND WHAT IT CAN DO — `loadEngineFacts`.
    *
@@ -495,6 +497,7 @@ export class SetupWizardComponent {
     if (!api) return;
     const view = await api.crucible.settings();
     this.crucibleServers.set(view.servers);
+    this.crucibleHere.set((await api.crucible.localPresence()).state === 'present');
     this.coordination.set(await api.crucible.coordination());
     await this.loadEngineFacts();
   }

@@ -86,6 +86,7 @@ import type {
 import type { Job } from '@owen/foundry-core/shared/types';
 import { api } from '../../core/foundry';
 import { QueueService } from '../../core/queue.service';
+import { ServerRepairComponent } from '../../components/crucible-doors/server-repair.component';
 
 /**
  * One row as this card edits it: the view, plus the token somebody may have
@@ -103,7 +104,7 @@ interface EditableServer extends CrucibleServerView {
 
 @Component({
   selector: 'app-servers-card',
-  imports: [FormsModule, CrucibleDoorsComponent, CrucibleInstallOutcomeComponent],
+  imports: [FormsModule, CrucibleDoorsComponent, CrucibleInstallOutcomeComponent, ServerRepairComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './servers-card.component.html',
   styleUrl: './servers-card.component.scss',
@@ -125,6 +126,7 @@ export class ServersCardComponent {
   protected readonly cardWords = cardWords;
 
   protected readonly rows = signal<EditableServer[]>([]);
+  protected readonly reinstallNeeded = signal(false);
   protected readonly slots = signal<ComputeSlot[]>([]);
   protected readonly newJobsWaitFor = signal<NewJobsWaitFor>('top');
   protected readonly hosted = signal(false);

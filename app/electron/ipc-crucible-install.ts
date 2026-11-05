@@ -8,6 +8,7 @@ import { writeAppSettings } from '@owen/foundry-core/node/app-settings';
 import { coordinateServer, coordinationStates } from '@owen/foundry-core/node/crucible-coordinate';
 import { engineCatalog, pullSubject, removeModel } from '@owen/foundry-core/node/crucible-models';
 import { crucibleInstallDoor } from '@owen/foundry-core/node/crucible-install-door';
+import { crucibleRepairDoor, localCruciblePresence } from '@owen/foundry-core/node/crucible-repair';
 import { crucibleUninstallAvailability, crucibleUninstallDryRun } from '@owen/foundry-core/node/crucible-uninstall';
 import type { CrucibleUninstallFlags, CrucibleUninstallPlan, CrucibleUninstallRun } from '@owen/foundry-core/shared/uninstall-wire';
 import { type NewJobsWaitFor } from '@owen/foundry-core/shared/slots';
@@ -65,6 +66,17 @@ export function registerCrucibleInstallDoors(): void {
    * It is idempotent and it never starts anything (see `attach`), so the
    * second window to open costs the tray one question and nothing else.
    */
+  ipcMain.handle('crucible:local-presence', () => localCruciblePresence());
+  /**
+   * THE REPAIR DOOR. It answers when the repair ends, which can be hours on a
+   * hash of hundreds of gigabytes, and every step is pushed to every window so
+   * a Settings page that comes back can pick it up from `repair-states`.
+   */
+  const repairDoor = crucibleRepairDoor();
+  repairDoor.watch((state) => broadcast('crucible:repair-state', state));
+  ipcMain.handle('crucible:repair', (_event, server: string | null, verifyOnly: boolean) =>
+    repairDoor.run(server, verifyOnly));
+  ipcMain.handle('crucible:repair-states', () => repairDoor.states());
   ipcMain.handle('crucible:install-status', async () => {
     const answered = await installDoor.status();
     if (answered.running) installDoor.attach();

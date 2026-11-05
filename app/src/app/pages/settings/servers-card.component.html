@@ -88,6 +88,7 @@
               -->
               <button class="ghost" (click)="openUi(row.name)">Advanced engine console</button>
             </div>
+            <app-server-repair [server]="row.name" (reinstall)="reinstallNeeded.set(true)" />
             @if (probes()[row.name]; as probe) {
               @if (probe.outcome === 'ok') {
                 <p class="small ok">
@@ -193,7 +194,7 @@
           6.1 decides the rest — the door appears only for a server main can
           PROVE is this machine's, and never for a registry row.
         -->
-        <app-crucible-doors [canUninstall]="true" (changed)="load()" />
+        <app-crucible-doors [canUninstall]="true" [offerInstall]="reinstallNeeded()" (changed)="load()" />
 
         <!--
           ── WHAT CAME OF THE LINUX ENGINE ON THIS MACHINE ────────────────────

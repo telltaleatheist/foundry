@@ -354,6 +354,17 @@ export interface ComputeSlot {
  * time a drag reorders one and not the other the picker and the `any` walk
  * disagree about which machine is first. Reordering is rewriting the array.
  */
+/**
+ * WHETHER THIS MACHINE HAS A CRUCIBLE, asked before Install is offered. Install
+ * appears only on `absent`: *"there should and will never be two copies
+ * installed."* `connectable` is false for one that has published no connection,
+ * which the local door cannot register until a repair puts it right.
+ */
+export type LocalCruciblePresence =
+  | { state: 'present'; url: string | null; connectable: boolean }
+  | { state: 'absent' }
+  | { state: 'unknown'; code: string; message: string };
+
 export interface CrucibleServerView {
   name: string;
   /** Base URL without `/v1`, as stored. */

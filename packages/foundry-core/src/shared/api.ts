@@ -13,6 +13,7 @@ import type { IncomingPairingRequest, RemotePairingProgress } from './remote-pai
 import type { BookOutcome } from './book';
 import type { CrucibleCoordinationMap, CrucibleCoordinationState } from './coordinate-wire';
 import type { CrucibleInstallEvent, CrucibleInstallStatus } from './crucible-install-wire';
+import type { RepairState } from './crucible-repair-wire';
 import type { HostMintMeta, HostNodeAction, HostOffers, HostOperationState, HostPassOffer, HostStatus } from './host-ops';
 import type { ReadAsk } from './ledger';
 import type {
@@ -36,6 +37,7 @@ import type {
   ConnectCodePreview,
   CrucibleInstallPlan,
   CrucibleProbe,
+  LocalCruciblePresence,
   CrucibleServerEdit,
   CrucibleSettingsView,
   CrucibleStartResult,
@@ -1603,6 +1605,17 @@ export interface FoundryApi {
      * nothing has said yet — never "it is fine".
      */
     installStatus(): Promise<CrucibleInstallStatus>;
+    /** Whether this machine has a Crucible. Install is offered only when it does not. */
+    localPresence(): Promise<LocalCruciblePresence>;
+    /**
+     * Check, or check and repair, a registered server by name, or this machine's
+     * Crucible with `null`. Answers when it ends and never rejects: a refusal is
+     * in the state's `outcome`.
+     */
+    repair(server: string | null, verifyOnly: boolean): Promise<RepairState>;
+    /** The repairs this run of the app knows of, running or finished. */
+    repairStates(): Promise<RepairState[]>;
+    onRepairState(listener: (state: RepairState) => void): () => void;
     /**
      * Every event of the install in flight, BROADCAST to every window: one
      * machine is being set up, not one window's install.

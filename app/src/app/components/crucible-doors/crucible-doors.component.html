@@ -113,10 +113,31 @@
           @if (localNote(); as note) {
             <p class="small" [class.warn]="localFailed()">{{ note }}</p>
           }
+          @if (presence(); as here) {
+            @if (here.state === 'present' && !here.connectable) {
+              <p class="small">
+                There is a Crucible on this machine, but it has published no connection. Repair can put it right.
+              </p>
+              <app-server-repair [server]="null" (reinstall)="reinstallNeeded.set(true)" />
+            }
+          }
         </div>
       }
 
       <!-- ── 3. Install ────────────────────────────────────────────────── -->
+      <!--
+        ASKED BEFORE IT IS OFFERED. Owen: "there should and will never be two
+        copies installed." Install is drawn only when this machine was asked and
+        has none; a machine that cannot tell gets the reason and no Install.
+      -->
+      @if (presence(); as here) {
+        @if (here.state === 'unknown') {
+          <p class="small warn">Could not tell whether this machine has a Crucible, so Install is not offered: {{ here.message }}</p>
+        }
+      } @else {
+        <p class="small">Looking for a Crucible on this machine…</p>
+      }
+      @if (showInstall()) {
       <button class="door" type="button" (click)="toggle('install')">
         <span class="door-name">Install Crucible here</span>
         <span class="door-note">One button. It sets itself up and says where it has got to.</span>
@@ -221,6 +242,8 @@
             <p class="small">Looking at this machine…</p>
           }
         </div>
+      }
+
       }
 
       <!-- ── 4. Remove ─────────────────────────────────────────────────── -->

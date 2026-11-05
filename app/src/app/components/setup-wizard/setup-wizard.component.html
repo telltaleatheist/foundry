@@ -180,8 +180,13 @@
             } @else {
               <p class="lead">
                 Translation, simplification, cleanup, analysis and page reading run on a GPU
-                engine — a program called Crucible, on this machine or another one. Foundry
-                looked and found none here. Compiling a book and exporting it never need one.
+                engine — a program called Crucible, on this machine or another one.
+                @if (crucibleHere()) {
+                  There is one on this machine, and Foundry could not connect to it yet.
+                } @else {
+                  Foundry looked and found none here.
+                }
+                Compiling a book and exporting it never need one.
               </p>
               <p class="line">
                 An engine on a machine with a bigger card runs the work there; one on this

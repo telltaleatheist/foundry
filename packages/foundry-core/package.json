@@ -93,8 +93,8 @@
     "@owen/tool-loop": "^0.1.0"
   },
   "devDependencies": {
-    "@crucible/bootstrap": "file:../../app/vendor/crucible-bootstrap-2.0.34.tgz",
-    "@crucible/client": "file:../../app/vendor/crucible-client-2.0.34.tgz",
+    "@crucible/bootstrap": "file:../../app/vendor/crucible-bootstrap-2.0.34-a3ec20d.tgz",
+    "@crucible/client": "file:../../app/vendor/crucible-client-2.0.34-a3ec20d.tgz",
     "@owen/tool-loop": "file:../../app/vendor/owen-tool-loop-0.1.0.tgz",
     "@pdf-lib/fontkit": "1.1.1",
     "@types/bun": "1.3.14",

@@ -11,6 +11,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { FoundryApi, MenuAction } from '@owen/foundry-core/shared/api';
 import type { CrucibleCoordinationState } from '@owen/foundry-core/shared/coordinate-wire';
 import type { CrucibleInstallEvent } from '@owen/foundry-core/shared/crucible-install-wire';
+import type { RepairState } from '@owen/foundry-core/shared/crucible-repair-wire';
 import type { HostOffers, HostStatus } from '@owen/foundry-core/shared/host-ops';
 import type { CruciblePullProgress } from '@owen/foundry-core/shared/model-wire';
 import type { AskProgress } from '@owen/foundry-core/shared/ask';
@@ -303,6 +304,10 @@ const api: FoundryApi = {
       subscribe<CruciblePullProgress>('crucible:pull-progress', listener),
     installPlan: () => ipcRenderer.invoke('crucible:install-plan'),
     install: () => ipcRenderer.invoke('crucible:install'),
+    localPresence: () => ipcRenderer.invoke('crucible:local-presence'),
+    repair: (server, verifyOnly) => ipcRenderer.invoke('crucible:repair', server, verifyOnly),
+    repairStates: () => ipcRenderer.invoke('crucible:repair-states'),
+    onRepairState: (listener) => subscribe<RepairState>('crucible:repair-state', listener),
     installStatus: () => ipcRenderer.invoke('crucible:install-status'),
     onInstallEvent: (listener) => subscribe<CrucibleInstallEvent>('crucible:install-event', listener),
     installRetry: () => ipcRenderer.invoke('crucible:install-retry'),

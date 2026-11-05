@@ -120,13 +120,15 @@ import type {
 } from '@owen/foundry-core/shared/uninstall-wire';
 import { cardWords, diskWords, jobTypeWords, sizeWords } from '../../core/crucible-words';
 import { api } from '../../core/foundry';
+import type { LocalCruciblePresence } from '@owen/foundry-core/shared/slots';
+import { ServerRepairComponent } from './server-repair.component';
 
 /** Which door is open. `null` is all three closed, which is how it starts. */
 type DoorId = 'connect' | 'local' | 'install' | 'uninstall';
 
 @Component({
   selector: 'app-crucible-doors',
-  imports: [FormsModule],
+  imports: [FormsModule, ServerRepairComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './crucible-doors.component.html',
   styleUrl: './crucible-doors.component.scss',
@@ -150,6 +152,17 @@ export class CrucibleDoorsComponent {
    * under "Install Crucible here" is a wizard arguing with itself.
    */
   readonly canUninstall = input(false);
+  /** Repair has said installing again is the only cure, so Install comes back on a machine with a Crucible. */
+  readonly offerInstall = input(false);
+  /** Whether this machine has a Crucible; null until it has answered. */
+  protected readonly presence = signal<LocalCruciblePresence | null>(null);
+  protected readonly reinstallNeeded = signal(false);
+  /**
+   * A door already open stays: an install in flight makes this machine a machine
+   * with a Crucible, and its progress must not vanish because of that.
+   */
+  protected readonly showInstall = computed(() =>
+    this.presence()?.state === 'absent' || this.offerInstall() || this.reinstallNeeded() || this.open() === 'install');
 
 
   /** The words file's, exposed because a template cannot call a bare import. */
@@ -297,6 +310,20 @@ export class CrucibleDoorsComponent {
      * call conditional would put the decision in two places.
      */
     void this.askUninstall();
+    void this.askPresence();
+  }
+
+  /**
+   * "Use the existing one" is the default: on a machine with a Crucible not yet
+   * in the registry, that door opens by itself, unless somebody already chose.
+   */
+  private async askPresence(): Promise<void> {
+    if (!api) return;
+    const [presence, view] = await Promise.all([api.crucible.localPresence(), api.crucible.settings()]);
+    this.presence.set(presence);
+    if (presence.state === 'present' && this.open() === null && !view.servers.some((server) => server.loopback)) {
+      this.open.set('local');
+    }
   }
 
   /**

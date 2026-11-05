@@ -55,12 +55,15 @@ handle	crucible:install-plan	electron/ipc-crucible.ts
 handle	crucible:install-retry	electron/ipc-crucible-install.ts
 handle	crucible:install-status	electron/ipc-crucible-install.ts
 handle	crucible:job-models	electron/ipc-crucible.ts
+handle	crucible:local-presence	electron/ipc-crucible-install.ts
 handle	crucible:offer-start	electron/ipc-crucible-install.ts
 handle	crucible:open	electron/ipc-crucible.ts
 handle	crucible:parse-connect-code	electron/ipc-crucible.ts
 handle	crucible:pull	electron/ipc-crucible-install.ts
 handle	crucible:remember-job-model	electron/ipc-crucible.ts
 handle	crucible:remove-model	electron/ipc-crucible-install.ts
+handle	crucible:repair	electron/ipc-crucible-install.ts
+handle	crucible:repair-states	electron/ipc-crucible-install.ts
 handle	crucible:restart-windows	electron/ipc-crucible-install.ts
 handle	crucible:save	electron/ipc-crucible.ts
 handle	crucible:serves	electron/ipc-crucible.ts
@@ -210,12 +213,15 @@ invoke	crucible:install-plan	electron/preload.ts
 invoke	crucible:install-retry	electron/preload.ts
 invoke	crucible:install-status	electron/preload.ts
 invoke	crucible:job-models	electron/preload.ts
+invoke	crucible:local-presence	electron/preload.ts
 invoke	crucible:offer-start	electron/preload.ts
 invoke	crucible:open	electron/preload.ts
 invoke	crucible:parse-connect-code	electron/preload.ts
 invoke	crucible:pull	electron/preload.ts
 invoke	crucible:remember-job-model	electron/preload.ts
 invoke	crucible:remove-model	electron/preload.ts
+invoke	crucible:repair	electron/preload.ts
+invoke	crucible:repair-states	electron/preload.ts
 invoke	crucible:restart-windows	electron/preload.ts
 invoke	crucible:save	electron/preload.ts
 invoke	crucible:serves	electron/preload.ts
@@ -316,6 +322,7 @@ listen	capture:intake-progress	electron/preload.ts
 listen	crucible:coordination-changed	electron/preload.ts
 listen	crucible:install-event	electron/preload.ts
 listen	crucible:pull-progress	electron/preload.ts
+listen	crucible:repair-state	electron/preload.ts
 listen	document:opened	electron/preload.ts
 listen	document:relocated	electron/preload.ts
 listen	host-ops:changed	electron/preload.ts
@@ -334,6 +341,7 @@ push	capture:intake-progress	electron/ipc.ts
 push	crucible:coordination-changed	electron/ipc.ts
 push	crucible:install-event	electron/ipc-crucible-install.ts
 push	crucible:pull-progress	electron/ipc-crucible-install.ts
+push	crucible:repair-state	electron/ipc-crucible-install.ts
 push	document:opened	electron/documents.ts
 push	document:relocated	electron/documents.ts
 push	host-ops:changed	packages/foundry-core/src/node/host-ops.ts
