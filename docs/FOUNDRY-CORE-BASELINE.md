@@ -142,3 +142,28 @@ crucible."* Retired: the doctor's `wsl-vllm` / `vllm-local` probes and tiers and
 | App build | exit 0, 104 literals, surface 12/6 |
 | Engine bundle | `--check` current, **src 6e9a259ba206** |
 | Load smoke | **44** library modules (46 − `ollama`, `llm-catalog`) |
+
+## A4 (modular rebuild), in progress
+
+Structure only. Done by compiler-API tools rather than by hand: declarations and method bodies move
+verbatim. A class keeps a one-line delegate per moved method (the body becomes a `this`-typed function in
+a sibling module) and field order is unchanged; `private`/`protected` come off only the members a module
+reaches. `node/projects` and `node/job-queue` stay as facades re-exporting everything they exported, so no
+importer changes. `input()`/`output()`/query fields never move (Angular reads them statically).
+
+| Part | Result |
+| --- | --- |
+| Templates and styles (43 components) | `ng build` output **byte-identical** to the build before the move, including with CRLF `.html` as a Windows checkout writes them |
+| book-view (on main) | Real app on a scratch copy of a real project, real input events, 20 frames, baseline vs split: **DOM identical** in every frame except the bundle hash and one random UUID in an image URL that also differs between two runs of one build; no console errors. **Not exercised: the Apply button** |
+| Every other split (branch only) | Compiles under `strictTemplates`; a checker resolves symbols so no bare identifier binds to a moved function; headless gates green. **No runtime A/B yet** |
+| Library | `bun test` 1336 / 69 files, 1332 pass, the same 4 fail; 5 shuffled orders the same; **71** library modules load without electron |
+| IPC | handle 154, invoke 155, listen 19, push 18; every kind+name row identical with multiplicity, only the FILE column moved |
+
+Line counts: book-view component 7,731 -> 855, open-documents 5,103 -> 680, capture.service 3,413 -> 452,
+documents.service 1,715 -> 539, job-queue 7,616 -> 145 (facade), projects 7,134 -> 109 (facade), ipc.ts
+2,301 -> 158.
+
+Still over about 800, and why: `job-queue-carry.ts` 1,527 (one function, one linear sequence over shared
+locals; splitting it is a rewrite, not a move). Not in the brief's list and not split: `node/workspace`
+2,370, `node/capture` 2,282, `node/crucible-dispatch` 2,062, `node/book` 1,972, `node/ask-tools` 1,622,
+`node/crucible-registry` 1,358, `node/engine` 1,182, the `shared/*` tables and the engine (`src/engine`).

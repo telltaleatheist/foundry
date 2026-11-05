@@ -14,7 +14,7 @@ Read-only survey; nothing was changed.
 | A1 release tooling (`packages/foundry-core/tools/release.mjs`, `tools/adopt-foundry-core.mjs`) | done, nothing released | df8a25f, da7f7f1 |
 | A2 no Python: engine rasterises on `mupdf`, MLX reader + env installs retired | done — numbers in `FOUNDRY-CORE-BASELINE.md` "After A1 and A2" | see `git log` |
 | A3 Foundry window drops Clean text + pronunciation guide | done — standalone paths removed, hosted kept | see `git log` |
-| A4 modular rebuild of oversized files | not started | |
+| A4 modular rebuild of oversized files | in progress — see `FOUNDRY-CORE-BASELINE.md` "A4" | see `git log` |
 | 4 BookForge adopts the package (REORG-PLAN B3) | not started | |
 
 **Step 3 as built, where it differs from §6/§7 below:**
