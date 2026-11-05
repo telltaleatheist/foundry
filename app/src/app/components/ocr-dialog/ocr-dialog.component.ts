@@ -335,6 +335,18 @@ export class OcrDialogComponent {
   });
 
   constructor() {
+    /*
+     * THE BOOK ARRIVED AND TOOK THE TAB. A finished reading opens its book, which
+     * leaves this card with no PDF in front of it, and it would then tell somebody
+     * who has just read one to "Open a PDF first". The work is on screen, so it closes.
+     */
+    effect(() => {
+      if (this.watched()?.state === 'done' && this.source() === null) {
+        this.watching.set(null);
+        this.ui.closeOcr();
+      }
+    });
+
     // A stale complaint about the last document, cleared when the source
     // changes. Nothing else resets: skip-pages and the language are the user's
     // last answers and are usually the right ones again.
