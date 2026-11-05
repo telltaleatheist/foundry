@@ -123,3 +123,22 @@ and creator stamp, which also differ between two runs of the same bundle.
 **Not run (Owen gates packaging):** a packaged Foundry. The engine now imports `mupdf` (and reads
 `mupdf-wasm.wasm` with `fs`) from `node_modules` inside the app archive; asar reads under
 `ELECTRON_RUN_AS_NODE` are expected to work, and only a packaged run proves it.
+
+### A2c (no model server of Foundry's own)
+
+Owen: *"foundry will never ship without a crucible engine, so we can offload all model calls to
+crucible."* Retired: the doctor's `wsl-vllm` / `vllm-local` probes and tiers and its `wsl` distro list
+(DoctorReport **version 3**: one tier, the configured endpoint, which stays); the engine settings keys
+`backend.wslDistro` / `backend.vllmPython` (added to `retireSettingsKeys`'s one-time drop); the orphaned
+`node/ollama.ts` (a local-Ollama probe whose one reader was already gone) and `node/llm-catalog.ts`
+(the local-model catalogue — Ollama tags, the page reader's GGUF pair — with no importer left).
+`shared/model-lineup.json` is kept (Crucible's vendored lineup) though nothing reads it now.
+
+| Check | Result |
+| --- | --- |
+| IPC | unchanged (handle 154, invoke 155, listen 19, push 18) — none of this had a channel |
+| `bun test` | 1336 / 69 files, 1332 pass, the same 4 fail |
+| Typecheck | the one TS6133 |
+| App build | exit 0, 104 literals, surface 12/6 |
+| Engine bundle | `--check` current, **src 6e9a259ba206** |
+| Load smoke | **44** library modules (46 − `ollama`, `llm-catalog`) |

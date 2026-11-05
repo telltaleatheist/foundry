@@ -35,10 +35,6 @@ export interface BackendSettings {
   endpointUrl?: string;
   /** The model name that server was started with, when it differs from the registry's. */
   endpointModel?: string;
-  /** WSL distro to look for vLLM in. Default: every distro wsl.exe lists. */
-  wslDistro?: string;
-  /** Interpreter inside WSL with vllm importable. Default: named candidates. */
-  vllmPython?: string;
   /**
    * Headers every request to `endpointUrl` carries — an opaque map, validated
    * but never interpreted. This is the FALLBACK path, for a person running the
@@ -152,8 +148,6 @@ export function loadSettings(): FoundrySettings {
     backend.endpointUrl = url;
   }
   if (b['endpointModel'] !== undefined) backend.endpointModel = requireString(b['endpointModel'], 'backend.endpointModel');
-  if (b['wslDistro'] !== undefined) backend.wslDistro = requireString(b['wslDistro'], 'backend.wslDistro');
-  if (b['vllmPython'] !== undefined) backend.vllmPython = requireString(b['vllmPython'], 'backend.vllmPython');
   if (b['endpointHeaders'] !== undefined) {
     const raw = b['endpointHeaders'];
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {

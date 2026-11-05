@@ -2236,10 +2236,10 @@ export interface RunPlacement {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// `foundry doctor --json` — the engine's contract, version 2
+// `foundry doctor --json` — the engine's contract, version 3
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type TierId = 'endpoint' | 'wsl-vllm' | 'vllm-local';
+export type TierId = 'endpoint';
 
 export interface TierReport {
   id: TierId;
@@ -2253,18 +2253,11 @@ export interface DoctorReport {
   tiers: TierReport[];
   /** The tier a run would use, or null with the reason in that tier's detail. */
   chosen: TierId | null;
-  /**
-   * WSL itself, separate from the `wsl-vllm` TIER, and now READ BY NOBODY.
-   *
-   * The engine still reports it, because `foundry doctor` still knows how to
-   * find a vLLM somebody else built in WSL and this app does not get to edit
-   * the engine's contract. What changed is that the app stopped having a
-   * setup screen to point at it: this app no longer builds a vLLM environment,
-   * no longer starts one, and no longer offers to (docs/SLOTS.md §3 — all WSL
-   * complexity is Crucible's now). The field stays declared so an engine
-   * report carrying it still type-checks, and nothing in app/ reads it.
+  /*
+   * `wsl` (the distro list beside the `wsl-vllm` tier) is gone from the report
+   * with the tier, version 3 (2026-11-04): Foundry probes no model server of its
+   * own.
    */
-  wsl?: { available: boolean; distros: string[] };
 }
 
 /**
@@ -2290,12 +2283,10 @@ export type BackendMode = 'auto' | 'endpoint';
  * recognise, so a newer engine's settings survive an older app saving over them.
  *
  * `wslDistro` and `vllmPython` USED TO BE HERE, written by a setup runner that
- * built a vLLM environment inside WSL for this app to launch. Both the runner
- * and the launcher are gone (docs/SLOTS.md §6, package B): the local page
- * reader is a llama-server this app downloads and starts directly, and any
- * other OpenAI-compatible server is somebody else's to run. The two keys are
- * not deleted from anybody's settings.json — this writer preserves every key
- * it does not recognise, so an engine that still reads them still finds them.
+ * built a vLLM environment inside WSL for this app to launch. The runner and the
+ * launcher went first (docs/SLOTS.md §6, package B); the engine stopped reading
+ * the two keys on 2026-11-04 (its WSL/local-vLLM probes retired), and
+ * `retireSettingsKeys` (node/settings.ts) drops them from the file once.
  */
 export interface BackendSettingsPatch {
   mode?: BackendMode;
@@ -2469,38 +2460,12 @@ export interface SystemProfile {
   detail: string;
 }
 
-/**
- * One model ollama holds, with what it costs on disk.
- *
- * SEPARATE FROM `models` RATHER THAN REPLACING IT, and the redundancy is the
- * cheaper of two costs. `models` is the NAME list, which is what the lineup
- * matches a row against and what every caller but one wants; `bytes` is what
- * the "Models on this machine" row prints, and it is null whenever `/api/tags`
- * did not report a size. Deriving the names from this list at each call site
- * would be the same map written four times to save one field.
+/*
+ * `OllamaHolding` and `OllamaFacts` STOOD HERE: the disk inventory's view of
+ * a local Ollama (`node/ollama.ts`). Retired 2026-11-04 with every way Foundry
+ * had of probing a model server of its own; nothing had read them since the
+ * inventory itself went.
  */
-export interface OllamaHolding {
-  name: string;
-  /** `/api/tags`'s own `size`, in bytes. Null when it reported none. */
-  bytes: number | null;
-}
-
-/** Is ollama here, and is it running? Two different questions, both answered. */
-export interface OllamaFacts {
-  /** The server answered `/api/version` on `url`. */
-  running: boolean;
-  /** What it said, when it said anything. */
-  version: string | null;
-  /** An `ollama` binary is on this machine even if nothing is listening. */
-  installed: boolean;
-  /** The models it already holds. Empty when nothing is running. */
-  models: string[];
-  /** The same models with their sizes, for the disk inventory. */
-  holdings: OllamaHolding[];
-  url: string;
-  /** One sentence: running, installed-but-stopped, or absent. */
-  detail: string;
-}
 
 /*
  * ── THREE SHAPES STOOD HERE: `LlmModelOption`, `TranslateFloorMiss`, `LlmChoices`
@@ -2516,13 +2481,13 @@ export interface OllamaFacts {
  * enforce and no machine for it to measure a model against, so the step, the
  * door (`ollama:choices`) and these three shapes went together.
  *
- * `OllamaFacts` above SURVIVED, and only just: its one reader is the disk
- * inventory (docs/SLOTS.md §5b), which counts weights that are already here.
+ * (`OllamaFacts` survived them for a while, for the disk inventory; it went
+ * too, 2026-11-04.)
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The catalog, the tiles it lights, and the weights on this disk
-// (electron/llm-catalog.ts, electron/act-gates.ts, electron/machine-models.ts)
+// (electron/act-gates.ts; llm-catalog.ts and machine-models.ts are retired)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

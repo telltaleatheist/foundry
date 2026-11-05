@@ -37,7 +37,7 @@ import { epubFinal } from './epub/final.js';
 import { epubMeta, EPUB_META_FIELDS, type EpubMetaField } from './epub/meta.js';
 import { epubStamp } from './epub/stamp.js';
 import { pdfMeta, PDF_META_FIELDS, type PdfMetaField } from './pdf/meta.js';
-import { probeEndpoint, probeVllmLocal, probeWslVllm } from './backend/probe.js';
+import { probeEndpoint } from './backend/probe.js';
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { dumpBlocks } from './vlm/blocks-dump.js';
 import { analyzeBook } from './analyze/run.js';
@@ -2755,23 +2755,14 @@ async function runDoctor(args: ParsedArgs): Promise<void> {
   const endpointUrl =
     optionalString(args, 'endpoint') ?? settings.backend?.endpointUrl ?? DEFAULT_ENDPOINT_URL;
 
-  /*
-   * The four probes are independent measurements, so they run concurrently —
-   * the WSL probe alone can take ten seconds when a distro has to boot, and
-   * nothing about the endpoint answer depends on it.
-   */
-  const [endpoint, wslVllm, vllmLocal] = await Promise.all([
-    probeEndpoint(endpointUrl),
-    probeWslVllm(settings),
-    probeVllmLocal(settings),
-  ]);
+  // One probe: the configured endpoint. The WSL and local-vLLM probes went
+  // with every way Foundry had of starting a model server of its own.
+  const endpoint = await probeEndpoint(endpointUrl);
 
   const report = buildReport({
     platform: process.platform,
     mode: settings.backend?.mode ?? 'auto',
     endpoint,
-    wslVllm,
-    vllmLocal,
   });
 
   // The report is the RESULT, so it goes to stdout — both shapes of it. The
@@ -4533,31 +4524,24 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: 'doctor',
-    summary: 'Probe every reading backend and say which one a run would use.',
+    summary: 'Probe the reading endpoint and say whether a run could use it.',
     usage: '[--json] [--endpoint <url>]',
     detail: [
-      'Answers one question: where would vlm-convert read pages RIGHT NOW, and',
-      'why not anywhere faster? Three probes, concurrent, each reported with a',
-      'detail a person can act on:',
+      'Answers one question: could vlm-convert read pages RIGHT NOW? One probe,',
+      'reported with a detail a person can act on:',
       '',
-      '  endpoint    GET <url>/models on the OpenAI-compatible server. The first',
-      '              tier everywhere: vLLM in WSL, Docker, or another machine all',
-      '              look identical from here. Probed at --endpoint, else the',
-      '              settings URL, else http://localhost:8000/v1 (vLLM\'s default).',
-      '  wsl-vllm    (Windows) a WSL distro whose named interpreter can import',
-      '              vllm — a server COULD be started there. Nothing is started.',
-      '  vllm-local  (Linux) a named interpreter can import vllm.',
+      '  endpoint    GET <url>/models on the OpenAI-compatible server (a',
+      '              Crucible\'s OpenAI door). Probed at --endpoint, else the',
+      '              settings URL, else http://localhost:8000/v1.',
       '',
-      'The chosen tier follows the settings mode (auto: first available;',
-      'endpoint: that tier or nothing). It NAMES and never degrades: an',
-      'explicit mode whose tier is down chooses null and the detail says what to',
-      'fix — the next tier down is 10-100x slower and is not a thing to slide',
-      'into silently.',
+      'Foundry starts, provisions and probes no model server of its own: every',
+      'model call goes to Crucible. It NAMES and never degrades: a down endpoint',
+      'chooses null and the detail says what to fix.',
       '',
       `Settings are read from ${settingsPath()}`,
       '(FOUNDRY_CONFIG_DIR overrides the directory). Recognised keys, all under',
       '"backend": mode (auto|endpoint), endpointUrl, endpointModel,',
-      'wslDistro, vllmPython, endpointHeaders. Flags beat settings',
+      'endpointHeaders. Flags beat settings',
       'everywhere; a value a setting supplied is logged on the runs that use it.',
       '',
       'endpointHeaders is the exception to that last sentence and the only key',

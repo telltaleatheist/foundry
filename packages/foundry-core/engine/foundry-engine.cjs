@@ -5743,20 +5743,20 @@ function crc32(data) {
   for (let i = 0; i < data.length; i++) c = CRC_TABLE[(c ^ data[i]) & 255] ^ c >>> 8;
   return (c ^ 4294967295) >>> 0;
 }
-function zipText(path30, text) {
-  return { path: path30, data: new TextEncoder().encode(text) };
+function zipText(path29, text) {
+  return { path: path29, data: new TextEncoder().encode(text) };
 }
-function checkPath(path30) {
-  if (path30.length === 0) throw new ZipError("an entry has an empty path");
-  if (path30.includes("\\")) {
-    throw new ZipError(`entry "${path30}" contains a backslash \u2014 ZIP paths are forward-slashed`);
+function checkPath(path29) {
+  if (path29.length === 0) throw new ZipError("an entry has an empty path");
+  if (path29.includes("\\")) {
+    throw new ZipError(`entry "${path29}" contains a backslash \u2014 ZIP paths are forward-slashed`);
   }
-  if (path30.startsWith("/")) throw new ZipError(`entry "${path30}" is absolute \u2014 ZIP paths are relative`);
-  if (path30.split("/").some((seg) => seg === "." || seg === ".." || seg === "")) {
-    throw new ZipError(`entry "${path30}" has an empty or relative path segment`);
+  if (path29.startsWith("/")) throw new ZipError(`entry "${path29}" is absolute \u2014 ZIP paths are relative`);
+  if (path29.split("/").some((seg) => seg === "." || seg === ".." || seg === "")) {
+    throw new ZipError(`entry "${path29}" has an empty or relative path segment`);
   }
-  const name = new TextEncoder().encode(path30);
-  if (name.length > MAX_U16) throw new ZipError(`entry "${path30}" has a name longer than ${MAX_U16} bytes`);
+  const name = new TextEncoder().encode(path29);
+  if (name.length > MAX_U16) throw new ZipError(`entry "${path29}" has a name longer than ${MAX_U16} bytes`);
   return name;
 }
 function writeZip(entries) {
@@ -6445,38 +6445,38 @@ function readZip(bytes) {
     const extraLen = u16(p + 30);
     const commentLen = u16(p + 32);
     const localOffset = u32(p + 42);
-    const path30 = decoder.decode(bytes.subarray(p + 46, p + 46 + nameLen));
+    const path29 = decoder.decode(bytes.subarray(p + 46, p + 46 + nameLen));
     p += 46 + nameLen + extraLen + commentLen;
     if (csize === 4294967295 || usize === 4294967295 || localOffset === 4294967295) {
-      throw new UnzipError(`entry "${path30}" is zip64, which this reader does not implement`);
+      throw new UnzipError(`entry "${path29}" is zip64, which this reader does not implement`);
     }
     if (localOffset + 30 > bytes.length || u32(localOffset) !== LOCAL_SIG2) {
-      throw new UnzipError(`entry "${path30}": bad local header signature`);
+      throw new UnzipError(`entry "${path29}": bad local header signature`);
     }
     const lFlags = u16(localOffset + 6);
     const lMethod = u16(localOffset + 8);
     const lNameLen = u16(localOffset + 26);
     const lExtraLen = u16(localOffset + 28);
     const lPath = decoder.decode(bytes.subarray(localOffset + 30, localOffset + 30 + lNameLen));
-    if (lPath !== path30) {
-      throw new UnzipError(`the central directory says "${path30}", its local header says "${lPath}"`);
+    if (lPath !== path29) {
+      throw new UnzipError(`the central directory says "${path29}", its local header says "${lPath}"`);
     }
     if (lMethod !== method) {
-      throw new UnzipError(`entry "${path30}": method ${lMethod} locally, ${method} centrally`);
+      throw new UnzipError(`entry "${path29}": method ${lMethod} locally, ${method} centrally`);
     }
     const streamed = (lFlags & 8) !== 0;
     if (!streamed) {
       const lCrc = u32(localOffset + 14);
       const lCsize = u32(localOffset + 18);
       const lUsize = u32(localOffset + 22);
-      if (lCrc !== crc) throw new UnzipError(`entry "${path30}": the two headers disagree about its checksum`);
+      if (lCrc !== crc) throw new UnzipError(`entry "${path29}": the two headers disagree about its checksum`);
       if (lCsize !== csize || lUsize !== usize) {
-        throw new UnzipError(`entry "${path30}": the two headers disagree about its size`);
+        throw new UnzipError(`entry "${path29}": the two headers disagree about its size`);
       }
     }
     const start = localOffset + 30 + lNameLen + lExtraLen;
     if (start + csize > bytes.length) {
-      throw new UnzipError(`entry "${path30}" runs past the end of the file \u2014 the archive is truncated`);
+      throw new UnzipError(`entry "${path29}" runs past the end of the file \u2014 the archive is truncated`);
     }
     const raw = bytes.slice(start, start + csize);
     let data;
@@ -6486,24 +6486,24 @@ function readZip(bytes) {
       try {
         data = new Uint8Array((0, import_node_zlib.inflateRawSync)(raw));
       } catch (error) {
-        throw new UnzipError(`entry "${path30}" is deflated and would not inflate: ${error.message}`);
+        throw new UnzipError(`entry "${path29}" is deflated and would not inflate: ${error.message}`);
       }
     } else {
       throw new UnzipError(
-        `entry "${path30}" uses compression method ${method}; this reader implements stored (0) and deflate (8)`
+        `entry "${path29}" uses compression method ${method}; this reader implements stored (0) and deflate (8)`
       );
     }
     if (data.length !== usize) {
-      throw new UnzipError(`entry "${path30}" is ${data.length} bytes, its header says ${usize}`);
+      throw new UnzipError(`entry "${path29}" is ${data.length} bytes, its header says ${usize}`);
     }
     const actual = crc322(data);
     if (actual !== crc) {
       throw new UnzipError(
-        `entry "${path30}" fails its checksum (${actual.toString(16)} against ${crc.toString(16)}) \u2014 the file is damaged`
+        `entry "${path29}" fails its checksum (${actual.toString(16)} against ${crc.toString(16)}) \u2014 the file is damaged`
       );
     }
     out.push({
-      path: path30,
+      path: path29,
       data,
       raw,
       method,
@@ -6564,9 +6564,9 @@ function resolveHref(baseDir, href) {
   }
   return out.join("/");
 }
-function directoryOf(path30) {
-  const slash = path30.lastIndexOf("/");
-  return slash < 0 ? "" : path30.slice(0, slash);
+function directoryOf(path29) {
+  const slash = path29.lastIndexOf("/");
+  return slash < 0 ? "" : path29.slice(0, slash);
 }
 function attr(el, name) {
   return el.attrs.get(name);
@@ -6620,13 +6620,13 @@ function containerFromMembers(members) {
     if (item === void 0) {
       throw new BookError(`the spine references manifest id "${idref}", which the manifest does not declare`);
     }
-    const path30 = resolveHref(opfDir, item.href);
-    const member = byPath.get(path30);
+    const path29 = resolveHref(opfDir, item.href);
+    const member = byPath.get(path29);
     if (member === void 0) {
-      throw new BookError(`the manifest declares "${path30}", and there is no such entry in the archive`);
+      throw new BookError(`the manifest declares "${path29}", and there is no such entry in the archive`);
     }
     const source = member.text();
-    documents.push({ path: path30, source, stamped: source.includes("data-bf-cat") });
+    documents.push({ path: path29, source, stamped: source.includes("data-bf-cat") });
   }
   if (documents.length === 0) {
     throw new BookError("this EPUB has an empty spine \u2014 there is no book in it");
@@ -24749,14 +24749,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path30) {
+    var parse = function(path29) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path30; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path29; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -25070,8 +25070,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path30) {
-      return apply(parse(path30));
+    exports2.svgPathToOperators = function(path29) {
+      return apply(parse(path29));
     };
   }
 });
@@ -25255,7 +25255,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path30, options) {
+    exports2.drawSvgPath = function(path29, options) {
       var _a, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -25269,7 +25269,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path30), [
+      ], svgPath_1.svgPathToOperators(path29), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -29593,12 +29593,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path30, options) {
+        PDFPage2.prototype.drawSvgPath = function(path29, options) {
           var _a, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path30, "path", ["string"]);
+          utils_1.assertIs(path29, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -29627,7 +29627,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path30, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path29, {
             x: (_a = options.x) !== null && _a !== void 0 ? _a : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -30134,18 +30134,18 @@ function configDir() {
     case "win32": {
       const appData = process.env["APPDATA"];
       if (!appData) throw new SettingsError("%APPDATA% is not set; cannot locate the config directory");
-      return path7.join(appData, "foundry");
+      return path6.join(appData, "foundry");
     }
     case "darwin":
-      return path7.join(os2.homedir(), "Library", "Application Support", "foundry");
+      return path6.join(os.homedir(), "Library", "Application Support", "foundry");
     default: {
       const xdg = process.env["XDG_CONFIG_HOME"];
-      return path7.join(xdg ?? path7.join(os2.homedir(), ".config"), "foundry");
+      return path6.join(xdg ?? path6.join(os.homedir(), ".config"), "foundry");
     }
   }
 }
 function settingsPath() {
-  return path7.join(configDir(), "settings.json");
+  return path6.join(configDir(), "settings.json");
 }
 function requireString2(value, key) {
   if (typeof value !== "string" || value.length === 0) {
@@ -30157,7 +30157,7 @@ function loadSettings() {
   const file = settingsPath();
   let raw;
   try {
-    raw = fs10.readFileSync(file, "utf8");
+    raw = fs9.readFileSync(file, "utf8");
   } catch (err) {
     if (err.code === "ENOENT") return {};
     throw new SettingsError(`settings.json could not be read (${file}): ${err.message}`);
@@ -30198,8 +30198,6 @@ function loadSettings() {
     backend.endpointUrl = url;
   }
   if (b["endpointModel"] !== void 0) backend.endpointModel = requireString2(b["endpointModel"], "backend.endpointModel");
-  if (b["wslDistro"] !== void 0) backend.wslDistro = requireString2(b["wslDistro"], "backend.wslDistro");
-  if (b["vllmPython"] !== void 0) backend.vllmPython = requireString2(b["vllmPython"], "backend.vllmPython");
   if (b["endpointHeaders"] !== void 0) {
     const raw2 = b["endpointHeaders"];
     if (typeof raw2 !== "object" || raw2 === null || Array.isArray(raw2)) {
@@ -30214,14 +30212,14 @@ function loadSettings() {
   result.backend = backend;
   return result;
 }
-var fs10, os2, path7, BACKEND_MODES, SettingsError;
+var fs9, os, path6, BACKEND_MODES, SettingsError;
 var init_settings = __esm({
   "packages/foundry-core/src/engine/backend/settings.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs10 = __toESM(require("node:fs"), 1);
-    os2 = __toESM(require("node:os"), 1);
-    path7 = __toESM(require("node:path"), 1);
+    fs9 = __toESM(require("node:fs"), 1);
+    os = __toESM(require("node:os"), 1);
+    path6 = __toESM(require("node:path"), 1);
     init_bom();
     BACKEND_MODES = ["auto", "endpoint"];
     SettingsError = class extends Error {
@@ -30546,7 +30544,7 @@ async function readOnePage(url, page, opts) {
   }
 }
 async function tryOnePage(url, page, opts) {
-  const image = fs13.readFileSync(page.imagePath).toString("base64");
+  const image = fs12.readFileSync(page.imagePath).toString("base64");
   const started = Date.now();
   let response;
   try {
@@ -30601,12 +30599,12 @@ async function tryOnePage(url, page, opts) {
     response: payload
   };
 }
-var fs13, VlmEndpointError, PARKED_EXIT_CODE, VlmParkedError, WEATHER_WAITS_MS, WEATHER_STATUSES, DEFAULT_VLM_CONCURRENCY, PER_PAGE_DEADLINE_MS;
+var fs12, VlmEndpointError, PARKED_EXIT_CODE, VlmParkedError, WEATHER_WAITS_MS, WEATHER_STATUSES, DEFAULT_VLM_CONCURRENCY, PER_PAGE_DEADLINE_MS;
 var init_endpoint = __esm({
   "packages/foundry-core/src/engine/vlm/endpoint.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs13 = __toESM(require("node:fs"), 1);
+    fs12 = __toESM(require("node:fs"), 1);
     init_http_refusal();
     VlmEndpointError = class extends Error {
       constructor(message) {
@@ -31161,7 +31159,7 @@ var init_version = __esm({
     init_engine_import_meta_url();
     init_package();
     VERSION = package_default.version;
-    GIT_COMMIT = "src 7070147f2016".length > 0 ? "src 7070147f2016" : null;
+    GIT_COMMIT = "src 6e9a259ba206".length > 0 ? "src 6e9a259ba206" : null;
   }
 });
 
@@ -32390,13 +32388,13 @@ function emptyOverlay() {
   return { overlay: 1, amendments: [] };
 }
 function loadOverlay(filePath) {
-  const resolved = path12.resolve(filePath);
-  if (!fs16.existsSync(resolved)) {
+  const resolved = path11.resolve(filePath);
+  if (!fs15.existsSync(resolved)) {
     throw new VlmOverlayError(
       `no such overlay: ${resolved}. An overlay names the blocks a person struck, reclassified or corrected, and the chapters they laid out; a run told to apply one and handed nothing would render the book as if none of those decisions had been made.`
     );
   }
-  return parseOverlay(fs16.readFileSync(resolved, "utf8"), resolved);
+  return parseOverlay(fs15.readFileSync(resolved, "utf8"), resolved);
 }
 function parseOverlay(text, name) {
   let parsed;
@@ -32688,13 +32686,13 @@ function overlayTally(blocks, overlay) {
   }
   return { struck, reclassified, corrected, joined };
 }
-var fs16, path12, VlmOverlayError, AMENDMENT_FIELDS, TARGET_FIELDS, OVERLAY_FIELDS, CHAPTER_FIELDS, CATEGORY_LIST, INDEXES;
+var fs15, path11, VlmOverlayError, AMENDMENT_FIELDS, TARGET_FIELDS, OVERLAY_FIELDS, CHAPTER_FIELDS, CATEGORY_LIST, INDEXES;
 var init_overlay = __esm({
   "packages/foundry-core/src/engine/vlm/overlay.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs16 = __toESM(require("node:fs"), 1);
-    path12 = __toESM(require("node:path"), 1);
+    fs15 = __toESM(require("node:fs"), 1);
+    path11 = __toESM(require("node:path"), 1);
     init_bom();
     init_dots();
     VlmOverlayError = class extends Error {
@@ -33104,8 +33102,8 @@ function resolveJoin(previous, next, lexicon) {
     rest: next.slice(head.length)
   };
 }
-function joinedText(join12) {
-  return join12.opening + join12.separator + (join12.fused ?? "") + join12.rest;
+function joinedText(join11) {
+  return join11.opening + join11.separator + (join11.fused ?? "") + join11.rest;
 }
 function closeEmphasisBeforeBreak(text) {
   return text.replace(BREAK_BEHIND_EMPHASIS, "$3$1$2");
@@ -33651,18 +33649,18 @@ function flowBlocks(blocks, starts, column, lexicon, joins) {
       const last = open.parts[open.parts.length - 1];
       open.text = closeEmphasisBeforeBreak(open.text);
       last.text = closeEmphasisBeforeBreak(last.text);
-      const join12 = resolveJoin(open.text, block.text, lexicon);
-      last.text = last.text.slice(0, last.text.length - (open.text.length - join12.opening.length));
+      const join11 = resolveJoin(open.text, block.text, lexicon);
+      last.text = last.text.slice(0, last.text.length - (open.text.length - join11.opening.length));
       open.parts.push({
         block,
         page: block.page,
         order: block.order,
         part: block.part,
-        join: join12.fused === null ? "space" : "fused",
-        fused: join12.fused,
-        text: join12.rest
+        join: join11.fused === null ? "space" : "fused",
+        fused: join11.fused,
+        text: join11.rest
       });
-      open.text = joinedText(join12);
+      open.text = joinedText(join11);
       flowIndexOf[index] = out.length - 1;
     } else {
       flowIndexOf[index] = out.length;
@@ -35368,8 +35366,8 @@ var init_rank = __esm({
 
 // packages/foundry-core/src/engine/analyze/prose.ts
 function readProse(bookPath, act, log2) {
-  if (!fs18.existsSync(bookPath)) throw new AnalyzeError(`no such book file: ${bookPath}`);
-  const book = parseBookFile(stripBom(fs18.readFileSync(bookPath, "utf8")));
+  if (!fs17.existsSync(bookPath)) throw new AnalyzeError(`no such book file: ${bookPath}`);
+  const book = parseBookFile(stripBom(fs17.readFileSync(bookPath, "utf8")));
   const sentences = [];
   let rows = 0;
   for (const row of book.rows) {
@@ -35390,12 +35388,12 @@ function readProse(bookPath, act, log2) {
   }
   return { sentences, bankSha: book.source.bankSha, generation: book.source.generation };
 }
-var fs18, AnalyzeError, PROSE;
+var fs17, AnalyzeError, PROSE;
 var init_prose = __esm({
   "packages/foundry-core/src/engine/analyze/prose.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs18 = __toESM(require("node:fs"), 1);
+    fs17 = __toESM(require("node:fs"), 1);
     init_bom();
     init_book_file();
     init_rank();
@@ -35698,13 +35696,13 @@ function readAnswer(answer, labels, question) {
   return { probs: logs.map((lp) => Math.exp(lp - z)), labelMass: mass, missing: absent, gated: false };
 }
 function rankFileFor(reportPath) {
-  return `${path15.resolve(reportPath)}.rank.json`;
+  return `${path14.resolve(reportPath)}.rank.json`;
 }
 function readRankFile(rankPath) {
-  const where = path15.resolve(rankPath);
+  const where = path14.resolve(rankPath);
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs20.readFileSync(where, "utf8")));
+    parsed = JSON.parse(stripBom(fs19.readFileSync(where, "utf8")));
   } catch (err) {
     throw new AnalyzeError(`--ranks ${where} cannot be read as JSON (${err.message}).`);
   }
@@ -35726,10 +35724,10 @@ function readRankFile(rankPath) {
 function readPlan(categoriesPath, log2) {
   let requested = null;
   if (categoriesPath) {
-    if (!fs20.existsSync(categoriesPath)) {
+    if (!fs19.existsSync(categoriesPath)) {
       throw new AnalyzeError(`no such categories file: ${categoriesPath}`);
     }
-    requested = parseCategoriesJson(stripBom(fs20.readFileSync(categoriesPath, "utf8")), categoriesPath);
+    requested = parseCategoriesJson(stripBom(fs19.readFileSync(categoriesPath, "utf8")), categoriesPath);
   }
   const plan = buildPlan(requested, log2);
   const untuned = untunedNames(plan);
@@ -35839,10 +35837,10 @@ async function runAnalyzeRank(opts) {
     labelMass: massSum.map((m, i) => round6(m / Math.max(1, seen[i]))),
     gated
   };
-  const out = path15.resolve(opts.outPath);
-  ensureDir(path15.dirname(out));
+  const out = path14.resolve(opts.outPath);
+  ensureDir(path14.dirname(out));
   const partial = `${out}.partial`;
-  fs20.writeFileSync(partial, `${JSON.stringify(file)}
+  fs19.writeFileSync(partial, `${JSON.stringify(file)}
 `, "utf8");
   replaceFileSync(partial, out);
   const seconds = ((Date.now() - started) / 1e3).toFixed(1);
@@ -35851,13 +35849,13 @@ async function runAnalyzeRank(opts) {
   );
   return { units: units.length, groups: asked, gated, file };
 }
-var fs20, path15, UNIT_MIN_WORDS, UNIT_MAX_WORDS, UNIT_PIECE_WORDS, CHUNK_RESERVE_TOKENS, BRIEFCASE_SINGLE_CHUNK_TOKENS, GROUP_SIZE, GROUP_STRIDE, BATCH_SIZE, GROUP_UNIT_CHARS, NONE_OPTION_TEXT, LABEL_MASS_GATE, LOG_FLOOR, TOP_K_MARGIN, RANK_FORMAT;
+var fs19, path14, UNIT_MIN_WORDS, UNIT_MAX_WORDS, UNIT_PIECE_WORDS, CHUNK_RESERVE_TOKENS, BRIEFCASE_SINGLE_CHUNK_TOKENS, GROUP_SIZE, GROUP_STRIDE, BATCH_SIZE, GROUP_UNIT_CHARS, NONE_OPTION_TEXT, LABEL_MASS_GATE, LOG_FLOOR, TOP_K_MARGIN, RANK_FORMAT;
 var init_snap = __esm({
   "packages/foundry-core/src/engine/analyze/snap.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs20 = __toESM(require("node:fs"), 1);
-    path15 = __toESM(require("node:path"), 1);
+    fs19 = __toESM(require("node:fs"), 1);
+    path14 = __toESM(require("node:path"), 1);
     init_bom();
     init_fsdirs();
     init_fs_replace();
@@ -65877,7 +65875,7 @@ var require_fontkit_umd = __commonJS({
           return cmds.join("");
         };
         _proto.mapPoints = function mapPoints(fn) {
-          var path30 = new Path2();
+          var path29 = new Path2();
           for (var _iterator2 = _createForOfIteratorHelperLoose$l(this.commands), _step2; !(_step2 = _iterator2()).done; ) {
             var c = _step2.value;
             var args = [];
@@ -65885,9 +65883,9 @@ var require_fontkit_umd = __commonJS({
               var _fn = fn(c.args[i2], c.args[i2 + 1]), x = _fn[0], y = _fn[1];
               args.push(x, y);
             }
-            path30[c.command].apply(path30, args);
+            path29[c.command].apply(path29, args);
           }
-          return path30;
+          return path29;
         };
         _proto.transform = function transform2(m0, m1, m2, m3, m4, m5) {
           return this.mapPoints(function(x, y) {
@@ -66497,7 +66495,7 @@ var require_fontkit_umd = __commonJS({
         };
         _proto2._getPath = function _getPath() {
           var contours = this._getContours();
-          var path30 = new Path();
+          var path29 = new Path();
           for (var i2 = 0; i2 < contours.length; i2++) {
             var contour = contours[i2];
             var firstPt = contour[0];
@@ -66514,32 +66512,32 @@ var require_fontkit_umd = __commonJS({
               }
               var curvePt = firstPt;
             }
-            path30.moveTo(firstPt.x, firstPt.y);
+            path29.moveTo(firstPt.x, firstPt.y);
             for (var j = start; j < contour.length; j++) {
               var pt = contour[j];
               var prevPt = j === 0 ? firstPt : contour[j - 1];
               if (prevPt.onCurve && pt.onCurve) {
-                path30.lineTo(pt.x, pt.y);
+                path29.lineTo(pt.x, pt.y);
               } else if (prevPt.onCurve && !pt.onCurve) {
                 var curvePt = pt;
               } else if (!prevPt.onCurve && !pt.onCurve) {
                 var midX = (prevPt.x + pt.x) / 2;
                 var midY = (prevPt.y + pt.y) / 2;
-                path30.quadraticCurveTo(prevPt.x, prevPt.y, midX, midY);
+                path29.quadraticCurveTo(prevPt.x, prevPt.y, midX, midY);
                 var curvePt = pt;
               } else if (!prevPt.onCurve && pt.onCurve) {
-                path30.quadraticCurveTo(curvePt.x, curvePt.y, pt.x, pt.y);
+                path29.quadraticCurveTo(curvePt.x, curvePt.y, pt.x, pt.y);
                 var curvePt = null;
               } else {
                 throw new Error("Unknown TTF path state");
               }
             }
             if (curvePt) {
-              path30.quadraticCurveTo(curvePt.x, curvePt.y, firstPt.x, firstPt.y);
+              path29.quadraticCurveTo(curvePt.x, curvePt.y, firstPt.x, firstPt.y);
             }
-            path30.closePath();
+            path29.closePath();
           }
-          return path30;
+          return path29;
         };
         return TTFGlyph2;
       })(Glyph);
@@ -66576,7 +66574,7 @@ var require_fontkit_umd = __commonJS({
           var str = cff.topDict.CharStrings[this.id];
           var end = str.offset + str.length;
           stream.pos = str.offset;
-          var path30 = new Path();
+          var path29 = new Path();
           var stack = [];
           var trans = [];
           var width = null;
@@ -66609,9 +66607,9 @@ var require_fontkit_umd = __commonJS({
           }
           function moveTo(x2, y2) {
             if (open) {
-              path30.closePath();
+              path29.closePath();
             }
-            path30.moveTo(x2, y2);
+            path29.moveTo(x2, y2);
             open = true;
           }
           var parse = function parse2() {
@@ -66639,7 +66637,7 @@ var require_fontkit_umd = __commonJS({
                     while (stack.length >= 2) {
                       x += stack.shift();
                       y += stack.shift();
-                      path30.lineTo(x, y);
+                      path29.lineTo(x, y);
                     }
                     break;
                   case 6:
@@ -66652,7 +66650,7 @@ var require_fontkit_umd = __commonJS({
                       } else {
                         y += stack.shift();
                       }
-                      path30.lineTo(x, y);
+                      path29.lineTo(x, y);
                       phase = !phase;
                     }
                     break;
@@ -66664,7 +66662,7 @@ var require_fontkit_umd = __commonJS({
                       var c2y = c1y + stack.shift();
                       x = c2x + stack.shift();
                       y = c2y + stack.shift();
-                      path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                      path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                     }
                     break;
                   case 10:
@@ -66694,7 +66692,7 @@ var require_fontkit_umd = __commonJS({
                       checkWidth();
                     }
                     if (open) {
-                      path30.closePath();
+                      path29.closePath();
                       open = false;
                     }
                     break;
@@ -66758,17 +66756,17 @@ var require_fontkit_umd = __commonJS({
                       var c2y = c1y + stack.shift();
                       x = c2x + stack.shift();
                       y = c2y + stack.shift();
-                      path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                      path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                     }
                     x += stack.shift();
                     y += stack.shift();
-                    path30.lineTo(x, y);
+                    path29.lineTo(x, y);
                     break;
                   case 25:
                     while (stack.length >= 8) {
                       x += stack.shift();
                       y += stack.shift();
-                      path30.lineTo(x, y);
+                      path29.lineTo(x, y);
                     }
                     var c1x = x + stack.shift();
                     var c1y = y + stack.shift();
@@ -66776,7 +66774,7 @@ var require_fontkit_umd = __commonJS({
                     var c2y = c1y + stack.shift();
                     x = c2x + stack.shift();
                     y = c2y + stack.shift();
-                    path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                    path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                     break;
                   case 26:
                     if (stack.length % 2) {
@@ -66789,7 +66787,7 @@ var require_fontkit_umd = __commonJS({
                       c2y = c1y + stack.shift();
                       x = c2x;
                       y = c2y + stack.shift();
-                      path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                      path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                     }
                     break;
                   case 27:
@@ -66803,7 +66801,7 @@ var require_fontkit_umd = __commonJS({
                       c2y = c1y + stack.shift();
                       x = c2x + stack.shift();
                       y = c2y;
-                      path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                      path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                     }
                     break;
                   case 28:
@@ -66843,7 +66841,7 @@ var require_fontkit_umd = __commonJS({
                         x = c2x + stack.shift();
                         y = c2y + (stack.length === 1 ? stack.shift() : 0);
                       }
-                      path30.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
+                      path29.bezierCurveTo(c1x, c1y, c2x, c2y, x, y);
                       phase = !phase;
                     }
                     break;
@@ -66979,8 +66977,8 @@ var require_fontkit_umd = __commonJS({
                         var c6y = c5y;
                         x = c6x;
                         y = c6y;
-                        path30.bezierCurveTo(c1x, c1y, c2x, c2y, c3x, c3y);
-                        path30.bezierCurveTo(c4x, c4y, c5x, c5y, c6x, c6y);
+                        path29.bezierCurveTo(c1x, c1y, c2x, c2y, c3x, c3y);
+                        path29.bezierCurveTo(c4x, c4y, c5x, c5y, c6x, c6y);
                         break;
                       case 35:
                         var pts = [];
@@ -66989,8 +66987,8 @@ var require_fontkit_umd = __commonJS({
                           y += stack.shift();
                           pts.push(x, y);
                         }
-                        path30.bezierCurveTo.apply(path30, pts.slice(0, 6));
-                        path30.bezierCurveTo.apply(path30, pts.slice(6));
+                        path29.bezierCurveTo.apply(path29, pts.slice(0, 6));
+                        path29.bezierCurveTo.apply(path29, pts.slice(6));
                         stack.shift();
                         break;
                       case 36:
@@ -67008,8 +67006,8 @@ var require_fontkit_umd = __commonJS({
                         c6y = c5y;
                         x = c6x;
                         y = c6y;
-                        path30.bezierCurveTo(c1x, c1y, c2x, c2y, c3x, c3y);
-                        path30.bezierCurveTo(c4x, c4y, c5x, c5y, c6x, c6y);
+                        path29.bezierCurveTo(c1x, c1y, c2x, c2y, c3x, c3y);
+                        path29.bezierCurveTo(c4x, c4y, c5x, c5y, c6x, c6y);
                         break;
                       case 37:
                         var startx = x;
@@ -67028,8 +67026,8 @@ var require_fontkit_umd = __commonJS({
                           y += stack.shift();
                         }
                         pts.push(x, y);
-                        path30.bezierCurveTo.apply(path30, pts.slice(0, 6));
-                        path30.bezierCurveTo.apply(path30, pts.slice(6));
+                        path29.bezierCurveTo.apply(path29, pts.slice(0, 6));
+                        path29.bezierCurveTo.apply(path29, pts.slice(6));
                         break;
                       default:
                         throw new Error("Unknown op: 12 " + op);
@@ -67053,9 +67051,9 @@ var require_fontkit_umd = __commonJS({
           };
           parse();
           if (open) {
-            path30.closePath();
+            path29.closePath();
           }
-          return path30;
+          return path29;
         };
         return CFFGlyph2;
       })(Glyph);
@@ -67769,7 +67767,7 @@ var require_fontkit_umd = __commonJS({
         function TTFGlyphEncoder2() {
         }
         var _proto = TTFGlyphEncoder2.prototype;
-        _proto.encodeSimple = function encodeSimple(path30, instructions) {
+        _proto.encodeSimple = function encodeSimple(path29, instructions) {
           if (instructions === void 0) {
             instructions = [];
           }
@@ -67780,14 +67778,14 @@ var require_fontkit_umd = __commonJS({
           var same = 0;
           var lastX = 0, lastY = 0, lastFlag = 0;
           var pointCount = 0;
-          for (var i2 = 0; i2 < path30.commands.length; i2++) {
-            var c = path30.commands[i2];
+          for (var i2 = 0; i2 < path29.commands.length; i2++) {
+            var c = path29.commands[i2];
             for (var j = 0; j < c.args.length; j += 2) {
               var x = c.args[j];
               var y = c.args[j + 1];
               var flag2 = 0;
               if (c.command === "quadraticCurveTo" && j === 2) {
-                var next = path30.commands[i2 + 1];
+                var next = path29.commands[i2 + 1];
                 if (next && next.command === "quadraticCurveTo") {
                   var midX = (lastX + next.args[0]) / 2;
                   var midY = (lastY + next.args[1]) / 2;
@@ -67820,10 +67818,10 @@ var require_fontkit_umd = __commonJS({
               endPtsOfContours.push(pointCount - 1);
             }
           }
-          if (path30.commands.length > 1 && path30.commands[path30.commands.length - 1].command !== "closePath") {
+          if (path29.commands.length > 1 && path29.commands[path29.commands.length - 1].command !== "closePath") {
             endPtsOfContours.push(pointCount - 1);
           }
-          var bbox = path30.bbox;
+          var bbox = path29.bbox;
           var glyf2 = {
             numberOfContours: endPtsOfContours.length,
             xMin: bbox.minX,
@@ -68025,7 +68023,7 @@ var require_fontkit_umd = __commonJS({
             var gid = _step2.value;
             this.charstrings.push(this.cff.getCharString(gid));
             var glyph2 = this.font.getGlyph(gid);
-            var path30 = glyph2.path;
+            var path29 = glyph2.path;
             for (var subr in glyph2._usedGsubrs) {
               gsubrs[subr] = true;
             }
@@ -68066,7 +68064,7 @@ var require_fontkit_umd = __commonJS({
             used_fds[fd] = true;
             topDict.FDSelect.fds.push(topDict.FDArray.length - 1);
             var glyph2 = this.font.getGlyph(gid);
-            var path30 = glyph2.path;
+            var path29 = glyph2.path;
             for (var subr in glyph2._usedSubrs) {
               used_subrs[used_subrs.length - 1][subr] = true;
             }
@@ -68086,7 +68084,7 @@ var require_fontkit_umd = __commonJS({
           for (var _iterator3 = _createForOfIteratorHelperLoose$p(this.glyphs), _step3; !(_step3 = _iterator3()).done; ) {
             var gid = _step3.value;
             var glyph2 = this.font.getGlyph(gid);
-            var path30 = glyph2.path;
+            var path29 = glyph2.path;
             for (var subr in glyph2._usedSubrs) {
               used_subrs[subr] = true;
             }
@@ -72504,28 +72502,28 @@ function bankKey(question) {
   return (0, import_node_crypto4.createHash)("sha256").update(fields.join(NUL4), "utf8").digest("hex");
 }
 function pendingBankPath(bankPath) {
-  return `${path21.resolve(bankPath)}.pending`;
+  return `${path20.resolve(bankPath)}.pending`;
 }
 function swapPendingBankIntoPlace(bankPath, pending) {
   if (pending === null) return;
-  const resolved = path21.resolve(bankPath);
-  const pendingResolved = path21.resolve(pending);
-  if (!fs27.existsSync(pendingResolved)) {
+  const resolved = path20.resolve(bankPath);
+  const pendingResolved = path20.resolve(pending);
+  if (!fs26.existsSync(pendingResolved)) {
     throw new TranslateBankError(
       `${pendingResolved} was this run's bank and it is not there, so there is nothing to put in place of ${resolved}. The bank that is there has been left exactly as it was found.`
     );
   }
-  ensureDir(path21.dirname(resolved));
+  ensureDir(path20.dirname(resolved));
   replaceFileSync(pendingResolved, resolved);
 }
 function openTranslationBank(request) {
-  const bankPath = path21.resolve(request.bankPath);
+  const bankPath = path20.resolve(request.bankPath);
   const existing = TranslationBank.open(bankPath);
   const banked = existing.size;
   if (request.freshRequested && banked > 0) {
     const pending = pendingBankPath(bankPath);
-    ensureDir(path21.dirname(pending));
-    fs27.closeSync(fs27.openSync(pending, "a"));
+    ensureDir(path20.dirname(pending));
+    fs26.closeSync(fs26.openSync(pending, "a"));
     const carried = TranslationBank.open(pending);
     return {
       action: carried.size === 0 ? "ask-fresh" : "resume",
@@ -72549,14 +72547,14 @@ function openTranslationBank(request) {
     sentence: `${request.act}: ${banked} answer(s) are banked in ${bankPath} \u2014 a block whose exact question is in there is not asked again, and every new answer is added to it.`
   };
 }
-var import_node_crypto4, fs27, path21, TranslateBankError, KEY_FORMATS, NUL4, TranslationBank;
+var import_node_crypto4, fs26, path20, TranslateBankError, KEY_FORMATS, NUL4, TranslationBank;
 var init_bank = __esm({
   "packages/foundry-core/src/engine/translate/bank.ts"() {
     "use strict";
     init_engine_import_meta_url();
     import_node_crypto4 = require("node:crypto");
-    fs27 = __toESM(require("node:fs"), 1);
-    path21 = __toESM(require("node:path"), 1);
+    fs26 = __toESM(require("node:fs"), 1);
+    path20 = __toESM(require("node:path"), 1);
     init_bom();
     init_fsdirs();
     init_fs_replace();
@@ -72588,9 +72586,9 @@ var init_bank = __esm({
        * a book they are not from.
        */
       static open(filePath) {
-        const bank = new _TranslationBank(path21.resolve(filePath));
-        if (!fs27.existsSync(bank.filePath)) return bank;
-        const lines = stripBom(fs27.readFileSync(bank.filePath, "utf8")).split("\n");
+        const bank = new _TranslationBank(path20.resolve(filePath));
+        if (!fs26.existsSync(bank.filePath)) return bank;
+        const lines = stripBom(fs26.readFileSync(bank.filePath, "utf8")).split("\n");
         for (const [index, line] of lines.entries()) {
           if (line.trim().length === 0) continue;
           const last = lines.slice(index + 1).every((rest) => rest.trim().length === 0);
@@ -72639,14 +72637,14 @@ var init_bank = __esm({
        */
       append(entry) {
         this.byKey.set(entry.key, entry);
-        ensureDir(path21.dirname(this.filePath));
-        const handle = fs27.openSync(this.filePath, "a");
+        ensureDir(path20.dirname(this.filePath));
+        const handle = fs26.openSync(this.filePath, "a");
         try {
-          fs27.writeSync(handle, `${JSON.stringify(entry)}
+          fs26.writeSync(handle, `${JSON.stringify(entry)}
 `);
-          fs27.fsyncSync(handle);
+          fs26.fsyncSync(handle);
         } finally {
-          fs27.closeSync(handle);
+          fs26.closeSync(handle);
         }
       }
     };
@@ -73013,16 +73011,16 @@ var init_base = __esm({
           }
         }
       }
-      addToPath(path30, added, removed, oldPosInc, options) {
-        const last = path30.lastComponent;
+      addToPath(path29, added, removed, oldPosInc, options) {
+        const last = path29.lastComponent;
         if (last && !options.oneChangePerToken && last.added === added && last.removed === removed) {
           return {
-            oldPos: path30.oldPos + oldPosInc,
+            oldPos: path29.oldPos + oldPosInc,
             lastComponent: { count: last.count + 1, added, removed, previousComponent: last.previousComponent }
           };
         } else {
           return {
-            oldPos: path30.oldPos + oldPosInc,
+            oldPos: path29.oldPos + oldPosInc,
             lastComponent: { count: 1, added, removed, previousComponent: last }
           };
         }
@@ -73316,10 +73314,10 @@ __export(fixed_readings_exports, {
   wholeTokenOffsets: () => wholeTokenOffsets
 });
 function readFixedReadingsFile(file) {
-  const where = path22.resolve(file);
+  const where = path21.resolve(file);
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs29.readFileSync(where, "utf8")));
+    parsed = JSON.parse(stripBom(fs28.readFileSync(where, "utf8")));
   } catch (err) {
     throw new CleanTextError(`--fixed-readings ${where} cannot be read as JSON (${err.message}).`);
   }
@@ -73529,13 +73527,13 @@ function protectedWithin(spans, start, end) {
   if (spans === void 0) return [];
   return spans.filter((s) => s.at >= start && s.end <= end).map((s) => ({ at: s.at - start, end: s.end - start }));
 }
-var fs29, path22, FIXED_READINGS_FORMAT, MARKUP, WORD;
+var fs28, path21, FIXED_READINGS_FORMAT, MARKUP, WORD;
 var init_fixed_readings = __esm({
   "packages/foundry-core/src/engine/clean/fixed-readings.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs29 = __toESM(require("node:fs"), 1);
-    path22 = __toESM(require("node:path"), 1);
+    fs28 = __toESM(require("node:fs"), 1);
+    path21 = __toESM(require("node:path"), 1);
     init_bom();
     init_punctuate();
     FIXED_READINGS_FORMAT = "fixed-readings/v1";
@@ -73830,7 +73828,7 @@ function cleanBlocks(book, where) {
   const plan = bookRowPlan(book, where);
   const blocks = [];
   const tables = [];
-  const fileName = path23.basename(where);
+  const fileName = path22.basename(where);
   const targetOf = (key, block) => ({
     key,
     kind: "row",
@@ -73912,12 +73910,12 @@ function triageUnits(blocks, punctuated, unit) {
   }
   return out;
 }
-var path23, CELL_JOIN, DEFAULT_CLEAN_UNIT, CLEAN_UNITS;
+var path22, CELL_JOIN, DEFAULT_CLEAN_UNIT, CLEAN_UNITS;
 var init_blocks2 = __esm({
   "packages/foundry-core/src/engine/clean/blocks.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    path23 = __toESM(require("node:path"), 1);
+    path22 = __toESM(require("node:path"), 1);
     init_bookrows();
     init_punctuate();
     init_segments();
@@ -74037,19 +74035,19 @@ function collectPrintedForms(bookText, where) {
   }));
 }
 function runCleanForms(opts) {
-  const where = path24.resolve(opts.bookPath);
+  const where = path23.resolve(opts.bookPath);
   let text;
   try {
-    text = stripBom(fs30.readFileSync(where, "utf8"));
+    text = stripBom(fs29.readFileSync(where, "utf8"));
   } catch (err) {
     throw new CleanTextError(`--book ${where} cannot be read (${err.message}).`);
   }
   const forms = collectPrintedForms(text, where);
   const file = { format: PRINTED_FORMS_FORMAT, source: where, forms };
-  const out = path24.resolve(opts.outPath);
-  ensureDir(path24.dirname(out));
+  const out = path23.resolve(opts.outPath);
+  ensureDir(path23.dirname(out));
   const partial = `${out}.partial`;
-  fs30.writeFileSync(partial, `${JSON.stringify(file, null, 2)}
+  fs29.writeFileSync(partial, `${JSON.stringify(file, null, 2)}
 `, "utf8");
   replaceFileSync(partial, out);
   const byKind = /* @__PURE__ */ new Map();
@@ -74059,13 +74057,13 @@ function runCleanForms(opts) {
   );
   return file;
 }
-var fs30, path24, PRINTED_FORMS_FORMAT, SAMPLES, WORDS_TOO, TITLES_TOO, DETERMINERS;
+var fs29, path23, PRINTED_FORMS_FORMAT, SAMPLES, WORDS_TOO, TITLES_TOO, DETERMINERS;
 var init_forms = __esm({
   "packages/foundry-core/src/engine/clean/forms.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs30 = __toESM(require("node:fs"), 1);
-    path24 = __toESM(require("node:path"), 1);
+    fs29 = __toESM(require("node:fs"), 1);
+    path23 = __toESM(require("node:path"), 1);
     init_fsdirs();
     init_fs_replace();
     init_bom();
@@ -74316,10 +74314,10 @@ async function runCleanTriage(opts) {
   const transport = opts.transport ?? fetchTransport(decideDeadline(deadlineForConcurrency(concurrency)));
   const sleep = opts.sleep ?? ((ms) => new Promise((resolve23) => setTimeout(resolve23, ms)));
   const url = decideUrl(opts.endpoint);
-  const where = path25.resolve(opts.bookPath);
+  const where = path24.resolve(opts.bookPath);
   let bookText;
   try {
-    bookText = stripBom(fs31.readFileSync(where, "utf8"));
+    bookText = stripBom(fs30.readFileSync(where, "utf8"));
   } catch (err) {
     throw new CleanTextError(`--book ${where} cannot be read (${err.message}).`);
   }
@@ -74398,10 +74396,10 @@ async function runCleanTriage(opts) {
     // In the book's order, so the file reads alongside it.
     blocks: Object.fromEntries(units.map((unit2) => [unit2.parts, verdicts[unit2.parts]]))
   };
-  const out = path25.resolve(opts.outPath);
-  ensureDir(path25.dirname(out));
+  const out = path24.resolve(opts.outPath);
+  ensureDir(path24.dirname(out));
   const partial = `${out}.partial`;
-  fs31.writeFileSync(partial, `${JSON.stringify(file, null, 2)}
+  fs30.writeFileSync(partial, `${JSON.stringify(file, null, 2)}
 `, "utf8");
   replaceFileSync(partial, out);
   const flagged = Object.values(file.blocks).filter((v) => v.needsCleaning).length;
@@ -74412,10 +74410,10 @@ async function runCleanTriage(opts) {
   return { positions: units.length, flagged, clean: units.length - flagged, file };
 }
 function readTriageFile(triagePath) {
-  const where = path25.resolve(triagePath);
+  const where = path24.resolve(triagePath);
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs31.readFileSync(where, "utf8")));
+    parsed = JSON.parse(stripBom(fs30.readFileSync(where, "utf8")));
   } catch (err) {
     throw new CleanTextError(`--triage ${where} cannot be read as JSON (${err.message}).`);
   }
@@ -74433,13 +74431,13 @@ function readTriageFile(triagePath) {
   }
   return file;
 }
-var fs31, path25, TRIAGE_FORMAT, TRIAGE_FLAG_P, TRIAGE_MIN_LABEL_MASS, GROUP_MAX_UNITS, GROUP_MAX_SENTENCES, GROUP_MAX_CHARS, CONTEXT_UNITS, CONTEXT_CHARS, DEFAULT_TRIAGE_CONCURRENCY, TRIAGE_GUIDE, SENTENCE_EXAMPLES, TRIAGE_CRITERIA, SENTENCE_OPTIONS;
+var fs30, path24, TRIAGE_FORMAT, TRIAGE_FLAG_P, TRIAGE_MIN_LABEL_MASS, GROUP_MAX_UNITS, GROUP_MAX_SENTENCES, GROUP_MAX_CHARS, CONTEXT_UNITS, CONTEXT_CHARS, DEFAULT_TRIAGE_CONCURRENCY, TRIAGE_GUIDE, SENTENCE_EXAMPLES, TRIAGE_CRITERIA, SENTENCE_OPTIONS;
 var init_triage = __esm({
   "packages/foundry-core/src/engine/clean/triage.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs31 = __toESM(require("node:fs"), 1);
-    path25 = __toESM(require("node:path"), 1);
+    fs30 = __toESM(require("node:fs"), 1);
+    path24 = __toESM(require("node:path"), 1);
     init_fsdirs();
     init_fs_replace();
     init_bom();
@@ -74522,7 +74520,7 @@ __export(apply_readings_exports, {
   runApplyReadings: () => runApplyReadings
 });
 function appliedReadingsPathFor(recordsPath) {
-  return `${path26.resolve(recordsPath).replace(/\.jsonl$/i, "")}.applied.json`;
+  return `${path25.resolve(recordsPath).replace(/\.jsonl$/i, "")}.applied.json`;
 }
 function readingsOnlyKey(request) {
   return (0, import_node_crypto5.createHash)("sha256").update([KEY_FORMAT, request.text, fixedKeyField(request.text, request.fixed, request.at)].join("\0"), "utf8").digest("hex");
@@ -74534,10 +74532,10 @@ async function runApplyReadings(opts) {
       "clean-text --readings-only was handed no readings, so it would write a copy of the book and call it a step. Name a --fixed-readings file that holds at least one reading."
     );
   }
-  const where = path26.resolve(opts.bookPath);
+  const where = path25.resolve(opts.bookPath);
   let bookText;
   try {
-    bookText = stripBom(fs32.readFileSync(where, "utf8"));
+    bookText = stripBom(fs31.readFileSync(where, "utf8"));
   } catch (err) {
     throw new CleanTextError(`--book ${where} cannot be read (${err.message}).`);
   }
@@ -74546,7 +74544,7 @@ async function runApplyReadings(opts) {
   if (blocks.length === 0) {
     throw new CleanTextError(`--book ${where} has no block with words in it, so there is nothing to write readings into.`);
   }
-  const recordsPath = path26.resolve(opts.recordsPath);
+  const recordsPath = path25.resolve(opts.recordsPath);
   const records = TranslationRecords.open(recordsPath);
   const known = new Set(blocks.map((b) => b.parts));
   if (records.positions > 0 && ![...records.positionMap().keys()].some((parts) => known.has(parts))) {
@@ -74612,8 +74610,8 @@ async function runApplyReadings(opts) {
   }
   const appliedPath = appliedReadingsPathFor(recordsPath);
   const file = { format: APPLIED_READINGS_FORMAT, from: opts.from ?? null, applied };
-  ensureDir(path26.dirname(appliedPath));
-  fs32.writeFileSync(appliedPath, `${JSON.stringify(file, null, 2)}
+  ensureDir(path25.dirname(appliedPath));
+  fs31.writeFileSync(appliedPath, `${JSON.stringify(file, null, 2)}
 `, "utf8");
   const sourceTexts = bookPositionTexts(book);
   const digests = /* @__PURE__ */ new Map();
@@ -74625,21 +74623,21 @@ async function runApplyReadings(opts) {
     digests.set(parts, blockDigest(text));
   }
   const stamp = narrationTextStamp({ model: READINGS_ONLY_MODEL, at, punctuationRefused: 0, blocks: digests });
-  ensureDir(path26.dirname(path26.resolve(opts.stampPath)));
-  fs32.writeFileSync(path26.resolve(opts.stampPath), `${JSON.stringify(stamp, null, 2)}
+  ensureDir(path25.dirname(path25.resolve(opts.stampPath)));
+  fs31.writeFileSync(path25.resolve(opts.stampPath), `${JSON.stringify(stamp, null, 2)}
 `, "utf8");
   opts.log(
     `clean-text: readings only \u2014 ${fixed.length} reading(s) handed in, ${applied.length} landed across ${changed} of ${blocks.length} block(s), ${missed} not found; ${written} row(s) written. Where each one landed: ${appliedPath}`
   );
   return { blocks: blocks.length, changed, written, applied: applied.length, missed, appliedPath, stamp };
 }
-var fs32, path26, import_node_crypto5, APPLIED_READINGS_FORMAT, READINGS_ONLY_MODEL, KEY_FORMAT;
+var fs31, path25, import_node_crypto5, APPLIED_READINGS_FORMAT, READINGS_ONLY_MODEL, KEY_FORMAT;
 var init_apply_readings = __esm({
   "packages/foundry-core/src/engine/clean/apply-readings.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs32 = __toESM(require("node:fs"), 1);
-    path26 = __toESM(require("node:path"), 1);
+    fs31 = __toESM(require("node:fs"), 1);
+    path25 = __toESM(require("node:path"), 1);
     import_node_crypto5 = require("node:crypto");
     init_fsdirs();
     init_bom();
@@ -74899,10 +74897,10 @@ function cleanEpubKey(request) {
   return (0, import_node_crypto6.createHash)("sha256").update(fields.join(NUL5), "utf8").digest("hex");
 }
 function cleanEpubBankPath(outPath) {
-  return `${path27.resolve(outPath)}.clean-bank.jsonl`;
+  return `${path26.resolve(outPath)}.clean-bank.jsonl`;
 }
 function cleanEpubStampPath(outPath) {
-  return `${path27.resolve(outPath)}.stamp.json`;
+  return `${path26.resolve(outPath)}.stamp.json`;
 }
 function textNodesOf(source, site) {
   const fragment = source.slice(site.innerStart, site.innerEnd);
@@ -74990,8 +74988,8 @@ async function cleanTextEpub(opts) {
   });
   const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   const model = opts.model ?? opts.runner?.model ?? (await openModelServer({ kind, transport, endpoint, log: opts.log })).model;
-  const epubPath = path27.resolve(opts.epubPath);
-  const outPath = path27.resolve(opts.outPath);
+  const epubPath = path26.resolve(opts.epubPath);
+  const outPath = path26.resolve(opts.outPath);
   if (epubPath === outPath) {
     throw new CleanTextError(
       `--out ${outPath} is --epub itself. This command writes a NEW book and never edits one in place: the input is what a second run would have to read, and a pass that consumed it would make its own result impossible to check. Name a different --out.`
@@ -74999,7 +74997,7 @@ async function cleanTextEpub(opts) {
   }
   let bytes;
   try {
-    bytes = new Uint8Array(fs33.readFileSync(epubPath));
+    bytes = new Uint8Array(fs32.readFileSync(epubPath));
   } catch (err) {
     throw new CleanTextError(`--epub ${epubPath} cannot be read (${err.message}).`);
   }
@@ -75254,13 +75252,13 @@ async function cleanTextEpub(opts) {
       uncompressedSize: member.uncompressedSize
     };
   });
-  ensureDir(path27.dirname(outPath));
-  await fs33.promises.writeFile(outPath, writeZip(entries));
+  ensureDir(path26.dirname(outPath));
+  await fs32.promises.writeFile(outPath, writeZip(entries));
   const stampPath = cleanEpubStampPath(outPath);
-  fs33.writeFileSync(stampPath, `${JSON.stringify(stamp, null, 2)}
+  fs32.writeFileSync(stampPath, `${JSON.stringify(stamp, null, 2)}
 `, "utf8");
   const receiptPath2 = `${outPath}.receipt.json`;
-  fs33.writeFileSync(receiptPath2, `${JSON.stringify({
+  fs32.writeFileSync(receiptPath2, `${JSON.stringify({
     normalizerVersion: NORMALIZER_VERSION,
     punctuationSpec: PUNCTUATION_SPEC_VERSION,
     model,
@@ -75319,13 +75317,13 @@ function sayRefusal(log2, key, record2) {
     `clean-text: REFUSED ${record2.status} in ${key} \u2014 "${record2.find}" \u2192 "${record2.replace}"${record2.detail === void 0 ? "" : ` (${record2.detail})`}`
   );
 }
-var fs33, path27, import_node_crypto6, NUL5, NOTHING_TO_ASK;
+var fs32, path26, import_node_crypto6, NUL5, NOTHING_TO_ASK;
 var init_epub2 = __esm({
   "packages/foundry-core/src/engine/clean/epub.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs33 = __toESM(require("node:fs"), 1);
-    path27 = __toESM(require("node:path"), 1);
+    fs32 = __toESM(require("node:fs"), 1);
+    path26 = __toESM(require("node:path"), 1);
     import_node_crypto6 = require("node:crypto");
     init_fsdirs();
     init_zip();
@@ -75397,13 +75395,13 @@ function triageKey(request) {
   return (0, import_node_crypto7.createHash)("sha256").update(fields.join(NUL6), "utf8").digest("hex");
 }
 function receiptPath(recordsPath) {
-  return `${path28.resolve(recordsPath)}.receipt.json`;
+  return `${path27.resolve(recordsPath)}.receipt.json`;
 }
 function openBook(bookPath) {
-  const where = path28.resolve(bookPath);
+  const where = path27.resolve(bookPath);
   let text;
   try {
-    text = stripBom(fs34.readFileSync(where, "utf8"));
+    text = stripBom(fs33.readFileSync(where, "utf8"));
   } catch (err) {
     throw new CleanTextError(
       `--book ${where} cannot be read (${err.message}). It is the book file the app materialises for a step (docs/BOOK-FILE.md) \u2014 one JSON object per line, the header first.`
@@ -75444,12 +75442,12 @@ async function runCleanText(opts) {
   const triage = opts.triagePath === void 0 ? null : readTriageFile(opts.triagePath);
   if (triage !== null && !sameRemoval(triage.removal ?? NO_REMOVAL, removal)) {
     throw new CleanTextError(
-      `--triage ${path28.resolve(opts.triagePath)} was asked about a different removal (${JSON.stringify(removalRecord(triage.removal ?? NO_REMOVAL))}) from this run's (${JSON.stringify(removalRecord(removal))}). Run clean-triage with the same --remove-references and --remove-also as clean-text.`
+      `--triage ${path27.resolve(opts.triagePath)} was asked about a different removal (${JSON.stringify(removalRecord(triage.removal ?? NO_REMOVAL))}) from this run's (${JSON.stringify(removalRecord(removal))}). Run clean-triage with the same --remove-references and --remove-also as clean-text.`
     );
   }
   if (triage !== null && (triage.unit ?? "block") !== unit) {
     throw new CleanTextError(
-      `--triage ${path28.resolve(opts.triagePath)} judged ${triage.unit ?? "block"}s, and this run asks about ${unit}s. Its verdicts name positions this run does not have. Run clean-triage with --unit ${unit}, or clean-text with --unit ${triage.unit ?? "block"}.`
+      `--triage ${path27.resolve(opts.triagePath)} judged ${triage.unit ?? "block"}s, and this run asks about ${unit}s. Its verdicts name positions this run does not have. Run clean-triage with --unit ${unit}, or clean-text with --unit ${triage.unit ?? "block"}.`
     );
   }
   const { text: bookText, where } = openBook(opts.bookPath);
@@ -75462,13 +75460,13 @@ async function runCleanText(opts) {
   for (const one of plan.kept) {
     opts.log(`clean-text: LEFT AS PRINTED \u2014 ${one}`);
   }
-  const fileName = path28.basename(where);
+  const fileName = path27.basename(where);
   if (blocks.length === 0) {
     throw new CleanTextError(
       `--book ${where} has no block with words in it, so there is nothing to clean. A book file whose every row is shelved, skipped or blank is not a book this pass can act on.`
     );
   }
-  const recordsPath = path28.resolve(opts.recordsPath);
+  const recordsPath = path27.resolve(opts.recordsPath);
   const records = TranslationRecords.open(recordsPath);
   refuseForeignRecords(records, new Set(blocks.map((b) => b.parts)), recordsPath, where);
   opts.log(records.size === 0 ? `clean-text: nothing is recorded in ${recordsPath}, so every block is asked of the model and recorded there as it lands.` : `clean-text: ${records.size} record(s) covering ${records.positions} position(s) are in ${recordsPath} \u2014 a block whose exact question is in there is not asked again, and every new answer is added to it.`);
@@ -75537,7 +75535,7 @@ async function runCleanText(opts) {
   const keptClean = /* @__PURE__ */ new Set();
   if (triage !== null) {
     const summary = {
-      file: path28.resolve(opts.triagePath),
+      file: path27.resolve(opts.triagePath),
       model: triage.model.id,
       clean: [],
       flagged: 0,
@@ -75770,8 +75768,8 @@ async function runCleanText(opts) {
     ...fixed.length > 0 ? { fixedReadings: fixedRecord } : {}
   };
   const receiptOut = receiptPath(recordsPath);
-  ensureDir(path28.dirname(receiptOut));
-  fs34.writeFileSync(receiptOut, `${JSON.stringify(receipt, null, 2)}
+  ensureDir(path27.dirname(receiptOut));
+  fs33.writeFileSync(receiptOut, `${JSON.stringify(receipt, null, 2)}
 `, "utf8");
   const sourceTexts = bookPositionTexts(book);
   const digests = /* @__PURE__ */ new Map();
@@ -75790,15 +75788,15 @@ async function runCleanText(opts) {
     punctuationRefused: punctuated.record.refused.length,
     blocks: digests
   });
-  ensureDir(path28.dirname(path28.resolve(opts.stampPath)));
-  fs34.writeFileSync(path28.resolve(opts.stampPath), `${JSON.stringify(stamp, null, 2)}
+  ensureDir(path27.dirname(path27.resolve(opts.stampPath)));
+  fs33.writeFileSync(path27.resolve(opts.stampPath), `${JSON.stringify(stamp, null, 2)}
 `, "utf8");
   if (humanKept > 0) {
     opts.log(
       `clean-text: ${humanKept} position(s) whose newest row a person wrote were left exactly as they left them \u2014 their source text has not changed since.`
     );
   }
-  opts.log(`clean-text: the receipt is ${receiptOut}; the stamp is ${path28.resolve(opts.stampPath)}`);
+  opts.log(`clean-text: the receipt is ${receiptOut}; the stamp is ${path27.resolve(opts.stampPath)}`);
   opts.log(
     `clean-text: the stamp names ${digests.size} block position(s) and their text digest is ${stamp.textDigest} \u2014 vlm-compile --narration-stamp recomputes both over the book it is handed and refuses by name if it is not this one.`
   );
@@ -75825,13 +75823,13 @@ function sayRefusal2(log2, key, record2) {
     `clean-text: REFUSED ${record2.status} in ${key} \u2014 "${record2.find}" \u2192 "${record2.replace}"${record2.detail === void 0 ? "" : ` (${record2.detail})`}`
   );
 }
-var fs34, path28, import_node_crypto7, KEY_FORMAT2, SENTENCE_KEY_FORMAT, NUL6, DEFAULT_CLEAN_GATE, TRIAGE_KEY_FORMAT, NOTHING_TO_ASK2;
+var fs33, path27, import_node_crypto7, KEY_FORMAT2, SENTENCE_KEY_FORMAT, NUL6, DEFAULT_CLEAN_GATE, TRIAGE_KEY_FORMAT, NOTHING_TO_ASK2;
 var init_run = __esm({
   "packages/foundry-core/src/engine/clean/run.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    fs34 = __toESM(require("node:fs"), 1);
-    path28 = __toESM(require("node:path"), 1);
+    fs33 = __toESM(require("node:fs"), 1);
+    path27 = __toESM(require("node:path"), 1);
     import_node_crypto7 = require("node:crypto");
     init_fsdirs();
     init_bom();
@@ -76546,14 +76544,14 @@ var require_util = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path30 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path29 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path30 && path30[0] !== "/") {
-          path30 = `/${path30}`;
+        if (path29 && path29[0] !== "/") {
+          path29 = `/${path29}`;
         }
-        return new URL(`${origin}${path30}`);
+        return new URL(`${origin}${path29}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -77005,39 +77003,39 @@ var require_diagnostics = __commonJS({
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
         const {
-          request: { method, path: path30, origin }
+          request: { method, path: path29, origin }
         } = evt;
-        debuglog("sending request to %s %s/%s", method, origin, path30);
+        debuglog("sending request to %s %s/%s", method, origin, path29);
       });
       diagnosticsChannel.channel("undici:request:headers").subscribe((evt) => {
         const {
-          request: { method, path: path30, origin },
+          request: { method, path: path29, origin },
           response: { statusCode }
         } = evt;
         debuglog(
           "received response to %s %s/%s - HTTP %d",
           method,
           origin,
-          path30,
+          path29,
           statusCode
         );
       });
       diagnosticsChannel.channel("undici:request:trailers").subscribe((evt) => {
         const {
-          request: { method, path: path30, origin }
+          request: { method, path: path29, origin }
         } = evt;
-        debuglog("trailers received from %s %s/%s", method, origin, path30);
+        debuglog("trailers received from %s %s/%s", method, origin, path29);
       });
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
-          request: { method, path: path30, origin },
+          request: { method, path: path29, origin },
           error
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
-          path30,
+          path29,
           error.message
         );
       });
@@ -77086,9 +77084,9 @@ var require_diagnostics = __commonJS({
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
           const {
-            request: { method, path: path30, origin }
+            request: { method, path: path29, origin }
           } = evt;
-          debuglog("sending request to %s %s/%s", method, origin, path30);
+          debuglog("sending request to %s %s/%s", method, origin, path29);
         });
       }
       diagnosticsChannel.channel("undici:websocket:open").subscribe((evt) => {
@@ -77152,7 +77150,7 @@ var require_request = __commonJS({
     var kHandler = /* @__PURE__ */ Symbol("handler");
     var Request = class {
       constructor(origin, {
-        path: path30,
+        path: path29,
         method,
         body,
         headers,
@@ -77167,11 +77165,11 @@ var require_request = __commonJS({
         expectContinue,
         servername
       }, handler) {
-        if (typeof path30 !== "string") {
+        if (typeof path29 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path30[0] !== "/" && !(path30.startsWith("http://") || path30.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path29[0] !== "/" && !(path29.startsWith("http://") || path29.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path30)) {
+        } else if (invalidPathRegex.test(path29)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -77234,7 +77232,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? buildURL(path30, query) : path30;
+        this.path = query ? buildURL(path29, query) : path29;
         this.origin = origin;
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
         this.blocking = blocking == null ? false : blocking;
@@ -81768,7 +81766,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request) {
-      const { method, path: path30, host, upgrade, blocking, reset } = request;
+      const { method, path: path29, host, upgrade, blocking, reset } = request;
       let { body, headers, contentLength } = request;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -81834,7 +81832,7 @@ var require_client_h1 = __commonJS({
       if (blocking) {
         socket[kBlocking] = true;
       }
-      let header = `${method} ${path30} HTTP/1.1\r
+      let header = `${method} ${path29} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -82361,7 +82359,7 @@ var require_client_h2 = __commonJS({
     }
     function writeH2(client, request) {
       const session = client[kHTTP2Session];
-      const { method, path: path30, host, upgrade, expectContinue, signal, headers: reqHeaders } = request;
+      const { method, path: path29, host, upgrade, expectContinue, signal, headers: reqHeaders } = request;
       let { body } = request;
       if (upgrade) {
         util.errorRequest(client, request, new Error("Upgrade not supported for H2"));
@@ -82428,7 +82426,7 @@ var require_client_h2 = __commonJS({
         });
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path30;
+      headers[HTTP2_HEADER_PATH] = path29;
       headers[HTTP2_HEADER_SCHEME] = "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -82782,9 +82780,9 @@ var require_redirect_handler = __commonJS({
           return this.handler.onHeaders(statusCode, headers, resume, statusText);
         }
         const { origin, pathname, search } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path30 = search ? `${pathname}${search}` : pathname;
+        const path29 = search ? `${pathname}${search}` : pathname;
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path30;
+        this.opts.path = path29;
         this.opts.origin = origin;
         this.opts.maxRedirections = 0;
         this.opts.query = null;
@@ -85885,20 +85883,20 @@ var require_mock_utils = __commonJS({
       }
       return true;
     }
-    function safeUrl(path30) {
-      if (typeof path30 !== "string") {
-        return path30;
+    function safeUrl(path29) {
+      if (typeof path29 !== "string") {
+        return path29;
       }
-      const pathSegments = path30.split("?");
+      const pathSegments = path29.split("?");
       if (pathSegments.length !== 2) {
-        return path30;
+        return path29;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path30, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path30);
+    function matchKey(mockDispatch2, { path: path29, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path29);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -85920,7 +85918,7 @@ var require_mock_utils = __commonJS({
     function getMockDispatch(mockDispatches, key) {
       const basePath = key.query ? buildURL(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path30 }) => matchValue(safeUrl(path30), resolvedPath));
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path29 }) => matchValue(safeUrl(path29), resolvedPath));
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
       }
@@ -85958,9 +85956,9 @@ var require_mock_utils = __commonJS({
       }
     }
     function buildKey(opts) {
-      const { path: path30, method, body, headers, query } = opts;
+      const { path: path29, method, body, headers, query } = opts;
       return {
-        path: path30,
+        path: path29,
         method,
         body,
         headers,
@@ -86428,10 +86426,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path30, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path29, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path30,
+            Path: path29,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -91330,9 +91328,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path30) {
-      for (let i = 0; i < path30.length; ++i) {
-        const code = path30.charCodeAt(i);
+    function validateCookiePath(path29) {
+      for (let i = 0; i < path29.length; ++i) {
+        const code = path29.charCodeAt(i);
         if (code < 32 || // exclude CTLs (0-31)
         code === 127 || // DEL
         code === 59) {
@@ -93942,11 +93940,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path30 = opts.path;
+          let path29 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path30 = `/${path30}`;
+            path29 = `/${path29}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path30);
+          url = new URL(util.parseOrigin(url).origin + path29);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -94136,43 +94134,22 @@ function formatOptions(specs) {
 
 // packages/foundry-core/src/engine/commands.ts
 init_engine_import_meta_url();
-var path29 = __toESM(require("node:path"), 1);
+var path28 = __toESM(require("node:path"), 1);
 
 // packages/foundry-core/src/engine/backend/plan.ts
 init_engine_import_meta_url();
-var DOCTOR_REPORT_VERSION = 2;
+var DOCTOR_REPORT_VERSION = 3;
 function buildReport(inputs) {
   const endpoint = {
     id: "endpoint",
     available: inputs.endpoint.available,
     detail: inputs.endpoint.detail
   };
-  const wslVllm = {
-    id: "wsl-vllm",
-    available: inputs.wslVllm.available,
-    detail: inputs.wslVllm.detail
-  };
-  const vllmLocal = {
-    id: "vllm-local",
-    available: inputs.platform === "linux" && inputs.vllmLocal.available,
-    detail: inputs.vllmLocal.detail
-  };
-  const tiers = inputs.platform === "linux" ? [endpoint, vllmLocal, wslVllm] : [endpoint, wslVllm, vllmLocal];
-  let chosen;
-  if (inputs.mode === "auto") {
-    chosen = tiers.find((t) => t.available)?.id ?? null;
-  } else {
-    chosen = tiers.find((t) => t.id === "endpoint" && t.available)?.id ?? null;
-  }
   return {
     version: DOCTOR_REPORT_VERSION,
     platform: inputs.platform,
-    wsl: {
-      available: inputs.wslVllm.distros.length > 0,
-      distros: inputs.wslVllm.distros
-    },
-    tiers,
-    chosen
+    tiers: [endpoint],
+    chosen: endpoint.available ? "endpoint" : null
   };
 }
 function formatReport(report) {
@@ -94804,45 +94781,6 @@ async function pdfMeta(opts) {
 
 // packages/foundry-core/src/engine/backend/probe.ts
 init_engine_import_meta_url();
-var fs9 = __toESM(require("node:fs"), 1);
-var os = __toESM(require("node:os"), 1);
-var path6 = __toESM(require("node:path"), 1);
-var import_node_child_process = require("node:child_process");
-var spawnRunner = (cmd, args, timeoutMs) => new Promise((resolve23) => {
-  let proc;
-  try {
-    proc = (0, import_node_child_process.spawn)(cmd, [...args], { stdio: ["ignore", "pipe", "pipe"] });
-  } catch (err) {
-    resolve23({ exitCode: null, stdout: "", stderr: "", failure: err.message });
-    return;
-  }
-  const out = [];
-  const errBuf = [];
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    proc.kill();
-  }, timeoutMs);
-  proc.stdout.on("data", (d) => out.push(d));
-  proc.stderr.on("data", (d) => errBuf.push(d));
-  proc.on("error", (err) => {
-    clearTimeout(timer);
-    resolve23({ exitCode: null, stdout: "", stderr: "", failure: err.message });
-  });
-  proc.on("close", (code) => {
-    clearTimeout(timer);
-    resolve23({
-      exitCode: code,
-      stdout: decodeConsole(Buffer.concat(out)),
-      stderr: decodeConsole(Buffer.concat(errBuf)),
-      ...timedOut ? { failure: `timed out after ${timeoutMs}ms` } : {}
-    });
-  });
-});
-function decodeConsole(buf) {
-  if (buf.includes(0)) return buf.toString("utf16le").replace(/^﻿/, "");
-  return buf.toString("utf8");
-}
 async function probeEndpoint(url, timeoutMs = 3e3) {
   const miss = (detail) => ({ available: false, detail, url, models: [], latencyMs: null });
   const started = Date.now();
@@ -94876,114 +94814,25 @@ async function probeEndpoint(url, timeoutMs = 3e3) {
     latencyMs
   };
 }
-function findSpecProgram(module2) {
-  return `import importlib.util,sys;sys.exit(0 if importlib.util.find_spec('${module2}') else 3)`;
-}
-function wslPythonCandidates(settings) {
-  const explicit = settings.backend?.vllmPython;
-  if (explicit) return [explicit];
-  const envs = ["vllm", "dots", "vlmtest"];
-  const roots = ["~/miniconda3", "~/miniforge3", "~/anaconda3"];
-  const conda = roots.flatMap((root) => envs.map((env) => `${root}/envs/${env}/bin/python`));
-  return [...conda, "~/.venvs/vllm/bin/python"];
-}
-async function probeVllmLocal(settings, run = spawnRunner) {
-  if (process.platform !== "linux") {
-    return {
-      available: false,
-      python: null,
-      detail: process.platform === "win32" ? "on Windows vLLM lives in WSL \u2014 see the wsl-vllm tier" : "vLLM has no useful macOS backend; MLX is the Mac path"
-    };
-  }
-  const home = os.homedir();
-  const explicit = settings.backend?.vllmPython;
-  const candidates = explicit ? [explicit] : [
-    path6.join(home, ".foundry", "envs", "wsl-x64", "python", "bin", "python3"),
-    ...["vllm", "dots", "vlmtest"].flatMap((env) => ["miniconda3", "miniforge3", "anaconda3"].map((root) => path6.join(home, root, "envs", env, "bin", "python"))),
-    path6.join(home, ".venvs", "vllm", "bin", "python")
-  ];
-  const misses = [];
-  for (const candidate of candidates) {
-    if (!fs9.existsSync(candidate)) {
-      misses.push(`${candidate} (does not exist)`);
-      continue;
-    }
-    const probe = await run(candidate, ["-c", findSpecProgram("vllm")], 15e3);
-    if (probe.exitCode === 0) {
-      return { available: true, detail: `${candidate} can import vllm`, python: candidate };
-    }
-    misses.push(`${candidate} (${probe.failure ?? `no module vllm`})`);
-  }
-  return {
-    available: false,
-    python: null,
-    detail: `no local interpreter with vllm found. Tried:
-${misses.map((m) => `  ${m}`).join("\n")}
-Name one in settings (backend.vllmPython) if it lives elsewhere.`
-  };
-}
-async function probeWslVllm(settings, run = spawnRunner) {
-  let known = [];
-  const miss = (detail) => ({ available: false, detail, distro: null, python: null, distros: known });
-  if (process.platform !== "win32") return miss("WSL is a Windows feature; not win32");
-  const list = await run("wsl.exe", ["-l", "-q"], 15e3);
-  if (list.failure || list.exitCode !== 0) {
-    return miss(`wsl.exe -l -q failed: ${list.failure ?? list.stderr.trim() ?? `exit ${list.exitCode}`}`);
-  }
-  const distros = list.stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
-  known = distros;
-  if (distros.length === 0) return miss("wsl.exe lists no installed distros");
-  const wanted = settings.backend?.wslDistro;
-  if (wanted && !distros.includes(wanted)) {
-    return miss(`settings name WSL distro "${wanted}" but wsl.exe lists: ${distros.join(", ")}`);
-  }
-  const targets = wanted ? [wanted] : distros;
-  const candidates = wslPythonCandidates(settings);
-  const misses = [];
-  for (const distro of targets) {
-    for (const candidate of candidates) {
-      const probe = await run(
-        "wsl.exe",
-        ["-d", distro, "--", "sh", "-c", `${candidate} -c "${findSpecProgram("vllm")}"`],
-        2e4
-      );
-      if (probe.exitCode === 0) {
-        return {
-          available: true,
-          detail: `distro ${distro}, ${candidate} can import vllm`,
-          distro,
-          python: candidate,
-          distros
-        };
-      }
-      misses.push(`${distro}: ${candidate} (${probe.failure ?? `exit ${probe.exitCode}`})`);
-    }
-  }
-  return miss(
-    `no interpreter with vllm found. Tried:
-${misses.map((m) => `  ${m}`).join("\n")}
-Name one in settings (backend.vllmPython) if it lives elsewhere.`
-  );
-}
 
 // packages/foundry-core/src/engine/commands.ts
 init_settings();
 
 // packages/foundry-core/src/engine/vlm/blocks-dump.ts
 init_engine_import_meta_url();
-var fs17 = __toESM(require("node:fs"), 1);
-var path13 = __toESM(require("node:path"), 1);
+var fs16 = __toESM(require("node:fs"), 1);
+var path12 = __toESM(require("node:path"), 1);
 
 // packages/foundry-core/src/engine/vlm/bridge.ts
 init_engine_import_meta_url();
-var fs12 = __toESM(require("node:fs"), 1);
-var path9 = __toESM(require("node:path"), 1);
+var fs11 = __toESM(require("node:fs"), 1);
+var path8 = __toESM(require("node:path"), 1);
 
 // packages/foundry-core/src/engine/vlm/raster.ts
 init_engine_import_meta_url();
 var import_node_module = require("node:module");
-var fs11 = __toESM(require("node:fs"), 1);
-var path8 = __toESM(require("node:path"), 1);
+var fs10 = __toESM(require("node:fs"), 1);
+var path7 = __toESM(require("node:path"), 1);
 var import_node_url = require("node:url");
 var zlib = __toESM(require("node:zlib"), 1);
 init_fsdirs();
@@ -95023,20 +94872,20 @@ function writeImageFile(data, file) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (attempt > 0) sleepSync2(200);
     try {
-      fs11.writeFileSync(file, data);
+      fs10.writeFileSync(file, data);
       return;
     } catch (err) {
       last = err;
     }
     const tmp = `${file}.part`;
     try {
-      fs11.writeFileSync(tmp, data);
-      fs11.renameSync(tmp, file);
+      fs10.writeFileSync(tmp, data);
+      fs10.renameSync(tmp, file);
       return;
     } catch (err) {
       last = err;
       try {
-        fs11.unlinkSync(tmp);
+        fs10.unlinkSync(tmp);
       } catch {
       }
     }
@@ -95061,7 +94910,7 @@ function writePgm(file, mupdf, pixmap) {
 ${width} ${height}
 255
 `, "latin1");
-    fs11.writeFileSync(file, Buffer.concat([header, Buffer.from(samples.buffer, samples.byteOffset, width * height)]));
+    fs10.writeFileSync(file, Buffer.concat([header, Buffer.from(samples.buffer, samples.byteOffset, width * height)]));
   } finally {
     gray.destroy();
   }
@@ -95157,7 +95006,7 @@ var PdfPages = class {
   constructor(mupdf, file) {
     this.mupdf = mupdf;
     this.name = file;
-    this.doc = mupdf.Document.openDocument(fs11.readFileSync(file), file);
+    this.doc = mupdf.Document.openDocument(fs10.readFileSync(file), file);
   }
   mupdf;
   doc;
@@ -95230,7 +95079,7 @@ var ImagePages = class {
     this.mupdf = mupdf;
     this.paths = [...paths];
     this.name = `${this.paths.length} page image(s)`;
-    const missing = this.paths.find((p) => !fs11.existsSync(p));
+    const missing = this.paths.find((p) => !fs10.existsSync(p));
     if (missing !== void 0) throw new RasterError(`no such page image: ${missing}`);
   }
   mupdf;
@@ -95253,7 +95102,7 @@ var ImagePages = class {
     }
   }
   render(index, _dpi) {
-    const image = new this.mupdf.Image(fs11.readFileSync(this.paths[index]));
+    const image = new this.mupdf.Image(fs10.readFileSync(this.paths[index]));
     let pixmap = image.toPixmap();
     image.destroy();
     if (pixmap.getAlpha()) {
@@ -95271,7 +95120,7 @@ var ImagePages = class {
     return pixmap;
   }
   icc(index) {
-    return iccProfileOf(fs11.readFileSync(this.paths[index]));
+    return iccProfileOf(fs10.readFileSync(this.paths[index]));
   }
   close() {
   }
@@ -95363,7 +95212,7 @@ async function renderPages(opts) {
       renderMode: mode
     });
     if (opts.rendersDir) ensureDir(opts.rendersDir);
-    const scratch = opts.rendersDir ?? path8.join(process.env["TMPDIR"] ?? "/tmp", `foundry-vlm-${process.pid}`);
+    const scratch = opts.rendersDir ?? path7.join(process.env["TMPDIR"] ?? "/tmp", `foundry-vlm-${process.pid}`);
     ensureDir(scratch);
     let total = 0;
     for (let index = 0; index < source.count; index += 1) {
@@ -95377,11 +95226,11 @@ async function renderPages(opts) {
       const pixmap = mode !== null && source instanceof PdfPages && snapsTo(source.renderSize(index, opts.dpi), mode) ? source.renderTo(index, mode[0], mode[1]) : source.render(index, opts.dpi);
       const width = pixmap.getWidth();
       const height = pixmap.getHeight();
-      const image = path8.join(scratch, `page-${String(number).padStart(4, "0")}.png`);
+      const image = path7.join(scratch, `page-${String(number).padStart(4, "0")}.png`);
       try {
         writeImageFile(pngBytes(mupdf, pixmap, source.icc(index)), image);
         if (opts.grayscale === true) {
-          writePgm(path8.join(scratch, `page-${String(number).padStart(4, "0")}.pgm`), mupdf, pixmap);
+          writePgm(path7.join(scratch, `page-${String(number).padStart(4, "0")}.pgm`), mupdf, pixmap);
         }
       } finally {
         pixmap.destroy();
@@ -95390,7 +95239,7 @@ async function renderPages(opts) {
       total += seconds;
       if (width === 0 || height === 0) throw new RasterError(`page ${number} rendered to a ${width}x${height} image`);
       opts.onPage?.({ number, width, height, renderSeconds: seconds }, image);
-      if (!opts.rendersDir) fs11.unlinkSync(image);
+      if (!opts.rendersDir) fs10.unlinkSync(image);
       process.stderr.write(`  page ${number}/${source.count}: rendered
 `);
     }
@@ -95453,7 +95302,7 @@ async function cropPages(opts) {
             `the crop for ${crop.name} on page ${number} rendered to a ${pixmap.getWidth()}x${pixmap.getHeight()} image`
           );
         }
-        const file = path8.join(opts.cropsDir, crop.name);
+        const file = path7.join(opts.cropsDir, crop.name);
         writeImageFile(pngBytes(mupdf, pixmap, source.icc(number - 1)), file);
         opts.onCrop?.(crop.name, file);
       } finally {
@@ -95822,7 +95671,7 @@ var VlmBridgeError = class extends Error {
 };
 var MLX_MAX_PIXELS = 2e6;
 function pagesInDirectory(dir) {
-  const named = fs12.readdirSync(dir).filter((name) => PAGE_IMAGE.test(name)).map((name) => ({ name, at: /\d+/.exec(name) }));
+  const named = fs11.readdirSync(dir).filter((name) => PAGE_IMAGE.test(name)).map((name) => ({ name, at: /\d+/.exec(name) }));
   named.sort((a, b) => {
     if (a.at !== null && b.at !== null && a.at[0] !== b.at[0]) {
       return Number(a.at[0]) - Number(b.at[0]);
@@ -95830,7 +95679,7 @@ function pagesInDirectory(dir) {
     if (a.at === null !== (b.at === null)) return a.at === null ? 1 : -1;
     return a.name.localeCompare(b.name);
   });
-  return named.map((one) => path9.join(dir, one.name));
+  return named.map((one) => path8.join(dir, one.name));
 }
 var PAGE_IMAGE = /\.(jpe?g|png|tiff?|bmp|webp)$/i;
 function sourceName(source) {
@@ -95839,14 +95688,14 @@ function sourceName(source) {
 async function readPagesWithVlm(opts) {
   const source = opts.source;
   if (source.kind === "pdf") {
-    if (!fs12.existsSync(source.path)) {
+    if (!fs11.existsSync(source.path)) {
       throw new VlmBridgeError(`no such PDF: ${source.path}`);
     }
   } else {
     if (source.paths.length === 0) {
       throw new VlmBridgeError("a read of page images was given no pages");
     }
-    const gone = source.paths.find((one) => !fs12.existsSync(one));
+    const gone = source.paths.find((one) => !fs11.existsSync(one));
     if (gone !== void 0) {
       throw new VlmBridgeError(`no such page image: ${gone}`);
     }
@@ -95858,9 +95707,9 @@ async function readPagesWithVlm(opts) {
   let renderSeconds;
   try {
     ({ renderSeconds } = await renderPages({
-      source: source.kind === "pdf" ? { kind: "pdf", path: path9.resolve(source.path) } : { kind: "pages", paths: source.paths.map((one) => path9.resolve(one)) },
+      source: source.kind === "pdf" ? { kind: "pdf", path: path8.resolve(source.path) } : { kind: "pages", paths: source.paths.map((one) => path8.resolve(one)) },
       dpi: opts.dpi,
-      ...opts.rendersDir ? { rendersDir: path9.resolve(opts.rendersDir) } : {},
+      ...opts.rendersDir ? { rendersDir: path8.resolve(opts.rendersDir) } : {},
       grayscale: opts.grayscale === true,
       excludePages: [...excluded],
       ...opts.renderMode !== void 0 ? { renderMode: opts.renderMode } : {},
@@ -95949,9 +95798,9 @@ async function cropPageRenders(opts) {
   const written = [];
   try {
     await cropPages({
-      source: opts.source.kind === "pdf" ? { kind: "pdf", path: path9.resolve(opts.source.path) } : { kind: "pages", paths: opts.source.paths.map((page) => path9.resolve(page)) },
+      source: opts.source.kind === "pdf" ? { kind: "pdf", path: path8.resolve(opts.source.path) } : { kind: "pages", paths: opts.source.paths.map((page) => path8.resolve(page)) },
       dpi: opts.dpi,
-      cropsDir: path9.resolve(opts.cropsDir),
+      cropsDir: path8.resolve(opts.cropsDir),
       crops: opts.requests.map((r) => ({ page: r.page, name: r.name, box: [r.box.x1, r.box.y1, r.box.x2, r.box.y2] })),
       onCrop: (name, file) => written.push({ name, path: file })
     });
@@ -95967,13 +95816,13 @@ async function cropPageRenders(opts) {
   return written.map((entry) => ({
     name: entry.name,
     mediaType: "image/png",
-    data: new Uint8Array(fs12.readFileSync(entry.path))
+    data: new Uint8Array(fs11.readFileSync(entry.path))
   }));
 }
 async function readPdfTextLayer(opts) {
   let layer;
   try {
-    layer = await readTextLayer(path9.resolve(opts.pdfPath));
+    layer = await readTextLayer(path8.resolve(opts.pdfPath));
   } catch (err) {
     if (err instanceof RasterError) throw new VlmBridgeError(`reading the PDF's text layer failed: ${err.message}`);
     throw err;
@@ -95985,9 +95834,9 @@ async function readPdfTextLayer(opts) {
 
 // packages/foundry-core/src/engine/vlm/read.ts
 init_engine_import_meta_url();
-var fs15 = __toESM(require("node:fs"), 1);
-var os3 = __toESM(require("node:os"), 1);
-var path11 = __toESM(require("node:path"), 1);
+var fs14 = __toESM(require("node:fs"), 1);
+var os2 = __toESM(require("node:os"), 1);
+var path10 = __toESM(require("node:path"), 1);
 
 // packages/foundry-core/src/engine/vlm/band.ts
 init_engine_import_meta_url();
@@ -96036,8 +95885,8 @@ init_models();
 
 // packages/foundry-core/src/engine/vlm/readings.ts
 init_engine_import_meta_url();
-var fs14 = __toESM(require("node:fs"), 1);
-var path10 = __toESM(require("node:path"), 1);
+var fs13 = __toESM(require("node:fs"), 1);
+var path9 = __toESM(require("node:path"), 1);
 init_bom();
 init_fsdirs();
 init_fs_replace();
@@ -96069,9 +95918,9 @@ var VlmReadings = class _VlmReadings {
    * silently supply somebody else's pages.
    */
   static open(filePath) {
-    const readings = new _VlmReadings(path10.resolve(filePath));
-    if (!fs14.existsSync(readings.filePath)) return readings;
-    const lines = stripBom(fs14.readFileSync(readings.filePath, "utf8")).split("\n");
+    const readings = new _VlmReadings(path9.resolve(filePath));
+    if (!fs13.existsSync(readings.filePath)) return readings;
+    const lines = stripBom(fs13.readFileSync(readings.filePath, "utf8")).split("\n");
     for (const [index, line] of lines.entries()) {
       if (line.trim().length === 0) continue;
       const last = lines.slice(index + 1).every((rest) => rest.trim().length === 0);
@@ -96135,27 +95984,27 @@ var VlmReadings = class _VlmReadings {
   /** Append and fsync. The whole point is that a kill costs one page. */
   append(reading) {
     this.byPage.set(reading.page, reading);
-    ensureDir(path10.dirname(this.filePath));
-    const handle = fs14.openSync(this.filePath, "a");
+    ensureDir(path9.dirname(this.filePath));
+    const handle = fs13.openSync(this.filePath, "a");
     try {
-      fs14.writeSync(handle, `${JSON.stringify(reading)}
+      fs13.writeSync(handle, `${JSON.stringify(reading)}
 `);
-      fs14.fsyncSync(handle);
+      fs13.fsyncSync(handle);
     } finally {
-      fs14.closeSync(handle);
+      fs13.closeSync(handle);
     }
   }
 };
 function completionMarkerPath(readingsPath) {
-  const resolved = path10.resolve(readingsPath);
+  const resolved = path9.resolve(readingsPath);
   return `${resolved.replace(/\.jsonl$/i, "")}.completed.json`;
 }
 function readCompletionMarker(readingsPath) {
   const markerPath = completionMarkerPath(readingsPath);
-  if (!fs14.existsSync(markerPath)) return null;
+  if (!fs13.existsSync(markerPath)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs14.readFileSync(markerPath, "utf8")));
+    parsed = JSON.parse(stripBom(fs13.readFileSync(markerPath, "utf8")));
   } catch (err) {
     throw new VlmReadingsError(
       `${markerPath} is not JSON (${err instanceof Error ? err.message : String(err)}). It is where a finished conversion records itself, so this run cannot tell whether the readings beside it are a finished book or an interrupted one.`
@@ -96179,23 +96028,23 @@ function readCompletionMarker(readingsPath) {
 function writeCompletionMarker(readingsPath, completion) {
   const record2 = { ...completion, foundryVersion: VERSION };
   const markerPath = completionMarkerPath(readingsPath);
-  ensureDir(path10.dirname(markerPath));
+  ensureDir(path9.dirname(markerPath));
   const tmp = `${markerPath}.tmp`;
-  fs14.writeFileSync(tmp, `${JSON.stringify(record2, null, 2)}
+  fs13.writeFileSync(tmp, `${JSON.stringify(record2, null, 2)}
 `, "utf8");
   replaceFileSync(tmp, markerPath);
   return record2;
 }
 function renderModePath(readingsPath) {
-  const resolved = path10.resolve(readingsPath);
+  const resolved = path9.resolve(readingsPath);
   return `${resolved.replace(/\.jsonl$/i, "")}.render-mode.json`;
 }
 function readRenderMode(readingsPath) {
   const modePath = renderModePath(readingsPath);
-  if (!fs14.existsSync(modePath)) return null;
+  if (!fs13.existsSync(modePath)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs14.readFileSync(modePath, "utf8")));
+    parsed = JSON.parse(stripBom(fs13.readFileSync(modePath, "utf8")));
   } catch {
     return null;
   }
@@ -96205,14 +96054,14 @@ function readRenderMode(readingsPath) {
 }
 function writeRenderMode(readingsPath, mode) {
   const modePath = renderModePath(readingsPath);
-  ensureDir(path10.dirname(modePath));
+  ensureDir(path9.dirname(modePath));
   const tmp = `${modePath}.tmp`;
-  fs14.writeFileSync(tmp, `${JSON.stringify(mode, null, 2)}
+  fs13.writeFileSync(tmp, `${JSON.stringify(mode, null, 2)}
 `, "utf8");
   replaceFileSync(tmp, modePath);
 }
 function pendingPath(readingsPath) {
-  return `${path10.resolve(readingsPath)}.pending`;
+  return `${path9.resolve(readingsPath)}.pending`;
 }
 function pendingRequestPath(readingsPath) {
   return `${pendingPath(readingsPath)}.request`;
@@ -96230,10 +96079,10 @@ function sameAsk(request, ask) {
 }
 function readPendingRequest(readingsPath) {
   const requestPath = pendingRequestPath(readingsPath);
-  if (!fs14.existsSync(requestPath)) return null;
+  if (!fs13.existsSync(requestPath)) return null;
   let parsed;
   try {
-    parsed = JSON.parse(stripBom(fs14.readFileSync(requestPath, "utf8")));
+    parsed = JSON.parse(stripBom(fs13.readFileSync(requestPath, "utf8")));
   } catch (err) {
     throw new VlmReadingsError(
       `${requestPath} is not JSON (${err instanceof Error ? err.message : String(err)}). It is where a half-finished reading records what it was asked for, so this run cannot tell whether the pending bank beside it answers the same question. Delete that one file to resume the pending anyway, or pass --fresh-readings to throw the pending away and start the replacement over.`
@@ -96255,30 +96104,30 @@ function readPendingRequest(readingsPath) {
 function writePendingRequest(readingsPath, ask) {
   const record2 = { ...normaliseAsk(ask), foundryVersion: VERSION };
   const requestPath = pendingRequestPath(readingsPath);
-  ensureDir(path10.dirname(requestPath));
+  ensureDir(path9.dirname(requestPath));
   const tmp = `${requestPath}.tmp`;
-  fs14.writeFileSync(tmp, `${JSON.stringify(record2, null, 2)}
+  fs13.writeFileSync(tmp, `${JSON.stringify(record2, null, 2)}
 `, "utf8");
   replaceFileSync(tmp, requestPath);
   return record2;
 }
 function discardPending(readingsPath) {
-  fs14.rmSync(pendingPath(readingsPath), { force: true });
-  fs14.rmSync(pendingRequestPath(readingsPath), { force: true });
+  fs13.rmSync(pendingPath(readingsPath), { force: true });
+  fs13.rmSync(pendingRequestPath(readingsPath), { force: true });
 }
 function swapPendingIntoPlace(readingsPath, pending, completion) {
-  const resolved = path10.resolve(readingsPath);
+  const resolved = path9.resolve(readingsPath);
   if (pending === null) return writeCompletionMarker(resolved, completion);
-  const pendingResolved = path10.resolve(pending);
-  if (!fs14.existsSync(pendingResolved)) {
+  const pendingResolved = path9.resolve(pending);
+  if (!fs13.existsSync(pendingResolved)) {
     throw new VlmReadingsError(
       `${pendingResolved} was this run's reading and it is not there, so there is nothing to put in place of ${resolved}. The bank that is there has been left exactly as it was found: replacing a book somebody paid for with a file that does not exist is the one thing the pending bank exists to make impossible.`
     );
   }
-  fs14.rmSync(completionMarkerPath(resolved), { force: true });
-  ensureDir(path10.dirname(resolved));
+  fs13.rmSync(completionMarkerPath(resolved), { force: true });
+  ensureDir(path9.dirname(resolved));
   replaceFileSync(pendingResolved, resolved);
-  fs14.rmSync(`${pendingResolved}.request`, { force: true });
+  fs13.rmSync(`${pendingResolved}.request`, { force: true });
   return writeCompletionMarker(resolved, completion);
 }
 function describeAsk(skipPages, language) {
@@ -96290,7 +96139,7 @@ function openReadingsBank(request) {
       "--fresh-readings and --reuse-readings say opposite things about the same bank. Pass one."
     );
   }
-  const readingsPath = path10.resolve(request.readingsPath);
+  const readingsPath = path9.resolve(request.readingsPath);
   const ask = request.ask ?? {};
   const asked = normaliseAsk(ask);
   const pending = pendingPath(readingsPath);
@@ -96316,8 +96165,8 @@ function openReadingsBank(request) {
     };
   }
   let discarded = null;
-  if (!fs14.existsSync(pending)) {
-    fs14.rmSync(pendingRequestPath(readingsPath), { force: true });
+  if (!fs13.existsSync(pending)) {
+    fs13.rmSync(pendingRequestPath(readingsPath), { force: true });
   } else if (request.freshRequested) {
     const abandoned = VlmReadings.open(pending).size;
     discardPending(readingsPath);
@@ -96339,8 +96188,8 @@ function openReadingsBank(request) {
   }
   const preface = discarded === null ? "" : `${discarded}; `;
   if (banked > 0 && (completed !== null || request.freshRequested)) {
-    ensureDir(path10.dirname(pending));
-    fs14.closeSync(fs14.openSync(pending, "a"));
+    ensureDir(path9.dirname(pending));
+    fs13.closeSync(fs13.openSync(pending, "a"));
     writePendingRequest(readingsPath, ask);
     return {
       action: "read-fresh",
@@ -96387,7 +96236,7 @@ async function confirmServedModel(label, endpoint, wanted, headers, log2) {
   );
 }
 function renderPath(dir, page) {
-  return path11.join(dir, `page-${String(page).padStart(4, "0")}.png`);
+  return path10.join(dir, `page-${String(page).padStart(4, "0")}.png`);
 }
 function replaysCompletedBank(opts) {
   if (opts.reuseReadings !== true || opts.readingsPath === void 0) return false;
@@ -96680,14 +96529,14 @@ function sourceFor(opts) {
     );
   }
   if (opts.pdfPath !== void 0) {
-    const pdfPath = path11.resolve(opts.pdfPath);
-    if (!fs15.existsSync(pdfPath)) {
+    const pdfPath = path10.resolve(opts.pdfPath);
+    if (!fs14.existsSync(pdfPath)) {
       throw new Error(`no such PDF: ${pdfPath}. A reading is of a book, and this one is not there.`);
     }
     return { kind: "pdf", path: pdfPath };
   }
-  const dir = path11.resolve(opts.pagesDir);
-  if (!fs15.existsSync(dir)) {
+  const dir = path10.resolve(opts.pagesDir);
+  if (!fs14.existsSync(dir)) {
     throw new Error(`no such directory: ${dir}. A reading is of a book, and its pages are not there.`);
   }
   const paths = pagesInDirectory(dir);
@@ -96700,7 +96549,7 @@ async function vlmRead(opts) {
   const started = Date.now();
   const model = requireVlmModel(opts.modelId);
   const source = sourceFor(opts);
-  const readingsPath = path11.resolve(opts.readingsPath);
+  const readingsPath = path10.resolve(opts.readingsPath);
   const viaEndpoint = opts.endpoint !== void 0;
   const localBudget = viaEndpoint ? void 0 : pixelBudget(model);
   const skipPages = [...new Set(opts.skipPages ?? [])].sort((a, b) => a - b);
@@ -96711,7 +96560,7 @@ async function vlmRead(opts) {
     `vlm-read: the product of this run is the reading in ${readingsPath}. No book is written here \u2014 the formats are rendered out of the bank afterwards, with vlm-convert --reuse-readings.`
   );
   const keepRenders = opts.rendersDir !== void 0;
-  const rendersDir = opts.rendersDir !== void 0 ? path11.resolve(opts.rendersDir) : fs15.mkdtempSync(path11.join(os3.tmpdir(), "foundry-vlm-"));
+  const rendersDir = opts.rendersDir !== void 0 ? path10.resolve(opts.rendersDir) : fs14.mkdtempSync(path10.join(os2.tmpdir(), "foundry-vlm-"));
   try {
     const phase = await readPagesIntoBank({
       label: "vlm-read",
@@ -96776,7 +96625,7 @@ async function vlmRead(opts) {
       peakRssBytes: phase.run.peakRssBytes
     };
   } finally {
-    if (!keepRenders) fs15.rmSync(rendersDir, { recursive: true, force: true });
+    if (!keepRenders) fs14.rmSync(rendersDir, { recursive: true, force: true });
   }
 }
 
@@ -96791,8 +96640,8 @@ var VlmBlocksError = class extends Error {
   }
 };
 async function dumpBlocks(opts) {
-  const readingsPath = path13.resolve(opts.readingsPath);
-  if (!fs17.existsSync(readingsPath)) {
+  const readingsPath = path12.resolve(opts.readingsPath);
+  if (!fs16.existsSync(readingsPath)) {
     throw new VlmBlocksError(
       `no such readings file: ${readingsPath}. This command reads a bank of page answers; it never reads a page from a model, so an absent bank is nothing it can make up for.`
     );
@@ -96881,8 +96730,8 @@ async function renderSizes(missing, opts, readingsPath, fallbackBudget) {
       `${readingsPath} records no render size for page(s) ${missing.slice(0, 12).join(", ")}${missing.length > 12 ? ` (and ${missing.length - 12} more)` : ""}, which means it was written before a bank recorded the geometry of the pages it banked. The boxes in those answers cannot be placed without knowing how big the page they were measured on was, so pass --pdf and they are measured again.`
     );
   }
-  const pdfPath = path13.resolve(opts.pdfPath);
-  if (!fs17.existsSync(pdfPath)) throw new VlmBlocksError(`no such PDF: ${pdfPath}`);
+  const pdfPath = path12.resolve(opts.pdfPath);
+  if (!fs16.existsSync(pdfPath)) throw new VlmBlocksError(`no such PDF: ${pdfPath}`);
   const model = requireVlmModel(opts.modelId);
   const run = await readPagesWithVlm({
     // A dump measures a DOCUMENT's pages, so this route rasterises and always
@@ -96906,8 +96755,8 @@ init_prose();
 // packages/foundry-core/src/engine/analyze/report.ts
 init_engine_import_meta_url();
 var import_node_crypto3 = require("node:crypto");
-var fs19 = __toESM(require("node:fs"), 1);
-var path14 = __toESM(require("node:path"), 1);
+var fs18 = __toESM(require("node:fs"), 1);
+var path13 = __toESM(require("node:path"), 1);
 init_bom();
 init_fsdirs();
 init_fs_replace();
@@ -96950,8 +96799,8 @@ var AnalysisReport = class _AnalysisReport {
    * on disk belong to whatever ran last and are replaced wholesale at the swap.
    */
   read(filePath) {
-    if (!fs19.existsSync(filePath)) return;
-    const lines = stripBom(fs19.readFileSync(filePath, "utf8")).split("\n");
+    if (!fs18.existsSync(filePath)) return;
+    const lines = stripBom(fs18.readFileSync(filePath, "utf8")).split("\n");
     let header = null;
     for (const [index, line] of lines.entries()) {
       if (line.trim().length === 0) continue;
@@ -97012,14 +96861,14 @@ var AnalysisReport = class _AnalysisReport {
    * to close, so nothing can interleave a line into the middle of another.
    */
   append(row) {
-    ensureDir(path14.dirname(this.appendPath));
-    const handle = fs19.openSync(this.appendPath, "a");
+    ensureDir(path13.dirname(this.appendPath));
+    const handle = fs18.openSync(this.appendPath, "a");
     try {
-      fs19.writeSync(handle, `${JSON.stringify(row)}
+      fs18.writeSync(handle, `${JSON.stringify(row)}
 `);
-      fs19.fsyncSync(handle);
+      fs18.fsyncSync(handle);
     } finally {
-      fs19.closeSync(handle);
+      fs18.closeSync(handle);
     }
     this.rows += 1;
   }
@@ -97042,19 +96891,19 @@ var AnalysisReport = class _AnalysisReport {
     for (const [key, answer] of this.verdicts) {
       lines.push(JSON.stringify({ kind: "verdict", key, verdict: answer.verdict, reason: answer.reason }));
     }
-    ensureDir(path14.dirname(this.outPath));
+    ensureDir(path13.dirname(this.outPath));
     const part = `${this.outPath}.${process.pid}.part`;
-    const handle = fs19.openSync(part, "w");
+    const handle = fs18.openSync(part, "w");
     try {
-      fs19.writeSync(handle, `${lines.join("\n")}
+      fs18.writeSync(handle, `${lines.join("\n")}
 `);
-      fs19.fsyncSync(handle);
+      fs18.fsyncSync(handle);
     } finally {
-      fs19.closeSync(handle);
+      fs18.closeSync(handle);
     }
     replaceFileSync(part, this.outPath);
-    if (this.appendPath !== this.outPath && fs19.existsSync(this.appendPath)) {
-      fs19.unlinkSync(this.appendPath);
+    if (this.appendPath !== this.outPath && fs18.existsSync(this.appendPath)) {
+      fs18.unlinkSync(this.appendPath);
     }
   }
   /** Open a report for a run, reading whatever it may reuse. */
@@ -97065,15 +96914,15 @@ var AnalysisReport = class _AnalysisReport {
   }
 };
 function pendingReportPath(outPath) {
-  return `${path14.resolve(outPath)}.pending`;
+  return `${path13.resolve(outPath)}.pending`;
 }
 function openAnalysisReport(request) {
-  const outPath = path14.resolve(request.outPath);
+  const outPath = path13.resolve(request.outPath);
   const pending = pendingReportPath(outPath);
   if (request.freshRequested) {
-    ensureDir(path14.dirname(pending));
+    ensureDir(path13.dirname(pending));
     const report2 = AnalysisReport.openFor(outPath, pending, [pending]);
-    fs19.closeSync(fs19.openSync(pending, "a"));
+    fs18.closeSync(fs18.openSync(pending, "a"));
     return {
       report: report2,
       pendingPath: pending,
@@ -97125,22 +96974,22 @@ function viterbi(logProbs, switchCost) {
     dp = next;
     back.push(from);
   }
-  const path30 = new Array(n);
+  const path29 = new Array(n);
   let j = argmax(dp);
-  path30[n - 1] = j;
+  path29[n - 1] = j;
   for (let i = n - 2; i >= 0; i -= 1) {
     j = back[i][j];
-    path30[i] = j;
+    path29[i] = j;
   }
-  return path30;
+  return path29;
 }
-function runsOf(path30, state) {
+function runsOf(path29, state) {
   const out = [];
   let i = 0;
-  while (i < path30.length) {
-    if (path30[i] === state) {
+  while (i < path29.length) {
+    if (path29[i] === state) {
       let k = i;
-      while (k < path30.length && path30[k] === state) k += 1;
+      while (k < path29.length && path29[k] === state) k += 1;
       out.push([i, k]);
       i = k;
     } else {
@@ -97206,9 +97055,9 @@ function onOffPath(hot, params) {
   const rows = hot.map((h) => [Math.log(Math.max(1 - h, LOG_FLOOR2)), Math.log(Math.max(h, LOG_FLOOR2)) - params.tau]);
   return viterbi(rows, params.switchCost);
 }
-function mergedRuns(path30, units, params) {
+function mergedRuns(path29, units, params) {
   const out = [];
-  for (const [a, bEx] of runsOf(path30, 1)) {
+  for (const [a, bEx] of runsOf(path29, 1)) {
     const b = bEx - 1;
     const prev = out[out.length - 1];
     if (prev) {
@@ -97270,8 +97119,8 @@ function makeSpan(id, from, to, categories, units, hot) {
 function buildSpans(map, params = DEFAULT_SPAN_PARAMS) {
   if (map.units.length === 0 || map.categories.length === 0) return [];
   const hot = hotness(map, params);
-  const path30 = onOffPath(hot, params);
-  const ranges = mergedRuns(path30, map.units, params);
+  const path29 = onOffPath(hot, params);
+  const ranges = mergedRuns(path29, map.units, params);
   const spans = ranges.map(([a, b], id) => makeSpan(id, a, b, keepCategories(scoreRange(map, a, b, params), params.categoryFloor), map.units, hot));
   return spans.sort(compareSpans);
 }
@@ -97690,8 +97539,8 @@ function findingRows(finding, sentences, hit) {
 // packages/foundry-core/src/engine/vlm/book-run.ts
 init_engine_import_meta_url();
 var crypto = __toESM(require("node:crypto"), 1);
-var fs21 = __toESM(require("node:fs"), 1);
-var path16 = __toESM(require("node:path"), 1);
+var fs20 = __toESM(require("node:fs"), 1);
+var path15 = __toESM(require("node:path"), 1);
 init_fsdirs();
 init_fs_replace();
 init_book_file();
@@ -97707,7 +97556,7 @@ function bankSha(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 16);
 }
 function imagesDir(readingsPath) {
-  const resolved = path16.resolve(readingsPath);
+  const resolved = path15.resolve(readingsPath);
   return `${resolved.replace(/\.jsonl$/i, "")}.images`;
 }
 function figureSource(opts) {
@@ -97717,13 +97566,13 @@ function figureSource(opts) {
     );
   }
   if (opts.pdfPath !== void 0) {
-    const pdfPath = path16.resolve(opts.pdfPath);
-    if (!fs21.existsSync(pdfPath)) throw new BookRunError(`no such PDF: ${pdfPath}`);
+    const pdfPath = path15.resolve(opts.pdfPath);
+    if (!fs20.existsSync(pdfPath)) throw new BookRunError(`no such PDF: ${pdfPath}`);
     return { kind: "pdf", path: pdfPath };
   }
   if (opts.pagesDir === void 0) return null;
-  const dir = path16.resolve(opts.pagesDir);
-  if (!fs21.existsSync(dir)) {
+  const dir = path15.resolve(opts.pagesDir);
+  if (!fs20.existsSync(dir)) {
     throw new BookRunError(
       `no such directory: ${dir}. The figures are cut out of the pages this book was read from, and they are not there.`
     );
@@ -97738,14 +97587,14 @@ function figureSource(opts) {
 }
 async function buildBookFile(opts) {
   const cutFrom = figureSource(opts);
-  const readingsPath = path16.resolve(opts.readingsPath);
-  if (!fs21.existsSync(readingsPath)) {
+  const readingsPath = path15.resolve(opts.readingsPath);
+  if (!fs20.existsSync(readingsPath)) {
     throw new BookRunError(
       `no such readings file: ${readingsPath}. This command reflows a bank of page answers into a book; it reads no page from a model, so an absent bank is nothing it can make up for.`
     );
   }
   const readings = VlmReadings.open(readingsPath);
-  const sha = bankSha(fs21.readFileSync(readingsPath));
+  const sha = bankSha(fs20.readFileSync(readingsPath));
   const pages = readings.pages();
   if (pages.length === 0) {
     throw new BookRunError(
@@ -97802,15 +97651,15 @@ async function buildBookFile(opts) {
     );
   }
   const images = await cutFigures(rows, readingsPath, cutFrom, opts);
-  const resolved = path16.resolve(opts.outPath);
-  ensureDir(path16.dirname(resolved));
+  const resolved = path15.resolve(opts.outPath);
+  ensureDir(path15.dirname(resolved));
   const pending = `${resolved}.tmp`;
   const figures = {
     blocks: rows.filter((row) => row.category === "Picture" && row.shelf === void 0).length,
     cut: images.length,
     from: cutFrom === null ? null : cutFrom.kind
   };
-  fs21.writeFileSync(pending, formatBookFile({ ...book, figures }), "utf8");
+  fs20.writeFileSync(pending, formatBookFile({ ...book, figures }), "utf8");
   replaceFileSync(pending, resolved);
   opts.log(
     `vlm-book: ${rows.length - shelved.length} block(s) from ${parsed.length} page(s) \u2014 ${joinedPages.length} paragraph(s) joined across a page turn, ${flow.reflowed.length} reflowed out of print lines, ${flow.mergedHeadings.length} heading(s) merged out of two boxes, ${flow.promotedHeadings.length} heading(s) the contents page lists, promoted to chapter openings, ${flow.adoptedNotes.length} list item(s) adopted as footnotes, ${flow.suppressedHeads.length} running head(s) dropped` + (unreadable.length === 0 ? "" : `, ${unreadable.length} page(s) UNREADABLE`)
@@ -97848,7 +97697,7 @@ async function clearStaleCrops(cropsDir, log2) {
   const backoff = [50, 150, 400, 900];
   for (let attempt = 0; ; attempt += 1) {
     try {
-      fs21.rmSync(cropsDir, { recursive: true, force: true });
+      fs20.rmSync(cropsDir, { recursive: true, force: true });
       return;
     } catch (err) {
       const code = err.code;
@@ -97910,8 +97759,8 @@ async function cutFigures(rows, readingsPath, source, opts) {
 
 // packages/foundry-core/src/engine/vlm/compile.ts
 init_engine_import_meta_url();
-var fs22 = __toESM(require("node:fs"), 1);
-var path17 = __toESM(require("node:path"), 1);
+var fs21 = __toESM(require("node:fs"), 1);
+var path16 = __toESM(require("node:path"), 1);
 init_digest();
 init_stamp();
 init_fsdirs();
@@ -97980,7 +97829,7 @@ function formatOf(outPath) {
 function titleFor(opts) {
   const said = opts.title?.trim() ?? "";
   if (said.length > 0) return said;
-  return path17.basename(opts.outPath).replace(/\.[^.]+$/, "").trim();
+  return path16.basename(opts.outPath).replace(/\.[^.]+$/, "").trim();
 }
 function asBlock(row) {
   return {
@@ -98268,25 +98117,25 @@ function figuresIn(imagesDir2, rows) {
         `"${row.id}" names its figure as a path rather than as a name, and a book file names figures by the file they were cut to inside this book's own directory.`
       );
     }
-    const file = path17.join(imagesDir2, row.image);
-    if (!fs22.existsSync(file)) continue;
+    const file = path16.join(imagesDir2, row.image);
+    if (!fs21.existsSync(file)) continue;
     found.set(row.image, file);
   }
   return found;
 }
 function compileBook(opts) {
-  const bookPath = path17.resolve(opts.bookPath);
-  const outPath = path17.resolve(opts.outPath);
+  const bookPath = path16.resolve(opts.bookPath);
+  const outPath = path16.resolve(opts.outPath);
   const format = formatOf(outPath);
   if (bookPath === outPath) {
     throw new CompileError("this run would write the book over the file it is compiling from.");
   }
-  if (!fs22.existsSync(bookPath)) {
+  if (!fs21.existsSync(bookPath)) {
     throw new CompileError(`no such book file: ${bookPath}`);
   }
   let book;
   try {
-    book = parseBookFile(fs22.readFileSync(bookPath, "utf8"));
+    book = parseBookFile(fs21.readFileSync(bookPath, "utf8"));
   } catch (err) {
     if (!(err instanceof BookFileError)) throw err;
     throw new CompileError(`this is not a book this program can compile: ${err.message}`);
@@ -98297,7 +98146,7 @@ function compileBook(opts) {
       "nothing in this book is text a book is made of \u2014 every row is out of the flow. There is no book to write."
     );
   }
-  const images = opts.imagesDir === void 0 || format === "txt" ? /* @__PURE__ */ new Map() : figuresIn(path17.resolve(opts.imagesDir), flow);
+  const images = opts.imagesDir === void 0 || format === "txt" ? /* @__PURE__ */ new Map() : figuresIn(path16.resolve(opts.imagesDir), flow);
   const column = bodyColumn(flow.map(asBlock), flow[0].pageWidth);
   const spans = spansOf(flow, book);
   const documents = [];
@@ -98398,11 +98247,11 @@ function compileBook(opts) {
     id: `img${index}`,
     href: `images/${name}`,
     mediaType: figureMediaType(name),
-    data: new Uint8Array(fs22.readFileSync(file))
+    data: new Uint8Array(fs21.readFileSync(file))
   }));
   const packaged = format === "txt" ? packageVlmText(metadata, documents) : packageVlmEpub(metadata, documents, resources, dotsStylesheet(book.typography), navTree(chapters));
-  ensureDir(path17.dirname(outPath));
-  fs22.writeFileSync(outPath, packaged.bytes);
+  ensureDir(path16.dirname(outPath));
+  fs21.writeFileSync(outPath, packaged.bytes);
   opts.log(
     `vlm-compile: ${flow.length - notes} block(s) and ${notes} note(s) in ${documents.length} document(s), ${pictures} figure(s), ${linked} reference number(s) linked` + (strippedMarkers === 0 ? "" : `, ${strippedMarkers} number(s) no note answers for REMOVED from the prose`) + (unresolved === 0 ? "" : `, ${unresolved} recorded reference(s) the prose does not print as a superscript`)
   );
@@ -98423,9 +98272,9 @@ function compileBook(opts) {
 // packages/foundry-core/src/engine/vlm/convert.ts
 init_engine_import_meta_url();
 var crypto2 = __toESM(require("node:crypto"), 1);
-var fs24 = __toESM(require("node:fs"), 1);
-var os4 = __toESM(require("node:os"), 1);
-var path18 = __toESM(require("node:path"), 1);
+var fs23 = __toESM(require("node:fs"), 1);
+var os3 = __toESM(require("node:os"), 1);
+var path17 = __toESM(require("node:path"), 1);
 init_stamp();
 init_fsdirs();
 init_records();
@@ -98438,7 +98287,7 @@ init_overlay();
 
 // packages/foundry-core/src/engine/vlm/pdf-text.ts
 init_engine_import_meta_url();
-var fs23 = __toESM(require("node:fs"), 1);
+var fs22 = __toESM(require("node:fs"), 1);
 var import_fontkit = __toESM(require_fontkit_umd(), 1);
 var import_pdf_lib2 = __toESM(require_cjs(), 1);
 init_xml();
@@ -98729,7 +98578,7 @@ async function embedFaces(doc, pages) {
   const covered = /* @__PURE__ */ new Set();
   for (const face of ["roman", "italic", "bold", "boldItalic"]) {
     if (!wanted.has(face)) continue;
-    const font = await doc.embedFont(fs23.readFileSync(FACE_FILES[face]), { subset: true });
+    const font = await doc.embedFont(fs22.readFileSync(FACE_FILES[face]), { subset: true });
     fonts.set(face, font);
     for (const code of font.getCharacterSet()) covered.add(code);
   }
@@ -99347,8 +99196,8 @@ init_text_out();
 async function vlmConvert(opts) {
   const started = Date.now();
   const model = requireVlmModel(opts.modelId);
-  const pdfPath = path18.resolve(opts.pdfPath);
-  const outPath = path18.resolve(opts.outPath);
+  const pdfPath = path17.resolve(opts.pdfPath);
+  const outPath = path17.resolve(opts.outPath);
   const geometric = model.dialect === "dots-json";
   const viaEndpoint = opts.endpoint !== void 0;
   const format = opts.format ?? "epub";
@@ -99378,7 +99227,7 @@ async function vlmConvert(opts) {
   if (opts.overlayPath !== void 0) {
     const spine = overlay.chapters === void 0 ? "no chapter list, so the chapters are worked out as usual" : `${overlay.chapters.length} chapter(s) laid out, and the book divides there and nowhere else`;
     opts.log(
-      `vlm-convert: overlay ${path18.resolve(opts.overlayPath)} \u2014 ${overlay.amendments.length} amendment(s), applied to the blocks as each page is parsed; ${spine}. The readings bank is not touched: what the model said and what a person decided about it are two files.`
+      `vlm-convert: overlay ${path17.resolve(opts.overlayPath)} \u2014 ${overlay.amendments.length} amendment(s), applied to the blocks as each page is parsed; ${spine}. The readings bank is not touched: what the model said and what a person decided about it are two files.`
     );
   }
   if (opts.recordsPath !== void 0 && !geometric) {
@@ -99402,20 +99251,20 @@ async function vlmConvert(opts) {
     }
     return JSON.stringify(narrationStampMeta(parsed));
   })();
-  if (opts.recordsPath !== void 0 && !fs24.existsSync(opts.recordsPath)) {
+  if (opts.recordsPath !== void 0 && !fs23.existsSync(opts.recordsPath)) {
     throw new Error(
-      `--records ${path18.resolve(opts.recordsPath)} does not exist. A missing records file is not an empty one: every block would keep its source text and this run would write the untranslated book with "${opts.language}" stamped on it, which is a file nobody can tell from the translation they asked for.`
+      `--records ${path17.resolve(opts.recordsPath)} does not exist. A missing records file is not an empty one: every block would keep its source text and this run would write the untranslated book with "${opts.language}" stamped on it, which is a file nobody can tell from the translation they asked for.`
     );
   }
   const records = opts.recordsPath === void 0 ? null : TranslationRecords.open(opts.recordsPath).positionMap();
   if (records !== null && records.size === 0) {
     throw new Error(
-      `--records ${path18.resolve(opts.recordsPath)} answers for no position at all. The same refusal as a missing file and for the same reason \u2014 a run that substituted nothing would write the untranslated book and call it a translation.`
+      `--records ${path17.resolve(opts.recordsPath)} answers for no position at all. The same refusal as a missing file and for the same reason \u2014 a run that substituted nothing would write the untranslated book and call it a translation.`
     );
   }
   if (records !== null) {
     opts.log(
-      `vlm-convert: records ${path18.resolve(opts.recordsPath)} \u2014 ${records.size} position(s) whose words are substituted for the book's own as the documents are written. The reflow, the chapters and the curation all run on the SOURCE text first, and dc:language comes from --language (${opts.language}), because a file of sentences does not declare a language.`
+      `vlm-convert: records ${path17.resolve(opts.recordsPath)} \u2014 ${records.size} position(s) whose words are substituted for the book's own as the documents are written. The reflow, the chapters and the curation all run on the SOURCE text first, and dc:language comes from --language (${opts.language}), because a file of sentences does not declare a language.`
     );
   }
   const localBudget = viaEndpoint ? void 0 : pixelBudget(model);
@@ -99424,7 +99273,7 @@ async function vlmConvert(opts) {
     viaEndpoint ? `vlm-convert: ${model.id} via ${opts.endpoint}, which publishes the page contract` : `vlm-convert: ${model.id} (${model.repo}), pages rendered at ${VLM_DPI} dpi${localBudget === void 0 ? "" : `, ${localBudget.toLocaleString("en-US")} pixel budget for any page this run reads`}`
   );
   const keepRenders = opts.rendersDir !== void 0;
-  const rendersDir = opts.rendersDir !== void 0 ? path18.resolve(opts.rendersDir) : fs24.mkdtempSync(path18.join(os4.tmpdir(), "foundry-vlm-"));
+  const rendersDir = opts.rendersDir !== void 0 ? path17.resolve(opts.rendersDir) : fs23.mkdtempSync(path17.join(os3.tmpdir(), "foundry-vlm-"));
   try {
     const phase = await readPagesIntoBank({
       label: "vlm-convert",
@@ -99523,9 +99372,9 @@ async function vlmConvert(opts) {
     }
     if (geometric) checkPixelBudget(geometryPages, run.pages, budgetFor, opts.log);
     const parseSeconds = (Date.now() - parseStarted) / 1e3;
-    const stem = path18.basename(pdfPath).replace(/\.[^.]+$/, "").trim();
+    const stem = path17.basename(pdfPath).replace(/\.[^.]+$/, "").trim();
     const title = run.document.title.length > 0 ? run.document.title : stem;
-    const identifier = `urn:sha256:${crypto2.createHash("sha256").update(fs24.readFileSync(pdfPath)).digest("hex")}`;
+    const identifier = `urn:sha256:${crypto2.createHash("sha256").update(fs23.readFileSync(pdfPath)).digest("hex")}`;
     const narrationStamp = narrationStampMetaJson;
     const metadata = {
       title,
@@ -99559,7 +99408,7 @@ async function vlmConvert(opts) {
         `vlm-convert: ${blocks} blocks over ${geometryPages.length} pages in ${parseSeconds.toFixed(2)}s, ${furniture} header/footer block(s) KEPT \u2014 this route reprints the page, and the folio was printed on the page`
       );
       const built = await buildTextPdf({
-        pdfBytes: fs24.readFileSync(pdfPath),
+        pdfBytes: fs23.readFileSync(pdfPath),
         dpi: VLM_DPI,
         crop: (requests) => cropRenders(requests, pdfPath, rendersDir),
         /*
@@ -99721,15 +99570,15 @@ async function vlmConvert(opts) {
       zipSeconds = built.zipSeconds;
     }
     const writeStarted = Date.now();
-    ensureDir(path18.dirname(outPath));
-    fs24.writeFileSync(outPath, bytes);
+    ensureDir(path17.dirname(outPath));
+    fs23.writeFileSync(outPath, bytes);
     for (const sidecar of sidecars) {
-      const beside = path18.join(path18.dirname(outPath), ...sidecar.path.split("/"));
-      ensureDir(path18.dirname(beside));
-      fs24.writeFileSync(beside, sidecar.data);
+      const beside = path17.join(path17.dirname(outPath), ...sidecar.path.split("/"));
+      ensureDir(path17.dirname(beside));
+      fs23.writeFileSync(beside, sidecar.data);
     }
     if (opts.chaptersPath !== void 0) {
-      writeProposals(path18.resolve(opts.chaptersPath), proposals, chapters, skipped, skipPages);
+      writeProposals(path17.resolve(opts.chaptersPath), proposals, chapters, skipped, skipPages);
       opts.log(`vlm-convert: ${proposals.length} chapter proposal(s) written to ${opts.chaptersPath}`);
     }
     if (opts.readingsPath !== void 0) {
@@ -99742,7 +99591,7 @@ async function vlmConvert(opts) {
       });
       if (phase.pendingPath !== null) {
         opts.log(
-          `vlm-convert: the reading in ${phase.pendingPath} is complete and this book was made from it, so it has taken the place of ${path18.resolve(opts.readingsPath)} \u2014 one rename, after the book landed. The reading that was there was not touched by anything before this line.`
+          `vlm-convert: the reading in ${phase.pendingPath} is complete and this book was made from it, so it has taken the place of ${path17.resolve(opts.readingsPath)} \u2014 one rename, after the book landed. The reading that was there was not touched by anything before this line.`
         );
       }
       opts.log(
@@ -99791,13 +99640,13 @@ async function vlmConvert(opts) {
       peakRssBytes: run.peakRssBytes
     };
   } finally {
-    if (!keepRenders) fs24.rmSync(rendersDir, { recursive: true, force: true });
+    if (!keepRenders) fs23.rmSync(rendersDir, { recursive: true, force: true });
   }
 }
 function sameFile(a, b) {
   const real = (filePath) => {
     try {
-      return fs24.realpathSync.native(filePath);
+      return fs23.realpathSync.native(filePath);
     } catch {
       return filePath;
     }
@@ -99820,7 +99669,7 @@ async function cropRenders(requests, pdfPath, rendersDir) {
     // takes one — so this face is named here rather than plumbed through.
     source: { kind: "pdf", path: pdfPath },
     dpi: VLM_DPI,
-    cropsDir: path18.join(rendersDir, "crops"),
+    cropsDir: path17.join(rendersDir, "crops"),
     requests: requests.map((r) => ({ page: r.page, box: r.box, name: r.name }))
   });
   return cropped;
@@ -99849,8 +99698,8 @@ function checkPixelBudget(pages, rendered, budgetFor, log2) {
   }
 }
 function writeProposals(filePath, proposals, sections, unreadable, skippedPages) {
-  ensureDir(path18.dirname(filePath));
-  fs24.writeFileSync(
+  ensureDir(path17.dirname(filePath));
+  fs23.writeFileSync(
     filePath,
     `${JSON.stringify({ proposals, sections, unreadable, skippedPages }, null, 1)}
 `
@@ -99860,8 +99709,8 @@ function writeProposals(filePath, proposals, sections, unreadable, skippedPages)
 // packages/foundry-core/src/engine/vlm/epub-explode.ts
 init_engine_import_meta_url();
 var crypto3 = __toESM(require("node:crypto"), 1);
-var fs25 = __toESM(require("node:fs"), 1);
-var path19 = __toESM(require("node:path"), 1);
+var fs24 = __toESM(require("node:fs"), 1);
+var path18 = __toESM(require("node:path"), 1);
 init_fsdirs();
 init_fs_replace();
 init_xml();
@@ -100334,7 +100183,7 @@ function epubSha(bytes) {
   return crypto3.createHash("sha256").update(bytes).digest("hex").slice(0, 16);
 }
 function epubImagesDir(outPath) {
-  const resolved = path19.resolve(outPath);
+  const resolved = path18.resolve(outPath);
   const stem = resolved.toLowerCase().endsWith(".book.jsonl") ? resolved.slice(0, -".book.jsonl".length) : resolved.replace(/\.jsonl$/i, "");
   return `${stem}.images`;
 }
@@ -100536,27 +100385,27 @@ function ncxIn(opfSource, opfDir) {
   return null;
 }
 async function explodeEpub(opts) {
-  const epubPath = path19.resolve(opts.epubPath);
-  if (!fs25.existsSync(epubPath)) {
+  const epubPath = path18.resolve(opts.epubPath);
+  if (!fs24.existsSync(epubPath)) {
     throw new EpubExplodeError(
       `no such EPUB: ${epubPath}. This route explodes a publisher's own container into the book file; it reads no page from a model, so an absent archive is nothing it can make up for.`
     );
   }
-  const bytes = fs25.readFileSync(epubPath);
+  const bytes = fs24.readFileSync(epubPath);
   const made = bookFromEpub(bytes, {
     ...opts.language !== void 0 ? { language: opts.language } : {},
     log: opts.log
   });
   const images = copyFigures(made.figures, made.members, opts);
-  const resolved = path19.resolve(opts.outPath);
-  ensureDir(path19.dirname(resolved));
+  const resolved = path18.resolve(opts.outPath);
+  ensureDir(path18.dirname(resolved));
   const pending = `${resolved}.tmp`;
   const figures = {
     blocks: made.book.rows.filter((row) => row.category === "Picture" && row.shelf === void 0).length,
     cut: images.length,
     from: "epub"
   };
-  fs25.writeFileSync(pending, formatBookFile({ ...made.book, figures }), "utf8");
+  fs24.writeFileSync(pending, formatBookFile({ ...made.book, figures }), "utf8");
   replaceFileSync(pending, resolved);
   const flow = made.book.rows.length;
   const notes = made.book.rows.filter((row) => row.category === "Footnote").length;
@@ -100574,7 +100423,7 @@ async function explodeEpub(opts) {
 }
 function copyFigures(figures, members, opts) {
   const dir = epubImagesDir(opts.outPath);
-  fs25.rmSync(dir, { recursive: true, force: true });
+  fs24.rmSync(dir, { recursive: true, force: true });
   if (figures.length === 0) return [];
   ensureDir(dir);
   const written = [];
@@ -100589,7 +100438,7 @@ function copyFigures(figures, members, opts) {
     const dot = figure.href.lastIndexOf(".");
     const name = `${figure.row.id.replace("-", "")}${dot < 0 ? "" : figure.href.slice(dot).toLowerCase()}`;
     figureMediaType(name);
-    fs25.writeFileSync(path19.join(dir, name), member.data);
+    fs24.writeFileSync(path18.join(dir, name), member.data);
     figure.row.image = name;
     written.push(name);
   }
@@ -100600,8 +100449,8 @@ function copyFigures(figures, members, opts) {
 // packages/foundry-core/src/engine/vlm/vtt-book.ts
 init_engine_import_meta_url();
 var crypto4 = __toESM(require("node:crypto"), 1);
-var fs26 = __toESM(require("node:fs"), 1);
-var path20 = __toESM(require("node:path"), 1);
+var fs25 = __toESM(require("node:fs"), 1);
+var path19 = __toESM(require("node:path"), 1);
 init_bom();
 init_fsdirs();
 init_fs_replace();
@@ -100747,28 +100596,28 @@ function bookFromCues(cues, language) {
   };
 }
 function mintVttBook(opts) {
-  const vttPath = path20.resolve(opts.vttPath);
-  if (!fs26.existsSync(vttPath)) {
+  const vttPath = path19.resolve(opts.vttPath);
+  if (!fs25.existsSync(vttPath)) {
     throw new VttBookError(
       `no such transcript: ${vttPath}. This route mints a book out of an audiobook's own cues; there is no model here and no second source to fall back on, so an absent file is nothing it can make up for.`
     );
   }
-  const parsed = parseVtt(fs26.readFileSync(vttPath, "utf8"), vttPath);
+  const parsed = parseVtt(fs25.readFileSync(vttPath, "utf8"), vttPath);
   if (parsed.cues.length === 0) {
     throw new VttBookError(
       `${vttPath} holds no cues${parsed.notes > 0 ? ` (${parsed.notes} NOTE comment(s), which are not cues)` : ""}. A book file made from it would have no text in it at all, and there is nothing for an analysis to read.`
     );
   }
   const book = bookFromCues(parsed.cues, opts.language);
-  const resolved = path20.resolve(opts.outPath);
-  ensureDir(path20.dirname(resolved));
+  const resolved = path19.resolve(opts.outPath);
+  ensureDir(path19.dirname(resolved));
   const pending = `${resolved}.tmp`;
-  fs26.writeFileSync(pending, formatBookFile(book), "utf8");
+  fs25.writeFileSync(pending, formatBookFile(book), "utf8");
   try {
-    parseBookFile(stripBom(fs26.readFileSync(pending, "utf8")));
+    parseBookFile(stripBom(fs25.readFileSync(pending, "utf8")));
   } catch (err) {
     try {
-      fs26.unlinkSync(pending);
+      fs25.unlinkSync(pending);
     } catch {
     }
     throw new VttBookError(
@@ -100842,7 +100691,7 @@ init_text_out();
 
 // packages/foundry-core/src/engine/translate/run.ts
 init_engine_import_meta_url();
-var fs28 = __toESM(require("node:fs"), 1);
+var fs27 = __toESM(require("node:fs"), 1);
 init_xml();
 init_zip();
 init_bank();
@@ -101592,8 +101441,8 @@ async function runTranslation(opts) {
   const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
   const to = readLanguage(opts.to, "--to");
   const from = opts.from === void 0 ? null : readLanguage(opts.from, "--from");
-  const book = opts.epubPath === void 0 ? null : readFoundryBook(new Uint8Array(fs28.readFileSync(opts.epubPath)));
-  const bookFile2 = opts.bookPath === void 0 ? null : readBookFile(fs28.readFileSync(opts.bookPath, "utf8"), opts.bookPath);
+  const book = opts.epubPath === void 0 ? null : readFoundryBook(new Uint8Array(fs27.readFileSync(opts.epubPath)));
+  const bookFile2 = opts.bookPath === void 0 ? null : readBookFile(fs27.readFileSync(opts.bookPath, "utf8"), opts.bookPath);
   const server = await openModelServer({
     kind,
     transport,
@@ -101613,7 +101462,7 @@ async function runTranslation(opts) {
     freshRequested: opts.freshBank === true
   });
   if (records !== null) opts.log(records.sentence);
-  if (opts.sourceRecordsPath !== void 0 && !fs28.existsSync(opts.sourceRecordsPath)) {
+  if (opts.sourceRecordsPath !== void 0 && !fs27.existsSync(opts.sourceRecordsPath)) {
     throw new TranslateError(
       `${opts.sourceRecordsPath} was named as the parent of this chain and there is no file there. A missing parent is not an empty one: every block would fall back to the book's own words and this run would translate the source text as though "${opts.from ?? "the detected source"}" were what it says.`
     );
@@ -102252,7 +102101,7 @@ async function runTranslation(opts) {
       uncompressedSize: member.uncompressedSize
     };
   });
-  await fs28.promises.writeFile(opts.outPath, writeZip(entries));
+  await fs27.promises.writeFile(opts.outPath, writeZip(entries));
   if (opts.bankPath !== void 0 && bank !== null && bank.pendingPath !== null) {
     swapPendingBankIntoPlace(opts.bankPath, bank.pendingPath);
     opts.log(
@@ -103414,7 +103263,7 @@ async function runAnalyzeRankCommand(args) {
     model: requireString(args, "model", "the resident decide model"),
     log
   });
-  process.stdout.write(`${path29.resolve(outPath)}
+  process.stdout.write(`${path28.resolve(outPath)}
 `);
 }
 function defaultTranslationOut(epubPath, to) {
@@ -103450,12 +103299,12 @@ async function runTranslate(args) {
   }
   const outPath = recordsPath !== void 0 || epubPath === void 0 ? void 0 : named ?? defaultTranslationOut(epubPath, to);
   const input = epubPath ?? bookPath;
-  if (outPath !== void 0 && path29.resolve(outPath) === path29.resolve(input)) {
+  if (outPath !== void 0 && path28.resolve(outPath) === path28.resolve(input)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the one and writes the other; a book overwritten by its own translation is the single input this command cannot get back.`
     );
   }
-  if (recordsPath !== void 0 && path29.resolve(recordsPath) === path29.resolve(input)) {
+  if (recordsPath !== void 0 && path28.resolve(recordsPath) === path28.resolve(input)) {
     throw new UsageError(
       `--records ${recordsPath} is the input itself. The records file is written to; the book is not.`
     );
@@ -103548,7 +103397,7 @@ async function runTranslate(args) {
 async function runEpubFinal(args) {
   const epubPath = requireString(args, "epub", "the working book to finish");
   const outPath = requireString(args, "out", "where the final EPUB is written");
-  if (path29.resolve(outPath) === path29.resolve(epubPath)) {
+  if (path28.resolve(outPath) === path28.resolve(epubPath)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the working book and writes the edition; the working copy is where every cut lives, and a run that overwrites it cannot be run a second time.`
     );
@@ -103600,7 +103449,7 @@ async function runEpubFinal(args) {
 async function runEpubStamp(args) {
   const epubPath = requireString(args, "epub", "the book to stamp");
   const outPath = optionalString(args, "out");
-  if (outPath !== void 0 && path29.resolve(outPath) === path29.resolve(epubPath)) {
+  if (outPath !== void 0 && path28.resolve(outPath) === path28.resolve(epubPath)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the one and writes the other; a directory working copy is stamped in place and takes no --out at all.`
     );
@@ -103636,7 +103485,7 @@ function metaLine(name, value) {
 async function runEpubMeta(args) {
   const epubPath = requireString(args, "epub", "the book whose metadata is being read or written");
   const outPath = optionalString(args, "out");
-  if (outPath !== void 0 && path29.resolve(outPath) === path29.resolve(epubPath)) {
+  if (outPath !== void 0 && path28.resolve(outPath) === path28.resolve(epubPath)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the one and writes the other; a directory working copy is edited in place and takes no --out at all.`
     );
@@ -103723,7 +103572,7 @@ async function runEpubMeta(args) {
 async function runPdfMeta(args) {
   const pdfPath = requireString(args, "pdf", "the PDF whose metadata is being read or written");
   const outPath = optionalString(args, "out");
-  if (outPath !== void 0 && path29.resolve(outPath) === path29.resolve(pdfPath)) {
+  if (outPath !== void 0 && path28.resolve(outPath) === path28.resolve(pdfPath)) {
     throw new UsageError(
       `--out ${outPath} is the input itself. foundry reads the one and writes the other, and this command rewrites the whole file rather than patching it, so there would be nothing left to read.`
     );
@@ -103780,17 +103629,11 @@ async function runPdfMeta(args) {
 async function runDoctor(args) {
   const settings = loadSettings();
   const endpointUrl = optionalString(args, "endpoint") ?? settings.backend?.endpointUrl ?? DEFAULT_ENDPOINT_URL;
-  const [endpoint, wslVllm, vllmLocal] = await Promise.all([
-    probeEndpoint(endpointUrl),
-    probeWslVllm(settings),
-    probeVllmLocal(settings)
-  ]);
+  const endpoint = await probeEndpoint(endpointUrl);
   const report = buildReport({
     platform: process.platform,
     mode: settings.backend?.mode ?? "auto",
-    endpoint,
-    wslVllm,
-    vllmLocal
+    endpoint
   });
   if (flag(args, "json")) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}
@@ -105590,31 +105433,24 @@ var COMMANDS = [
   },
   {
     name: "doctor",
-    summary: "Probe every reading backend and say which one a run would use.",
+    summary: "Probe the reading endpoint and say whether a run could use it.",
     usage: "[--json] [--endpoint <url>]",
     detail: [
-      "Answers one question: where would vlm-convert read pages RIGHT NOW, and",
-      "why not anywhere faster? Three probes, concurrent, each reported with a",
-      "detail a person can act on:",
+      "Answers one question: could vlm-convert read pages RIGHT NOW? One probe,",
+      "reported with a detail a person can act on:",
       "",
-      "  endpoint    GET <url>/models on the OpenAI-compatible server. The first",
-      "              tier everywhere: vLLM in WSL, Docker, or another machine all",
-      "              look identical from here. Probed at --endpoint, else the",
-      "              settings URL, else http://localhost:8000/v1 (vLLM's default).",
-      "  wsl-vllm    (Windows) a WSL distro whose named interpreter can import",
-      "              vllm \u2014 a server COULD be started there. Nothing is started.",
-      "  vllm-local  (Linux) a named interpreter can import vllm.",
+      "  endpoint    GET <url>/models on the OpenAI-compatible server (a",
+      "              Crucible's OpenAI door). Probed at --endpoint, else the",
+      "              settings URL, else http://localhost:8000/v1.",
       "",
-      "The chosen tier follows the settings mode (auto: first available;",
-      "endpoint: that tier or nothing). It NAMES and never degrades: an",
-      "explicit mode whose tier is down chooses null and the detail says what to",
-      "fix \u2014 the next tier down is 10-100x slower and is not a thing to slide",
-      "into silently.",
+      "Foundry starts, provisions and probes no model server of its own: every",
+      "model call goes to Crucible. It NAMES and never degrades: a down endpoint",
+      "chooses null and the detail says what to fix.",
       "",
       `Settings are read from ${settingsPath()}`,
       "(FOUNDRY_CONFIG_DIR overrides the directory). Recognised keys, all under",
       '"backend": mode (auto|endpoint), endpointUrl, endpointModel,',
-      "wslDistro, vllmPython, endpointHeaders. Flags beat settings",
+      "endpointHeaders. Flags beat settings",
       "everywhere; a value a setting supplied is logged on the runs that use it.",
       "",
       "endpointHeaders is the exception to that last sentence and the only key",

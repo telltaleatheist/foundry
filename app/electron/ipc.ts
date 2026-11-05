@@ -1628,8 +1628,9 @@ export function registerIpc(): void {
    * `PUT /v1/settings`, route and upstream per class, and that pass-through is
    * untouched. What went is Foundry keeping a model of its own.
    *
-   * Ollama is still PROBED, by exactly one caller that is not a door:
-   * `machine-models.ts`, which counts what is on this disk (docs/SLOTS.md §5b).
+   * Ollama is not probed any more either: `node/ollama.ts`, whose one reader
+   * (the disk inventory) had already gone, retired 2026-11-04 with every way
+   * Foundry had of probing a model server of its own.
    */
 
   /*

@@ -9,10 +9,8 @@
  * The SCHEMA IS THE ENGINE'S. This module writes only the three keys the
  * settings screen edits and PRESERVES every other key in the file, at both
  * levels: a newer engine's `endpointModel` must survive an older app saving a
- * URL over it, and so must the `wslDistro`/`vllmPython` pair an older app wrote
- * before the WSL launcher was retired (docs/SLOTS.md §6) — this app no longer
- * reads or writes those two, and deleting somebody's keys because we stopped
- * caring about them is not preserving their file. Reading is equally forgiving:
+ * URL over it. (The keys the engine itself stopped reading are the one
+ * exception, dropped once by `retireSettingsKeys` below.) Reading is equally forgiving:
  * unknown keys are ignored, and a file that will not parse is reported rather
  * than replaced, because overwriting an operator's broken JSON destroys the
  * thing they need to see to fix it.
@@ -93,12 +91,14 @@ export function readSettings(): SettingsView {
 /**
  * Keys nothing reads any more, dropped from the file ONCE and said ONCE.
  *
- * Foundry has no Python (2026-11-04): the pages are rasterised in-process on
- * MuPDF and every model call goes to Crucible. So `backend.python` (the
- * interpreter the rasteriser and the MLX reader ran in, written by the
- * environment installer) and `backend.mode: "mlx"` (the local reader) name
- * things that no longer exist — and the engine REFUSES an unknown mode, so a
- * file still saying "mlx" would stop every run. They are taken out and the file
+ * Foundry has no Python and runs no model server of its own (2026-11-04): the
+ * pages are rasterised in-process on MuPDF and every model call goes to
+ * Crucible. So `backend.python` (the interpreter the rasteriser and the MLX
+ * reader ran in, written by the environment installer), `backend.mode: "mlx"`
+ * (the local reader), and `backend.vllmPython` / `backend.wslDistro` (where the
+ * doctor looked for a vLLM it could start) name things that no longer exist —
+ * and the engine REFUSES an unknown mode, so a file still saying "mlx" would
+ * stop every run. They are taken out and the file
  * is written back, with one sentence saying so, rather than ignored (the key
  * would outlive everyone who knew what it was) or refused (an upgrade would
  * break a working install). Every other key is carried across untouched, as
@@ -118,6 +118,12 @@ export function retireSettingsKeys(): string | null {
     dropped.push(`backend.python (${JSON.stringify(backend['python'])})`);
     delete backend['python'];
   }
+  for (const key of ['vllmPython', 'wslDistro']) {
+    if (key in backend) {
+      dropped.push(`backend.${key} (${JSON.stringify(backend[key])})`);
+      delete backend[key];
+    }
+  }
   if (backend['mode'] === 'mlx') {
     dropped.push('backend.mode "mlx"');
     delete backend['mode'];
@@ -129,8 +135,8 @@ export function retireSettingsKeys(): string | null {
   const envs = process.platform === 'win32'
     ? path.join(process.env['LOCALAPPDATA'] ?? path.join(os.homedir(), 'AppData', 'Local'), 'foundry', 'envs')
     : path.join(os.homedir(), 'Library', 'Application Support', 'foundry', 'envs');
-  return `${file}: dropped ${dropped.join(' and ')} — Foundry has no local Python any more (pages render `
-    + `in-process; every model call goes to Crucible). Any environment it downloaded under ${envs} is unused `
+  return `${file}: dropped ${dropped.join(', ')} — Foundry has no local Python or model server any more `
+    + `(pages render in-process; every model call goes to Crucible). Any environment it downloaded under ${envs} is unused `
     + 'and can be deleted by hand.';
 }
 
