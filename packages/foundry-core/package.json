@@ -78,7 +78,8 @@
     "build:engine": "node tools/build-engine.mjs",
     "check:engine": "node tools/build-engine.mjs --check",
     "typecheck": "tsc -p tsconfig.engine.json && tsc -p tsconfig.cjs.json --noEmit && tsc -p tsconfig.esm.json --noEmit",
-    "pack": "npm run build && npm pack"
+    "pack": "npm run build && npm pack",
+    "release": "node tools/release.mjs"
   },
   "_peerNote": "The Crucible SDKs and tool-loop are PEERS, not dependencies: each app pins them itself (app/vendor/*.tgz here, BookForge's vendor/ there), because a file: tarball nested inside this package's tarball does not install cleanly, and because the app and this package must share ONE copy (instanceof CrucibleRefused, one registry). They are devDependencies only so this package builds and tests on its own.",
   "dependencies": {
