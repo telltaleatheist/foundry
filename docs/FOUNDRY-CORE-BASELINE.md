@@ -143,7 +143,7 @@ crucible."* Retired: the doctor's `wsl-vllm` / `vllm-local` probes and tiers and
 | Engine bundle | `--check` current, **src 6e9a259ba206** |
 | Load smoke | **44** library modules (46 − `ollama`, `llm-catalog`) |
 
-## A4 (modular rebuild), in progress
+## A4 (modular rebuild)
 
 Structure only. Done by compiler-API tools rather than by hand: declarations and method bodies move
 verbatim. A class keeps a one-line delegate per moved method (the body becomes a `this`-typed function in
@@ -155,7 +155,9 @@ importer changes. `input()`/`output()`/query fields never move (Angular reads th
 | --- | --- |
 | Templates and styles (43 components) | `ng build` output **byte-identical** to the build before the move, including with CRLF `.html` as a Windows checkout writes them |
 | book-view (on main) | Real app on a scratch copy of a real project, real input events, 20 frames, baseline vs split: **DOM identical** in every frame except the bundle hash and one random UUID in an image URL that also differs between two runs of one build; no console errors. **Not exercised: the Apply button** |
-| Every other split (branch only) | Compiles under `strictTemplates`; a checker resolves symbols so no bare identifier binds to a moved function; headless gates green. **No runtime A/B yet** |
+| Every other split | Compiles under `strictTemplates`; a checker resolves symbols so no bare identifier binds to a moved function; headless gates green |
+| Runtime walk, whole app | Real built app against the build before the splits (aef86e0), **both under the same mode: hidden, offscreen, 1900x1000**, on scratch copies of two real projects, real input events, network off. 56 frames (33 + 18 + 5): the book and its edits, Apply, the five dialogs, Settings, the queue page, the PDF viewer and search, the light table, the page editor with a corner drag, turn and step, closing with and without pending changes. **DOM and text identical in all 56** once run-specific values are normalised (ids, bundle hashes, scratch paths, the Apply timestamp); no network attempt. Pixels differ in three frames: the Doctor pane prints the engine path, which differs because the baseline runs from another folder; General Settings differs between two runs of the SAME build; `12-chosen` is a toast timing out around the capture |
+| Not exercised by that walk | Anything that needs a live model server or a real job running; native file dialogs (stubbed); real window chrome and focus, because both sides ran hidden |
 | Library | `bun test` 1336 / 69 files, 1332 pass, the same 4 fail; 5 shuffled orders the same; **71** library modules load without electron |
 | IPC | handle 154, invoke 155, listen 19, push 18; every kind+name row identical with multiplicity, only the FILE column moved |
 
