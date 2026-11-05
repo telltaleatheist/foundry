@@ -163,10 +163,11 @@ function main() {
   }
 
   process.stdout.write('release: the tarball holds what a consumer needs\n');
-  const entries = new Set(run('tar', ['-tzf', tgz], { maxBuffer: 64 * 1024 * 1024 }).split(/\r?\n/));
+  // Relative to OUT: GNU tar (Git for Windows) reads a `C:\...` path as a remote host `C`.
+  const entries = new Set(run('tar', ['-tzf', expected], { cwd: OUT, maxBuffer: 64 * 1024 * 1024 }).split(/\r?\n/));
   const missing = REQUIRED.filter((entry) => !entries.has(entry));
   if (missing.length > 0) fail(`${expected} is missing ${missing.join(', ')}`);
-  const shipped = JSON.parse(run('tar', ['-xzOf', tgz, 'package/package.json']));
+  const shipped = JSON.parse(run('tar', ['-xzOf', expected, 'package/package.json'], { cwd: OUT }));
   if (shipped.name !== '@owen/foundry-core' || shipped.version !== version) {
     fail(`${expected} carries ${shipped.name}@${shipped.version}, not @owen/foundry-core@${version}`);
   }
