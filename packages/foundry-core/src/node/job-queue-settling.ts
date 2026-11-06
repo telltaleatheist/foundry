@@ -23,9 +23,11 @@ import { changed, copyOf, detachedRuns, forgetPark, jobs, releasing, requests, r
  * stored block, the host's record, the scan's Info, the project's name. Owen,
  * 2026-11-06: *"yes, they should fill metadata from the pdf if its available"*;
  * this used to stop after the host's record. Lenient end to end, because the
- * book is made and a stamp is the last thing that happens to it: a source that
- * fails is a named console line and no record from that source, and a project
- * the library does not list is no record at all.
+ * book is made and filed before this runs, and a stamp that fails is a console
+ * line and never a failed job (job-queue-carry.ts): a source that fails is a
+ * named line and no record from that source; a project the function refuses —
+ * not in the library, or its own record unreadable — is its refusal, naming
+ * the project, and no stamp.
  */
 export async function inheritedMintMetaFor(dir: string): Promise<MintMeta | null> {
   try {

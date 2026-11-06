@@ -116,6 +116,21 @@ test('an unattended export of a PDF with an Info title and author, and nothing s
   expect((await mintSeedFor(unattendedDir)).meta).toEqual(await inheritedMintMetaFor(unattendedDir));
 });
 
+test('a project whose own record will not read is refused, by name', async () => {
+  const broken = path.join(path.dirname(projectDir), 'broken-record-0badf00d');
+  await project(broken, 'broken record');
+  const manifest = path.join(broken, 'project.json');
+  const good = await fsp.readFile(manifest, 'utf8');
+  // Listed first, while its record reads; then the record is damaged.
+  await mintSeedFor(broken);
+  await fsp.writeFile(manifest, '{ "version": 2, "key": ');
+  try {
+    await expect(mintSeedFor(broken)).rejects.toThrow('The record of "broken-record-0badf00d" (project.json) could not be read');
+  } finally {
+    await fsp.writeFile(manifest, good);
+  }
+});
+
 test('an unattended export of a directory the library does not hold stamps nothing, and fails nothing', async () => {
   expect(await inheritedMintMetaFor(path.join(root, 'elsewhere'))).toBeNull();
 });

@@ -276,32 +276,36 @@ export async function writeEpubMetadataFor(
  * (`inheritedMintMetaFor`, job-queue-settling.ts). `scan: false` stops after
  * the host, for the card's edit mode, where the file itself is the next witness.
  *
- * A host that throws, and a catalogue that will not parse, are each a line in
+ * A host that throws, and a scan that will not read, are each a line in
  * `problems` and no record from that source: the card shows the lines under
  * its form, the settle writes them to the console, and the sources below still
- * answer.
+ * answer. A project whose own record will not read is REFUSED, by name: that is
+ * a damaged project, not a source with nothing to say.
  */
 export async function mintSeedFor(projectDir: string, scan = true): Promise<MintSeed> {
   const project = (await listProjects()).find((one) => fold(one.dir) === fold(projectDir));
   if (project === undefined) {
     throw new Error(`"${projectDir}" is not a project in this library, so there is nothing to read about it.`);
   }
-  const problems: string[] = [];
-  let manifest: Awaited<ReturnType<typeof readManifest>> | null = null;
+  let manifest: Awaited<ReturnType<typeof readManifest>>;
   try {
     manifest = await readManifest(project.dir);
   } catch (err) {
-    problems.push(`The project's own record could not be read: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `The record of "${path.basename(project.dir)}" (project.json) could not be read, so who its book is cannot be said: `
+      + `${err instanceof Error ? err.message : String(err)}`,
+    );
   }
+  const problems: string[] = [];
   let host: HostMintMeta | null = null;
   try {
     host = await hostMintMeta(project.dir);
   } catch (err) {
     problems.push(err instanceof Error ? err.message : String(err));
   }
-  const above = inheritMintMeta(manifest?.meta ?? null, host);
+  const above = inheritMintMeta(manifest.meta ?? null, host);
   if (!scan) return { meta: above, problems };
-  const name = manifest === null ? null : mintMetaFromName(manifest.stem);
+  const name = mintMetaFromName(manifest.stem);
   return { meta: fillMintGaps(fillMintGaps(above, await scanMetaOf(project.documents, problems)), name), problems };
 }
 
