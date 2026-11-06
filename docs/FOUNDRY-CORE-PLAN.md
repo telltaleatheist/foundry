@@ -27,7 +27,7 @@ Read-only survey; nothing was changed.
   `app/tsconfig.json` `paths` (emptied for Angular in `tsconfig.app.json`), so the app-side
   test (`hosted-runner`) and the library share module instances. BookForge (step 4) is the
   one consumer that pins a tarball.
-- **Peers** are `^` ranges (`^2.0.34`, `^0.1.0`), not exact, so `adopt-crucible-release`'s
+- **Peers** are `^` ranges (`^2.0.35`, `^0.1.0`), not exact, so `adopt-crucible-release`'s
   `npm install` in `app/` is not refused before the package is repointed; they are also
   devDependencies naming `../../app/vendor/*.tgz`, and `app/test/crucible-pin.test.ts` fails
   until both follow an adoption. `@anthropic-ai/sdk` stays unlisted (tool-loop's optional peer;
