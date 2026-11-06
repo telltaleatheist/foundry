@@ -434,3 +434,57 @@ test('a ✕ that arrives while the landing is in flight is refused, so one endin
     stop();
   }
 });
+
+/**
+ * ── A PROJECT WHOSE RECORD WILL NOT READ FILES ITS EXPORT, AND SAYS SO ──────
+ *
+ * An EPUB export nobody confirmed at a card inherits its metadata at the settle
+ * (`inheritedMintMetaFor`). When the project's own record will not read, there
+ * is nothing to inherit — and that is news for the person, not a console line
+ * and not a failed job: the book is made and filed. The reason ends the row's
+ * message and rides on the host's landing as `problem` (2026-11-06).
+ *
+ * THE RECORD BREAKS DURING THE RUN, because that is the only way to reach the
+ * settle with it broken: the spawn reads it too (`materializeAtSpawn`), and a
+ * record that will not read THEN fails the job before the engine starts.
+ */
+test('an unattended export from a damaged record lands, and the row and the landing say it went without metadata', async () => {
+  materialising();
+  const library = await fsp.mkdtemp(path.join(os.tmpdir(), 'foundry-damaged-record-'));
+  libraries.push(library);
+  const dir = path.join(library, 'projects', 'damaged-keeper-0badc0de');
+  await fsp.mkdir(path.join(dir, 'final'), { recursive: true });
+  const record = path.join(dir, 'project.json');
+  await fsp.writeFile(record, JSON.stringify({
+    version: 2, key: 'damaged-keeper-0badc0de', title: 'The Keeper', stem: 'keeper', createdAt: 0,
+    archive: null, documents: [], working: { files: [] }, final: [], reading: null,
+  }), 'utf8');
+  const real = appSettings.readAppSettings();
+  spyOn(appSettings, 'readAppSettings').mockReturnValue({ ...real, libraryDir: library });
+  const output = path.join(dir, 'final', 'keeper.epub');
+  placedWithASession(async () => {});
+  spyOn(engine, 'runEngine').mockImplementation(() => ({
+    done: fsp.writeFile(output, 'the export this run made', 'utf8')
+      .then(() => fsp.writeFile(record, '{ "version": 2, "key": ', 'utf8'))
+      .then(() => ({ code: 0, stdout: '', stderr: '' })),
+    cancel: () => {},
+  }));
+  // The tray's own writes are somebody else's unit: a damaged record is what
+  // the settle has to speak about, not what these have to survive.
+  spyOn(projects, 'rotateFinal').mockResolvedValue(null);
+  spyOn(projects, 'recordFinal').mockResolvedValue(undefined);
+  const landings: Parameters<Parameters<typeof queue.onExportLanded>[0]>[0][] = [];
+  queue.onExportLanded((landing) => { landings.push(landing); });
+  const row = await ran({
+    kind: 'epub', inputPath: SCAN, outputPath: output, readingsPath: BANK, export: true,
+  });
+  expect(row.state).toBe('done');
+  expect(row.message).toBe(
+    "Wrote keeper.epub, filed without metadata: damaged-keeper-0badc0de's record could not be read.",
+  );
+  expect(landings).toHaveLength(1);
+  expect(landings[0]!.metadata).toBeUndefined();
+  expect(landings[0]!.problem).toBe(
+    "\"keeper.epub\" was filed without metadata: damaged-keeper-0badc0de's record could not be read.",
+  );
+});

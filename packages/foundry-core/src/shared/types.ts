@@ -3292,13 +3292,24 @@ export interface ExportLanding {
    * `filename` is the basename actually minted on disk. Absent `metadata`
    * means "minted before this field existed" or "nobody had a record to
    * stamp" — a standalone first mint with no form confirmed — never "a host's
-   * fields were read and dropped"; the same posture as `stepId` above. A
-   * hosted export inherits the host's `mintMetaFor` answer under the project's
-   * stored block at the settle (`inheritMintMeta`, shared/mint-meta.ts), so a
-   * book BookForge asked for arrives with its own shelf's title and author
-   * whether or not anybody opened the modal on this project.
+   * fields were read and dropped"; the same posture as `stepId` above. An
+   * export nobody confirmed inherits the card's whole stack at the settle —
+   * the project's stored block, the host's `mintMetaFor` answer, the scan's
+   * Info, the project's name (`mintSeedFor`, node/doors-meta.ts) — so a book
+   * BookForge asked for arrives with its own shelf's title and author whether
+   * or not anybody opened the modal on this project.
    */
   metadata?: ExportMintMetadata;
+  /**
+   * WHY THIS BOOK WAS FILED WITHOUT METADATA, in a sentence a host can show
+   * as it stands — present only when the settle could not inherit any: the
+   * project's own record would not read (2026-11-06). The export still landed
+   * and is a version like any other; this is news for the person, never a
+   * failure. OPTIONAL, and absent on every landing that had nothing to say, so
+   * a host that does not read it is unaffected. The same reason ends the job
+   * row's own message ("Wrote X, filed without metadata: …").
+   */
+  problem?: string;
 }
 
 /** The landing's metadata block — `MintMeta`'s facts plus the minted name. */

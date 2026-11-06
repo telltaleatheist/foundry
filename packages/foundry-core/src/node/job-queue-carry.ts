@@ -1172,9 +1172,17 @@ export async function carry(
         const filedIn = projectDirOf(next.outputPath);
         const projectDir = homeOf(request) ?? filedIn;
         let minted: ExportMintMetadata | undefined;
-        const inherited = request.kind === 'epub' && request.mintMeta === undefined && projectDir !== null
+        const inheritance = request.kind === 'epub' && request.mintMeta === undefined && projectDir !== null
           ? await inheritedMintMetaFor(projectDir)
           : null;
+        const inherited = inheritance?.meta ?? null;
+        /*
+         * A REFUSED INHERITANCE IS SAID, NOT LOGGED (2026-11-06): a project whose
+         * own record will not read files its book with no metadata at all, and
+         * that is a sentence on the row and on the host's landing, never a
+         * failed job — the book is made and filed.
+         */
+        const unstamped = inheritance?.problem ?? null;
         const confirmed = request.kind === 'epub'
           ? request.mintMeta ?? (inherited !== null && inherited.title.trim().length > 0 ? inherited : undefined)
           : undefined;
@@ -1198,7 +1206,7 @@ export async function carry(
             );
           }
         }
-        next.message = `Wrote ${filed}`;
+        next.message = unstamped === null ? `Wrote ${filed}` : `Wrote ${filed}, filed without metadata: ${unstamped}.`;
         changed();
         /*
          * ── AND WHOEVER IS HOSTING US IS TOLD, LAST ───────────────────────────
@@ -1234,6 +1242,7 @@ export async function carry(
               // absent means "minted before the modal existed", never "no
               // metadata" (`ExportLanding.metadata`).
               ...(minted !== undefined ? { metadata: minted } : {}),
+              ...(unstamped !== null ? { problem: `"${filed}" was filed without metadata: ${unstamped}.` } : {}),
               ...(filedIn === null ? { unfiled: true as const } : {}),
             });
           } catch (err) {

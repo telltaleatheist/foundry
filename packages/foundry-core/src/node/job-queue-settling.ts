@@ -2,7 +2,7 @@
  * job-queue-settling — a row finishing: what its mint inherits, telling its listeners, and cascading to what waited on it.
  */
 import * as path from 'node:path';
-import { mintSeedFor } from './doors-meta';
+import { mintSeedFor, MintRecordUnreadable } from './doors-meta';
 import { ledgerOf, projectDirOf, readManifest } from './projects';
 import { ancestry } from '../shared/ledger';
 import type { MintMeta } from '../shared/mint-meta';
@@ -25,18 +25,25 @@ import { changed, copyOf, detachedRuns, forgetPark, jobs, releasing, requests, r
  * this used to stop after the host's record. Lenient end to end, because the
  * book is made and filed before this runs, and a stamp that fails is a console
  * line and never a failed job (job-queue-carry.ts): a source that fails is a
- * named line and no record from that source; a project the function refuses —
- * not in the library, or its own record unreadable — is its refusal, naming
- * the project, and no stamp.
+ * named console line and no record from that source.
+ *
+ * A PROJECT THE FUNCTION REFUSES IS NOT CONSOLE-ONLY. Its own record unreadable
+ * (or the project not in the library) means the book goes out with no metadata
+ * at all, and the person has to hear that: `problem` is the reason, in words,
+ * and the settle writes it into the row's message and the host's landing
+ * (`ExportLanding.problem`). Still never a failed job — the book is filed.
  */
-export async function inheritedMintMetaFor(dir: string): Promise<MintMeta | null> {
+export async function inheritedMintMetaFor(dir: string): Promise<{ meta: MintMeta | null; problem: string | null }> {
   try {
     const seed = await mintSeedFor(dir);
     for (const problem of seed.problems) console.error(`[queue] ${path.basename(dir)}: ${problem}`);
-    return seed.meta;
+    return { meta: seed.meta, problem: null };
   } catch (err) {
     console.error(`[queue] ${path.basename(dir)}: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
+    const problem = err instanceof MintRecordUnreadable
+      ? `${err.project}'s record could not be read`
+      : err instanceof Error ? err.message.replace(/\.$/, '') : String(err);
+    return { meta: null, problem };
   }
 }
 

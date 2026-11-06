@@ -291,10 +291,7 @@ export async function mintSeedFor(projectDir: string, scan = true): Promise<Mint
   try {
     manifest = await readManifest(project.dir);
   } catch (err) {
-    throw new Error(
-      `The record of "${path.basename(project.dir)}" (project.json) could not be read, so who its book is cannot be said: `
-      + `${err instanceof Error ? err.message : String(err)}`,
-    );
+    throw new MintRecordUnreadable(path.basename(project.dir), err instanceof Error ? err.message : String(err));
   }
   const problems: string[] = [];
   let host: HostMintMeta | null = null;
@@ -307,6 +304,18 @@ export async function mintSeedFor(projectDir: string, scan = true): Promise<Mint
   if (!scan) return { meta: above, problems };
   const name = mintMetaFromName(manifest.stem);
   return { meta: fillMintGaps(fillMintGaps(above, await scanMetaOf(project.documents, problems)), name), problems };
+}
+
+/**
+ * `mintSeedFor`'s refusal for a project whose own record will not read — named,
+ * so the settle can say "filed without metadata" in its own words rather than
+ * quoting a parser (job-queue-settling.ts).
+ */
+export class MintRecordUnreadable extends Error {
+  constructor(readonly project: string, reason: string) {
+    super(`The record of "${project}" (project.json) could not be read, so who its book is cannot be said: ${reason}`);
+    this.name = 'MintRecordUnreadable';
+  }
 }
 
 /** The scan's Info title and author, or null; a scan that cannot be read adds a line to `problems`. */

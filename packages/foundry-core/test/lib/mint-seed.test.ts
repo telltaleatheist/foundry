@@ -109,11 +109,14 @@ test('an unattended export of a PDF with an Info title and author, and nothing s
   // What the settle stamps an EPUB export nobody confirmed at a card with
   // (job-queue-carry.ts): the card's own stack, from the card's own function.
   expect(await inheritedMintMetaFor(unattendedDir)).toEqual({
-    title: "'Working Towards the Führer.' Reflections on the Nature of the Hitler Dictatorship",
-    contributors: [{ first: 'Ian', last: 'Kershaw' }],
+    meta: {
+      title: "'Working Towards the Führer.' Reflections on the Nature of the Hitler Dictatorship",
+      contributors: [{ first: 'Ian', last: 'Kershaw' }],
+    },
+    problem: null,
   });
   // And the card reads the same answer for the same project.
-  expect((await mintSeedFor(unattendedDir)).meta).toEqual(await inheritedMintMetaFor(unattendedDir));
+  expect((await mintSeedFor(unattendedDir)).meta).toEqual((await inheritedMintMetaFor(unattendedDir)).meta);
 });
 
 test('a project whose own record will not read is refused, by name', async () => {
@@ -131,8 +134,10 @@ test('a project whose own record will not read is refused, by name', async () =>
   }
 });
 
-test('an unattended export of a directory the library does not hold stamps nothing, and fails nothing', async () => {
-  expect(await inheritedMintMetaFor(path.join(root, 'elsewhere'))).toBeNull();
+test('an unattended export of a directory the library does not hold stamps nothing, and says why', async () => {
+  const said = await inheritedMintMetaFor(path.join(root, 'elsewhere'));
+  expect(said.meta).toBeNull();
+  expect(said.problem).toContain('is not a project in this library');
 });
 
 test('a directory that is not a project in this library is refused', async () => {
