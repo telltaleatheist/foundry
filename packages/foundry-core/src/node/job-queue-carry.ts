@@ -1151,10 +1151,11 @@ export async function carry(
          * (bookforge-pc-1, 2026-09-07). The modal asked the host for exactly that
          * record (`mintMetaFor`) and merged it under the stored block; the
          * unattended route never did. Now it asks the same question through the
-         * same function (`inheritMintMeta`, shared/mint-meta.ts): the request's
-         * confirmed block first, the stored block over the host's record next,
-         * and nothing at all only when neither side has a record — the
-         * standalone first mint, which is what it always was.
+         * same function (`mintSeedFor`, doors-meta.ts): the request's confirmed
+         * block first, then the card's whole stack — the stored block, the
+         * host's record, the scan's Info, the project's name (Owen, 2026-11-06:
+         * *"yes, they should fill metadata from the pdf if its available"*) —
+         * and nothing at all only when no source has a record.
          *
          * A BLOCK WITH NO TITLE IS NOT STAMPED. The splice writes `Untitled` for
          * an empty one, and a title the compile already took from the scan is

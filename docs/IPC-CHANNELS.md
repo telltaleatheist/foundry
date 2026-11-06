@@ -1,5 +1,19 @@
 # Foundry's IPC channels — the whole list, for the collision audit
 
+## One stack for the card and for every unattended export (2026-11-06)
+
+**COUNTED BY SCRIPT (`node app/tools/ipc-channels.js`): 157 `ipcMain.handle`, 158
+preload invokes, 20 listens, 19 pushes.** The figure before this change was 159 /
+160 / 20 / 19; two channels left and none arrived.
+
+| Channel | |
+| --- | --- |
+| `meta:mint-seed` | **Changed.** Now the whole stack, composed by main (`mintSeedFor`, doors-meta.ts): the stored block, the host's record, the scan's Info and the project's name, each filling only what the sources above it left empty. Takes `(projectDir, scan)`; `scan: false` stops after the host (the card's edit mode). Answers `{ meta, problems }`. The settle stamps an EPUB export nobody confirmed from the same function, so the two cannot disagree (Owen: "yes, they should fill metadata from the pdf if its available"). |
+| ~~`meta:mint-read`~~ | **Gone.** The stored block, read by the card alone; it is the top of `meta:mint-seed`'s stack now. |
+| ~~`meta:mint-host`~~ | **Gone.** The host's record, read by the card alone; it is the second layer of `meta:mint-seed`'s stack now. |
+
+**FOR BOOKFORGE:** two fewer Foundry channels to collide with; `meta:mint-seed` keeps its name.
+
 ## The export card reads its seed by project (2026-11-05)
 
 **COUNTED BY SCRIPT (`node app/tools/ipc-channels.js`): 159 `ipcMain.handle`, 160
@@ -1249,9 +1263,7 @@ cannot report a failure. They are registered in one function, `registerIpc`
 | `library:choose` | Native directory picker for the library. Refuses while hosted. |
 | `library:dir` | The effective library directory — the host's, when hosted. |
 | `library:set` | Move the library. Refuses while hosted. |
-| `meta:mint-host` | The HOST's record of who this book is (`FoundryHost.mintMetaFor`), or null — the hosted mint modal's seed. Null standalone; a host that throws REJECTS in its own words so the form can say so. |
-| `meta:mint-seed` | The project's own word for the mint card's empty fields: `{ pdf, name, problem }` — the scan's Info and the project's name (BookForge's convention, strictly), read by main by project. Refuses a directory that is not a project. |
-| `meta:mint-read` | The project's mint metadata block (shared/mint-meta.ts), or null for a project that has never confirmed one. |
+| `meta:mint-seed` | Who the project's book is, for the mint card: `{ meta, problems }` — the stored block, the host's record, the scan's Info and the project's name (BookForge's convention, strictly), stacked by main (`mintSeedFor`) in that order. `(projectDir, scan)`; `scan: false` stops after the host. Every EPUB export nobody confirms is stamped from the same function. |
 | `meta:mint-stamp` | The whole block onto ONE finished export, in place — the metadata tile's Save over an EPUB. Tray-gated like the flat writer. |
 | `meta:mint-write` | Replace that block — what the mint modal saves, and what the next mint pre-fills from. |
 | `meta:read-epub` | A finished EPUB export's OPF metadata, through the engine. Only a file in the project's `final/` tray answers. |

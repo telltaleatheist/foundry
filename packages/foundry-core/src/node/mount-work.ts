@@ -229,9 +229,10 @@ export async function exportEpubFromStep(
     kind: 'epub',
     /*
      * NO `mintMeta` HERE, ON PURPOSE. Nobody is standing at a form, so the
-     * settle inherits it (`inheritedMintMetaFor`, electron/job-queue.ts): the
-     * project's stored block with the host's own record (`mintMetaFor`)
-     * underneath, field by field — the modal's precedence exactly. This door
+     * settle inherits it (`inheritedMintMetaFor`, job-queue-settling.ts): the
+     * project's stored block, the host's own record (`mintMetaFor`), the
+     * scan's Info and the project's name, field by field — the modal's stack
+     * exactly, from the modal's own function (`mintSeedFor`). This door
      * used to spread the stored block alone, and a hosted project minted from
      * a bare document has none until somebody confirms a mint, so the EPUB
      * BookForge narrated went out with the file stem for a title and no

@@ -20,7 +20,9 @@ import {
   isManaged, listProjects, metadataDir, projectDirOf, readManifest, recordMetadata
 } from './projects';
 import { mintMetaFromName } from '../shared/book-filename';
-import { contributorsFromString, type MintMeta, type MintSeed } from '../shared/mint-meta';
+import { hostMintMeta } from './host';
+import { contributorsFromString, fillMintGaps, inheritMintMeta, type MintMeta, type MintSeed } from '../shared/mint-meta';
+import type { HostMintMeta } from '../shared/host-ops';
 import { fold, originalOf } from '../shared/original';
 import type {
   MetadataPatch,
@@ -258,26 +260,62 @@ export async function writeEpubMetadataFor(
  *
  * A PROJECT THIS LIBRARY DOES NOT HOLD IS REFUSED, as every door that names a
  * directory refuses one. A scan that cannot be read is NOT a refusal: the name
- * can still say who the book is, and the failure comes back as `problem` for
+ * can still say who the book is, and the failure comes back in `problems` for
  * the card to show.
+ *
+ * ── ONE OWNER FOR EVERY EXPORT, WITH A CARD OR WITHOUT (2026-11-06) ─────────
+ *
+ * Owen: *"yes, they should fill metadata from the pdf if its available"*, of
+ * exports nobody confirms at a card (a host's narrate-on-a-step). Those used to
+ * stop at the stored block and the host's record, so a scan whose Info names
+ * its title and author still exported untitled. This is now the whole stack,
+ * in Owen's order, for both: the stored block, then the host's record
+ * (`inheritMintMeta`), then the scan's Info, then the project's name
+ * (`fillMintGaps`, each filling only what everything above it left empty).
+ * The card asks it through `meta:mint-seed`; the settle asks it directly
+ * (`inheritedMintMetaFor`, job-queue-settling.ts). `scan: false` stops after
+ * the host, for the card's edit mode, where the file itself is the next witness.
+ *
+ * A host that throws, and a catalogue that will not parse, are each a line in
+ * `problems` and no record from that source: the card shows the lines under
+ * its form, the settle writes them to the console, and the sources below still
+ * answer.
  */
-export async function mintSeedFor(projectDir: string): Promise<MintSeed> {
+export async function mintSeedFor(projectDir: string, scan = true): Promise<MintSeed> {
   const project = (await listProjects()).find((one) => fold(one.dir) === fold(projectDir));
   if (project === undefined) {
     throw new Error(`"${projectDir}" is not a project in this library, so there is nothing to read about it.`);
   }
-  const name = mintMetaFromName((await readManifest(project.dir)).stem);
-  const original = originalOf(project.documents);
-  if (original === null || original.kind !== 'pdf') return { pdf: null, name, problem: null };
+  const problems: string[] = [];
+  let manifest: Awaited<ReturnType<typeof readManifest>> | null = null;
+  try {
+    manifest = await readManifest(project.dir);
+  } catch (err) {
+    problems.push(`The project's own record could not be read: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  let host: HostMintMeta | null = null;
+  try {
+    host = await hostMintMeta(project.dir);
+  } catch (err) {
+    problems.push(err instanceof Error ? err.message : String(err));
+  }
+  const above = inheritMintMeta(manifest?.meta ?? null, host);
+  if (!scan) return { meta: above, problems };
+  const name = manifest === null ? null : mintMetaFromName(manifest.stem);
+  return { meta: fillMintGaps(fillMintGaps(above, await scanMetaOf(project.documents, problems)), name), problems };
+}
+
+/** The scan's Info title and author, or null; a scan that cannot be read adds a line to `problems`. */
+async function scanMetaOf(documents: Parameters<typeof originalOf>[0], problems: string[]): Promise<MintMeta | null> {
+  const original = originalOf(documents);
+  if (original === null || original.kind !== 'pdf') return null;
   const read = await readPdfMetadata(original.path);
   if (!read.ok) {
-    return { pdf: null, name, problem: `The scan's own title and author could not be read: ${read.reason}` };
+    problems.push(`The scan's own title and author could not be read: ${read.reason}`);
+    return null;
   }
-  if (read.metadata.kind !== 'pdf') return { pdf: null, name, problem: null };
+  if (read.metadata.kind !== 'pdf') return null;
   const { title, author } = read.metadata.fields;
   const contributors = author ? contributorsFromString(author) : [];
-  const pdf: MintMeta | null = title || contributors.length > 0
-    ? { title: title ?? '', contributors }
-    : null;
-  return { pdf, name, problem: null };
+  return title || contributors.length > 0 ? { title: title ?? '', contributors } : null;
 }

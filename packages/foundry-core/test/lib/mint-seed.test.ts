@@ -7,6 +7,11 @@
  * read of the scan went through `admittedPdf`, which refuses the project's
  * working PDF because nothing ever opened it. The last test pins that refusal,
  * so the reason the read had to move into main stays written down.
+ *
+ * And the exports nobody confirms at a card (2026-11-06, Owen: "yes, they
+ * should fill metadata from the pdf if its available") are stamped from the
+ * same stack: before, the settle stopped after the host's record, and the
+ * unattended test below came back null.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import * as fsp from 'node:fs/promises';
@@ -15,6 +20,7 @@ import * as path from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 
 import { admittedPdf, mintSeedFor } from '../../src/node/doors-meta';
+import { inheritedMintMetaFor } from '../../src/node/job-queue-settling';
 import { mintMetaFromName, parseBookFilename } from '../../src/shared/book-filename';
 import { fillMintGaps, type MintMeta } from '../../src/shared/mint-meta';
 import { useTestPlatform } from './platform-fixture';
@@ -24,12 +30,40 @@ let root = '';
 let projectDir = '';
 
 /** A PDF whose Info names a title and no author, the shape of the real scan. */
-async function scan(file: string): Promise<void> {
+async function scan(file: string, author?: string): Promise<void> {
   const doc = await PDFDocument.create();
   doc.addPage([200, 200]);
   doc.setTitle("'Working Towards the Führer.' Reflections on the Nature of the Hitler Dictatorship");
+  if (author !== undefined) doc.setAuthor(author);
   await fsp.writeFile(file, await doc.save());
 }
+
+/** A project of one imported PDF, catalogued the way an import catalogues it, with no stored block. */
+async function project(dir: string, stem: string, author?: string): Promise<void> {
+  await fsp.mkdir(path.join(dir, 'archive'), { recursive: true });
+  await fsp.mkdir(path.join(dir, 'working'), { recursive: true });
+  await scan(path.join(dir, 'archive', `${stem}.pdf`), author);
+  await scan(path.join(dir, 'working', `${stem}.pdf`), author);
+  const key = path.basename(dir);
+  await fsp.writeFile(path.join(dir, 'project.json'), JSON.stringify({
+    version: 2,
+    key,
+    title: stem,
+    stem,
+    createdAt: 1,
+    archive: { file: `${stem}.pdf`, kind: 'pdf', contentKey: key.slice(-8) },
+    documents: [{
+      kind: 'pdf',
+      steps: [{
+        file: `archive/${stem}.pdf`, kind: 'origin', label: 'The scan you imported',
+        appliedAt: 1, retention: 'irreplaceable', why: 'the only copy',
+      }],
+    }],
+    working: { files: [{ file: `${stem}.pdf`, kind: 'pdf', from: `archive/${stem}.pdf`, madeAt: 2 }] },
+  }));
+}
+
+let unattendedDir = '';
 
 beforeAll(async () => {
   root = await fsp.mkdtemp(path.join(os.tmpdir(), 'foundry-mint-seed-'));
@@ -40,26 +74,11 @@ beforeAll(async () => {
   useTestPlatform((name) => (name === 'userData' ? userData : path.join(root, name)));
 
   projectDir = path.join(library, 'projects', 'kershaw-d3f7ae65');
-  await fsp.mkdir(path.join(projectDir, 'archive'), { recursive: true });
-  await fsp.mkdir(path.join(projectDir, 'working'), { recursive: true });
-  await scan(path.join(projectDir, 'archive', `${STEM}.pdf`));
-  await scan(path.join(projectDir, 'working', `${STEM}.pdf`));
-  await fsp.writeFile(path.join(projectDir, 'project.json'), JSON.stringify({
-    version: 2,
-    key: 'kershaw-d3f7ae65',
-    title: STEM,
-    stem: STEM,
-    createdAt: 1,
-    archive: { file: `${STEM}.pdf`, kind: 'pdf', contentKey: 'd3f7ae65' },
-    documents: [{
-      kind: 'pdf',
-      steps: [{
-        file: `archive/${STEM}.pdf`, kind: 'origin', label: 'The scan you imported',
-        appliedAt: 1, retention: 'irreplaceable', why: 'the only copy',
-      }],
-    }],
-    working: { files: [{ file: `${STEM}.pdf`, kind: 'pdf', from: `archive/${STEM}.pdf`, madeAt: 2 }] },
-  }));
+  await project(projectDir, STEM);
+  // A stem outside the naming convention, so the name answers nothing and
+  // only the scan can say who the book is.
+  unattendedDir = path.join(library, 'projects', 'fuhrer-scan-0badc0de');
+  await project(unattendedDir, 'fuhrer scan 0412', 'Ian Kershaw');
 });
 
 afterAll(async () => {
@@ -68,21 +87,37 @@ afterAll(async () => {
 
 test('main reads the scan by project, and the name answers what the scan does not', async () => {
   const seed = await mintSeedFor(projectDir);
-  expect(seed.problem).toBeNull();
-  expect(seed.pdf?.title).toBe("'Working Towards the Führer.' Reflections on the Nature of the Hitler Dictatorship");
-  expect(seed.pdf?.contributors).toEqual([]);
-  expect(seed.name).toEqual({
-    title: 'Working Towards The Fuhrer',
-    contributors: [{ first: 'Ian', last: 'Kershaw' }],
-    year: '1993',
-  });
-  // The card's order below the stored block and the host: the scan, then the name.
-  const card = fillMintGaps(fillMintGaps(null, seed.pdf), seed.name);
-  expect(card).toEqual({
+  expect(seed.problems).toEqual([]);
+  // Nothing stored and no host: the scan's title, then the name's author and year.
+  expect(seed.meta).toEqual({
     title: "'Working Towards the Führer.' Reflections on the Nature of the Hitler Dictatorship",
     contributors: [{ first: 'Ian', last: 'Kershaw' }],
     year: '1993',
   });
+  expect(mintMetaFromName(STEM)).toEqual({
+    title: 'Working Towards The Fuhrer',
+    contributors: [{ first: 'Ian', last: 'Kershaw' }],
+    year: '1993',
+  });
+});
+
+test('the edit mode of the card stops after the host, so the file itself is the next witness', async () => {
+  expect(await mintSeedFor(projectDir, false)).toEqual({ meta: null, problems: [] });
+});
+
+test('an unattended export of a PDF with an Info title and author, and nothing stored, fills both', async () => {
+  // What the settle stamps an EPUB export nobody confirmed at a card with
+  // (job-queue-carry.ts): the card's own stack, from the card's own function.
+  expect(await inheritedMintMetaFor(unattendedDir)).toEqual({
+    title: "'Working Towards the Führer.' Reflections on the Nature of the Hitler Dictatorship",
+    contributors: [{ first: 'Ian', last: 'Kershaw' }],
+  });
+  // And the card reads the same answer for the same project.
+  expect((await mintSeedFor(unattendedDir)).meta).toEqual(await inheritedMintMetaFor(unattendedDir));
+});
+
+test('an unattended export of a directory the library does not hold stamps nothing, and fails nothing', async () => {
+  expect(await inheritedMintMetaFor(path.join(root, 'elsewhere'))).toBeNull();
 });
 
 test('a directory that is not a project in this library is refused', async () => {

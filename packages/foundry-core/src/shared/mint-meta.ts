@@ -241,20 +241,20 @@ export function inheritMintMeta(
 }
 
 /**
- * What a project says about itself before anybody has filled the card: the
- * scan's own Info dictionary, and the project's name read through BookForge's
- * convention (`mintMetaFromName`, shared/book-filename.ts). Main reads both
- * (`meta:mint-seed`), so the scan's path is one main composed rather than one
- * the renderer named.
+ * Who a project's book is before anybody has filled the card, every source
+ * stacked in Owen's order: the stored block, the host's record, the scan's own
+ * Info dictionary, the project's name read through BookForge's convention
+ * (`mintMetaFromName`, shared/book-filename.ts). Main composes it
+ * (`mintSeedFor`, node/doors-meta.ts) for the card and for every export nobody
+ * confirms, so the two cannot stamp different books from one project.
  *
- * `problem` is a read that failed, in words for the card to show under the
- * form: the scan could not be read, and the person should know the empty
- * fields are not the scan's answer.
+ * `problems` are the reads that failed, in words for the card to show under the
+ * form: a host that could not answer, a scan that could not be read. The
+ * person should know the empty fields are not those sources' answer.
  */
 export interface MintSeed {
-  pdf: MintMeta | null;
-  name: MintMeta | null;
-  problem: string | null;
+  meta: MintMeta | null;
+  problems: string[];
 }
 
 /**

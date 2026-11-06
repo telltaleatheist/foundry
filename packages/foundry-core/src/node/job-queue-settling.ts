@@ -2,11 +2,10 @@
  * job-queue-settling — a row finishing: what its mint inherits, telling its listeners, and cascading to what waited on it.
  */
 import * as path from 'node:path';
-import { hostMintMeta } from './host';
+import { mintSeedFor } from './doors-meta';
 import { ledgerOf, projectDirOf, readManifest } from './projects';
-import { type HostMintMeta } from '../shared/host-ops';
 import { ancestry } from '../shared/ledger';
-import { inheritMintMeta, type MintMeta } from '../shared/mint-meta';
+import type { MintMeta } from '../shared/mint-meta';
 import type { Job } from '../shared/types';
 import { cancel, release, sweepDerivedBook } from './job-queue-gestures';
 import { changed, copyOf, detachedRuns, forgetPark, jobs, releasing, requests, resumableStops, sessions, settleListeners, slots } from './job-queue-state';
@@ -19,30 +18,24 @@ import { changed, copyOf, detachedRuns, forgetPark, jobs, releasing, requests, r
  * stamp that falls back to the form's answer rather than a mint that fails.
  */
 /**
- * THE PROJECT'S DECLARATION WITH THE HOST'S RECORD UNDERNEATH — what an EPUB
- * export nobody confirmed at a form is stamped with. `inheritMintMeta` holds
- * the precedence; this is only the two reads it needs, both lenient: a
- * catalogue that will not parse and a host that throws are each "no record",
- * because the book is made and a stamp is the last thing that happens to it.
+ * WHO THE BOOK IS, FOR AN EPUB EXPORT NOBODY CONFIRMED AT A FORM — the card's
+ * own stack, from the card's own function (`mintSeedFor`, doors-meta.ts): the
+ * stored block, the host's record, the scan's Info, the project's name. Owen,
+ * 2026-11-06: *"yes, they should fill metadata from the pdf if its available"*;
+ * this used to stop after the host's record. Lenient end to end, because the
+ * book is made and a stamp is the last thing that happens to it: a source that
+ * fails is a named console line and no record from that source, and a project
+ * the library does not list is no record at all.
  */
 export async function inheritedMintMetaFor(dir: string): Promise<MintMeta | null> {
-  let stored: MintMeta | undefined;
   try {
-    stored = (await readManifest(dir)).meta;
-  } catch {
-    stored = undefined;
-  }
-  let seed: HostMintMeta | null;
-  try {
-    seed = await hostMintMeta(dir);
+    const seed = await mintSeedFor(dir);
+    for (const problem of seed.problems) console.error(`[queue] ${path.basename(dir)}: ${problem}`);
+    return seed.meta;
   } catch (err) {
-    // The export is made and filed whatever the host says; what is lost is
-    // the author on the package, which is worth a named line and not a
-    // failed job (the modal's door lets the same throw reach the form).
     console.error(`[queue] ${path.basename(dir)}: ${err instanceof Error ? err.message : String(err)}`);
-    seed = null;
+    return null;
   }
-  return inheritMintMeta(stored ?? null, seed);
 }
 
 export async function chainLanguageOf(

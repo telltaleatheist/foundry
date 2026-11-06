@@ -14,7 +14,7 @@ import type { BookOutcome } from './book';
 import type { CrucibleCoordinationMap, CrucibleCoordinationState } from './coordinate-wire';
 import type { CrucibleInstallEvent, CrucibleInstallStatus } from './crucible-install-wire';
 import type { RepairState } from './crucible-repair-wire';
-import type { HostMintMeta, HostNodeAction, HostOffers, HostOperationState, HostPassOffer, HostStatus } from './host-ops';
+import type { HostNodeAction, HostOffers, HostOperationState, HostPassOffer, HostStatus } from './host-ops';
 import type { MintSeed } from './mint-meta';
 import type { ReadAsk } from './ledger';
 import type {
@@ -360,12 +360,10 @@ export interface FoundryApi {
     writeEpub(filePath: string, patch: Partial<EpubMetadataFields>): Promise<MetadataWriteOutcome>;
     /**
      * The MINT metadata — the per-project block the mint modal edits
-     * (shared/mint-meta.ts). Read answers null for a project that has never
-     * confirmed one, which is the dialog's cue to seed; write replaces the
-     * block, which is what makes the next mint pre-fill with what the person
-     * last said.
+     * (shared/mint-meta.ts). Write replaces the block, which is what makes the
+     * next mint pre-fill with what the person last said; it is read back as
+     * the top of `mintSeed`'s stack.
      */
-    readMint(projectDir: string): Promise<MintMeta | null>;
     writeMint(projectDir: string, meta: MintMeta): Promise<void>;
     /**
      * The whole block stamped onto ONE finished export, in place — the
@@ -374,16 +372,12 @@ export interface FoundryApi {
      */
     stampMint(filePath: string, meta: MintMeta): Promise<MetadataOutcome>;
     /**
-     * The HOST's record of who this book is, or null — the hosted modal's
-     * seed (`HostMintMeta`, shared/host-ops.ts). The stored block wins
-     * per-field over this; the position still feeds the language.
+     * Who the project's book is, for the card: the stored block, the host's
+     * record, the scan's Info and the project's name, stacked by main
+     * (`mintSeedFor`) — the same stack an export nobody confirms is stamped
+     * with. `scan: false` stops after the host's record (the card's edit mode).
      */
-    hostSeed(projectDir: string): Promise<HostMintMeta | null>;
-    /**
-     * What the project says about itself for the card's empty fields: the scan's
-     * Info dictionary and the project's name, read by main (`mintSeedFor`).
-     */
-    mintSeed(projectDir: string): Promise<MintSeed>;
+    mintSeed(projectDir: string, scan: boolean): Promise<MintSeed>;
   };
 
   /**
