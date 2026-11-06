@@ -43,6 +43,28 @@ test('every fault the exporter wrote is respelled, and nothing else changes', ()
   parseXml(`<x>${strictXhtmlFragment(PLANTED)}</x>`, 'strict');
 });
 
+test('an attribute value is decoded once, through the full list, then escaped', () => {
+  // The parser decodes values itself, through its short list only — so the raw
+  // value is what is decoded here: `&amp;` once (never `&amp;amp;`), `&nbsp;`
+  // and `&oelig;` to their characters, an unknown name kept visible.
+  assert.equal(
+    strictXhtmlFragment('<td title="R&amp;D" abbr="a&nbsp;b" axis=\'&oelig;uvre &zzz; "q"\'>x</td>'),
+    '<td title="R&amp;D" abbr="a b" axis="œuvre &amp;zzz; &quot;q&quot;">x</td>',
+  );
+});
+
+test('a surrogate half, by reference or as a character, is dropped like a C0 control', () => {
+  assert.equal(strictXhtmlFragment('<td>a&#xD800;b&#55296;c\uDC00d&#1;e\u0001f</td>'), '<td>abcdef</td>');
+  // A real pair is one character, and stays.
+  assert.equal(strictXhtmlFragment('<td>\u{1F600}&#x1F600;</td>'), '<td>\u{1F600}\u{1F600}</td>');
+  assert.equal(strictXhtmlFragment('<td title="a&#xDFFF;b">x</td>'), '<td title="ab">x</td>');
+});
+
+test('void elements written bare, in any case, close themselves in lower case', () => {
+  assert.equal(strictXhtmlFragment('<TD>a<BR>b<Hr>c<IMG src=x>d</td>'), '<td>a<br/>b<hr/>c<img src="x"/>d</td>');
+  parseXml(`<x>${strictXhtmlFragment('<TD>a<BR>b<Hr>c<IMG src=x>d</td>')}</x>`, 'strict');
+});
+
 test('a structure that does not close is still refused at the page, never guessed', () => {
   assert.throws(() => checkTableHtml('<table><tr><td>x</tr></table>', 7), /page 7|not well-formed/);
 });

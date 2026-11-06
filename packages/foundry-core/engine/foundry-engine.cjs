@@ -31177,7 +31177,7 @@ var init_version = __esm({
     init_engine_import_meta_url();
     init_package();
     VERSION = package_default.version;
-    GIT_COMMIT = "src 8f2e471ac629".length > 0 ? "src 8f2e471ac629" : null;
+    GIT_COMMIT = "src 3b01a29b4d80".length > 0 ? "src 3b01a29b4d80" : null;
   }
 });
 
@@ -33337,11 +33337,43 @@ function written(source, node) {
     return "";
   }
   let attrs = "";
-  for (const [name, value] of node.attrs) attrs += ` ${name}="${escAttr(value)}"`;
+  for (const [name, raw] of rawAttrs(source.slice(node.start, node.innerStart))) {
+    attrs += ` ${name}="${escAttr(decodeAll(raw))}"`;
+  }
   if (node.selfClosing && node.children.length === 0 && VOID.has(node.tag)) return `<${node.tag}${attrs}/>`;
   let inner = "";
   for (const child of node.children) inner += written(source, child);
   return `<${node.tag}${attrs}>${inner}</${node.tag}>`;
+}
+function rawAttrs(tag) {
+  const attrs = /* @__PURE__ */ new Map();
+  const nameChar = /[-A-Za-z0-9_:.]/;
+  let j = 1;
+  while (j < tag.length && nameChar.test(tag[j])) j++;
+  for (; ; ) {
+    while (j < tag.length && /\s/.test(tag[j])) j++;
+    if (j >= tag.length || tag[j] === ">" || tag[j] === "/") return attrs;
+    const at = j;
+    while (j < tag.length && nameChar.test(tag[j])) j++;
+    const name = tag.slice(at, j).toLowerCase();
+    while (j < tag.length && /\s/.test(tag[j])) j++;
+    let value = name;
+    if (tag[j] === "=") {
+      j++;
+      while (j < tag.length && /\s/.test(tag[j])) j++;
+      const quote = tag[j];
+      if (quote === '"' || quote === "'") {
+        const close = tag.indexOf(quote, j + 1);
+        value = tag.slice(j + 1, close);
+        j = close + 1;
+      } else {
+        const from = j;
+        while (j < tag.length && !/[\s>]/.test(tag[j])) j++;
+        value = tag.slice(from, j);
+      }
+    }
+    if (!attrs.has(name)) attrs.set(name, value);
+  }
 }
 function decodeAll(raw) {
   return raw.replace(
@@ -33349,7 +33381,7 @@ function decodeAll(raw) {
     (whole, dec, hex2, name) => {
       if (name !== void 0) return HTML_ENTITIES[name] ?? whole;
       const code = Number.parseInt(dec ?? hex2, dec !== void 0 ? 10 : 16);
-      return code > 1114111 ? "" : String.fromCodePoint(code);
+      return code > 1114111 || code >= 55296 && code <= 57343 ? "" : String.fromCodePoint(code);
     }
   ).replace(FORBIDDEN, "");
 }
@@ -33366,7 +33398,7 @@ var init_strict_xhtml = __esm({
     init_engine_import_meta_url();
     init_html_entities();
     init_xml();
-    FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g;
+    FORBIDDEN = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF\uD800-\uDFFF]/gu;
     VOID = /* @__PURE__ */ new Set([
       "area",
       "base",
