@@ -31137,7 +31137,7 @@ var init_package = __esm({
   "package.json"() {
     package_default = {
       name: "foundry",
-      version: "2.0.2",
+      version: "2.0.3",
       private: true,
       description: "Recast poorly scanned PDFs into clean EPUBs. A document vision model (dots-ocr by default) reads each page whole \u2014 locally via MLX, or against any OpenAI-compatible server such as vLLM.",
       type: "module",
@@ -31177,7 +31177,7 @@ var init_version = __esm({
     init_engine_import_meta_url();
     init_package();
     VERSION = package_default.version;
-    GIT_COMMIT = "src 343f2d46b2e8".length > 0 ? "src 343f2d46b2e8" : null;
+    GIT_COMMIT = "src 36e77bfde944".length > 0 ? "src 36e77bfde944" : null;
   }
 });
 
