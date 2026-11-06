@@ -194,8 +194,14 @@ export function esc(text: string): string {
     .replace(/'/g, '&apos;');
 }
 
+/**
+ * The head of every spine document. THE DOCTYPE IS EPUB 3's (2026-11-06): it
+ * was missing, and a document without one is not the XHTML its package
+ * declares. It declares no named references, which is why nothing in a
+ * document may use one (`strictXhtmlFragment`, and `esc` for prose).
+ */
 export const XHTML_HEAD = (title: string, lang: string): string =>
-  `<?xml version="1.0" encoding="UTF-8"?>\n`
+  `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n`
   + `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"`
   + ` xml:lang="${esc(lang)}" lang="${esc(lang)}">\n`
   + `<head>\n  <meta charset="utf-8"/>\n  <title>${esc(title)}</title>\n`
@@ -384,6 +390,12 @@ export function packageVlmEpub(
      * is guessed shut, the export fails naming the document and the parser's
      * own words, and the defect is fixed where it was made.
      *
+     * STRICT, AS A READING SYSTEM IS (2026-11-06). It used the 'xhtml'
+     * dialect, which forgives bare `<br>`, `&nbsp;`, a raw `&` and unquoted
+     * attributes — so for all its comment it passed the malformed table markup
+     * the exporter wrote. 'strict' refuses each of those, and the tables are
+     * respelled where they enter the book so a book this program made passes.
+     *
      * MEASURED COST OF ITS ABSENCE: the triple-emphasis defect (2026-08-26)
      * wrote crossed tags into c0016.xhtml, the export was filed as a library
      * version, and the first thing to refuse it was a TTS pipeline in another
@@ -391,7 +403,7 @@ export function packageVlmEpub(
      * the day it was written.
      */
     try {
-      parseXml(document.xhtml, 'xhtml');
+      parseXml(document.xhtml, 'strict');
     } catch (err) {
       throw new VlmEpubError(
         `"${document.href}" is not well-formed XHTML and was not written into the book `

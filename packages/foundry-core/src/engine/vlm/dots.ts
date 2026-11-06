@@ -50,6 +50,7 @@
  * it is better than throwing away 299 good pages.
  */
 import { parseXml } from '../epub/xml.js';
+import { strictXhtmlFragment } from '../epub/strict-xhtml.js';
 import { starEmphasis } from './dialect.js';
 
 /** One page's answer could not be read. Always names the page. */
@@ -1120,13 +1121,20 @@ function partVerdict(
 }
 
 /**
- * A Table block's text is HTML by contract, and it goes into the book as the
- * model wrote it — so it is checked here, at the page, where a failure can name
- * the page it came from.
+ * A Table block's text is HTML by contract — so it is checked here, at the
+ * page, where a failure can name the page it came from.
  *
  * Never repaired: a tag guessed shut moves somebody's rows into somebody else's
  * table. This is `dialect.ts`'s rule and this dialect obeys it, with the one
  * difference that the stop is scoped to a page.
+ *
+ * AND WRITTEN BACK AS STRICT XHTML (2026-11-06). The model writes HTML — bare
+ * `<br>`, `&nbsp;`, raw `&`, valueless and unquoted attributes, `<TD>` — and a
+ * reading system parses the book as XML, where each of those stops it. The
+ * structure checked above is respelled, never restructured
+ * (`strictXhtmlFragment`, epub/strict-xhtml.ts); every route a table enters the
+ * book by (the bank's compile, the book route, an exploded EPUB) comes through
+ * here, so the export's strict check (vlm/epub.ts) passes what this returns.
  */
 export function checkTableHtml(fragment: string, page: number): string {
   try {
@@ -1138,5 +1146,5 @@ export function checkTableHtml(fragment: string, page: number): string {
       + `. The fragment starts: ${fragment.slice(0, 120)}`,
     );
   }
-  return fragment.trim();
+  return strictXhtmlFragment(fragment.trim());
 }

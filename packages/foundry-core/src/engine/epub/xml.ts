@@ -176,8 +176,18 @@ export function decodeEntities(raw: string): string {
  * document has exactly one element child, but nothing here enforces that: this
  * parser is also how the OPF is read, and refusing a stray processing
  * instruction would be a rule about XML the stage does not need.
+ *
+ * THE 'strict' DIALECT IS WHAT A READING SYSTEM'S XML PARSER WILL ACCEPT, and
+ * it is for checking what this program WRITES, never for reading a publisher's
+ * book (2026-11-06, the export check in vlm/epub.ts). Where 'xhtml' forgives
+ * the wild — bare `<br>`, `<td nowrap>`, `width=50`, `</TD>` closing `<td>`, a
+ * bare `&`, `&nbsp;` — 'strict' refuses each, by name and offset: no void
+ * elements, end tags matched case-sensitively, every attribute given once with
+ * a quoted value and no `<` in it, and every `&` one of XML's five references
+ * or a numeric one.
  */
-export function parseXml(source: string, dialect: 'xhtml' | 'xml' = 'xhtml'): XmlElement {
+export function parseXml(source: string, dialect: 'xhtml' | 'xml' | 'strict' = 'xhtml'): XmlElement {
+  const strict = dialect === 'strict';
   const root: XmlElement = {
     kind: 'element', name: '#document', tag: '#document', attrs: new Map(),
     start: 0, end: source.length, innerStart: 0, innerEnd: source.length,
@@ -190,6 +200,7 @@ export function parseXml(source: string, dialect: 'xhtml' | 'xml' = 'xhtml'): Xm
   let textStart = 0;
 
   const flushText = (upTo: number): void => {
+    if (strict) refuseLooseText(source, textStart, upTo);
     if (upTo > textStart) {
       top().children.push({ kind: 'text', start: textStart, end: upTo, parent: top() });
     }
@@ -204,7 +215,11 @@ export function parseXml(source: string, dialect: 'xhtml' | 'xml' = 'xhtml'): Xm
     const next = source[lt + 1];
     const isMarkup = next !== undefined
       && (NAME_START.test(next) || next === '/' || next === '!' || next === '?');
-    if (!isMarkup) { i = lt + 1; continue; }
+    if (!isMarkup) {
+      if (strict) throw new XmlError('a bare "<" in text (write &lt;)', lt);
+      i = lt + 1;
+      continue;
+    }
 
     flushText(lt);
 
@@ -278,7 +293,7 @@ export function parseXml(source: string, dialect: 'xhtml' | 'xml' = 'xhtml'): Xm
       if (open === root) {
         throw new XmlError(`end tag </${name}> with nothing open`, lt);
       }
-      if (open.tag !== tag) {
+      if (strict ? open.name !== name : open.tag !== tag) {
         throw new XmlError(`end tag </${name}> closes <${open.name}>, opened at ${open.start}`, lt);
       }
       open.innerEnd = lt;
@@ -306,8 +321,10 @@ export function parseXml(source: string, dialect: 'xhtml' | 'xml' = 'xhtml'): Xm
         throw new XmlError(`unreadable attribute in <${name}>`, j);
       }
       const attrName = source.slice(attrStart, j).toLowerCase();
+      if (strict && attrs.has(attrName)) throw new XmlError(`attribute ${attrName} given twice in <${name}>`, attrStart);
       while (j < source.length && /\s/.test(source[j]!)) j++;
       if (source[j] !== '=') {
+        if (strict) throw new XmlError(`attribute ${attrName} in <${name}> has no value`, attrStart);
         // A valueless attribute (HTML's `<hr noshade>`); its value is its name.
         attrs.set(attrName, attrName);
         continue;
@@ -320,8 +337,13 @@ export function parseXml(source: string, dialect: 'xhtml' | 'xml' = 'xhtml'): Xm
         const close = source.indexOf(quote, j + 1);
         if (close < 0) throw new XmlError(`unterminated attribute value in <${name}>`, j);
         raw = source.slice(j + 1, close);
+        if (strict) {
+          if (raw.includes('<')) throw new XmlError(`a "<" inside attribute ${attrName} of <${name}>`, j);
+          refuseLooseText(source, j + 1, close);
+        }
         j = close + 1;
       } else {
+        if (strict) throw new XmlError(`attribute ${attrName} in <${name}> is not quoted`, j);
         const valueStart = j;
         while (j < source.length && !/[\s>]/.test(source[j]!)) j++;
         raw = source.slice(valueStart, j);
@@ -352,6 +374,23 @@ export function parseXml(source: string, dialect: 'xhtml' | 'xml' = 'xhtml'): Xm
     throw new XmlError(`<${open.name}> is never closed`, open.start);
   }
   return root;
+}
+
+/**
+ * THE STRICT DIALECT'S RULE FOR TEXT: every `&` begins one of XML's five named
+ * references or a numeric one. An XHTML document with an HTML5 doctype declares
+ * no other names, so a reading system's XML parser stops at `&nbsp;` — and at a
+ * bare `&` — and shows the reader nothing.
+ */
+function refuseLooseText(source: string, from: number, to: number): void {
+  for (let at = source.indexOf('&', from); at >= 0 && at < to; at = source.indexOf('&', at + 1)) {
+    if (!/^&(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9A-Fa-f]+);/.test(source.slice(at, Math.min(to, at + 12)))) {
+      const shown = /^&[A-Za-z][A-Za-z0-9]*;/.exec(source.slice(at, at + 40))?.[0];
+      throw new XmlError(shown !== undefined
+        ? `the named reference ${shown} is not defined in XML (write the character or a numeric reference)`
+        : 'a bare "&" (write &amp;)', at);
+    }
+  }
 }
 
 /** Depth-first walk over every element under (and including) `node`. */
