@@ -86,9 +86,10 @@ export function parseEndpointHeaders(raw: string, source: string): EndpointHeade
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (err) {
+  } catch {
+    // NOT the parser's own words: Node's quote the input, and this may hold a credential.
     throw new EndpointHeadersError(
-      `${source} is not valid JSON (${(err as Error).message}). It must be a JSON object of `
+      `${source} is not valid JSON. It must be a JSON object of `
       + 'header names to string values, e.g. {"Authorization": "Bearer ...", "X-Api": "1"}.',
     );
   }

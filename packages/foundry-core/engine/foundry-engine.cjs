@@ -30250,9 +30250,9 @@ function parseEndpointHeaders(raw, source) {
   let parsed;
   try {
     parsed = JSON.parse(raw);
-  } catch (err) {
+  } catch {
     throw new EndpointHeadersError(
-      `${source} is not valid JSON (${err.message}). It must be a JSON object of header names to string values, e.g. {"Authorization": "Bearer ...", "X-Api": "1"}.`
+      `${source} is not valid JSON. It must be a JSON object of header names to string values, e.g. {"Authorization": "Bearer ...", "X-Api": "1"}.`
     );
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
@@ -31177,7 +31177,7 @@ var init_version = __esm({
     init_engine_import_meta_url();
     init_package();
     VERSION = package_default.version;
-    GIT_COMMIT = "src 3b01a29b4d80".length > 0 ? "src 3b01a29b4d80" : null;
+    GIT_COMMIT = "src 343f2d46b2e8".length > 0 ? "src 343f2d46b2e8" : null;
   }
 });
 
@@ -97038,13 +97038,21 @@ async function pdfMeta(opts) {
 
 // packages/foundry-core/src/engine/backend/probe.ts
 init_engine_import_meta_url();
+init_endpoint_headers();
 async function probeEndpoint(url, timeoutMs = 3e3) {
   const miss = (detail) => ({ available: false, detail, url, models: [], latencyMs: null });
+  let headers;
+  try {
+    headers = resolveEndpointHeaders();
+  } catch (err) {
+    return miss(`${url}: ${err.message}`);
+  }
   const started = Date.now();
   let response;
   try {
     response = await fetch(`${url.replace(/\/$/, "")}/models`, {
-      signal: AbortSignal.timeout(timeoutMs)
+      signal: AbortSignal.timeout(timeoutMs),
+      ...headers !== void 0 ? { headers: { ...headers } } : {}
     });
   } catch (err) {
     const cause = err instanceof Error && err.name === "TimeoutError" ? `no answer within ${timeoutMs}ms` : err.message;

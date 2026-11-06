@@ -22,6 +22,8 @@
  * engine, so we can offload all model calls to crucible."* Foundry starts,
  * provisions and probes no model server of its own.
  */
+import { resolveEndpointHeaders, type EndpointHeaders } from './endpoint-headers.js';
+
 export interface ProbeReport {
   available: boolean;
   detail: string;
@@ -37,15 +39,29 @@ export interface EndpointProbe extends ProbeReport {
  * GET <url>/models with a short deadline. `url` is the base the run would be
  * given (`http://host:8000/v1`), so the probe exercises the exact base the
  * chat request would extend.
+ *
+ * WITH THE HEADERS A RUN WOULD SEND (`resolveEndpointHeaders`, the one owner),
+ * because the probe's whole claim is "a run could read pages right now". It
+ * used to send none, so every current Crucible, which refuses a request without
+ * `X-Crucible-Api` (426), was reported down while real runs read through it.
+ * Headers that will not parse are a miss with their reason, not a throw: a
+ * probe reports, and that reason is the detail a person can act on.
  */
 export async function probeEndpoint(url: string, timeoutMs = 3000): Promise<EndpointProbe> {
   const miss = (detail: string): EndpointProbe =>
     ({ available: false, detail, url, models: [], latencyMs: null });
+  let headers: EndpointHeaders | undefined;
+  try {
+    headers = resolveEndpointHeaders();
+  } catch (err) {
+    return miss(`${url}: ${(err as Error).message}`);
+  }
   const started = Date.now();
   let response: Response;
   try {
     response = await fetch(`${url.replace(/\/$/, '')}/models`, {
       signal: AbortSignal.timeout(timeoutMs),
+      ...(headers !== undefined ? { headers: { ...headers } } : {}),
     });
   } catch (err) {
     const cause = err instanceof Error && err.name === 'TimeoutError'
