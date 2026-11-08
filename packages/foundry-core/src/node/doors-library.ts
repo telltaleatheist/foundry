@@ -16,6 +16,7 @@ import {
 } from './crucible-coordinate';
 import type { AskPresetsKept } from '../shared/ask-presets';
 import { admitted } from './openable';
+import { healWorkingPdf, isWorkingPdf } from './pdf-repair';
 import { hosted } from './host';
 import * as queue from './job-queue';
 import { finishSetup, finishPreparedSetup } from './setup';
@@ -29,6 +30,15 @@ export async function readDocumentBytes(target: string) {
   const resolved = admitted(target);
   if (resolved === null) {
     throw new Error(`${target} was never opened in this app.`);
+  }
+  /*
+   * A PROJECT'S WORKING PDF IS LOOKED AT BEFORE IT IS HANDED OVER, and rebuilt if
+   * it is damaged (pdf-repair.ts). This is the path for the books imported before
+   * the import did it: the viewer, the original panel and the block editor all
+   * read through this door, so the first open after the fix heals the copy.
+   */
+  if (isWorkingPdf(resolved)) {
+    await healWorkingPdf(resolved);
   }
   return fsp.readFile(resolved);
 }

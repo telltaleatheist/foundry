@@ -2031,6 +2031,12 @@ export interface FoundryApi {
    * project never fires this, because there is nowhere for it to go.
    */
   onDocumentRelocated(listener: (move: { from: string; to: string }) => void): () => void;
+  /**
+   * A sentence about a document, from main: a project's working PDF that was
+   * damaged and has been rebuilt, or could not be (node/pdf-repair.ts). It goes
+   * to the notice strip and nowhere else.
+   */
+  onDocumentNotice(listener: (sentence: string) => void): () => void;
   onNavigate(listener: (route: string) => void): () => void;
   /**
    * A project to stand in, pushed as the window finishes loading — the hosted

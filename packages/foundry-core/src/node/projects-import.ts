@@ -12,6 +12,7 @@ import { CAPTURE_RECIPE_PAYLOAD, emptyRecipe, recipeBytes } from '../shared/capt
 import { writeAtomically } from './atomic';
 import { announceProjects, copyNewOnly, readManifest, withCreatedProject, writeManifest } from './projects-manifest';
 import { ARCHIVE, GENERATED, WORKING, contentKey, projectDirOf, projectsDir, slugify, stemOf } from './projects-paths';
+import { healWorkingPdf } from './pdf-repair';
 import { recordStep } from './projects-rotation';
 import { ledgerOf, originLedger } from './projects-steps';
 
@@ -300,6 +301,14 @@ export async function importDocument(
         retention: 'irreplaceable',
         why: WHY_IMPORTED,
       }, { onlyIfEmpty: true });
+      /*
+       * A DAMAGED SCAN IS REBUILT HERE, in the copy that was just made, before
+       * anything reads it: a page tree pdf.js cannot walk opened as "This PDF
+       * would not open" on a book MuPDF reads whole (pdf-repair.ts). Gated on
+       * `made` like the stamp, and for its reason; a copy made before this line,
+       * or one a crash left unrebuilt, is healed when it is opened.
+       */
+      if (made) notice = await healWorkingPdf(path.join(dir, live, liveFile));
     } else {
       // A refusal from the stamp is a sentence and not a throw: the copy stands,
       // the book opens, and the person is told which of its doors is shut.
