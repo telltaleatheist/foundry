@@ -55,6 +55,7 @@ interface MupdfDocument {
   wasRepaired(): boolean;
   newGraftMap(): MupdfGraftMap;
   saveToBuffer(options: string): { asUint8Array(): Uint8Array };
+  destroy(): void;
 }
 interface Mupdf {
   PDFDocument: new (data?: Uint8Array) => MupdfDocument;
@@ -199,15 +200,33 @@ function rebuild(mupdf: Mupdf, src: MupdfDocument, places: number): Rebuilt {
     const entry = root.get(key);
     if (!entry.isNull()) dst.getTrailer().get('Root').put(key, map.graftObject(entry));
   }
-  return {
-    bytes: Buffer.from(dst.saveToBuffer('garbage=compact,compress').asUint8Array()),
-    pages: places - dropped.length,
-    dropped,
-  };
+  try {
+    return {
+      bytes: Buffer.from(dst.saveToBuffer('garbage=compact,compress').asUint8Array()),
+      pages: places - dropped.length,
+      dropped,
+    };
+  } finally {
+    dst.destroy();
+  }
 }
 
 /** The words for an open MuPDF refused, which is the file's fault and said as such. */
 const refusal = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/**
+ * A document opened for `use` and freed after it, thrown or not. A 400 MB scan is
+ * held inside MuPDF's heap for as long as its document lives, so none waits for
+ * the collector.
+ */
+function opened<T>(mupdf: Mupdf, bytes: Uint8Array, use: (doc: MupdfDocument) => T): T {
+  const doc = new mupdf.PDFDocument(bytes);
+  try {
+    return use(doc);
+  } finally {
+    doc.destroy();
+  }
+}
 
 /**
  * Look at a PDF's bytes and, when it is damaged, rebuild it. Never throws for a
@@ -215,23 +234,31 @@ const refusal = (err: unknown): string => (err instanceof Error ? err.message : 
  */
 export async function checkPdf(bytes: Uint8Array): Promise<PdfHealth> {
   const mupdf = await loadMupdf();
-  let src: MupdfDocument;
-  let found: Look;
+  type Outcome = { found: Look } | { found: Look; made: Rebuilt } | { unread: string };
+  let outcome: Outcome;
   try {
-    src = new mupdf.PDFDocument(bytes);
-    found = look(src);
+    outcome = opened(mupdf, bytes, (src) => {
+      const found = look(src);
+      if (found.damage === null) return { found };
+      try {
+        return { found, made: rebuild(mupdf, src, found.places) };
+      } catch (err) {
+        return { unread: `${found.damage}, and rebuilding it failed (${refusal(err)})` };
+      }
+    });
   } catch (err) {
     return { state: 'unrepairable', why: `MuPDF could not read it (${refusal(err)})` };
   }
-  if (found.damage === null) return { state: 'sound', pages: found.places };
-  let made: Rebuilt;
+  if ('unread' in outcome) return { state: 'unrepairable', why: outcome.unread };
+  const { found } = outcome;
+  if (!('made' in outcome) || found.damage === null) return { state: 'sound', pages: found.places };
+  const { made } = outcome;
+  if (made.pages === 0) return { state: 'unrepairable', why: `${found.damage}, and not one page in it could be read` };
   let again: Look;
   try {
-    made = rebuild(mupdf, src, found.places);
-    if (made.pages === 0) return { state: 'unrepairable', why: `${found.damage}, and not one page in it could be read` };
-    again = look(new mupdf.PDFDocument(made.bytes));
+    again = opened(mupdf, made.bytes, look);
   } catch (err) {
-    return { state: 'unrepairable', why: `${found.damage}, and rebuilding it failed (${refusal(err)})` };
+    return { state: 'unrepairable', why: `${found.damage}, and the rebuilt copy would not open (${refusal(err)})` };
   }
   if (again.damage !== null || again.places !== made.pages) {
     return {
