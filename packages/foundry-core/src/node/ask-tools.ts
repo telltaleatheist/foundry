@@ -38,7 +38,7 @@
  * once, since a heading read as a footnote often carries a stray number too. A
  * strike drops the retyping, for the strike's own reason: the block goes.
  */
-import type { AskBlock, AskChapterChange, AskHighlight, AskMark, AskView } from '../shared/ask';
+import { freeInsertId, type AskBlock, type AskChapterChange, type AskHighlight, type AskMark, type AskView } from '../shared/ask';
 import { PDF_BLOCK_CATEGORIES } from '../shared/categories';
 import { opIds, type AskHistory } from '../shared/ask-history';
 
@@ -46,6 +46,13 @@ import { opIds, type AskHistory } from '../shared/ask-history';
 const CATEGORIES: readonly string[] = PDF_BLOCK_CATEGORIES.map((c) => c.id);
 /** The kinds a chapter may be started at: a heading, which is what a chapter's first block is. */
 const HEADINGS: ReadonlySet<string> = new Set(['Title', 'Section-header']);
+/**
+ * The kinds a block can be ADDED as: the ones that are words. A picture, a table
+ * and a formula are things the page drew, a footnote is bound to a number the
+ * page printed (the replay refuses an inserted one), and a running head or a
+ * folio is nothing a book is missing.
+ */
+const ADDABLE: readonly string[] = ['Text', 'Title', 'Section-header', 'List-item', 'Quote', 'Caption'];
 
 /**
  * WHAT ONE CALL DID, for the person watching the run (Owen, 2026-11-02: the
@@ -85,6 +92,7 @@ export interface AskCounts {
   readonly retyped: number;
   readonly joined: number;
   readonly split: number;
+  readonly added: number;
   readonly restored: number;
   readonly linked: number;
   readonly reverted: number;
@@ -154,7 +162,7 @@ export function roundSaid(said: readonly AskSaid[]): string {
 export function tallySaid(counts: Partial<AskCounts> & { struck: number; revised: number; retyped: number }): string {
   const said: [number | undefined, string][] = [
     [counts.struck, 'marked'], [counts.revised, 'revised'], [counts.retyped, 'retyped'],
-    [counts.joined, 'joined'], [counts.split, 'split'], [counts.restored, 'restored'],
+    [counts.joined, 'joined'], [counts.split, 'split'], [counts.added, 'added'], [counts.restored, 'restored'],
     [counts.linked, 'linked'], [counts.reverted, 'reverted'], [counts.highlighted, 'pointed at'],
   ];
   const parts = said.filter(([n]) => n !== undefined && n > 0).map(([n, word]) => `${n} ${word}`);
@@ -200,6 +208,8 @@ interface Live extends AskBlock {
 type Join = { reason: string; into: string };
 /** A split the model proposed: where, the trimmed halves, and each half's new kind. */
 type Split = { reason: string; at: number; first: string; second: string; firstCategory: string | null; secondCategory: string | null };
+/** A block the model proposed adding beside another: its kind, its words, and the chapter starting at it. */
+type Insert = { reason: string; beside: string; where: 'before' | 'after'; category: string; text: string; chapter: string | null };
 /** A link the model proposed: this note's number is printed in `block`, at these characters. */
 type Link = { reason: string; note: string; block: string; at: number; len: number };
 /** An earlier edit the model proposed taking back: the edit as a mark, and every block it names. */
@@ -221,6 +231,8 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
   /** By the block that goes; a chain (A ← B ← C) is B → A and C → B. */
   const joins = new Map<string, Join>();
   const splits = new Map<string, Split>();
+  /** By place — `before:<id>` or `after:<id>` — so one block is added at one place. */
+  const inserts = new Map<string, Insert>();
   const restores = new Map<string, string>();
   const links: Link[] = [];
   const highlights: AskHighlight[] = [];
@@ -298,7 +310,15 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
     const cut = split === undefined ? ''
       : ` [SPLIT before "${clip(split.second, 30)}"${split.firstCategory !== null || split.secondCategory !== null
         ? ` (${split.firstCategory ?? b.category} | ${split.secondCategory ?? b.category})` : ''}: ${split.reason}]`;
-    return `${b.id}${head}${said}${joined}${cut}${apparatusSaid(b)} ${clip(textOf(b), n)}`;
+    return `${addedSaid(b, 'before')}${b.id}${head}${said}${joined}${cut}${apparatusSaid(b)} ${clip(textOf(b), n)}${addedSaid(b, 'after')}`;
+  }
+
+  /** A block added beside this one, on its own line where it will stand: above for before, below for after. */
+  function addedSaid(b: Live, where: 'before' | 'after'): string {
+    const add = inserts.get(`${where}:${b.id}`);
+    if (add === undefined) return '';
+    const said = `(new) [ADDED ${where} ${b.id} as ${add.category}${add.chapter === null ? '' : `; starts chapter "${add.chapter}"`}: ${add.reason}] ${clip(add.text, 200)}`;
+    return where === 'before' ? `${said}\n` : `\n${said}`;
   }
 
   function goneLine(b: Live, n = 200): string {
@@ -425,7 +445,7 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
       else revised += 1;
     }
     return {
-      struck, revised, retyped: retypes.size, joined: joins.size, split: splits.size,
+      struck, revised, retyped: retypes.size, joined: joins.size, split: splits.size, added: inserts.size,
       restored: restores.size, linked: links.length, reverted: reverts.size, highlighted: highlights.length,
     };
   }
@@ -524,6 +544,8 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
             : '',
           before ? `${before} blocks before the first chapter.` : '',
           ...rows,
+          ...[...inserts.values()].filter((add) => add.chapter !== null)
+            .map((add) => `(new) a chapter "${add.chapter}" starts at the block you added ${add.where} ${add.beside}`),
         ].filter(Boolean).join('\n');
         return { content, said: { verb: 'outline', detail: '' } };
       },
@@ -1126,6 +1148,72 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
       aim: (a) => ({ verb: 'split', detail: words(typeof a['id'] === 'string' ? a['id'] : '', quoted(a['reason'])) }),
     },
     /*
+     * ── WORDS NO BLOCK CARRIES (Owen, 2026-11-10) ────────────────────────────
+     *
+     * A Culture of Conspiracy's third chapter had no heading block at all: the
+     * reading lost it. The model found where the chapter began and had nothing
+     * to put a title there with. It tried writing the title onto the front of
+     * the chapter's first paragraph and splitting it off, and a revised block
+     * is not split. This is the editor's own "add a block" (`InsertOp`), with
+     * the chapter start a heading usually wants in the same decision.
+     */
+    {
+      name: 'insert',
+      description: `Add a NEW block the book does not have, with a short reason: words the reading missed altogether, such as a chapter heading no block carries. Give before or after (a block id; the new block goes immediately before or after it) and text (the new block's words). category is its kind (default Text), one of ${ADDABLE.join(', ')}. starts_chapter:true also starts a chapter at the new block (only when its kind is Title or Section-header), titled with its words unless chapter_title is given. Never add words a block already carries: revise changes a block's words, and split cuts a heading off the paragraph it ran into. A second insert at the same place replaces the first; unmark with the neighbouring block's id takes it off. Use dry_run:true first.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          before: { type: 'string', description: 'The block the new one goes immediately before.' },
+          after: { type: 'string', description: 'Or the block it goes immediately after. Exactly one of the two.' },
+          text: { type: 'string', description: 'The new block\'s words.' },
+          category: { type: 'string', enum: [...ADDABLE], description: 'The new block\'s kind (default Text).' },
+          starts_chapter: { type: 'boolean', description: 'Start a chapter at the new block. Only for a Title or a Section-header.' },
+          chapter_title: { type: 'string', description: 'The chapter\'s title, when it is not the block\'s own words. Only with starts_chapter:true.' },
+          reason: { type: 'string', description: 'Short label, e.g. "chapter heading the scan lost".' },
+          dry_run: { type: 'boolean' },
+        },
+        required: ['text', 'reason'],
+      },
+      run(a) {
+        const reason = reasonOf(a);
+        if ((a['before'] === undefined) === (a['after'] === undefined)) throw new Error('give exactly one of before or after');
+        const where = a['before'] !== undefined ? 'before' : 'after';
+        const b = liveBlock(a[where], where);
+        const join = joins.get(b.id);
+        if (join !== undefined) throw new Error(`${b.id} is joined into ${join.into}, so nothing stands beside it; add the block beside ${join.into}, or unmark the join first`);
+        const text = typeof a['text'] === 'string' ? a['text'].trim() : '';
+        if (text.length === 0) throw new Error('text must be the new block\'s words; a block is added because the reading missed its words');
+        const category = a['category'] === undefined ? 'Text' : a['category'];
+        if (typeof category !== 'string' || !ADDABLE.includes(category)) {
+          throw new Error(`category must be one of ${ADDABLE.join(', ')} (exactly as spelled); a block is added as words, never as a footnote, a picture, a table or a running head`);
+        }
+        if (a['chapter_title'] !== undefined && a['starts_chapter'] !== true) throw new Error('chapter_title goes with starts_chapter:true');
+        let chapter: string | null = null;
+        if (a['starts_chapter'] === true) {
+          if (!HEADINGS.has(category)) throw new Error(`a chapter starts at a heading; give category "Title" or "Section-header" to start one at the new block, not ${category}`);
+          const given = a['chapter_title'];
+          if (given !== undefined && (typeof given !== 'string' || given.trim().length === 0)) throw new Error('chapter_title must be the chapter\'s title');
+          chapter = typeof given === 'string' ? given.trim() : text.replace(/\*+/g, '').replace(/\s+/g, ' ').trim();
+          if (chapter.length === 0) throw new Error('the new block has no words to title a chapter with; give chapter_title');
+        }
+        const key = `${where}:${b.id}`;
+        const replaced = inserts.has(key);
+        const show = `${where} ${b.id} (${clip(textOf(b), 60)}):\n  [${category}${chapter === null ? '' : `; starts chapter "${chapter}"`}] ${clip(text, 200)}`;
+        if (a['dry_run'] === true) {
+          return { content: `WOULD ADD ${show}`, said: { verb: 'dry run:', detail: words(`a ${category} would be added ${where} ${b.id}`, quoted(reason)) } };
+        }
+        inserts.set(key, { reason, beside: b.id, where, category, text, chapter });
+        return {
+          content: `ADDED ${show}\n${replaced ? 'It replaces the block you added there earlier. ' : ''}The new block gets its own id when the person keeps it. ${totals()}`,
+          said: { verb: 'added', detail: words(`a ${category} ${where} ${b.id}`, quoted(reason)) },
+        };
+      },
+      aim: (a) => ({
+        verb: 'insert',
+        detail: words(typeof a['before'] === 'string' ? `before ${a['before']}` : typeof a['after'] === 'string' ? `after ${a['after']}` : '', quoted(a['reason'])),
+      }),
+    },
+    /*
      * ── A BLOCK REMOVED BY MISTAKE (Owen, 2026-11-02) ────────────────────────
      *
      * The person's strikes were hidden from the model entirely, so it could
@@ -1341,12 +1429,12 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
     },
     {
       name: 'unmark',
-      description: 'Take marks, revisions, retypings, joins, splits, restores and links off: by selector, or every one with a given reason. A revised block goes back to its original text, a retyped one to its original kind and chapter.',
+      description: 'Take marks, revisions, retypings, joins, splits, added blocks, restores and links off: by selector, or every one with a given reason. A revised block goes back to its original text, a retyped one to its original kind and chapter. A block you added is taken off by the id of the block it stands beside.',
       parameters: {
         type: 'object',
         properties: {
           ...selectorProps,
-          reason: { type: 'string', description: 'Unmark everything marked, revised, retyped, joined, split, restored or linked with exactly this reason.' },
+          reason: { type: 'string', description: 'Unmark everything marked, revised, retyped, joined, split, added, restored or linked with exactly this reason.' },
         },
       },
       run(a) {
@@ -1365,6 +1453,7 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
             if (joins.get(b.id)?.reason === reason && joins.delete(b.id)) n += 1;
             if (splits.get(b.id)?.reason === reason && splits.delete(b.id)) n += 1;
           }
+          for (const [key, add] of [...inserts]) if (add.reason === reason && inserts.delete(key)) n += 1;
           for (const [id, why] of [...restores]) if (why === reason && restores.delete(id)) n += 1;
           for (const [handle, r] of [...reverts]) if (r.reason === reason && reverts.delete(handle)) n += 1;
           dropLinks((l) => l.reason !== reason);
@@ -1385,6 +1474,8 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
             if (retypes.delete(id)) n += 1;
             if (joins.delete(id)) n += 1;
             if (splits.delete(id)) n += 1;
+            if (inserts.delete(`before:${id}`)) n += 1;
+            if (inserts.delete(`after:${id}`)) n += 1;
           }
           dropLinks((l) => !ids.has(l.note));
           for (const [handle, r] of [...reverts]) if (r.ids.some((id) => ids.has(id)) && reverts.delete(handle)) n += 1;
@@ -1398,7 +1489,7 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
     },
     {
       name: 'marks_summary',
-      description: 'Every reason used so far, whether it marks, revises, retypes, joins, splits, restores or links, how many blocks each holds, and examples.',
+      description: 'Every reason used so far, whether it marks, revises, retypes, joins, splits, adds, restores or links, how many blocks each holds, and examples.',
       parameters: { type: 'object', properties: {} },
       run() {
         type Kind = Mark['kind'] | 'category' | 'join' | 'split' | 'restore' | 'link';
@@ -1435,13 +1526,19 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
         for (const [why, blocks] of restoreReasons) {
           parts.push(`"${why}" (restored): ${blocks.length}\n${blocks.slice(0, 3).map((b) => goneLine(b, 160)).join('\n')}`);
         }
+        const addReasons = new Map<string, Insert[]>();
+        for (const add of inserts.values()) addReasons.set(add.reason, [...(addReasons.get(add.reason) ?? []), add]);
+        for (const [why, added] of addReasons) {
+          parts.push(`"${why}" (added): ${added.length}\n${added.slice(0, 3)
+            .map((add) => `${add.where} ${add.beside}: [${add.category}${add.chapter === null ? '' : `; starts chapter "${add.chapter}"`}] ${clip(add.text, 160)}`).join('\n')}`);
+        }
         const revertReasons = new Map<string, string[]>();
         for (const [handle, r] of reverts) revertReasons.set(r.reason, [...(revertReasons.get(r.reason) ?? []), `${handle}: undo ${r.said}`]);
         for (const [why, said] of revertReasons) parts.push(`"${why}" (reverted): ${said.length}\n${said.slice(0, 3).join('\n')}`);
         if (highlights.length > 0) {
           parts.push(`Places pointed at: ${highlights.length}\n${highlights.slice(-3).map((h) => `${h.id}: ${h.note}`).join('\n')}`);
         }
-        if (parts.length === 0) return { content: 'Nothing marked, revised, retyped, joined, split, restored or linked yet.', said: checked };
+        if (parts.length === 0) return { content: 'Nothing marked, revised, retyped, joined, split, added, restored or linked yet.', said: checked };
         return { content: parts.join('\n\n'), said: checked };
       },
       aim: () => ({ verb: 'checked its work', detail: '' }),
@@ -1483,7 +1580,17 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
     highlights: () => [...highlights],
     items() {
       const out: AskMark[] = [];
+      // The names the run was shown; the landing mints again against the book as it stands then.
+      const taken = new Set([...byId.keys(), ...goneById.keys()]);
+      const added = (b: Live, where: 'before' | 'after'): void => {
+        const add = inserts.get(`${where}:${b.id}`);
+        if (add === undefined) return;
+        const id = freeInsertId(taken);
+        taken.add(id);
+        out.push({ id, kind: 'insert', reason: add.reason, beside: b.id, before: b.text, where, category: add.category, text: add.text, chapter: add.chapter });
+      };
       for (const b of live) {
+        added(b, 'before');
         const mark = marks.get(b.id);
         if (mark !== undefined) {
           out.push(mark.kind === 'strike'
@@ -1544,6 +1651,7 @@ export function askToolbox(view: AskView, history: AskHistory | null = null): As
             blockBefore: byId.get(l.block)!.text,
           });
         }
+        added(b, 'after');
       }
       for (const b of gone) {
         const why = restores.get(b.id);

@@ -1,6 +1,6 @@
 {
   "name": "@owen/foundry-core",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Foundry's features without a window: the engine bundle, the book/ledger/queue/Crucible logic a main process runs, and the browser-safe shapes and replay a renderer shares. Consumed by standalone Foundry (this repo's app/) and by BookForge.",
   "license": "UNLICENSED",

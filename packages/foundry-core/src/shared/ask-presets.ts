@@ -1,117 +1,68 @@
 /**
- * ASK'S PRESETS — questions kept in the Presets modal, each with a checkbox;
- * Send runs the checked ones one after another, in list order (Owen,
- * 2026-11-02).
+ * ASK'S PRESETS — questions the person keeps, each a title and the text sent to
+ * the model when it is pressed (Owen, 2026-11-02; made the person's own,
+ * 2026-11-10).
+ *
+ * EVERY PRESET IS ONE THE PERSON WROTE. Four used to ship in this file; Owen,
+ * 2026-11-10: *"i think we should create 'ask' presets instead of having the
+ * presets coded in"*, then *"remove the shipped defaults"*. A list nobody has
+ * added to is empty, and there is nothing to restore.
  *
  * The presets are the APP's, not a book's: the same jobs are asked of every
  * book, so they live in `app-settings.json` (`askPresets`, and which were
- * checked last in `askPresetsChecked`), where a person's own presets and
- * edits are kept too. Absent there means "never changed", which is the shipped
- * defaults below.
+ * checked last in `askPresetsChecked`).
  *
- * ── WHY THE QUESTIONS NAME THE TOOLS ────────────────────────────────────────
- *
- * Each built-in is written as a full instruction that says which tools to use,
- * because a one-line "fix the chapters" leaves the model to rediscover what the
- * toolbox can do on every book, and it is the TOOLS that make the result
- * reviewable — a chapter heading fixed by `recategorize` lands as a retyping
- * the person can keep or undo, not as words the model describes.
- *
- * ── WHY THE DEFAULTS ARE ORDERED THIS WAY ───────────────────────────────────
- *
- * The list's order is the run order. Chapters first: it finds each chapter by
- * the table of contents, and Front & back matter is the step that removes the
- * table of contents. Each step is its own run on the book's thread, so each
- * later step starts from the earlier ones' note, and from the book with their
- * changes pending on it — a landing is on the pane's stack before the next
- * step reads the view (`AskChain`).
+ * The list's order is the run order when several are sent from the Presets
+ * modal. Each step is its own run on the book's thread, so each later step
+ * starts from the earlier ones' note, and from the book with their changes
+ * pending on it — a landing is on the pane's stack before the next step reads
+ * the view (`AskChain`).
  */
 
-/** One preset. `id` is stable across renames; the built-ins' ids are fixed. */
+/** One preset. `id` is stable across renames. */
 export interface AskPreset {
   readonly id: string;
+  /** Its title: the button's words. */
   readonly label: string;
-  /** One line, under the name in the modal. May be empty. */
-  readonly description: string;
+  /** The text sent to the model. */
   readonly question: string;
 }
 
 /** Ceilings, so "a few buttons" stays that. */
 export const ASK_PRESET_MAX = 30;
 export const ASK_PRESET_LABEL_MAX = 40;
-export const ASK_PRESET_DESCRIPTION_MAX = 140;
 export const ASK_PRESET_QUESTION_MAX = 4000;
 
-export const DEFAULT_ASK_PRESETS: readonly AskPreset[] = [
-  {
-    id: 'builtin:chapters',
-    label: 'Correct chapters',
-    description: 'Every chapter in the contents starts at a Title with its proper name; false chapter starts go.',
-    question: 'Correct this book\'s chapters. First find the table of contents (outline, then read the front of the book). '
-      + 'For each chapter it lists, find where that chapter begins in the body (search for its title or number). '
-      + 'Each chapter\'s heading must be a Title with a chapter starting at it: use recategorize with category "Title" and '
-      + 'starts_chapter:true to retype it; if the heading is glued to the paragraph after it, use split at the first words of '
-      + 'the paragraph with first_category "Title", then make the heading start the chapter; if the chapter\'s title is only a '
-      + 'number or is wrong, use rename_chapter to give it the title the contents list. Use recategorize with '
-      + 'starts_chapter:false to take away chapter starts that are not real chapters. Do NOT mark the table of contents itself '
-      + 'for removal; that is a separate step. In your summary, list any chapter from the contents you could not find in the body.',
-  },
-  {
-    id: 'builtin:matter',
-    label: 'Front & back matter',
-    description: 'Mark the contents, copyright, index, bibliography, ads and the like; point at anything unsure.',
-    question: 'Mark for removal everything in the front and back of this book that should not be read aloud in an audiobook: '
-      + 'the table of contents, the copyright page, the index, the bibliography, acknowledgements, advertisements, "also by '
-      + 'this author" lists, and similar apparatus. Use mark (dry_run first when you use a pattern or a span). Keep the '
-      + 'title, a dedication, an epigraph, a foreword, a preface, an introduction and an afterword: those are read. For '
-      + 'anything you are unsure of, use highlight with a short note instead of marking it, and say so in your summary.',
-  },
-  {
-    id: 'builtin:pictures',
-    label: 'Pictures, captions & URLs',
-    description: 'Strike pictures and captions, rejoin the prose they split, and take web addresses out.',
-    question: 'Remove what a listener cannot see. Mark pictures and their captions for removal (search category_is '
-      + '"Picture" and "Caption", dry_run first). Where a picture or caption split a sentence or a paragraph in two, join '
-      + 'the block after it onto the block before it (join, dry_run first to check the seam reads as one sentence). Mark '
-      + 'blocks that are only a web address for removal. Where a web address sits inside a sentence, use revise to take it '
-      + 'out and keep the words around it grammatical (for example "(Associated Newspapers Limited, www.dailymail.co.uk)" '
-      + 'becomes "(Associated Newspapers Limited)").',
-  },
-  {
-    id: 'builtin:footnotes',
-    label: 'Footnotes',
-    description: 'Link notes to their numbers, point at stray numbers, and retype blocks misread as notes.',
-    question: 'Put this book\'s footnotes right. read only:"unlinked" shows notes nothing points at and numbers no note '
-      + 'carries. Where a note and a number truly belong together (the same number, the note close after the place the '
-      + 'number is printed), use link_footnote to bind them. Use highlight for stray numbers that are not real references, '
-      + 'with a note saying what they are. Use recategorize for blocks wrongly read as footnotes (a chapter number, a '
-      + 'heading, a page number): give them the kind they really are.',
-  },
-];
+/** A title as kept: one line, trimmed to the ceiling. */
+export function presetLabel(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, ASK_PRESET_LABEL_MAX);
+}
 
-/** Checked when nothing has been kept yet: every default. */
-export const DEFAULT_CHECKED: readonly string[] = DEFAULT_ASK_PRESETS.map((one) => one.id);
+/** The text as kept: trimmed to the ceiling, its own line breaks left alone. */
+export function presetQuestion(value: string): string {
+  return value.trim().slice(0, ASK_PRESET_QUESTION_MAX);
+}
 
 /** The presets Send runs: the checked ones, in the list's order, which is the run order. */
 export function checkedSteps(presets: readonly AskPreset[], checked: ReadonlySet<string>): AskPreset[] {
   return presets.filter((one) => checked.has(one.id));
 }
 
-/** Which were checked last, as stored: ids, each once; null is never kept. */
-export function clampCheckedPresets(value: unknown): string[] | null {
-  if (!Array.isArray(value)) return null;
+/** Which were checked last, as stored: ids, each once. Nothing kept is none. */
+export function clampCheckedPresets(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 80))]
     .slice(0, ASK_PRESET_MAX);
 }
 
 /**
- * The buttons as stored, made legal: null (never changed) is the defaults;
- * each entry needs a label and a question, trimmed to the ceilings; an id
- * seen twice keeps the first.
+ * The list as stored, made legal: nothing kept is an empty list; each entry
+ * needs a title and a text, trimmed to the ceilings; an id seen twice keeps
+ * the first. A field this build does not know (the one-line description
+ * presets carried until 2026-11-10) is not carried on.
  */
-export function clampAskPresets(value: unknown): AskPreset[] | null {
-  if (value === null || value === undefined) return null;
-  if (!Array.isArray(value)) return null;
+export function clampAskPresets(value: unknown): AskPreset[] {
+  if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
   const out: AskPreset[] = [];
   for (const raw of value) {
@@ -119,27 +70,19 @@ export function clampAskPresets(value: unknown): AskPreset[] | null {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
     const entry = raw as Record<string, unknown>;
     const id = typeof entry['id'] === 'string' ? entry['id'].trim().slice(0, 80) : '';
-    const label = typeof entry['label'] === 'string' ? entry['label'].replace(/\s+/g, ' ').trim().slice(0, ASK_PRESET_LABEL_MAX) : '';
-    // Kept before descriptions existed reads as none.
-    const description = typeof entry['description'] === 'string'
-      ? entry['description'].replace(/\s+/g, ' ').trim().slice(0, ASK_PRESET_DESCRIPTION_MAX) : '';
-    const question = typeof entry['question'] === 'string' ? entry['question'].trim().slice(0, ASK_PRESET_QUESTION_MAX) : '';
+    const label = typeof entry['label'] === 'string' ? presetLabel(entry['label']) : '';
+    const question = typeof entry['question'] === 'string' ? presetQuestion(entry['question']) : '';
     if (id.length === 0 || label.length === 0 || question.length === 0 || seen.has(id)) continue;
     seen.add(id);
-    out.push({ id, label, description, question });
+    out.push({ id, label, question });
   }
   return out;
 }
 
-/** What the settings hold for the modal: the list (null: defaults) and which were checked last (null: the defaults). */
+/** What the settings hold: the list, and which were checked last. */
 export interface AskPresetsKept {
-  readonly presets: AskPreset[] | null;
-  readonly checked: string[] | null;
-}
-
-/** The buttons to draw: what is kept, or the defaults when nothing is. */
-export function askPresetsOrDefaults(kept: readonly AskPreset[] | null): readonly AskPreset[] {
-  return kept ?? DEFAULT_ASK_PRESETS;
+  readonly presets: AskPreset[];
+  readonly checked: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -24,24 +24,24 @@ import type { AskSession } from '../../src/shared/ask';
 import type { BookOp } from '../../src/shared/ops';
 import type { BookRow } from '../../src/shared/book';
 
-test('the defaults are the four jobs, in run order, each a full instruction naming its tools', () => {
-  expect(presets.DEFAULT_ASK_PRESETS.map((p) => p.label))
-    .toEqual(['Correct chapters', 'Front & back matter', 'Pictures, captions & URLs', 'Footnotes']);
-  const [chapters, matter, pictures, notes] = presets.DEFAULT_ASK_PRESETS;
-  expect(chapters!.question).toContain('rename_chapter');
-  expect(chapters!.question).toContain('Do NOT mark the table of contents');
-  expect(matter!.question).toContain('highlight');
-  expect(pictures!.question).toContain('join');
-  expect(notes!.question).toContain('link_footnote');
-  for (const p of presets.DEFAULT_ASK_PRESETS) expect(p.description.length).toBeGreaterThan(0);
+/** Four of a person's own, as the chain tests name them. */
+const MINE = [
+  { id: 'mine:chapters', label: 'Correct chapters', question: 'Fix the chapters.' },
+  { id: 'mine:matter', label: 'Front & back matter', question: 'Mark the front and back matter.' },
+  { id: 'mine:pictures', label: 'Pictures', question: 'Strike the pictures.' },
+  { id: 'mine:footnotes', label: 'Footnotes', question: 'Link the footnotes.' },
+];
+
+test('no preset ships: a list nobody has added to is empty, and nothing is checked', () => {
+  expect(settings.readAppSettings().askPresets).toEqual([]);
+  expect(settings.readAppSettings().askPresetsChecked).toEqual([]);
+  expect(Object.keys(presets).filter((name) => /default/i.test(name))).toEqual([]);
 });
 
-test('presets and the checked set persist in app settings; null restores the defaults', () => {
-  expect(settings.readAppSettings().askPresets).toBeNull();
-  expect(settings.readAppSettings().askPresetsChecked).toBeNull();
+test('presets and the checked set persist in app settings', () => {
   const mine = [
-    { ...presets.DEFAULT_ASK_PRESETS[1]!, label: 'Matter, my way' },
-    { id: 'mine:1', label: 'Numbers', description: '', question: 'Spell out the numbers.' },
+    { id: 'mine:1', label: 'Numbers', question: 'Spell out the numbers.' },
+    { id: 'mine:2', label: 'Chapters', question: 'can you fix the chapters?\nsome are subtitles.' },
   ];
   settings.writeAppSettings({ askPresets: mine, askPresetsChecked: ['mine:1'] });
   const file = path.join(userData, 'app-settings.json');
@@ -53,32 +53,35 @@ test('presets and the checked set persist in app settings; null restores the def
   // Another setting written later leaves the presets alone.
   settings.writeAppSettings({ setupCompleted: true });
   expect(settings.readAppSettings().askPresets).toEqual(mine);
-  settings.writeAppSettings({ askPresets: null });
-  expect(settings.readAppSettings().askPresets).toBeNull();
-  expect(presets.askPresetsOrDefaults(settings.readAppSettings().askPresets)).toBe(presets.DEFAULT_ASK_PRESETS);
+  // The last one deleted leaves an empty list, not four that come back.
+  settings.writeAppSettings({ askPresets: [] });
+  expect(settings.readAppSettings().askPresets).toEqual([]);
   expect(settings.readAppSettings().askPresetsChecked).toEqual(['mine:1']);
 });
 
-test('a stored list is made legal: no label or question, a repeated id, old entries without a description', () => {
+test('a stored list is made legal: no title or text, a repeated id, a field this build does not know', () => {
   expect(presets.clampAskPresets([
-    { id: 'a', label: '  Two   words ', question: 'Q' },
+    { id: 'a', label: '  Two   words ', question: ' Q\nsecond line ' },
     { id: 'a', label: 'again', description: 'x', question: 'Q2' },
     { id: 'b', label: '', question: 'Q' },
     { id: 'c', label: 'C', question: '   ' },
+    { id: 'd', label: 'D', description: 'kept before 2026-11-10', question: 'Q' },
     'junk',
-  ])).toEqual([{ id: 'a', label: 'Two words', description: '', question: 'Q' }]);
-  expect(presets.clampAskPresets('nope')).toBeNull();
+  ])).toEqual([{ id: 'a', label: 'Two words', question: 'Q\nsecond line' }, { id: 'd', label: 'D', question: 'Q' }]);
+  expect(presets.clampAskPresets('nope')).toEqual([]);
+  expect(presets.clampAskPresets(undefined)).toEqual([]);
   expect(presets.clampCheckedPresets(['a', 'a', 3, 'b'])).toEqual(['a', 'b']);
+  expect(presets.presetLabel('x'.repeat(60)).length).toBe(presets.ASK_PRESET_LABEL_MAX);
 });
 
 test('the checked presets run in the list\'s order, which the person can change', () => {
-  const list = [...presets.DEFAULT_ASK_PRESETS].reverse();
-  expect(presets.checkedSteps(list, new Set(['builtin:chapters', 'builtin:footnotes'])).map((p) => p.id))
-    .toEqual(['builtin:footnotes', 'builtin:chapters']);
+  const list = [...MINE].reverse();
+  expect(presets.checkedSteps(list, new Set(['mine:chapters', 'mine:footnotes'])).map((p) => p.id))
+    .toEqual(['mine:footnotes', 'mine:chapters']);
 });
 
 test('a chain runs every step in order, says where it is, and ends with a sentence', () => {
-  const chain = new presets.AskChain('c1', presets.DEFAULT_ASK_PRESETS.slice(0, 3));
+  const chain = new presets.AskChain('c1', MINE.slice(0, 3));
   expect(chain.said()).toBe('Presets: step 1 of 3 — Correct chapters');
   expect(chain.current()!.step).toEqual({ chain: 'c1', step: 'Correct chapters', index: 1, of: 3 });
   const two = chain.ended({ state: 'done' });
@@ -90,7 +93,7 @@ test('a chain runs every step in order, says where it is, and ends with a senten
 });
 
 test('a failed step stops the chain and names it; the steps before stay', () => {
-  const chain = new presets.AskChain('c2', presets.DEFAULT_ASK_PRESETS);
+  const chain = new presets.AskChain('c2', MINE);
   chain.ended({ state: 'done' });
   const over = chain.ended({ state: 'failed', message: 'the server went away.' });
   expect(over).toEqual({ over: 'The presets stopped at step 2 of 4 (Front & back matter), which failed: the server went away. The steps before it stay on the book.' });
@@ -98,7 +101,7 @@ test('a failed step stops the chain and names it; the steps before stay', () => 
 });
 
 test('one Stop ends the chain: the running step\'s end starts nothing more, even if it finished', () => {
-  const chain = new presets.AskChain('c3', presets.DEFAULT_ASK_PRESETS);
+  const chain = new presets.AskChain('c3', MINE);
   chain.cancel();
   expect(chain.said()).toBeNull();
   const over = chain.ended({ state: 'done' });
@@ -167,7 +170,7 @@ test('a run started from a preset is kept with the preset\'s name beside the ful
   const { readSessionsAt } = await import('../../src/node/ask-document');
   const file = path.join(userData, 'sessions-preset.jsonl');
   const kept: AskSession = {
-    id: 'r9', at: '2026-11-02T00:00:00Z', request: presets.DEFAULT_ASK_PRESETS[3]!.question, preset: 'Footnotes',
+    id: 'r9', at: '2026-11-02T00:00:00Z', request: MINE[3]!.question, preset: 'Footnotes',
     server: 's', model: 'm', summary: '', items: [], skipped: 0, rounds: 1, seconds: 1,
   };
   fs.writeFileSync(file, `${JSON.stringify(kept)}\n${JSON.stringify({ ...kept, id: 'r10', preset: 7 })}\n`);
@@ -175,5 +178,5 @@ test('a run started from a preset is kept with the preset\'s name beside the ful
   fs.writeFileSync(file, `${JSON.stringify(kept)}\n`);
   const [back] = await readSessionsAt(file);
   expect(back!.preset).toBe('Footnotes');
-  expect(back!.request).toContain('link_footnote');
+  expect(back!.request).toBe('Link the footnotes.');
 });

@@ -218,6 +218,107 @@ test('highlight points at a block or exact words in it, and changes nothing', ()
   expect(b.call('highlight', JSON.stringify({ id: 'a-9', note: 'x' })).said).toEqual({ verb: 'pointed at', detail: 'a-9 "x"' });
 });
 
+/*
+ * A CHAPTER HEADING THE READING LOST (Owen, 2026-11-10, A Culture of Conspiracy):
+ * chapter 3's text was in the book and its title was in no block. The model had
+ * no way to add one, and its workaround was refused, as the second test keeps.
+ */
+test('a heading no block carries: add a Title where the chapter begins, starting the chapter', () => {
+  const { b, run } = box();
+  expect(run('insert', { before: 'a-10', text: 'Chapter 3. The Flood', category: 'Title', starts_chapter: true, reason: 'heading lost', dry_run: true }))
+    .toContain('WOULD ADD before a-10');
+  expect(b.items()).toEqual([]);
+  expect(run('insert', { before: 'a-10', text: ' Chapter 3. The Flood ', category: 'Title', starts_chapter: true, reason: 'heading lost' }))
+    .toContain('[Title; starts chapter "Chapter 3. The Flood"] Chapter 3. The Flood');
+  expect(b.counts().added).toBe(1);
+  // The model sees its new block where it will stand, and the chapter in the outline.
+  expect(run('read', { from: 'a-9', count: 3 })).toContain('(new) [ADDED before a-10 as Title; starts chapter "Chapter 3. The Flood": heading lost] Chapter 3. The Flood\na-10 ');
+  expect(run('outline')).toContain('a chapter "Chapter 3. The Flood" starts at the block you added before a-10');
+  expect(run('marks_summary')).toContain('"heading lost" (added): 1');
+
+  const items = b.items();
+  expect(items).toEqual([{
+    id: 'u1', kind: 'insert', reason: 'heading lost', beside: 'a-10', before: 'Morning came.', where: 'before',
+    category: 'Title', text: 'Chapter 3. The Flood', chapter: 'Chapter 3. The Flood',
+  }]);
+  expect(structureSaid(items[0] as Extract<AskMark, { kind: 'insert' }>)).toBe('added before a-10 as Title, starts a chapter, "Chapter 3. The Flood"');
+  for (const item of JSON.parse(JSON.stringify(items)) as unknown[]) expect(isAskMark(item)).toBe(true);
+  expect(isAskMark({ ...items[0], text: '' })).toBe(false);
+
+  const landing = planLanding(items, states([]).rows, false);
+  expect(landing.skipped).toEqual([]);
+  expect(landing.ops).toEqual([
+    { op: 'insert', id: 'u1', before: 'a-10', category: 'Title', text: 'Chapter 3. The Flood' },
+    { op: 'chapter', set: 'u1', title: 'Chapter 3. The Flood' },
+  ]);
+  const after = states(landing.ops);
+  const order = after.out.rows.map((r) => r.id);
+  expect(order.slice(order.indexOf('a-9'), order.indexOf('a-10') + 1)).toEqual(['a-9', 'u1', 'a-10']);
+  expect(after.out.rows.find((r) => r.id === 'u1')).toMatchObject({ category: 'Title', text: 'Chapter 3. The Flood' });
+  expect(after.out.chapters.map((c) => c.id)).toEqual(['a-1', 'a-9', 'u1']);
+
+  // Taken back, the added block is struck and its chapter goes.
+  const undo = planUndo(landing.acted, after.rows, false);
+  expect(undo.skipped).toEqual([]);
+  expect(undo.ops).toEqual([{ op: 'chapter', remove: 'u1' }, { op: 'strike', id: 'u1' }]);
+  const back = states([...landing.ops, ...undo.ops]);
+  expect(back.out.rows.find((r) => r.id === 'u1')?.struck).toBe(true);
+  expect(back.out.chapters.map((c) => c.id)).toEqual(['a-1', 'a-9']);
+  // Words the person changed since are theirs.
+  const edited = states([...landing.ops, { op: 'text', id: 'u1', text: 'Chapter 3' }]);
+  expect(planUndo(landing.acted, edited.rows, false).skipped[0]!.why).toContain('have changed since the run');
+
+  // A name the book took meanwhile is never minted twice: the mark kept is the one that landed.
+  const again = planLanding(items, after.rows, false);
+  expect(again.acted[0]!.id).toBe('u2');
+  expect(states([...landing.ops, ...again.ops]).out.rows.filter((r) => r.id === 'u1' || r.id === 'u2').length).toBe(2);
+  // The block it goes beside, gone.
+  const rowsWithout = new Map(states([]).rows);
+  rowsWithout.delete('a-10');
+  expect(planLanding(items, rowsWithout, false).skipped[0]!.why).toContain('a-10');
+});
+
+test('an added block lands before the join or split that consumes its neighbour\'s name', () => {
+  const { b, run } = box();
+  run('split', { id: 'a-1', at_quote: 'The rain', first_category: 'Section-header', reason: 'heading run in' });
+  run('insert', { after: 'a-1', text: 'An epigraph the reading missed.', category: 'Quote', reason: 'epigraph lost' });
+  run('insert', { before: 'a-1', text: 'Part One', category: 'Section-header', reason: 'part heading lost' });
+  const landing = planLanding(b.items(), states([]).rows, false);
+  expect(landing.skipped).toEqual([]);
+  expect(landing.ops.slice(0, 2).map((op) => op.op)).toEqual(['insert', 'insert']);
+  const after = states(landing.ops);
+  expect(after.out.rows.slice(0, 4).map((r) => r.id)).toEqual(['u1', 'a-1/1', 'a-1/2', 'u2']);
+  expect(landing.acted.filter((i) => i.kind === 'insert').map((i) => i.id).sort()).toEqual(['u1', 'u2']);
+});
+
+test('what insert refuses, and how an added block is taken off', () => {
+  const { b, run } = box();
+  // The workaround the model tried on the real book: write the title onto the paragraph, then cut it off.
+  run('revise', { id: 'a-10', edits: [{ find: 'Morning', replace: 'Chapter 3. The Flood Morning' }], reason: 'title' });
+  expect(run('split', { id: 'a-10', at_quote: 'Morning', reason: 'title' })).toContain('already carries a mark, revision');
+  run('unmark', { ids: ['a-10'] });
+
+  expect(run('insert', { text: 'x', reason: 'r' })).toContain('exactly one of before or after');
+  expect(run('insert', { before: 'a-1', after: 'a-2', text: 'x', reason: 'r' })).toContain('exactly one of before or after');
+  expect(run('insert', { before: 'a-10', text: '   ', reason: 'r' })).toContain('the reading missed its words');
+  expect(run('insert', { before: 'a-10', text: 'x', category: 'Footnote', reason: 'r' })).toContain('never as a footnote');
+  expect(run('insert', { before: 'a-10', text: 'x', starts_chapter: true, reason: 'r' })).toContain('a chapter starts at a heading');
+  expect(run('insert', { before: 'a-10', text: 'x', chapter_title: 'X', reason: 'r' })).toContain('chapter_title goes with starts_chapter:true');
+  expect(run('insert', { before: 'a-11', text: 'x', reason: 'r' })).toContain('was struck by the person');
+  run('mark', { ids: ['a-3', 'a-4'], reason: 'picture' });
+  run('join', { id: 'a-5', reason: 'broken' });
+  expect(run('insert', { after: 'a-5', text: 'x', reason: 'r' })).toContain('a-5 is joined into a-2');
+  expect(b.counts().added).toBe(0);
+
+  run('insert', { before: 'a-10', text: 'First', reason: 'one' });
+  expect(run('insert', { before: 'a-10', text: 'Second', reason: 'one' })).toContain('It replaces the block you added there earlier.');
+  run('insert', { after: 'a-9', text: 'Third', chapter_title: 'Named', starts_chapter: true, category: 'Section-header', reason: 'two' });
+  expect(b.items().filter((i) => i.kind === 'insert').map((i) => [i.id, (i as Extract<AskMark, { kind: 'insert' }>).text])).toEqual([['u1', 'Third'], ['u2', 'Second']]);
+  expect(run('unmark', { reason: 'two' })).toContain('Unmarked 1.');
+  expect(run('unmark', { ids: ['a-10'] })).toContain('Unmarked 1.');
+  expect(b.counts().added).toBe(0);
+});
+
 test('every new mark is one a saved run can be read back with', () => {
   const { b, run } = box();
   run('mark', { ids: ['a-3', 'a-4'], reason: 'picture' });

@@ -84,7 +84,7 @@ measured **154**; two doors arrived and none left.
 | Channel | Request/result |
 | --- | --- |
 | `ask:presets` | nothing → `AskPresetsKept`: the Presets modal's list and which were checked last, from `app-settings.json` (`askPresets`, `askPresetsChecked`); a null field is "never changed", which the renderer draws as the shipped defaults (shared/ask-presets.ts). |
-| `ask:save-presets` | `Partial<AskPresetsKept>` → `AskPresetsKept` as kept. A list of null restores the defaults. Clamped (`clampAskPresets`) and written whole: `writeAppSettings` now writes through a temp file and a rename (`writeAtomicallySync`), for every setting. |
+| `ask:save-presets` | `Partial<AskPresetsKept>` → `AskPresetsKept` as kept. Clamped (`clampAskPresets`) and written whole: `writeAppSettings` now writes through a temp file and a rename (`writeAtomicallySync`), for every setting. |
 
 `AskSession` gained `highlights`, `hitLimit` and `chain` (all optional, so earlier runs still read), and
 `AskMark` four kinds: `join`, `split`, `restore`, `link`. `AskView` carries `struckBlocks` and `loose`.

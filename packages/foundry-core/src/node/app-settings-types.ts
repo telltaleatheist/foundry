@@ -316,14 +316,13 @@ export interface AppSettings {
   lastJobServers: Partial<Record<JobModelKind, string>>;
 
   /**
-   * ASK'S BUTTONS (Owen, 2026-11-02) — the person's own list, in order, or null
-   * for "never changed", which draws the shipped defaults
-   * (shared/ask-presets.ts). App-wide, not per book: the same jobs are asked
-   * of every book. Writing null is "Restore default buttons".
+   * ASK'S PRESETS (Owen, 2026-11-02) — the person's own list, in order; empty
+   * until they add one (shared/ask-presets.ts). App-wide, not per book: the
+   * same jobs are asked of every book.
    */
-  askPresets: AskPreset[] | null;
-  /** Which presets were checked when Send was last pressed, by id; null is never kept (the defaults). */
-  askPresetsChecked: string[] | null;
+  askPresets: AskPreset[];
+  /** Which presets were checked when Send was last pressed, by id. */
+  askPresetsChecked: string[];
 }
 
 /** How many a person may keep. A ceiling so "a list" cannot become a corpus. */

@@ -174,6 +174,13 @@ export class AskHistory {
           firstCategory: null, secondCategory: null, chapterBefore: was.chapter,
         };
       }
+      case 'insert': {
+        const beside = op.before ?? op.after!;
+        return {
+          id: op.id, kind: 'insert', reason, beside, before: need(beside).text,
+          where: op.before !== undefined ? 'before' : 'after', category: op.category, text: op.text, chapter: null,
+        };
+      }
       case 'link': {
         const block = need(op.block);
         return { id: op.note, kind: 'link', reason, before: need(op.note).text, block: op.block, at: op.at, len: op.len, blockBefore: block.text };
@@ -308,6 +315,7 @@ function markMade(item: AskMark, op: BookOp): boolean {
     case 'category': return item.kind === 'category' && item.id === op.id && item.to === op.category;
     case 'merge': return item.kind === 'join' && item.id === op.id;
     case 'split': return item.kind === 'split' && item.id === op.id;
+    case 'insert': return item.kind === 'insert' && item.id === op.id;
     case 'link': return item.kind === 'link' && item.id === op.note && item.block === op.block && item.at === op.at;
     case 'unlink': return item.kind === 'unlink' && item.id === op.note && item.block === op.block && item.at === op.at;
     case 'chapter':

@@ -206,6 +206,29 @@ export type AskMark =
     readonly chapterBefore: string | null;
   }
   | {
+    /**
+     * A BLOCK ADDED (`InsertOp`) — words the reading missed altogether, such as
+     * a chapter heading no block carries (Owen, 2026-11-10: the model found where
+     * a chapter began and had nothing to put its title there with).
+     *
+     * `id` is the NEW block's name (`u<n>`). The run mints it against the names
+     * it was shown, and `planLanding` mints it again against the book as it
+     * stands, so the mark a session keeps always carries the name that landed.
+     */
+    readonly id: string;
+    readonly kind: 'insert';
+    readonly reason: string;
+    /** The block it goes beside, and that block's text when the run saw it. */
+    readonly beside: string;
+    readonly before: string;
+    readonly where: 'before' | 'after';
+    /** The new block's kind and words. */
+    readonly category: string;
+    readonly text: string;
+    /** The title of the chapter that starts at the new block, or null for none. */
+    readonly chapter: string | null;
+  }
+  | {
     /** A block the PERSON struck, proposed back. */
     readonly id: string;
     readonly kind: 'restore';
@@ -275,6 +298,8 @@ export function askMarkKey(item: AskMark): string {
     case 'link': return `link:${item.id}:${item.block}:${item.at}`;
     case 'unlink': return `unlink:${item.id}:${item.block}:${item.at}`;
     case 'revert': return `revert:${item.handle}`;
+    // By its place, which is what one run holds one of; the minted name moves at landing.
+    case 'insert': return `insert:${item.beside}:${item.where}`;
     default: return `${item.kind}:${item.id}`;
   }
 }
@@ -292,8 +317,9 @@ export function retypeSaid(item: Extract<AskMark, { kind: 'category' }>): string
 }
 
 /** "joined to e-412", "split before "It was…"" — what a structural mark does, in a line, for the review card. */
-export function structureSaid(item: Extract<AskMark, { kind: 'join' | 'split' | 'restore' | 'link' | 'unlink' | 'revert' }>): string {
+export function structureSaid(item: Extract<AskMark, { kind: 'join' | 'split' | 'insert' | 'restore' | 'link' | 'unlink' | 'revert' }>): string {
   switch (item.kind) {
+    case 'insert': return `added ${item.where} ${item.beside} as ${item.category}${item.chapter === null ? '' : `, starts a chapter, "${item.chapter}"`}`;
     case 'join': return `joined to ${item.into}`;
     case 'split': {
       const kinds = item.firstCategory !== null || item.secondCategory !== null
@@ -587,7 +613,28 @@ export function planLanding(
     while (wentInto.has(at)) at = wentInto.get(at)!;
     return at;
   };
+  /*
+   * THE ADDED BLOCKS GO FIRST, whatever their place in the list: an insert names
+   * the block it goes beside, and a join or a split later in the same run would
+   * have consumed that name by the time the insert replayed. Each takes the
+   * first free `u<n>` in the book as it stands, so the name is never one a
+   * block the person added meanwhile already has.
+   */
+  const taken = new Set(rows.keys());
   for (const item of items) {
+    if (item.kind !== 'insert') continue;
+    if (!rows.has(item.beside)) {
+      skipped.push({ item, why: `the block it goes beside (${item.beside}) is no longer in the book` });
+      continue;
+    }
+    const id = freeInsertId(taken);
+    taken.add(id);
+    ops.push({ op: 'insert', id, ...(item.where === 'before' ? { before: item.beside } : { after: item.beside }), category: item.category, text: item.text });
+    if (item.chapter !== null) ops.push({ op: 'chapter', set: id, title: item.chapter });
+    acted.push({ ...item, id });
+  }
+  for (const item of items) {
+    if (item.kind === 'insert') continue;
     if (item.kind === 'revert') {
       const back = planUndo([item.original], rows, translated);
       if (back.skipped.length > 0) {
@@ -681,6 +728,13 @@ export function planLanding(
   return { ops, corrections, acted, skipped };
 }
 
+/** The first free name for an added block: `u<n>`, the editor's own mint (`commitInsert`). */
+export function freeInsertId(taken: ReadonlySet<string>): string {
+  let ordinal = 1;
+  while (taken.has(`u${ordinal}`)) ordinal += 1;
+  return `u${ordinal}`;
+}
+
 /**
  * A SPLIT, AS OPS: the cut, each half's words trimmed at it (the replay cuts at a
  * character and keeps whatever space was there), each half's new kind, and the
@@ -754,6 +808,30 @@ export function planUndo(
         continue;
       }
       ops.push(...plan);
+      acted.push(item);
+      continue;
+    }
+    if (item.kind === 'insert') {
+      /*
+       * AN ADDED BLOCK TAKEN BACK IS STRUCK. The grammar has no un-insert, and a
+       * strike is how every other block leaves the book: it stays on the page
+       * struck, where the person can see what was taken out.
+       */
+      const row = now.get(item.id);
+      if (row === undefined) {
+        skipped.push({ item, why: 'the block it added is no longer in the book' });
+        continue;
+      }
+      if (row.struck) {
+        skipped.push({ item, why: 'the block it added has been struck since the run' });
+        continue;
+      }
+      if (row.text !== item.text) {
+        skipped.push({ item, why: 'the words of the block it added have changed since the run' });
+        continue;
+      }
+      if (row.chapter !== null) ops.push({ op: 'chapter', remove: item.id });
+      ops.push({ op: 'strike', id: item.id });
       acted.push(item);
       continue;
     }

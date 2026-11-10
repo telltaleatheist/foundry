@@ -40,7 +40,7 @@ function tools() {
 
 test('the seventeen tools are offered, each with a schema', () => {
   const { box } = tools();
-  expect(box.tools.map((t) => t.name)).toEqual(['outline', 'read', 'search', 'mark', 'revise', 'revise_pattern', 'recategorize', 'rename_chapter', 'join', 'split', 'restore', 'link_footnote', 'highlight', 'history', 'revert', 'unmark', 'marks_summary']);
+  expect(box.tools.map((t) => t.name)).toEqual(['outline', 'read', 'search', 'mark', 'revise', 'revise_pattern', 'recategorize', 'rename_chapter', 'join', 'split', 'insert', 'restore', 'link_footnote', 'highlight', 'history', 'revert', 'unmark', 'marks_summary']);
   for (const t of box.tools) expect((t.parameters as { type: string }).type).toBe('object');
 });
 

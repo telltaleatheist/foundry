@@ -119,14 +119,10 @@ export function writeAppSettings(patch: Partial<AppSettings>): AppSettings {
     root['lastJobServers'] = clampLastJobModels(patch.lastJobServers);
   }
   if (patch.askPresets !== undefined) {
-    const kept = clampAskPresets(patch.askPresets);
-    if (kept === null) delete root['askPresets'];
-    else root['askPresets'] = kept;
+    root['askPresets'] = clampAskPresets(patch.askPresets);
   }
   if (patch.askPresetsChecked !== undefined) {
-    const checked = clampCheckedPresets(patch.askPresetsChecked);
-    if (checked === null) delete root['askPresetsChecked'];
-    else root['askPresetsChecked'] = checked;
+    root['askPresetsChecked'] = clampCheckedPresets(patch.askPresetsChecked);
   }
   /*
    * NULL IS A VALUE HERE and clears the receipt — which is what re-installing

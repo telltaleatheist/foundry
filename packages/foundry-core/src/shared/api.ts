@@ -966,9 +966,9 @@ export interface FoundryApi {
     deleteConversation(projectDir: string, id: string): Promise<AskConversation[]>;
     renameConversation(projectDir: string, id: string, title: string): Promise<AskConversation[]>;
     onProgress(listener: (frame: AskProgress) => void): () => void;
-    /** The Presets modal's list and which were checked last, as kept (null fields: the defaults). */
+    /** The person's presets and which were checked last, as kept. */
     presets(): Promise<AskPresetsKept>;
-    /** Keep what is given — a list (null restores the defaults) and/or the checked ids. Answers what is kept. */
+    /** Keep what is given — the list and/or the checked ids. Answers what is kept. */
     savePresets(kept: Partial<AskPresetsKept>): Promise<AskPresetsKept>;
   };
 
