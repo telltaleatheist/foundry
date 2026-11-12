@@ -88,13 +88,13 @@
     "pdf-lib": "1.17.1"
   },
   "peerDependencies": {
-    "@crucible/bootstrap": "^2.0.35",
-    "@crucible/client": "^2.0.35",
+    "@crucible/bootstrap": "^2.0.38",
+    "@crucible/client": "^2.0.38",
     "@owen/tool-loop": "^0.1.0"
   },
   "devDependencies": {
-    "@crucible/bootstrap": "file:../../app/vendor/crucible-bootstrap-2.0.35.tgz",
-    "@crucible/client": "file:../../app/vendor/crucible-client-2.0.35.tgz",
+    "@crucible/bootstrap": "file:../../app/vendor/crucible-bootstrap-2.0.38.tgz",
+    "@crucible/client": "file:../../app/vendor/crucible-client-2.0.38.tgz",
     "@owen/tool-loop": "file:../../app/vendor/owen-tool-loop-0.1.0.tgz",
     "@pdf-lib/fontkit": "1.1.1",
     "@types/bun": "1.3.14",

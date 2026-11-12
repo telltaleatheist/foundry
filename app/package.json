@@ -63,8 +63,8 @@
   },
   "_crucibleClientNote": "Crucible SDKs are vendored as immutable npm-pack tarballs: the LIBRARY this app is built against, never the release an install puts on a machine — that is the release channel's answer, read at install time (crucible docs/INSTALL-UNINSTALL.md 6.5). Compatibility with a server is the API version on X-Crucible-Api, not this number. Update both packages, integrity hashes, and generated module metadata together; directory dependencies are not supported.",
   "dependencies": {
-    "@crucible/bootstrap": "file:vendor/crucible-bootstrap-2.0.35.tgz",
-    "@crucible/client": "file:vendor/crucible-client-2.0.35.tgz",
+    "@crucible/bootstrap": "file:vendor/crucible-bootstrap-2.0.38.tgz",
+    "@crucible/client": "file:vendor/crucible-client-2.0.38.tgz",
     "@owen/foundry-core": "file:../packages/foundry-core",
     "@owen/tool-loop": "file:vendor/owen-tool-loop-0.1.0.tgz",
     "tslib": "^2.3.0"
