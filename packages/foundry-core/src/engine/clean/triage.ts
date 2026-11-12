@@ -52,6 +52,7 @@ import { NORMALIZER_VERSION } from './tts-number-normalizer.js';
 import { PUNCTUATION_SPEC_VERSION } from './tts-punctuation.js';
 import { NO_REMOVAL, removalRecord, removalTriageCriteria, type RemovalRequest } from './removal.js';
 import { applyFixedToAll, type FixedReading } from './fixed-readings.js';
+import { requestNeed } from '../context-need.js';
 
 /** What a triage file is, spelled into it — a reader refuses any other. */
 export const TRIAGE_FORMAT = 'foundry-clean-triage/v1';
@@ -451,7 +452,28 @@ type DecideReply = Omit<DoorReply, 'answers'> & { answers?: Record<string, Decid
 /**
  * Judge every position of the book, and write the verdicts to `outPath`.
  */
+/**
+ * THE CONTEXT THIS TRIAGE'S LARGEST QUESTION NEEDS (src/engine/context-need.ts):
+ * the book is grouped exactly as a run groups it, and each group's state with its
+ * longest question is counted, with the one-token answer the decide door reads.
+ * The door wraps both in about 250 characters of its own wording
+ * (crucible/decide.py), which the count's slack covers. Nothing is written and
+ * no server is asked. `endpoint` and `model` are not read.
+ */
+export async function measureCleanTriage(opts: CleanTriageOptions): Promise<number | null> {
+  return (await cleanTriage(opts, true)).measured;
+}
+
 export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTriageOutcome> {
+  return cleanTriage(opts, false);
+}
+
+async function cleanTriage(opts: CleanTriageOptions, measuring: true): Promise<{ measured: number | null }>;
+async function cleanTriage(opts: CleanTriageOptions, measuring: false): Promise<CleanTriageOutcome>;
+async function cleanTriage(
+  opts: CleanTriageOptions,
+  measuring: boolean,
+): Promise<CleanTriageOutcome | { measured: number | null }> {
   const started = Date.now();
   const at = new Date().toISOString();
   const concurrency = opts.concurrency ?? DEFAULT_TRIAGE_CONCURRENCY;
@@ -480,6 +502,22 @@ export async function runCleanTriage(opts: CleanTriageOptions): Promise<CleanTri
   const removal = opts.removal ?? NO_REMOVAL;
   const units = triageUnits(blocks, punctuated.text, unit);
   const groups = triageGroups(units, unit);
+  if (measuring) {
+    let measured = 0;
+    for (const group of groups) {
+      const state = groupState(units, group, unit, removal);
+      for (const one of units.slice(group.askFrom, group.askTo)) {
+        const question = JSON.stringify(triageQuestion(one.parts, unit, one.text));
+        measured = Math.max(measured, requestNeed(state, question, 1));
+      }
+    }
+    if (measured === 0) {
+      opts.log('clean-triage: no position is left to judge, so no model would be asked anything');
+      return { measured: null };
+    }
+    opts.log(`clean-triage: the largest question of ${groups.length} group(s) needs ${measured} tokens of context`);
+    return { measured };
+  }
   opts.log(
     `clean-triage: ${units.length} ${unit === 'sentence' ? 'sentence' : 'block'} position(s) of `
     + `${blocks.length} block(s), in ${groups.length} group(s), asked of ${opts.model} at ${url}`);

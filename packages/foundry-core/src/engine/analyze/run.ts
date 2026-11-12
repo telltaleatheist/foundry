@@ -39,6 +39,7 @@ import {
 } from '../translate/transport.js';
 import { optionSetVersion, planHues, planNames, untunedNames, type RankPlan } from './plan.js';
 import { AnalyzeError, readProse } from './prose.js';
+import { requestNeed } from '../context-need.js';
 import type { BookSentence, FlagWindow } from './rank.js';
 import {
   analysisHeader,
@@ -52,6 +53,7 @@ import { rankFromRatingMap, spanParamsVersion } from './spans.js';
 import {
   askVerdict,
   buildVerificationPrompt,
+  VERDICT_PREDICT_TOKENS,
   stageNumCtx,
   windowFinding,
   VERIFY_PROMPT_VERSION,
@@ -179,14 +181,43 @@ function checkRankFile(
  * book before the server is asked anything, and the server preflight is one
  * HTTP GET that names a missing model in a sentence somebody can act on.
  */
-export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> {
-  const { log } = opts;
-  const { sentences, bankSha, generation } = readProse(opts.bookPath, 'analyze', log);
-  const plan = readPlan(opts.categoriesPath ?? null, log);
+/** The book, its checklist and the ranking in front of it, read and checked once for both doors below. */
+function readRankedBook(opts: AnalyzeOptions) {
+  const { sentences, bankSha, generation } = readProse(opts.bookPath, 'analyze', opts.log);
+  const plan = readPlan(opts.categoriesPath ?? null, opts.log);
   const ranks = readRankFile(opts.ranksPath);
   checkRankFile(ranks, opts.ranksPath, sentences, bankSha, plan);
+  return { sentences, bankSha, generation, plan, ranks, ranked: rankFromRatingMap(ranks, sentences, plan) };
+}
 
-  const ranked = rankFromRatingMap(ranks, sentences, plan);
+/**
+ * THE CONTEXT THIS ANALYSIS'S LARGEST VERIFY CALL NEEDS, or null when the
+ * ranking left nothing to verify (src/engine/context-need.ts). Every passage and
+ * category is prompted exactly as `verifyStage` prompts it, nothing is written
+ * (the report is not opened) and no server is asked. A verdict answered in the
+ * report already is counted too: the floor is the book's.
+ */
+export function measureAnalysis(opts: AnalyzeOptions): number | null {
+  const { sentences, ranked } = readRankedBook(opts);
+  let measured: number | null = null;
+  let calls = 0;
+  for (const window of ranked.windows) {
+    const passage = sentences.slice(window.contextFrom, window.contextTo + 1).map((s) => s.text);
+    for (const category of window.categories) {
+      const prompt = buildVerificationPrompt(passage, category.category, category.proposition);
+      measured = Math.max(measured ?? 0, requestNeed('', prompt, VERDICT_PREDICT_TOKENS));
+      calls += 1;
+    }
+  }
+  opts.log(measured === null
+    ? 'analyze: the ranking left nothing to verify, so no model would be asked anything'
+    : `analyze: the largest of ${calls} verify call(s) needs ${measured} tokens of context`);
+  return measured;
+}
+
+export async function analyzeBook(opts: AnalyzeOptions): Promise<AnalyzeResult> {
+  const { log } = opts;
+  const { sentences, bankSha, generation, plan, ranks, ranked } = readRankedBook(opts);
   const calls = ranked.windows.reduce((n, w) => n + w.categories.length, 0);
   log(
     `analyze: the ranking by ${ranks.model.id} made ${ranked.spans.length} span(s), ${ranked.passages.length} `

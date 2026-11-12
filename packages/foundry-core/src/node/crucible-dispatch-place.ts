@@ -118,6 +118,13 @@ export async function placeJob(
    * is the server's own pick at this app's ceiling ({@link APP_SIZED_MODELS}).
    */
   chosenModel?: string,
+  /**
+   * The least context this run's largest request needs, measured from its own
+   * book before it was placed (job-queue-carry.ts `measureRun`). Absent for a
+   * kind that measures nothing (a page reading, an analysis's ranking) and for
+   * a run whose rules settle everything.
+   */
+  contextTokens?: number,
 ): Promise<PlacementOutcome> {
   const available = slotAvailability();
   const slots = available.slots;
@@ -268,7 +275,7 @@ export async function placeJob(
      * twice a minute until somebody noticed the row. It FAILS, with the server's
      * own reason and the two things a person can do about it.
      */
-    const outcome = await placeOn(slot, capability, say, claim, signal, chosenModel);
+    const outcome = await placeOn(slot, capability, say, claim, signal, chosenModel, contextTokens);
     return outcome.verdict === 'wait' && outcome.standing
       ? { verdict: 'refuse', reason: `${outcome.reason}. ${whatToDoAbout(capability)}` }
       : outcome;
@@ -296,7 +303,7 @@ export async function placeJob(
       reasons.push(`"${slot.name}" is a cloud provider, and cloud slots are chosen on purpose`);
       continue;
     }
-    const outcome = await placeOn(slot, capability, say, claim, signal, chosenModel);
+    const outcome = await placeOn(slot, capability, say, claim, signal, chosenModel, contextTokens);
     if (outcome.verdict === 'go') return outcome;
     if (outcome.verdict === 'refuse') return outcome;
     if (!outcome.standing) allStanding = false;
@@ -328,6 +335,7 @@ export async function placeOn(
   claim: LaneClaim,
   signal?: AbortSignal,
   chosenModel?: string,
+  contextTokens?: number,
 ): Promise<PlacementOutcome> {
   if (signal?.aborted) return transientWait('The request was cancelled.');
   if (slot.kind === 'cloud') {
@@ -342,7 +350,7 @@ export async function placeOn(
     return transientWait(`"${slot.name}" is no longer registered`);
   }
   try {
-    return await placeOnCrucible(entry, slot, capability, say, claim, signal, chosenModel);
+    return await placeOnCrucible(entry, slot, capability, say, claim, signal, chosenModel, contextTokens);
   } catch (err) {
     // A STOP WHILE THE SESSION WAITED IN THE LINE: the SDK has already taken it
     // out of the line and throws the abort itself, which is our own gesture and

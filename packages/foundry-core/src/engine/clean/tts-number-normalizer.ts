@@ -2617,6 +2617,38 @@ function ruleRewrites(ruled: NumberRuleOutcome): NarrationTextRewrite[] {
  * which runs on the failure path too, because a pass that threw still left 6-17
  * GB of weights resident and e2a takes the GPU next either way.
  */
+/**
+ * WHAT EACH ASK SENDS THE MODEL, keyed by the ask — and an ask with no entry is
+ * one the rules settle alone. Lifted out of `askAboutEach` so that a measuring
+ * run (`measureCleanText`, clean/run.ts) sizes the very inputs a real pass sends.
+ *
+ * Only a span the rules left a digit in is worth a model call. The neighbours
+ * are shown in their rule-applied form too, so the context reads in the same
+ * words the answer has to be written in.
+ */
+export function normalizerInputs(
+  asks: readonly NormalizerAsk[],
+  ask: 'digit-bearing' | 'every-block',
+  ruledOf: ReadonlyMap<string, NumberRuleOutcome> = new Map(
+    asks.map((one) => [one.key, applyNumberRules(one.text, one.segments)] as const)),
+): Map<string, string> {
+  const inputs = new Map<string, string>();
+  const asContext = (text: string | null): string | null =>
+    text === null ? null : applyNumberRules(text, [text.length]).text;
+  for (const one of asks) {
+    const ruled = ruledOf.get(one.key)!;
+    // A block with nothing left to read is skipped ONLY when the question is
+    // about digits. When the question is "does anything here print one way and
+    // read another", a block with no digit is exactly the block that might.
+    if (ask === 'digit-bearing' && !stillHasDigits(ruled.text)) continue;
+    // A block with no text at all is nothing to ask about in either mode.
+    if (ruled.text.trim() === '') continue;
+    inputs.set(one.key,
+      buildNormalizerInput(ruled.text, asContext(one.previous), asContext(one.next)));
+  }
+  return inputs;
+}
+
 export async function askAboutEach(
   asks: readonly NormalizerAsk[],
   runner: NumberNormalizerRunner,
@@ -2694,23 +2726,7 @@ export async function askAboutEach(
   const ruledOf = new Map<string, NumberRuleOutcome>();
   for (const ask of asks) ruledOf.set(ask.key, applyNumberRules(ask.text, ask.segments));
 
-  // Only a span the rules left a digit in is worth a model call. The neighbours
-  // are shown in their rule-applied form too, so the context reads in the same
-  // words the answer has to be written in.
-  const inputs = new Map<string, string>();
-  const asContext = (text: string | null): string | null =>
-    text === null ? null : applyNumberRules(text, [text.length]).text;
-  for (const one of asks) {
-    const ruled = ruledOf.get(one.key)!;
-    // A block with nothing left to read is skipped ONLY when the question is
-    // about digits. When the question is "does anything here print one way and
-    // read another", a block with no digit is exactly the block that might.
-    if (ask === 'digit-bearing' && !stillHasDigits(ruled.text)) continue;
-    // A block with no text at all is nothing to ask about in either mode.
-    if (ruled.text.trim() === '') continue;
-    inputs.set(one.key,
-      buildNormalizerInput(ruled.text, asContext(one.previous), asContext(one.next)));
-  }
+  const inputs = normalizerInputs(asks, ask, ruledOf);
   const total = inputs.size;
 
   const decisions = new Map<string, AskOutcome>();

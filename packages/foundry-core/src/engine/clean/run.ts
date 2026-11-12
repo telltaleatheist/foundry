@@ -109,13 +109,15 @@ import { blockDigest, bookPositionTexts } from './digest.js';
 import { narrationTextPrompt } from './prompt.js';
 import { applySpans, CleanTextError, punctuateBlocks, segmentsAfter } from './punctuate.js';
 import type { PunctuationStageRecord } from './punctuate.js';
-import { openModelRunner } from './runner.js';
+import { EDIT_LIST_NUM_PREDICT, openModelRunner } from './runner.js';
 import { markerCharacters } from './segments.js';
 import { narrationTextStamp, type NarrationTextStamp } from './stamp.js';
 import {
   askAboutEach, classifyEdit, EVERY_CLASS,
+  normalizerInputs,
   NORMALIZER_VERSION,
 } from './tts-number-normalizer.js';
+import { MEASURING_MODEL, requestNeed } from '../context-need.js';
 import type {
   AskOutcome, ModelServerFacts, NumberEditRecord, NumberNormalizerRunner, NumberUnitRecord,
 } from './tts-number-normalizer.js';
@@ -501,7 +503,29 @@ function isRefusal(status: string): boolean {
  * is accepted here for the reason the doctrine gives: the pass runs ONCE and the
  * book keeps the result.
  */
+/**
+ * THE CONTEXT THIS CLEANUP'S LARGEST REQUEST NEEDS, or null when the rules
+ * settle every block and no model would be asked anything
+ * (src/engine/context-need.ts). The book is read and planned exactly as a run
+ * plans it and the run stops where it would open the model: nothing is
+ * written, no server is asked. The need is counted as `pinContextTo`
+ * (clean/runner.ts) checks a window: the prompt, the longest input, and the
+ * edit list's answer room.
+ */
+export async function measureCleanText(opts: CleanTextOptions): Promise<number | null> {
+  return (await cleanText(opts, true)).measured;
+}
+
 export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOutcome> {
+  return cleanText(opts, false);
+}
+
+async function cleanText(opts: CleanTextOptions, measuring: true): Promise<{ measured: number | null }>;
+async function cleanText(opts: CleanTextOptions, measuring: false): Promise<CleanTextOutcome>;
+async function cleanText(
+  opts: CleanTextOptions,
+  measuring: boolean,
+): Promise<CleanTextOutcome | { measured: number | null }> {
   const started = Date.now();
   const at = new Date().toISOString();
   const endpoint = opts.endpoint;
@@ -515,7 +539,8 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * (`chat.max_in_flight`) and falls back to the measured knee of four; a vLLM
    * states nothing and keeps its twelve. `--concurrency` wins over both, unasked.
    */
-  const concurrency = await resolveConcurrency({
+  // A measuring run sends nothing, so it has no pool to size and no server to ask.
+  const concurrency = measuring ? 1 : await resolveConcurrency({
     asked: opts.concurrency, kind, openaiDefault: DEFAULT_TEXT_CONCURRENCY, endpoint,
     transport: opts.transport, log: opts.log,
   });
@@ -542,9 +567,12 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * (and, against a URL nobody is listening on, would hang the test for the
    * transport's whole deadline).
    */
+  // MEASURING ASKS NO SERVER (src/engine/context-need.ts). Without a name the
+  // cache answers for nothing, so every block is counted: a floor that is high
+  // by the cached blocks, never low.
   const model = opts.model
     ?? opts.runner?.model
-    ?? (await openModelServer({ kind, transport, endpoint, log: opts.log })).model;
+    ?? (measuring ? MEASURING_MODEL : (await openModelServer({ kind, transport, endpoint, log: opts.log })).model);
 
   const unit = opts.unit ?? DEFAULT_CLEAN_UNIT;
   const removal = opts.removal ?? NO_REMOVAL;
@@ -847,6 +875,19 @@ export async function runCleanText(opts: CleanTextOptions): Promise<CleanTextOut
    * one is asserting what happens to it, and silently swapping in a stub would
    * make "the model was never called" unprovable.
    */
+  if (measuring) {
+    const inputs = normalizerInputs(asks, 'every-block');
+    if (inputs.size === 0) {
+      opts.log('clean-text: the rules settle every block, so no model would be asked anything');
+      return { measured: null };
+    }
+    let longest = '';
+    for (const input of inputs.values()) if (input.length > longest.length) longest = input;
+    const measured = requestNeed(withRemoval(narrationTextPrompt(), removal), longest, EDIT_LIST_NUM_PREDICT);
+    opts.log(`clean-text: the largest of ${inputs.size} requests needs ${measured} tokens of context`);
+    return { measured };
+  }
+
   const runner = opts.runner ?? (asks.length === 0
     ? NOTHING_TO_ASK
     : await openModelRunner({ model, endpoint, server: kind, transport, log: opts.log }));

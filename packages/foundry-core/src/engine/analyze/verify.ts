@@ -99,7 +99,7 @@ export const VERIFY_PROMPT_VERSION = 'foundry-verify/v4-justified-2026-09-25';
  * is reported as a degradation and counted, never guessed at: a reason cut off
  * mid-sentence is not one to show anybody.
  */
-const VERDICT_PREDICT_TOKENS = 512;
+export const VERDICT_PREDICT_TOKENS = 512;
 
 /**
  * The output budget num_ctx is SIZED from — a different number, on purpose.

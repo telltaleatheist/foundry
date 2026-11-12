@@ -101,7 +101,7 @@ import type { ModelServerFacts, NumberNormalizerRunner } from './tts-number-norm
  * and it is generous because the cost of clipping one is a parse failure, which
  * is counted against the 10% share that fails the whole run.
  */
-const EDIT_LIST_NUM_PREDICT = 2048;
+export const EDIT_LIST_NUM_PREDICT = 2048;
 
 /**
  * The context window, sized ONCE from the longest request of the whole book.

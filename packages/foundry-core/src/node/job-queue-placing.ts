@@ -97,6 +97,8 @@ export async function placeRun(
    * catch one function out has to know whether it has already happened.
    */
   settle: () => void,
+  /** The least context its model may start at, measured from its book (job-queue-measure.ts). */
+  contextTokens?: number,
 ): Promise<Placed> {
   const held = slots.get(next.id) ?? null;
   /*
@@ -172,7 +174,7 @@ export async function placeRun(
       // (translate, simplify, clean, analysis); absent everywhere else.
       const chosenModel = 'chosenModel' in request ? request.chosenModel : undefined;
       outcome = await placeJob(
-        request.kind, next.waitFor, say, claim, placementAbort.signal, chosenModel);
+        request.kind, next.waitFor, say, claim, placementAbort.signal, chosenModel, contextTokens);
     } finally {
       wires.release();
     }

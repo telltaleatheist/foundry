@@ -864,3 +864,71 @@ export function metaFlagsFor(record: Record<string, string>): string[] {
   }
   return flags;
 }
+
+/**
+ * WHERE A MEASURE IS "PLACED": nowhere. A measuring run (`--measure-context`,
+ * src/engine/context-need.ts) plans its book and exits before it asks a server
+ * anything, so this placement exists only to spell a command line every text act
+ * accepts: the OpenAI door, which needs no model named, and a model and origin
+ * the decide acts' argv requires. `.invalid` is reserved (RFC 2606) and never
+ * resolves, so a defect that dialled it would fail at the name lookup rather
+ * than reach a machine.
+ */
+const MEASURING: Placement = {
+  ...UNPLACED,
+  door: 'openai',
+  endpoint: 'http://measuring.invalid/openai',
+  origin: 'http://measuring.invalid',
+  model: '(measuring)',
+};
+
+/** The kinds whose largest request is measured from their own book before they are placed. */
+export const MEASURED_KINDS: ReadonlySet<EngineRequest['kind']> = new Set<EngineRequest['kind']>([
+  'translate', 'simplify', 'clean', 'analysis', 'clean-triage',
+]);
+
+/**
+ * THE COMMAND THAT MEASURES THIS REQUEST, or null for a kind that states no
+ * floor: a page reading, whose request size is the server's own reading
+ * contract, and an analysis's ranking, which sizes its chunks to whatever
+ * context its model loaded at (src/engine/analyze/snap.ts `loadedContextOf`).
+ *
+ * The real run's own line (`argsFor`) with the flag on the end, so the measure
+ * plans exactly the book, the options and the checklist the run will — save the
+ * checklist's PATH: an analysis's checklist is written beside its report only
+ * when the run starts, and a measure taken before the placement must leave the
+ * project as it found it, so it reads a copy the caller wrote elsewhere.
+ */
+export function measureArgsFor(request: EngineRequest, checklistPath: string | null): string[] | null {
+  if (!MEASURED_KINDS.has(request.kind)) return null;
+  const args = argsFor(request, {}, MEASURING);
+  if (request.kind === 'analysis' && request.categories.length > 0) {
+    const at = args.indexOf('--categories');
+    if (at === -1 || checklistPath === null) {
+      throw new Error('an analysis with a checklist was measured without one; that is a defect in the queue');
+    }
+    args[at + 1] = checklistPath;
+  }
+  return [...args, '--measure-context'];
+}
+
+/**
+ * AN ANALYSIS'S CHECKLIST AS THE ENGINE READS IT, for the run's own file beside
+ * the report and for a measure's copy. The entry is rebuilt field by field rather
+ * than spread: `parseCategoriesJson` (src/engine/analyze/plan.ts) refuses a field
+ * it does not read, so anything this app grows on its own request shape would end
+ * the run the day it was added. `description` and `label` are omitted when empty.
+ */
+export function analysisChecklistJson(request: AnalyzeRequest | AnalysisRankRequest): string {
+  const asked = request.categories.map((one) => {
+    const description = (one.description ?? '').trim();
+    const label = (one.label ?? '').trim();
+    return {
+      name: one.name,
+      enabled: one.enabled,
+      ...(description.length > 0 ? { description } : {}),
+      ...(label.length > 0 ? { label } : {}),
+    };
+  });
+  return `${JSON.stringify(asked, null, 2)}\n`;
+}

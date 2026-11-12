@@ -40,7 +40,7 @@ import { pdfMeta, PDF_META_FIELDS, type PdfMetaField } from './pdf/meta.js';
 import { probeEndpoint } from './backend/probe.js';
 import { loadSettings, settingsPath, type FoundrySettings } from './backend/settings.js';
 import { dumpBlocks } from './vlm/blocks-dump.js';
-import { analyzeBook } from './analyze/run.js';
+import { analyzeBook, measureAnalysis } from './analyze/run.js';
 import { buildBookFile } from './vlm/book-run.js';
 import { compileBook } from './vlm/compile.js';
 import { vlmConvert } from './vlm/convert.js';
@@ -53,10 +53,13 @@ import { parsePageList } from './vlm/pages.js';
 import { formatConflict, VLM_OUTPUT_FORMATS, type VlmOutputFormat } from './vlm/text-out.js';
 import {
   DEFAULT_TRANSLATE_CONCURRENCY,
+  measureTranslation,
   REWRITE_MODES,
   translateEpub,
   type RewriteMode,
+  type TranslateOptions,
 } from './translate/run.js';
+import { printContextNeed } from './context-need.js';
 import {
   DEFAULT_CLOUD_CONCURRENCY, DEFAULT_OLLAMA_CONCURRENCY, DEFAULT_OLLAMA_ENDPOINT,
   CRUCIBLE_CHAT_CONCURRENCY,
@@ -741,6 +744,17 @@ const TR_BANK: OptionSpec = {
   describe: 'Bank each answer here as it is accepted, and ask only for the blocks not in it.',
 };
 
+/**
+ * MEASURE, DON'T RUN (src/engine/context-need.ts). The queue asks this of a
+ * text act before it opens the model session, and hands the answer to Crucible
+ * as the least context the model may start at. Nothing is sent to a server.
+ */
+const MEASURE_CONTEXT: OptionSpec = {
+  name: 'measure-context',
+  type: 'boolean',
+  describe: 'Plan the run, print the context its largest request needs (FOUNDRY_CONTEXT_NEED on stdout), and exit without asking a server anything.',
+};
+
 /** The one instruction the bank's key cannot express. See `bank.ts`. */
 const TR_FRESH_BANK: OptionSpec = {
   name: 'fresh-bank',
@@ -1277,18 +1291,29 @@ async function runCleanTriageCommand(args: ParsedArgs): Promise<void> {
   const unit = await cleanUnit(args);
   const removal = await cleanRemoval(args);
   const fixedReadings = await cleanFixedReadings(args);
-  const { runCleanTriage } = await import('./clean/triage.js');
-  await runCleanTriage({
+  const { measureCleanTriage, runCleanTriage } = await import('./clean/triage.js');
+  // A measure is taken before any model is placed, so it has no door and no model to name.
+  const measuring = flag(args, 'measure-context');
+  const options: Parameters<typeof runCleanTriage>[0] = {
     ...(unit === undefined ? {} : { unit }),
     removal,
     ...(fixedReadings === undefined ? {} : { fixedReadings }),
     bookPath: requireString(args, 'book', 'the book file whose blocks are judged'),
     outPath: requireString(args, 'out', 'where the verdicts are written'),
-    endpoint: requireString(args, 'endpoint', 'the Crucible whose decide door is asked'),
-    model: requireString(args, 'model', 'the resident decide model'),
+    endpoint: measuring
+      ? optionalString(args, 'endpoint') ?? ''
+      : requireString(args, 'endpoint', 'the Crucible whose decide door is asked'),
+    model: measuring
+      ? optionalString(args, 'model') ?? ''
+      : requireString(args, 'model', 'the resident decide model'),
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     log,
-  });
+  };
+  if (measuring) {
+    printContextNeed(await measureCleanTriage(options));
+    return;
+  }
+  await runCleanTriage(options);
 }
 
 /**
@@ -1320,6 +1345,11 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
     const readings = await cleanFixedReadings(args);
     if (readings === undefined) {
       throw new UsageError('--readings-only needs --fixed-readings: the readings are the whole of what it writes.');
+    }
+    // Asks nobody anything, so a measure of it is the null need: no session to size.
+    if (flag(args, 'measure-context')) {
+      printContextNeed(null);
+      return;
     }
     const { runApplyReadings } = await import('./clean/apply-readings.js');
     await runApplyReadings({
@@ -1378,6 +1408,12 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
         + '<out>.stamp.json; it needs no --records, no --stamp and no --generation.',
       );
     }
+    if (flag(args, 'measure-context')) {
+      throw new UsageError(
+        '--measure-context measures the book-file route, which is the one the queue runs; the --epub '
+        + 'failsafe is a hand-run door and has no measure.',
+      );
+    }
     const outPath = requireString(args, 'out', 'where the cleaned EPUB is written');
     const { cleanTextEpub } = await import('./clean/epub.js');
     await cleanTextEpub({
@@ -1404,8 +1440,8 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
   const recordsPath = requireString(args, 'records', 'where the cleaned text is written');
   const stampPath = requireString(args, 'stamp', 'where the narration text stamp is written');
 
-  const { runCleanText: clean } = await import('./clean/run.js');
-  await clean({
+  const { measureCleanText, runCleanText: clean } = await import('./clean/run.js');
+  const options: Parameters<typeof clean>[0] = {
     bookPath,
     recordsPath,
     stampPath,
@@ -1422,7 +1458,12 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
     removal,
     ...(fixedReadings === undefined ? {} : { fixedReadings }),
     log,
-  });
+  };
+  if (flag(args, 'measure-context')) {
+    printContextNeed(await measureCleanText(options));
+    return;
+  }
+  await clean(options);
 }
 
 export interface Command {
@@ -1993,7 +2034,7 @@ async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
    * `--server ollama` there is no absence to interpret — `textServer` refused it
    * above, because an Ollama holds a library.
    */
-  const result = await analyzeBook({
+  const options: Parameters<typeof analyzeBook>[0] = {
     bookPath,
     ranksPath,
     outPath,
@@ -2004,7 +2045,12 @@ async function runVlmAnalyze(args: ParsedArgs): Promise<void> {
     ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
     fresh: flag(args, 'fresh'),
     log,
-  });
+  };
+  if (flag(args, 'measure-context')) {
+    printContextNeed(measureAnalysis(options));
+    return;
+  }
+  const result = await analyzeBook(options);
 
   log(
     `analyze: ${result.sentences} sentence(s), ${result.passages} candidate passage(s), `
@@ -2223,7 +2269,7 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
     throw new UsageError(`--concurrency takes a positive whole number, not "${concurrency}"`);
   }
 
-  const report = await translateEpub({
+  const options: TranslateOptions = {
     ...(epubPath !== undefined ? { epubPath } : {}),
     ...(bookPath !== undefined ? { bookPath } : {}),
     ...(outPath !== undefined ? { outPath } : {}),
@@ -2243,7 +2289,12 @@ async function runTranslate(args: ParsedArgs): Promise<void> {
       : {}),
     ...(rewrite !== undefined ? { rewrite: rewrite as RewriteMode } : {}),
     log,
-  });
+  };
+  if (flag(args, 'measure-context')) {
+    printContextNeed(await measureTranslation(options));
+    return;
+  }
+  const report = await translateEpub(options);
 
   // The skipped blocks and the retries are on the completion line, not only in
   // the scroll above it: a book that came back with fourteen untranslated
@@ -3581,6 +3632,7 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       AN_BOOK, AN_RANKS, AN_OUT, AN_CATEGORIES, AN_MODEL, AN_ENDPOINT, LLM_SERVER, AN_CONCURRENCY, AN_FRESH,
+      MEASURE_CONTEXT,
     ],
     run: runVlmAnalyze,
   },
@@ -3890,7 +3942,7 @@ export const COMMANDS: readonly Command[] = [
       TR_EPUB_IN, TR_BOOK_IN, TR_TO, TR_FROM, TR_OUT, TR_MODEL, TR_ENDPOINT, LLM_SERVER,
       TR_INSTRUCTIONS,
       TR_REWRITE, TR_BANK, TR_FRESH_BANK, TR_CONCURRENCY,
-      TR_RECORDS, TR_SOURCE_RECORDS, TR_GENERATION,
+      TR_RECORDS, TR_SOURCE_RECORDS, TR_GENERATION, MEASURE_CONTEXT,
     ],
     run: runTranslate,
   },
@@ -4102,7 +4154,7 @@ export const COMMANDS: readonly Command[] = [
     options: [
       CT_BOOK_IN, CT_RECORDS, CT_STAMP, CT_EPUB_IN, CT_EPUB_OUT,
       CT_ENDPOINT, CT_MODEL, LLM_SERVER, CT_CONCURRENCY, TR_GENERATION, CT_TRIAGE, CT_UNIT, CT_GATE,
-      CT_REMOVE_REFERENCES, CT_REMOVE_ALSO, CT_FIXED_READINGS, CT_READINGS_ONLY,
+      CT_REMOVE_REFERENCES, CT_REMOVE_ALSO, CT_FIXED_READINGS, CT_READINGS_ONLY, MEASURE_CONTEXT,
     ],
     run: runCleanText,
   },
@@ -4158,7 +4210,7 @@ export const COMMANDS: readonly Command[] = [
     ].join('\n'),
     options: [
       CT_BOOK_IN, CTR_OUT, CTR_ENDPOINT, CTR_MODEL, CTR_CONCURRENCY, CT_UNIT, CT_REMOVE_REFERENCES, CT_REMOVE_ALSO,
-      CT_FIXED_READINGS,
+      CT_FIXED_READINGS, MEASURE_CONTEXT,
     ],
     run: runCleanTriageCommand,
   },

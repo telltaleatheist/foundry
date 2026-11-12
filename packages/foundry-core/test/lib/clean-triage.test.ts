@@ -306,7 +306,7 @@ async function aProject(): Promise<{ dir: string; verdicts: string }> {
 test('a triage spawns on the cleanup book, never the export path, and lands no step', async () => {
   const { dir, verdicts } = await aProject();
   const release = mock(async () => {});
-  spyOn(dispatch, 'placeJob').mockResolvedValue({
+  const placed = spyOn(dispatch, 'placeJob').mockResolvedValue({
     verdict: 'go',
     placement: { ...PLACED, session: { id: 'triage-session', release } },
   });
@@ -318,7 +318,13 @@ test('a triage spawns on the cleanup book, never the export path, and lands no s
   const stepped = spyOn(projects, 'recordTextPass');
   const reported = spyOn(projects, 'recordAnalysis');
   let spawned: string[] = [];
+  let measuredWith: string[] = [];
   spyOn(engine, 'runEngine').mockImplementation((args: string[]) => {
+    // THE MEASURE comes first (job-queue-measure.ts) and answers on stdout.
+    if (args.includes('--measure-context')) {
+      measuredWith = args;
+      return { done: Promise.resolve({ code: 0, stdout: 'FOUNDRY_CONTEXT_NEED {"contextTokens":2358}\n', stderr: '' }), cancel: () => {} };
+    }
     spawned = args;
     return { done: Promise.resolve({ code: 0, stdout: '', stderr: '' }), cancel: () => {} };
   });
@@ -331,9 +337,19 @@ test('a triage spawns on the cleanup book, never the export path, and lands no s
   expect(outcome.row.kind).toBe('clean-triage');
   expect(outcome.row.title).toBe('Clean text — triage');
 
-  // THE BOOK: the cleanup's materialise, of the row the press pinned (null here).
-  expect(made).toHaveBeenCalledTimes(1);
+  // THE BOOK: the cleanup's materialise, of the row the press pinned (null here) —
+  // once for the measure before the placement, once for the run after it.
+  expect(made).toHaveBeenCalledTimes(2);
   expect(made.mock.calls[0]).toEqual([dir, null]);
+  expect(made.mock.calls[1]).toEqual([dir, null]);
+  // THE MEASURE planned the same book on the same line, asked nothing, and its
+  // figure went to the placement as the session's least context.
+  expect(measuredWith).toEqual([
+    'clean-triage', '--book', BOOK, '--out', verdicts,
+    '--endpoint', 'http://measuring.invalid', '--model', '(measuring)',
+    '--remove-references', 'off', '--measure-context',
+  ]);
+  expect(placed.mock.calls[0]![6]).toBe(2358);
   expect(exported).toHaveBeenCalledTimes(0);
   expect(analysed).toHaveBeenCalledTimes(0);
   // NOTHING ROTATED, NOTHING LANDED IN THE LEDGER.

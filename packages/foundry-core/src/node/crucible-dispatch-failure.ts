@@ -49,6 +49,14 @@ export function interpretFailure(err: unknown, slotName: string, capability: Cap
     return transientWait(`"${slotName}" is ${err.busyLine}`);
   }
   if (err instanceof CrucibleRefused) {
+    // The context floor refused up front, before any load: the same two answers
+    // as the failed load below, for the same reasons.
+    if (err.code === 'insufficient_kv_cache') {
+      return transientWait(`"${slotName}" cannot give this run the context it needs right now: ${err.serverMessage}`);
+    }
+    if (err.code === 'context_over_limit') {
+      return standingWait(`"${slotName}" cannot start the model with the context this run needs: ${err.serverMessage}`);
+    }
     if (err.code === 'engine_in_use') {
       /*
        * 409 `engine_in_use`: a STREAMING session holds the resident engine
@@ -80,6 +88,24 @@ export function interpretFailure(err: unknown, slotName: string, capability: Cap
       }
       if (err.reason === 'load_failed') {
         const code = (err.details as { error?: { code?: unknown } } | null)?.error?.code;
+        /*
+         * THE CARD COULD NOT GIVE THE CONTEXT THIS RUN STATED (Crucible 2.0.38,
+         * `contextTokens`). That is the card's memory right now — another
+         * process, the desktop, a model it could not evict — so it is waited on,
+         * and the walk tries the next machine. The SDK does not list it as
+         * server-specific, which would have refused the row; the server's
+         * sentence names the number and what holds the memory.
+         *
+         * ABOVE THE HOST'S CEILING is the other answer: that machine will never
+         * start this model that large, which is standing for it, and the walk
+         * still steps past to a machine that might.
+         */
+        if (code === 'insufficient_kv_cache') {
+          return transientWait(`"${slotName}" cannot give this run the context it needs right now: ${err.serverMessage}`);
+        }
+        if (code === 'context_over_limit') {
+          return standingWait(`"${slotName}" cannot start the model with the context this run needs: ${err.serverMessage}`);
+        }
         return typeof code === 'string' && isServerSpecificRefusal(code)
           ? transientWait(`"${slotName}" could not load the model: ${err.serverMessage}`)
           : { verdict: 'refuse', reason: `"${slotName}" could not load the model: ${err.serverMessage}` };

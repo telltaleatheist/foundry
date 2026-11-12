@@ -10,13 +10,14 @@ import { generatedRoleFor, projectDirOf, recordAnalysis, recordFinal, recordGene
 import type { ConversionKind, ExportMintMetadata, Job } from '../shared/types';
 import { ENGINE_PARKED_EXIT } from '../shared/types';
 import { type PlacementWait } from './crucible-dispatch';
-import { argsFor, categoriesFileFor, metaFlagsFor, recordFor } from './job-queue-args';
+import { analysisChecklistJson, argsFor, categoriesFileFor, metaFlagsFor, recordFor } from './job-queue-args';
 import { pump } from './job-queue-board';
 import type { RunWires } from './job-queue-board';
 import { cancel, discardCancelledReading, release, sweepDerivedBook } from './job-queue-gestures';
 import { landReadProducts } from './job-queue-landings';
 import { placeRun, sayOutward } from './job-queue-placing';
 import { homeOf, isTextPassRequest, materializeAtSpawn } from './job-queue-products';
+import { forgetMeasure, measureRun } from './job-queue-measure';
 import { putBack } from './job-queue-run';
 import { chainLanguageOf, inheritedMintMetaFor } from './job-queue-settling';
 import { PARK_AFTER_WEATHER_MS, changed, engineSentence, exportLanded, jobs, landings, lastEngineStderr, parkedRuns, parkedUntil, requests, resumableStops, slots } from './job-queue-state';
@@ -176,8 +177,25 @@ export async function carry(
    * NULL MEANS THE ROW IS NO LONGER THIS CALL'S — parked back in the queue, or
    * failed with the reason on it. `placeRun` has already said so and published.
    */
-  const placed = await placeRun(next, request, wires, settle);
-  if (!placed.go) return placed.wait;
+  /*
+   * ── THE CONTEXT IT NEEDS, MEASURED BEFORE THE MODEL IS ASKED FOR ──────────
+   *
+   * job-queue-measure.ts. Before the placement because the figure goes on the
+   * session the placement opens; the book it is measured from is made and swept
+   * inside, so the materialise below keeps its place. A throw is this function's
+   * boundary, like the materialise's: the row fails wearing the measure's words.
+   */
+  const contextTokens = await measureRun(next, request);
+  if (jobs.find((job) => job.id === next.id)?.state === 'cancelled') return null;
+  const placed = await placeRun(next, request, wires, settle, contextTokens);
+  if (!placed.go) {
+    // A parked row keeps its figure for the next pick; a failed or cancelled one is done with it.
+    // Read afresh: `placeRun` moves the row's state, which the compiler cannot see.
+    const now: Job['state'] = next.state as Job['state'];
+    if (now !== 'queued' && now !== 'running') forgetMeasure(next.id);
+    return placed.wait;
+  }
+  forgetMeasure(next.id);
   const { placement } = placed;
   /*
    * ── AND WHERE IT WENT IS ANNOUNCED, ONCE, BEFORE ANYTHING SPAWNS ─────────
@@ -543,22 +561,11 @@ export async function carry(
      */
     if ((request.kind === 'analysis' || request.kind === 'analysis-rank') && request.categories.length > 0) {
       const where = categoriesFileFor(request);
-      const asked = request.categories.map((one) => {
-        const description = (one.description ?? '').trim();
-        const label = (one.label ?? '').trim();
-        return {
-          name: one.name,
-          enabled: one.enabled,
-          ...(description.length > 0 ? { description } : {}),
-          // The words the person reads for this category, carried so the report's
-          // `names` header shows every device the label the desktop shows —
-          // including a custom category exactly as its author typed it.
-          ...(label.length > 0 ? { label } : {}),
-        };
-      });
+      // `label` is carried so the report's `names` header shows every device the
+      // label the desktop shows, a custom category exactly as its author typed it.
       try {
         await fsp.mkdir(path.dirname(where), { recursive: true });
-        await fsp.writeFile(where, `${JSON.stringify(asked, null, 2)}\n`, 'utf8');
+        await fsp.writeFile(where, analysisChecklistJson(request), 'utf8');
       } catch (err) {
         console.error(`[job] the analysis checklist could not be written to ${where}:`, err);
       }

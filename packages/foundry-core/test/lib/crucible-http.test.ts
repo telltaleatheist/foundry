@@ -318,3 +318,33 @@ test('real HTTP a job told a LOCAL model runs on it, resident, and is not sized'
     }finally{await result.placement.session?.release();}
   }finally{f.close();}
 });
+
+/*
+ * THE MEASURED CONTEXT GOES ON THE SESSION (Crucible 2.0.38 `context_tokens`).
+ * Owen, 2026-11-11: request the context the run needs before the model loads. A
+ * run that measured nothing states nothing, and the server's default stands.
+ */
+test('real HTTP a measured run opens its session with context_tokens, an unmeasured one without',async()=>{
+  for(const [need,expected] of [[5166,5166],[undefined,undefined]] as const){
+    const f=fixture({});try{
+      const result=await dispatch.placeJob('simplify',f.entry.name,()=>{},()=>true,undefined,undefined,need);
+      expect(result.verdict).toBe('go');if(result.verdict!=='go')throw Error(JSON.stringify(result));
+      try{
+        const opened=f.calls.find(call=>call.method==='POST'&&call.path==='/v1/queue/sessions');
+        expect(opened).toBeDefined();
+        expect(opened!.body.context_tokens).toBe(expected);
+      }finally{await result.placement.session?.release();}
+    }finally{f.close();}
+  }
+});
+
+test('a card that cannot give the stated context waits; a context over the host ceiling stands', async()=>{
+  const { CrucibleRefused } = await import('@crucible/client');
+  const { interpretFailure } = await import('../../src/node/crucible-dispatch-failure');
+  const short = interpretFailure(new CrucibleRefused(409,'insufficient_kv_cache','this card affords 4,096 tokens and the session needs 5,166',null),'Windows','simplify');
+  expect(short.verdict).toBe('wait');
+  if(short.verdict==='wait'){expect(short.standing).toBe(false);expect(short.reason).toContain('5,166');}
+  const over = interpretFailure(new CrucibleRefused(409,'context_over_limit','the ceiling here is 32,768',null),'Windows','simplify');
+  expect(over.verdict).toBe('wait');
+  if(over.verdict==='wait')expect(over.standing).toBe(true);
+});

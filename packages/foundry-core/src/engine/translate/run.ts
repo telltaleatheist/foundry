@@ -173,11 +173,12 @@ import {
 } from './markers.js';
 import {
   askModel, DEFAULT_TEXT_CONCURRENCY, openModelServer, releaseModel, resolveConcurrency,
-  type ServerKind,
+  type ModelServer, type ServerKind,
 } from './model-server.js';
 import {
-  deadlineForConcurrency, fetchTransport, usageLine, type Transport,
+  deadlineForConcurrency, fetchTransport, TRANSLATE_TUNING, answerBudget, usageLine, type Transport,
 } from './transport.js';
+import { MEASURING_MODEL, requestNeed } from '../context-need.js';
 import {
   chapterPosition, openTranslationRecords, swapPendingRecordsIntoPlace, TranslationRecords,
 } from './records.js';
@@ -1473,7 +1474,27 @@ export async function translateEpub(opts: TranslateOptions): Promise<TranslateRe
   }
 }
 
-async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> {
+/**
+ * THE CONTEXT THIS RUN'S LARGEST REQUEST NEEDS, measured by planning the book
+ * exactly as a run would and stopping before the first request
+ * (src/engine/context-need.ts). No server is opened: the plan takes nothing
+ * from one but the model's name, and only for cache keys.
+ *
+ * EVERY REQUEST THE PLAN COULD SEND is counted, the groups and each of their
+ * parts alone (a group that cannot be read back is asked part by part), and a
+ * block a bank or records file already answers is counted too: the floor is
+ * the book's, not this evening's cache.
+ */
+export async function measureTranslation(opts: TranslateOptions): Promise<number> {
+  return (await runTranslation(opts, true)).measured;
+}
+
+async function runTranslation(opts: TranslateOptions, measuring: true): Promise<{ measured: number }>;
+async function runTranslation(opts: TranslateOptions, measuring?: false): Promise<TranslateReport>;
+async function runTranslation(
+  opts: TranslateOptions,
+  measuring = false,
+): Promise<TranslateReport | { measured: number }> {
   // The name every line of this run starts with. See act.ts for the ruling.
   const act: TextAct = textActOf(opts.rewrite);
   const started = Date.now();
@@ -1634,13 +1655,15 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
    * person needs, and burying it under a page of parse progress makes them read
    * the page first.
    */
-  const server = await openModelServer({
-    kind,
-    transport,
-    endpoint,
-    log: opts.log,
-    ...(wanted === undefined ? {} : { model: wanted }),
-  });
+  const server: ModelServer = measuring
+    ? { kind, endpoint, model: wanted ?? MEASURING_MODEL, maxModelLen: null, defaults: null }
+    : await openModelServer({
+      kind,
+      transport,
+      endpoint,
+      log: opts.log,
+      ...(wanted === undefined ? {} : { model: wanted }),
+    });
   const model = server.model;
 
   /*
@@ -2250,6 +2273,31 @@ async function runTranslation(opts: TranslateOptions): Promise<TranslateReport> 
   // Numbered once the whole plan exists, so `chunk 7/41` counts the book and
   // not the document — the same reason block ordinals run across the book.
   for (const [i, chunk] of chunks.entries()) chunk.ordinal = i + 1;
+
+  if (measuring) {
+    // The answer room is what `askModel` asks for (vllm.ts `completionsBody`).
+    const need = (system: string, user: string): number =>
+      requestNeed(system, user, TRANSLATE_TUNING.numPredict ?? answerBudget(user));
+    let measured = 0;
+    for (const chunk of chunks) {
+      for (const part of chunk.parts) {
+        if (part.wordless) continue;
+        const system = systemPrompt(
+          from, to, opts.instructions, inventoryOf([part]), { kind: 'single' }, opts.rewrite,
+        );
+        measured = Math.max(measured, need(system, part.masked.text));
+      }
+      if (chunk.parts.length > 1) {
+        const payload = renderChunk(chunk.kind, chunk.parts.map((p) => p.masked.text), chunk.rowSizes);
+        const system = systemPrompt(
+          from, to, opts.instructions, inventoryOf(chunk.parts), shapeOf(chunk), opts.rewrite,
+        );
+        measured = Math.max(measured, need(system, payload));
+      }
+    }
+    opts.log(`${act}: the largest request of ${chunks.length} needs ${measured} tokens of context`);
+    return { measured };
+  }
 
   // "12 picture" read like a typo in the one line a person sees before a run
   // that takes hours. Every skipped category is a single English noun (table,

@@ -35,6 +35,8 @@ export async function placeOnCrucible(
   claim: LaneClaim,
   signal?: AbortSignal,
   chosenModel?: string,
+  /** The run's measured floor, for the session (`openSession`); absent states none. */
+  contextTokens?: number,
 ): Promise<PlacementOutcome> {
   /*
    * ── THE ADDRESS IN THE REGISTRY MAY NOT BE THE ENGINE'S ───────────────────
@@ -96,7 +98,7 @@ export async function placeOnCrucible(
   if (chosenModel !== undefined && chosenModel !== '' && (LLM_CLASSES as readonly string[]).includes(capability)) {
     return chosenModel.includes('/')
       ? placeUpstream(engine, slot, capability, chosenModel, say, claim)
-      : placeResidentModel(engine, slot, capability, chosenModel, say, claim, signal);
+      : placeResidentModel(engine, slot, capability, chosenModel, say, claim, signal, contextTokens);
   }
 
   const sized = APP_SIZED_MODELS[capability];
@@ -119,7 +121,7 @@ export async function placeOnCrucible(
         `"${slot.name}" named ${pick.model} as ${asked} and it does not fit its card (${short.toFixed(1)} GiB short)`,
       );
     }
-    return placeResidentModel(engine, slot, capability, pick.model, say, claim, signal);
+    return placeResidentModel(engine, slot, capability, pick.model, say, claim, signal, contextTokens);
   }
 
   const record = await readCapability(entry);
@@ -157,7 +159,7 @@ export async function placeOnCrucible(
     );
   }
 
-  return placeResidentModel(engine, slot, capability, row.selected, say, claim, signal);
+  return placeResidentModel(engine, slot, capability, row.selected, say, claim, signal, contextTokens);
 }
 
 /**
@@ -200,6 +202,7 @@ export async function placeResidentModel(
   say: PlacementProgress,
   claim: LaneClaim,
   signal?: AbortSignal,
+  contextTokens?: number,
 ): Promise<PlacementOutcome> {
   const client = clientFor(engine);
 
@@ -251,7 +254,8 @@ export async function placeResidentModel(
   say(listed.resident
     ? `Asking ${slot.name} for its turn…`
     : `Asking ${slot.name} for its turn and loading ${selected}…`);
-  const session = await openSession(engine, { model: selected }, capability, slot.name, say, signal);
+  const session = await openSession(
+    engine, { model: selected }, capability, slot.name, say, signal, contextTokens);
 
   /*
    * ── THE DEPTH IS ASKED FOR AFTER THE MODEL IS RESIDENT ─────────────────

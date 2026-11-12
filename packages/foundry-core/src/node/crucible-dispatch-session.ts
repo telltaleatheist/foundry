@@ -116,11 +116,20 @@ export async function openSession(
   slotName: string,
   say: PlacementProgress,
   signal?: AbortSignal,
+  /**
+   * THE LEAST CONTEXT THE MODEL MAY START AT, measured from this run's own book
+   * (src/node/context-need.ts) and absent for a run that states none. Crucible
+   * 2.0.38 starts the model at its default, or at this when it is more, or at the
+   * most the card affords below that, but never under it; a card that cannot give
+   * it ends the session `insufficient_kv_cache` (`interpretFailure`).
+   */
+  contextTokens?: number,
 ): Promise<HeldSession> {
   const client = clientFor(entry);
   const session: CrucibleSession = await client.session({
     act,
     ...pick,
+    ...(contextTokens === undefined ? {} : { contextTokens }),
     idleS: SESSION_IDLE_S,
     maxWaitS: SESSION_MAX_WAIT_S,
     onQueue: ({ position, of }) => {
