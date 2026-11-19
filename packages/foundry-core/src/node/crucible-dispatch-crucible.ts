@@ -35,7 +35,7 @@ export async function placeOnCrucible(
   claim: LaneClaim,
   signal?: AbortSignal,
   chosenModel?: string,
-  /** The run's measured floor, for the session (`openSession`); absent states none. */
+  /** The run's measured context, the one its model starts at (`openSession`); absent states none. */
   contextTokens?: number,
 ): Promise<PlacementOutcome> {
   /*

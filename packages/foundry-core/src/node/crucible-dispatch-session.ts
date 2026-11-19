@@ -117,11 +117,11 @@ export async function openSession(
   say: PlacementProgress,
   signal?: AbortSignal,
   /**
-   * THE LEAST CONTEXT THE MODEL MAY START AT, measured from this run's own book
-   * (src/node/context-need.ts) and absent for a run that states none. Crucible
-   * 2.0.38 starts the model at its default, or at this when it is more, or at the
-   * most the card affords below that, but never under it; a card that cannot give
-   * it ends the session `insufficient_kv_cache` (`interpretFailure`).
+   * THE CONTEXT THE MODEL STARTS AT, measured from this run's own book
+   * (src/node/context-need.ts) and absent for a run that states none (the model
+   * then starts at its default). Crucible 2.0.39 loads the model at exactly this
+   * (never under 2048) and keeps a resident one already at this or more; a card
+   * that cannot give it ends the session `insufficient_kv_cache` (`interpretFailure`).
    */
   contextTokens?: number,
 ): Promise<HeldSession> {
