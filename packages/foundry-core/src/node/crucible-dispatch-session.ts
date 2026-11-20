@@ -119,7 +119,7 @@ export async function openSession(
   /**
    * THE CONTEXT THE MODEL STARTS AT, measured from this run's own book
    * (src/node/context-need.ts) and absent for a run that states none (the model
-   * then starts at its default). Crucible 2.0.39 loads the model at exactly this
+   * then starts at its default). Crucible 2.0.39+ loads the model at exactly this
    * (never under 2048) and keeps a resident one already at this or more; a card
    * that cannot give it ends the session `insufficient_kv_cache` (`interpretFailure`).
    */
