@@ -17,10 +17,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { cleanTextEpub } from '../../../src/engine/clean/epub.js';
+import { cleanTextEpub, measureCleanTextEpub } from '../../../src/engine/clean/epub.js';
 import { readNarrationStampFile, type NarrationTextStampMeta } from '../../../src/engine/clean/stamp.js';
 import type { NumberNormalizerRunner } from '../../../src/engine/clean/tts-number-normalizer.js';
 import { writeZip, zipText } from '../../../src/engine/export/zip.js';
+import type { Transport } from '../../../src/engine/translate/transport.js';
 import { readZip } from '../../../src/engine/translate/unzip.js';
 
 const OPF_PATH = 'EPUB/package.opf';
@@ -69,7 +70,7 @@ const NAV = `<?xml version="1.0" encoding="UTF-8"?>
 </html>
 `;
 
-function book(): Uint8Array {
+function book(chapter: string = CHAPTER): Uint8Array {
   return writeZip([
     zipText('mimetype', 'application/epub+zip'),
     zipText('META-INF/container.xml',
@@ -78,7 +79,7 @@ function book(): Uint8Array {
       + `  <rootfiles><rootfile full-path="${OPF_PATH}" media-type="application/oebps-package+xml"/></rootfiles>\n`
       + '</container>\n'),
     zipText('EPUB/style.css', 'body { margin: 0 5%; }\n'),
-    zipText(CHAPTER_PATH, CHAPTER),
+    zipText(CHAPTER_PATH, chapter),
     zipText('EPUB/nav.xhtml', NAV),
     zipText(OPF_PATH, OPF),
   ]);
@@ -94,6 +95,38 @@ const SILENT: NumberNormalizerRunner = {
 function membersOf(bytes: Uint8Array): Map<string, string> {
   return new Map(readZip(bytes).map((m) => [m.path, m.text()] as const));
 }
+
+/** A server nobody may call: a measure that reached for one fails the test by name. */
+const NO_SERVER: Transport = {
+  get: async (url) => { throw new Error(`a measure asked a server: GET ${url}`); },
+  post: async (url) => { throw new Error(`a measure asked a server: POST ${url}`); },
+};
+
+describe('clean-text --epub --measure-context', () => {
+  test('a figure, nothing written, no server asked, and a longer paragraph needs more', async () => {
+    const measure = async (chapter: string): Promise<{ need: number | null; left: string[] }> => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clean-epub-measure-'));
+      fs.writeFileSync(path.join(dir, 'in.epub'), book(chapter));
+      const need = await measureCleanTextEpub({
+        epubPath: path.join(dir, 'in.epub'),
+        outPath: path.join(dir, 'out.epub'),
+        endpoint: 'http://measuring.invalid/openai',
+        transport: NO_SERVER,
+        log: () => {},
+      });
+      return { need, left: fs.readdirSync(dir).sort() };
+    };
+    const long = 'The minutes were never circulated, which surprised exactly no one. '.repeat(60).trim();
+    const small = await measure(CHAPTER);
+    const large = await measure(CHAPTER.replace("Nothing here needs a narrator's help at all.", long));
+    expect(small.need).not.toBeNull();
+    // The edit list's answer room is in every request's need.
+    expect(small.need!).toBeGreaterThan(2048);
+    expect(large.need!).toBeGreaterThan(small.need!);
+    expect(small.left).toEqual(['in.epub']);
+    expect(large.left).toEqual(['in.epub']);
+  });
+});
 
 describe('clean-text --epub, the failsafe', () => {
   test('every unedited byte survives, and the stamp is readable in both places', async () => {

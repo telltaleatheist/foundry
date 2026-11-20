@@ -30486,6 +30486,24 @@ var init_transport = __esm({
   }
 });
 
+// packages/foundry-core/src/shared/context-need.ts
+function promptTokens(system, user) {
+  return Math.ceil((system.length + user.length) / CHARS_PER_TOKEN2) + PROMPT_SLACK_TOKENS;
+}
+function requestNeed(system, user, answerTokens) {
+  return promptTokens(system, user) + answerTokens;
+}
+var CHARS_PER_TOKEN2, PROMPT_SLACK_TOKENS, CONTEXT_NEED_PREFIX;
+var init_context_need = __esm({
+  "packages/foundry-core/src/shared/context-need.ts"() {
+    "use strict";
+    init_engine_import_meta_url();
+    CHARS_PER_TOKEN2 = 2.5;
+    PROMPT_SLACK_TOKENS = 256;
+    CONTEXT_NEED_PREFIX = "FOUNDRY_CONTEXT_NEED ";
+  }
+});
+
 // packages/foundry-core/src/engine/backend/http-refusal.ts
 function explainHttpRefusal(status, statusText, body) {
   const said = body.trim().slice(0, BODY_EXCERPT);
@@ -30753,9 +30771,6 @@ function capFor2(system, user, wanted, maxModelLen) {
   if (room <= PREDICT_FLOOR2) return PREDICT_FLOOR2;
   return Math.min(wanted, room);
 }
-function promptTokens(system, user) {
-  return Math.ceil((system.length + user.length) / CHARS_PER_TOKEN2) + PROMPT_SLACK_TOKENS;
-}
 function fitsWindow(system, user, wanted, maxModelLen) {
   if (maxModelLen === null) return true;
   return maxModelLen - promptTokens(system, user) >= wanted;
@@ -30906,11 +30921,12 @@ async function complete(transport, endpoint, served, system, user, tuning) {
   }
   return withoutThinking(content);
 }
-var BUSY_STATUSES, CHAT_WAITS_ON, VllmError, LISTED_IDS_SHOWN, CHARS_PER_TOKEN2, PROMPT_SLACK_TOKENS, PREDICT_FLOOR2;
+var BUSY_STATUSES, CHAT_WAITS_ON, VllmError, LISTED_IDS_SHOWN, PREDICT_FLOOR2;
 var init_vllm = __esm({
   "packages/foundry-core/src/engine/translate/vllm.ts"() {
     "use strict";
     init_engine_import_meta_url();
+    init_context_need();
     init_http_refusal();
     init_endpoint();
     init_transport();
@@ -30923,8 +30939,6 @@ var init_vllm = __esm({
       }
     };
     LISTED_IDS_SHOWN = 12;
-    CHARS_PER_TOKEN2 = 2.5;
-    PROMPT_SLACK_TOKENS = 256;
     PREDICT_FLOOR2 = 128;
   }
 });
@@ -31183,7 +31197,7 @@ var init_version = __esm({
     init_engine_import_meta_url();
     init_package();
     VERSION = package_default.version;
-    GIT_COMMIT = "src f6aae1a890bc".length > 0 ? "src f6aae1a890bc" : null;
+    GIT_COMMIT = "src e60e8bb41d55".length > 0 ? "src e60e8bb41d55" : null;
   }
 });
 
@@ -37680,9 +37694,6 @@ var init_prose = __esm({
 });
 
 // packages/foundry-core/src/engine/context-need.ts
-function requestNeed(system, user, answerTokens) {
-  return promptTokens(system, user) + answerTokens;
-}
 function printContextNeed(contextTokens) {
   if (contextTokens !== null && (!Number.isInteger(contextTokens) || contextTokens < 1)) {
     throw new Error(`a measured context need must be a positive whole number of tokens, not ${contextTokens}`);
@@ -37690,13 +37701,13 @@ function printContextNeed(contextTokens) {
   process.stdout.write(`${CONTEXT_NEED_PREFIX}${JSON.stringify({ contextTokens })}
 `);
 }
-var CONTEXT_NEED_PREFIX, MEASURING_MODEL;
-var init_context_need = __esm({
+var MEASURING_MODEL;
+var init_context_need2 = __esm({
   "packages/foundry-core/src/engine/context-need.ts"() {
     "use strict";
     init_engine_import_meta_url();
-    init_vllm();
-    CONTEXT_NEED_PREFIX = "FOUNDRY_CONTEXT_NEED ";
+    init_context_need();
+    init_context_need();
     MEASURING_MODEL = "(measuring)";
   }
 });
@@ -76759,7 +76770,7 @@ var init_triage = __esm({
     init_tts_punctuation();
     init_removal();
     init_fixed_readings();
-    init_context_need();
+    init_context_need2();
     TRIAGE_FORMAT = "foundry-clean-triage/v1";
     TRIAGE_FLAG_P = 0.2;
     TRIAGE_MIN_LABEL_MASS = 0.9;
@@ -77191,7 +77202,8 @@ __export(epub_exports, {
   cleanEpubBankPath: () => cleanEpubBankPath,
   cleanEpubKey: () => cleanEpubKey,
   cleanEpubStampPath: () => cleanEpubStampPath,
-  cleanTextEpub: () => cleanTextEpub
+  cleanTextEpub: () => cleanTextEpub,
+  measureCleanTextEpub: () => measureCleanTextEpub
 });
 function cleanEpubKey(request) {
   const fields = [
@@ -77282,12 +77294,18 @@ function isRefusal(status) {
   return status !== "APPLIED" && status !== "APPLIED_RULE" && status !== "SCRIPTURE_PROTECTED" && status !== "NOOP";
 }
 async function cleanTextEpub(opts) {
+  return cleanEpub(opts, false);
+}
+async function measureCleanTextEpub(opts) {
+  return (await cleanEpub(opts, true)).measured;
+}
+async function cleanEpub(opts, measuring) {
   const started = Date.now();
   const at = (/* @__PURE__ */ new Date()).toISOString();
   const endpoint = opts.endpoint;
   const kind = opts.server ?? "openai";
   const removal = opts.removal ?? NO_REMOVAL;
-  const concurrency = await resolveConcurrency({
+  const concurrency = measuring ? 1 : await resolveConcurrency({
     asked: opts.concurrency,
     kind,
     openaiDefault: DEFAULT_TEXT_CONCURRENCY,
@@ -77296,7 +77314,7 @@ async function cleanTextEpub(opts) {
     log: opts.log
   });
   const transport = opts.transport ?? fetchTransport(deadlineForConcurrency(concurrency));
-  const model = opts.model ?? opts.runner?.model ?? (await openModelServer({ kind, transport, endpoint, log: opts.log })).model;
+  const model = opts.model ?? opts.runner?.model ?? (measuring ? MEASURING_MODEL : (await openModelServer({ kind, transport, endpoint, log: opts.log })).model);
   const epubPath = path26.resolve(opts.epubPath);
   const outPath = path26.resolve(opts.outPath);
   if (epubPath === outPath) {
@@ -77429,6 +77447,18 @@ async function cleanTextEpub(opts) {
     previous: index > 0 ? cleanText2.get(outstanding[index - 1].position) : null,
     next: index + 1 < outstanding.length ? cleanText2.get(outstanding[index + 1].position) : null
   }));
+  if (measuring) {
+    const inputs = normalizerInputs(asks, "every-block");
+    if (inputs.size === 0) {
+      opts.log("clean-text: the rules settle every block, so no model would be asked anything");
+      return { measured: null };
+    }
+    let longest = "";
+    for (const input of inputs.values()) if (input.length > longest.length) longest = input;
+    const measured = requestNeed(withRemoval(narrationTextPrompt(), removal), longest, EDIT_LIST_NUM_PREDICT);
+    opts.log(`clean-text: the largest of ${inputs.size} requests needs ${measured} tokens of context`);
+    return { measured };
+  }
   const runner = opts.runner ?? (asks.length === 0 ? NOTHING_TO_ASK : await openModelRunner({ model, endpoint, server: kind, transport, log: opts.log }));
   const blockByPosition = new Map(outstanding.map((block) => [block.position, block]));
   const bankAnswer = (position, decision) => {
@@ -77648,6 +77678,7 @@ var init_epub2 = __esm({
     init_removal();
     init_punctuate();
     init_runner();
+    init_context_need2();
     init_stamp();
     init_tts_number_normalizer();
     init_tts_punctuation();
@@ -78176,7 +78207,7 @@ var init_run = __esm({
     init_segments();
     init_stamp();
     init_tts_number_normalizer();
-    init_context_need();
+    init_context_need2();
     init_tts_punctuation();
     init_fixed_readings();
     init_removal();
@@ -99088,7 +99119,7 @@ init_model_server();
 init_transport();
 init_plan();
 init_prose();
-init_context_need();
+init_context_need2();
 
 // packages/foundry-core/src/engine/analyze/report.ts
 init_engine_import_meta_url();
@@ -103305,7 +103336,7 @@ function superscriptOf(digits) {
 init_languages();
 init_model_server();
 init_transport();
-init_context_need();
+init_context_need2();
 init_records();
 init_tablecells();
 
@@ -104568,7 +104599,7 @@ function escapeText3(text) {
 }
 
 // packages/foundry-core/src/engine/commands.ts
-init_context_need();
+init_context_need2();
 init_model_server();
 init_anthropic();
 init_version();
@@ -105306,14 +105337,9 @@ async function runCleanText2(args) {
         `--epub is the bare-EPUB failsafe and ${bookRoute.map((n) => `--${n}`).join(", ")} belong${bookRoute.length === 1 ? "s" : ""} to the book-file route. They are two doors onto one pass: the book route writes RECORDS keyed by the row ids a derived book keeps, and this one rewrites a finished file in place of them. Asking for both would mean choosing a source silently and filing the answers under the other one's names. The EPUB route writes its stamp into --out's package document and beside it as <out>.stamp.json; it needs no --records, no --stamp and no --generation.`
       );
     }
-    if (flag(args, "measure-context")) {
-      throw new UsageError(
-        "--measure-context measures the book-file route, which is the one the queue runs; the --epub failsafe is a hand-run door and has no measure."
-      );
-    }
     const outPath = requireString(args, "out", "where the cleaned EPUB is written");
-    const { cleanTextEpub: cleanTextEpub2 } = await Promise.resolve().then(() => (init_epub2(), epub_exports));
-    await cleanTextEpub2({
+    const { cleanTextEpub: cleanTextEpub2, measureCleanTextEpub: measureCleanTextEpub2 } = await Promise.resolve().then(() => (init_epub2(), epub_exports));
+    const epubOptions = {
       epubPath: epubIn,
       outPath,
       endpoint: server.endpoint,
@@ -105322,7 +105348,12 @@ async function runCleanText2(args) {
       ...concurrency !== void 0 ? { concurrency: Number(concurrency) } : {},
       removal,
       log
-    });
+    };
+    if (flag(args, "measure-context")) {
+      printContextNeed(await measureCleanTextEpub2(epubOptions));
+      return;
+    }
+    await cleanTextEpub2(epubOptions);
     return;
   }
   if (optionalString(args, "out") !== void 0) {

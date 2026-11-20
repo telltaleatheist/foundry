@@ -1408,15 +1408,9 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
         + '<out>.stamp.json; it needs no --records, no --stamp and no --generation.',
       );
     }
-    if (flag(args, 'measure-context')) {
-      throw new UsageError(
-        '--measure-context measures the book-file route, which is the one the queue runs; the --epub '
-        + 'failsafe is a hand-run door and has no measure.',
-      );
-    }
     const outPath = requireString(args, 'out', 'where the cleaned EPUB is written');
-    const { cleanTextEpub } = await import('./clean/epub.js');
-    await cleanTextEpub({
+    const { cleanTextEpub, measureCleanTextEpub } = await import('./clean/epub.js');
+    const epubOptions: Parameters<typeof cleanTextEpub>[0] = {
       epubPath: epubIn,
       outPath,
       endpoint: server.endpoint,
@@ -1425,7 +1419,14 @@ async function runCleanText(args: ParsedArgs): Promise<void> {
       ...(concurrency !== undefined ? { concurrency: Number(concurrency) } : {}),
       removal,
       log,
-    });
+    };
+    // BookForge's narration cleanup runs this door, and states the need it
+    // prints to Crucible before its model loads (Owen, 2026-11-12).
+    if (flag(args, 'measure-context')) {
+      printContextNeed(await measureCleanTextEpub(epubOptions));
+      return;
+    }
+    await cleanTextEpub(epubOptions);
     return;
   }
   if (optionalString(args, 'out') !== undefined) {

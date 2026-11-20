@@ -119,6 +119,7 @@
  * can say what it spent (`recordUsage`). Neither knows whether the endpoint is
  * local or billed, and neither needs to.
  */
+import { promptTokens } from '../../shared/context-need.js';
 import { explainHttpRefusal } from '../backend/http-refusal.js';
 import { PARKED_EXIT_CODE } from '../vlm/endpoint.js';
 import {
@@ -437,8 +438,8 @@ export async function requireServedModel(
  * plus a fixed slack): guessing high here only lowers a ceiling that was already
  * generous, and guessing low is a 400.
  */
-const CHARS_PER_TOKEN = 2.5;
-const PROMPT_SLACK_TOKENS = 256;
+// The characters-to-tokens rate and slack live in src/shared/context-need.ts,
+// where the context a run asks Crucible for is counted the same way.
 const PREDICT_FLOOR = 128;
 
 export function capFor(
@@ -454,9 +455,7 @@ export function capFor(
 }
 
 /** The pessimistic token estimate `capFor` sizes against, for a message to quote. */
-export function promptTokens(system: string, user: string): number {
-  return Math.ceil((system.length + user.length) / CHARS_PER_TOKEN) + PROMPT_SLACK_TOKENS;
-}
+export { promptTokens };
 
 /**
  * Does a request wanting `wanted` tokens of answer fit the server's window?

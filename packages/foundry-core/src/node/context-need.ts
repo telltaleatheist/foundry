@@ -2,12 +2,13 @@
  * context-need — the queue's half: reading the floor a measuring run printed.
  *
  * The engine's half (src/engine/context-need.ts) prints one line on stdout,
- * `FOUNDRY_CONTEXT_NEED {"contextTokens":N}`. This is a separate build that
- * cannot import the engine, so the prefix is spelled twice, and
- * test/engine/context-need.test.ts fails the day the two spellings differ.
+ * `FOUNDRY_CONTEXT_NEED {"contextTokens":N}`; both take the prefix from
+ * src/shared/context-need.ts. An app counting prompts it builds itself uses the
+ * same arithmetic, re-exported here as `requestNeed`.
  */
+import { CONTEXT_NEED_PREFIX } from '../shared/context-need';
 
-export const CONTEXT_NEED_PREFIX = 'FOUNDRY_CONTEXT_NEED ';
+export { CONTEXT_NEED_PREFIX, promptTokens, requestNeed } from '../shared/context-need';
 
 /**
  * What a measuring run printed: `{ contextTokens: N }`, `{ contextTokens: null }`

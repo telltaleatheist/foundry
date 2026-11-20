@@ -7,10 +7,10 @@
  * need from crucible before it loads the model"*, and, asked whether a fixed
  * figure per kind of work would do, he chose to measure each book first.
  *
- * Crucible 2.0.38 takes the figure as `contextTokens` on a queue session: the
- * model starts at its default, or at this when it is more, or at the most the
- * card affords below that, but never under it. So the figure is a FLOOR the run
- * cannot do without, and it is measured with the run's own planning: a stage
+ * Crucible takes the figure as `contextTokens` on a queue session, and from
+ * 2.0.39 loads the model at exactly that context (Owen, 2026-11-12: "we don't
+ * need 16k if the paragraphs are all small"). So the figure is the context the
+ * run cannot do without, and it is measured with the run's own planning: a stage
  * given `--measure-context` reads the book, plans its requests exactly as a
  * real run would, prints the largest one's need on stdout and exits without
  * opening a server.
@@ -21,22 +21,14 @@
  * counted any other way would be a floor that disagrees with the check the run
  * makes against the window it was given.
  */
-import { promptTokens } from './translate/vllm.js';
+import { CONTEXT_NEED_PREFIX } from '../shared/context-need.js';
 
-/**
- * The line a measuring run prints, so the queue can find it among anything else on stdout.
- * The queue reads it with `readContextNeed` (src/node/context-need.ts, a separate build that
- * cannot import this one); test/context-need.test.ts holds the two spellings together.
- */
-export const CONTEXT_NEED_PREFIX = 'FOUNDRY_CONTEXT_NEED ';
+// The counting and the line's prefix are shared with the queue and with apps
+// that count their own prompts (src/shared/context-need.ts).
+export { CONTEXT_NEED_PREFIX, requestNeed } from '../shared/context-need.js';
 
 /** The name a measuring run plans under in place of a model it never asked a server for. */
 export const MEASURING_MODEL = '(measuring)';
-
-/** One request's need: its prompt, counted as `capFor` counts it, plus the answer room it asks for. */
-export function requestNeed(system: string, user: string, answerTokens: number): number {
-  return promptTokens(system, user) + answerTokens;
-}
 
 /**
  * Say the run's need, on stdout, as the one line the queue reads. NULL is a run

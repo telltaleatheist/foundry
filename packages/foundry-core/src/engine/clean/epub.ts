@@ -99,13 +99,15 @@ import { narrationTextPrompt } from './prompt.js';
 import { NO_REMOVAL, removalKeyField, removesAnything, withRemoval, type RemovalRequest } from './removal.js';
 import { CleanTextError, nodeHolding, punctuateTarget } from './punctuate.js';
 import type { PunctuationRefusal, PunctuationStageRecord } from './punctuate.js';
-import { openModelRunner } from './runner.js';
+import { EDIT_LIST_NUM_PREDICT, openModelRunner } from './runner.js';
+import { MEASURING_MODEL, requestNeed } from '../context-need.js';
 import {
   narrationStampMeta, narrationTextStamp, NARRATION_TEXT_STAMP_NAME, type NarrationTextStamp,
 } from './stamp.js';
 import type { NarrationNumberTarget, NarrationTextRewrite } from './targets.js';
 import {
   askAboutEach, EVERY_CLASS,
+  normalizerInputs,
   NORMALIZER_VERSION,
 } from './tts-number-normalizer.js';
 import type {
@@ -365,6 +367,27 @@ function isRefusal(status: string): boolean {
  * stamp.
  */
 export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOutcome> {
+  return cleanEpub(opts, false);
+}
+
+/**
+ * THE CONTEXT THIS RUN'S LARGEST REQUEST NEEDS, or null when the rules settle
+ * every block (Owen, 2026-11-12: measure every time, BookForge as well). The
+ * book route's measure (`measureCleanText`, run.ts) over this route's walk: it
+ * reads the EPUB and its bank and stops where the model would open, so nothing
+ * is written and no server is asked. Blocks already banked at this exact
+ * question are not counted, since they are not asked.
+ */
+export async function measureCleanTextEpub(opts: CleanEpubOptions): Promise<number | null> {
+  return (await cleanEpub(opts, true)).measured;
+}
+
+async function cleanEpub(opts: CleanEpubOptions, measuring: true): Promise<{ measured: number | null }>;
+async function cleanEpub(opts: CleanEpubOptions, measuring: false): Promise<CleanEpubOutcome>;
+async function cleanEpub(
+  opts: CleanEpubOptions,
+  measuring: boolean,
+): Promise<CleanEpubOutcome | { measured: number | null }> {
   const started = Date.now();
   const at = new Date().toISOString();
   const endpoint = opts.endpoint;
@@ -373,7 +396,8 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
   // the book route's header (`src/clean/run.ts`) carries the whole argument, and
   // `resolveConcurrency` (translate/model-server.ts) owns the three rungs.
   const removal = opts.removal ?? NO_REMOVAL;
-  const concurrency = await resolveConcurrency({
+  // A measuring run sends nothing, so it has no pool to size and no server to ask.
+  const concurrency = measuring ? 1 : await resolveConcurrency({
     asked: opts.concurrency, kind, openaiDefault: DEFAULT_TEXT_CONCURRENCY, endpoint,
     transport: opts.transport, log: opts.log,
   });
@@ -396,7 +420,7 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
    */
   const model = opts.model
     ?? opts.runner?.model
-    ?? (await openModelServer({ kind, transport, endpoint, log: opts.log })).model;
+    ?? (measuring ? MEASURING_MODEL : (await openModelServer({ kind, transport, endpoint, log: opts.log })).model);
   const epubPath = path.resolve(opts.epubPath);
   const outPath = path.resolve(opts.outPath);
 
@@ -571,6 +595,19 @@ export async function cleanTextEpub(opts: CleanEpubOptions): Promise<CleanEpubOu
     previous: index > 0 ? cleanText.get(outstanding[index - 1]!.position)! : null,
     next: index + 1 < outstanding.length ? cleanText.get(outstanding[index + 1]!.position)! : null,
   }));
+
+  if (measuring) {
+    const inputs = normalizerInputs(asks, 'every-block');
+    if (inputs.size === 0) {
+      opts.log('clean-text: the rules settle every block, so no model would be asked anything');
+      return { measured: null };
+    }
+    let longest = '';
+    for (const input of inputs.values()) if (input.length > longest.length) longest = input;
+    const measured = requestNeed(withRemoval(narrationTextPrompt(), removal), longest, EDIT_LIST_NUM_PREDICT);
+    opts.log(`clean-text: the largest of ${inputs.size} requests needs ${measured} tokens of context`);
+    return { measured };
+  }
 
   const runner = opts.runner ?? (asks.length === 0
     ? NOTHING_TO_ASK
