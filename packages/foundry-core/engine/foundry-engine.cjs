@@ -31197,7 +31197,7 @@ var init_version = __esm({
     init_engine_import_meta_url();
     init_package();
     VERSION = package_default.version;
-    GIT_COMMIT = "src e60e8bb41d55".length > 0 ? "src e60e8bb41d55" : null;
+    GIT_COMMIT = "src fd7281e77f72".length > 0 ? "src fd7281e77f72" : null;
   }
 });
 

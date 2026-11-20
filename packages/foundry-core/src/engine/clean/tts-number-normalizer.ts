@@ -2606,18 +2606,6 @@ function ruleRewrites(ruled: NumberRuleOutcome): NarrationTextRewrite[] {
 }
 
 /**
- * Ask the model about every selected span, validate every answer, and give the
- * model's VRAM back before returning.
- *
- * The whole model-facing contract lives here: the context window pinned ONCE to
- * the longest request, the two retry rules in `askForEdits`, the validation wall
- * in `validateNumberEdits`, the parse-failure share that declares a model broken
- * rather than narrating a book of digits, `onSettled` — which is where a verdict
- * becomes durable, the moment there is one — and the `release()` in `finally` —
- * which runs on the failure path too, because a pass that threw still left 6-17
- * GB of weights resident and e2a takes the GPU next either way.
- */
-/**
  * WHAT EACH ASK SENDS THE MODEL, keyed by the ask — and an ask with no entry is
  * one the rules settle alone. Lifted out of `askAboutEach` so that a measuring
  * run (`measureCleanText`, clean/run.ts) sizes the very inputs a real pass sends.
@@ -2649,6 +2637,18 @@ export function normalizerInputs(
   return inputs;
 }
 
+/**
+ * Ask the model about every selected span, validate every answer, and give the
+ * model's VRAM back before returning.
+ *
+ * The whole model-facing contract lives here: the context window pinned ONCE to
+ * the longest request, the two retry rules in `askForEdits`, the validation wall
+ * in `validateNumberEdits`, the parse-failure share that declares a model broken
+ * rather than narrating a book of digits, `onSettled` — which is where a verdict
+ * becomes durable, the moment there is one — and the `release()` in `finally` —
+ * which runs on the failure path too, because a pass that threw still left 6-17
+ * GB of weights resident and e2a takes the GPU next either way.
+ */
 export async function askAboutEach(
   asks: readonly NormalizerAsk[],
   runner: NumberNormalizerRunner,
